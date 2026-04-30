@@ -161,6 +161,14 @@ _DEF_NODE_TYPES = {
     "class_declaration",
     "class_definition",
     "interface_declaration",
+    # Rust
+    "function_item",     # plain Rust functions
+    "impl_item",         # walked specially to qualify methods as Type::method
+    "trait_item",        # trait definitions and their default methods
+    "struct_item",       # treated as classes
+    "enum_item",
+    # Go: structs/interfaces declared as type_spec inside type_declaration
+    "type_spec",
 }
 
 _CALL_NODE_TYPES = {
@@ -169,6 +177,12 @@ _CALL_NODE_TYPES = {
     "method_invocation",
     "invocation_expression",
     "call",
+}
+
+# Anonymous function literals — name comes from the surrounding binding
+_ANONYMOUS_FN_TYPES = {
+    "arrow_function",       # JS/TS: const f = () => {}
+    "function_expression",  # JS/TS: const f = function () {}
 }
 
 
@@ -196,39 +210,103 @@ def _ts_extract(source: str, language: str, module_name: str) -> ExtractResult:
                 return text(c)
         return None
 
+    def emit_symbol(node, name: str, parent_qname: str | None, kind: str, qname_sep: str = ".") -> str:
+        qname = f"{parent_qname}{qname_sep}{name}" if parent_qname else f"{module_name}.{name}"
+        start_line = node.start_point[0] + 1
+        end_line = node.end_point[0] + 1
+        signature = text(node).splitlines()[0][:300] if node.start_byte != node.end_byte else None
+        out.symbols.append(
+            ExtractedSymbol(
+                name=name,
+                qualified_name=qname,
+                kind=kind,
+                signature=signature,
+                docstring=None,
+                body_hash_seed=text(node),
+                start_line=start_line,
+                end_line=end_line,
+                parent_qname=parent_qname,
+            )
+        )
+        return qname
+
+    def impl_target_name(impl_node) -> str | None:
+        """For Rust `impl Type` or `impl Trait for Type`, return Type."""
+        # tree-sitter-rust exposes a `type` field for the implementee
+        child = impl_node.child_by_field_name("type") if hasattr(impl_node, "child_by_field_name") else None
+        if child is not None:
+            return text(child).split("<")[0].strip()
+        # Fallback: first type_identifier
+        for c in impl_node.children:
+            if c.type in ("type_identifier", "scoped_type_identifier", "generic_type"):
+                return text(c).split("<")[0].strip()
+        return None
+
     def walk(node, parent_qname: str | None):
+        # ----- Rust impl/trait: methods become Type::method -----
+        if node.type == "impl_item":
+            type_name = impl_target_name(node)
+            if type_name:
+                impl_qname = f"{parent_qname}.{type_name}" if parent_qname else f"{module_name}.{type_name}"
+                # Emit the impl as a class-like aggregator if not already present
+                emit_symbol(node, type_name, parent_qname, "class")
+                # Walk children with Type qname as parent and Rust :: separator
+                for c in node.children:
+                    walk_rust_method(c, impl_qname)
+                return
+        if node.type == "trait_item":
+            name = find_name(node)
+            if name:
+                trait_qname = emit_symbol(node, name, parent_qname, "interface")
+                for c in node.children:
+                    walk_rust_method(c, trait_qname)
+                return
+
+        # ----- Anonymous functions assigned to a binding -----
+        # `const foo = () => {}` -> variable_declarator { name: foo, value: arrow_function }
+        if node.type == "variable_declarator":
+            value = node.child_by_field_name("value") if hasattr(node, "child_by_field_name") else None
+            if value is not None and value.type in _ANONYMOUS_FN_TYPES:
+                name = find_name(node)
+                if name:
+                    qname = emit_symbol(value, name, parent_qname, "function")
+                    _ts_collect_calls(value, qname, src_bytes, out)
+                    return  # do not double-walk
+            # otherwise let normal recursion continue
+
+        # ----- Standard def nodes -----
         if node.type in _DEF_NODE_TYPES:
             name = find_name(node)
             if name:
-                qname = f"{parent_qname}.{name}" if parent_qname else f"{module_name}.{name}"
-                kind = "class" if "class" in node.type or "interface" in node.type else (
-                    "method" if "method" in node.type else "function"
-                )
-                start_line = node.start_point[0] + 1
-                end_line = node.end_point[0] + 1
-                signature = text(node).splitlines()[0][:300] if node.start_byte != node.end_byte else None
-                seed = text(node)
-                out.symbols.append(
-                    ExtractedSymbol(
-                        name=name,
-                        qualified_name=qname,
-                        kind=kind,
-                        signature=signature,
-                        docstring=None,
-                        body_hash_seed=seed,
-                        start_line=start_line,
-                        end_line=end_line,
-                        parent_qname=parent_qname,
-                    )
-                )
-                # Collect calls inside this def
+                if (
+                    "class" in node.type
+                    or "interface" in node.type
+                    or node.type in ("struct_item", "enum_item", "type_spec")
+                ):
+                    kind = "class"
+                elif "method" in node.type:
+                    kind = "method"
+                else:
+                    kind = "function"
+                qname = emit_symbol(node, name, parent_qname, kind)
                 _ts_collect_calls(node, qname, src_bytes, out)
-                # Recurse into children with this qname as parent
                 for c in node.children:
                     walk(c, qname)
                 return
         for c in node.children:
             walk(c, parent_qname)
+
+    def walk_rust_method(node, parent_qname: str):
+        """Walk a Rust impl/trait body. function_item children become methods
+        with `::` separator. Recurse so nested types are also captured."""
+        if node.type == "function_item":
+            name = find_name(node)
+            if name:
+                qname = emit_symbol(node, name, parent_qname, "method", qname_sep="::")
+                _ts_collect_calls(node, qname, src_bytes, out)
+                return
+        for c in node.children:
+            walk_rust_method(c, parent_qname)
 
     walk(tree.root_node, None)
     return out

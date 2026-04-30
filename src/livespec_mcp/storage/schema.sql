@@ -1,5 +1,7 @@
--- livespec-mcp schema v1
--- Five blocks: project, code (file/symbol), graph (edges), RFs, docs.
+-- livespec-mcp schema v2
+-- Four blocks: project, code (file/symbol), graph (edges), RFs+docs.
+-- v2 changes: dropped commit_snapshot (unused), file.size_bytes, rf.source,
+-- index_run.error (write-only / never written).
 
 PRAGMA foreign_keys = ON;
 PRAGMA journal_mode = WAL;
@@ -11,13 +13,6 @@ CREATE TABLE IF NOT EXISTS project (
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
-CREATE TABLE IF NOT EXISTS commit_snapshot (
-    id INTEGER PRIMARY KEY,
-    project_id INTEGER NOT NULL REFERENCES project(id) ON DELETE CASCADE,
-    git_sha TEXT,
-    captured_at TEXT NOT NULL DEFAULT (datetime('now'))
-);
-
 -- ===== Code =====
 CREATE TABLE IF NOT EXISTS file (
     id INTEGER PRIMARY KEY,
@@ -25,7 +20,6 @@ CREATE TABLE IF NOT EXISTS file (
     path TEXT NOT NULL,
     language TEXT NOT NULL,
     content_hash TEXT NOT NULL,
-    size_bytes INTEGER NOT NULL,
     line_count INTEGER NOT NULL,
     mtime REAL NOT NULL,
     indexed_at TEXT NOT NULL DEFAULT (datetime('now')),
@@ -98,7 +92,6 @@ CREATE TABLE IF NOT EXISTS rf (
     module_id INTEGER REFERENCES module(id) ON DELETE SET NULL,
     status TEXT NOT NULL DEFAULT 'draft',   -- draft | active | deprecated
     priority TEXT NOT NULL DEFAULT 'medium',-- low | medium | high | critical
-    source TEXT,                     -- doc/file path or URL
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now')),
     UNIQUE(project_id, rf_id)
@@ -179,6 +172,5 @@ CREATE TABLE IF NOT EXISTS index_run (
     files_total INTEGER DEFAULT 0,
     files_changed INTEGER DEFAULT 0,
     symbols_total INTEGER DEFAULT 0,
-    edges_total INTEGER DEFAULT 0,
-    error TEXT
+    edges_total INTEGER DEFAULT 0
 );

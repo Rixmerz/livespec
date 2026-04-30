@@ -33,7 +33,6 @@ def register(mcp: FastMCP) -> None:
         module: str | None = None,
         priority: Literal["low", "medium", "high", "critical"] = "medium",
         status: Literal["draft", "active", "deprecated"] = "draft",
-        source: str | None = None,
     ) -> dict[str, Any]:
         """Create a Functional Requirement.
 
@@ -56,9 +55,9 @@ def register(mcp: FastMCP) -> None:
                 )
                 module_id = int(cur.lastrowid)
         cur = st.conn.execute(
-            """INSERT INTO rf(project_id, rf_id, title, description, module_id, status, priority, source)
-               VALUES(?,?,?,?,?,?,?,?)""",
-            (pid, rid, title, description, module_id, status, priority, source),
+            """INSERT INTO rf(project_id, rf_id, title, description, module_id, status, priority)
+               VALUES(?,?,?,?,?,?,?)""",
+            (pid, rid, title, description, module_id, status, priority),
         )
         return {"id": int(cur.lastrowid), "rf_id": rid, "title": title}
 

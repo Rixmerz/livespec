@@ -27,7 +27,38 @@ def connect(db_path: Path) -> sqlite3.Connection:
     conn.execute("PRAGMA journal_mode = WAL")
     conn.execute("PRAGMA synchronous = NORMAL")
     conn.executescript(_schema_sql())
+    _migrate_v1_to_v2(conn)
     return conn
+
+
+def _migrate_v1_to_v2(conn: sqlite3.Connection) -> None:
+    """Drop dead tables/columns from v1 schemas. Idempotent."""
+    # commit_snapshot was never written; simply drop if present.
+    conn.execute("DROP TABLE IF EXISTS commit_snapshot")
+
+    # file.size_bytes — drop column if present (SQLite supports DROP COLUMN since 3.35).
+    cols = {r["name"] for r in conn.execute("PRAGMA table_info(file)")}
+    if "size_bytes" in cols:
+        try:
+            conn.execute("ALTER TABLE file DROP COLUMN size_bytes")
+        except sqlite3.OperationalError:
+            pass  # older sqlite — leave it; schema CREATE IF NOT EXISTS won't add it back
+
+    # rf.source
+    cols = {r["name"] for r in conn.execute("PRAGMA table_info(rf)")}
+    if "source" in cols:
+        try:
+            conn.execute("ALTER TABLE rf DROP COLUMN source")
+        except sqlite3.OperationalError:
+            pass
+
+    # index_run.error
+    cols = {r["name"] for r in conn.execute("PRAGMA table_info(index_run)")}
+    if "error" in cols:
+        try:
+            conn.execute("ALTER TABLE index_run DROP COLUMN error")
+        except sqlite3.OperationalError:
+            pass
 
 
 @contextmanager

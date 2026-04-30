@@ -120,7 +120,6 @@ def index_project(
                 path=rel,
                 language=language,
                 content_hash=content_hash,
-                size_bytes=len(raw),
                 line_count=line_count,
                 mtime=mtime,
             )
@@ -167,7 +166,6 @@ def _upsert_file(
     path: str,
     language: str,
     content_hash: str,
-    size_bytes: int,
     line_count: int,
     mtime: float,
 ) -> int:
@@ -177,17 +175,17 @@ def _upsert_file(
     if row:
         file_id = int(row["id"])
         conn.execute(
-            """UPDATE file SET language=?, content_hash=?, size_bytes=?, line_count=?, mtime=?,
+            """UPDATE file SET language=?, content_hash=?, line_count=?, mtime=?,
                indexed_at=datetime('now') WHERE id=?""",
-            (language, content_hash, size_bytes, line_count, mtime, file_id),
+            (language, content_hash, line_count, mtime, file_id),
         )
         # Wipe old symbols (cascade also wipes edges)
         conn.execute("DELETE FROM symbol WHERE file_id=?", (file_id,))
         return file_id
     cur = conn.execute(
-        """INSERT INTO file(project_id, path, language, content_hash, size_bytes, line_count, mtime)
-           VALUES(?,?,?,?,?,?,?)""",
-        (project_id, path, language, content_hash, size_bytes, line_count, mtime),
+        """INSERT INTO file(project_id, path, language, content_hash, line_count, mtime)
+           VALUES(?,?,?,?,?,?)""",
+        (project_id, path, language, content_hash, line_count, mtime),
     )
     return int(cur.lastrowid)
 

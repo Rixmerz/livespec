@@ -13,13 +13,32 @@ Index a workspace once, then ask questions like:
 
 - **FastMCP 2.14** (stdio transport)
 - **SQLite** (single `docs.db` file, ACID, WAL)
-- **tree-sitter + tree-sitter-language-pack** (Python, TS, JS, Go, Java, Rust, …)
+- **tree-sitter + tree-sitter-language-pack** for multi-language parsing
 - **Python `ast`** for high-precision Python extraction
 - **NetworkX** for call graph and topological impact analysis
 - BM25 keyword search out of the box; embeddings (Jina code + multilingual-e5)
   are an optional `[embeddings]` extra (Phase 4)
 
 100% local, zero external services, zero API keys required.
+
+## Language support
+
+Honest table — only languages with a passing test suite are claimed.
+
+| Language | Status | What's covered |
+|----------|--------|----------------|
+| **Python** | ✅ Tested | Functions, classes, methods, decorators, calls — uses `ast` for full precision |
+| **Go** | ✅ Tested | Functions, struct types via `type_spec`, struct methods, calls |
+| **Java** | ✅ Tested | Classes, methods, calls (`method_invocation`) |
+| **JavaScript** | ✅ Tested | Function declarations, **arrow functions** assigned to const/let, classes, methods |
+| **TypeScript** | ✅ Tested | Same as JS plus typed signatures (`.ts` and `.tsx`) |
+| **Rust** | ✅ Tested | Free functions, struct/enum types, **`impl` block methods** as `Type::method`, traits |
+| Ruby, PHP, C, C++, C#, Kotlin, Swift, Scala | ⚠️ Untested | The generic tree-sitter extractor will *attempt* to parse these (they're listed in `EXT_LANGUAGE`) but no test suite covers them. Symbol coverage may be partial — open an issue with a fixture if you need a specific language hardened. |
+
+The extractor is a heuristic over hardcoded tree-sitter node types
+(`_DEF_NODE_TYPES`, `_CALL_NODE_TYPES` in `extractors.py`); it intentionally
+trades completeness for simplicity. Use the per-language tests in
+`tests/test_extractors.py` as the contract.
 
 ## Install
 
