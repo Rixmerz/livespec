@@ -113,6 +113,44 @@ async def test_detect_stale_docs(sample_repo):
 
 
 @pytest.mark.asyncio
+async def test_generate_docs_caller_supplied(sample_repo):
+    """Mode 1: caller writes content, tool persists. Works without sampling."""
+    async with Client(mcp) as c:
+        await c.call_tool("index_project", {})
+        result = (
+            await c.call_tool(
+                "generate_docs_for_symbol",
+                {
+                    "identifier": "pkg.auth.login",
+                    "content": "## login\n\nAutentica un usuario.",
+                },
+            )
+        ).data
+        assert result["mode"] == "caller_supplied"
+        assert result["target"] == "pkg.auth.login"
+
+        listed = (await c.call_tool("list_docs", {"target_type": "symbol"})).data
+        assert any(d["target_key"] == "pkg.auth.login" for d in listed["docs"])
+
+
+@pytest.mark.asyncio
+async def test_generate_docs_no_sampling_returns_prompt(sample_repo):
+    """Mode 3: no sampling, no content -> returns prompt for caller to fill."""
+    async with Client(mcp) as c:  # no sampling_handler -> sampling unsupported
+        await c.call_tool("index_project", {})
+        result = (
+            await c.call_tool(
+                "generate_docs_for_symbol",
+                {"identifier": "pkg.auth.login"},
+            )
+        ).data
+        assert result["mode"] == "needs_caller_content"
+        assert "prompt" in result
+        assert "source" in result
+        assert "login" in result["prompt"]
+
+
+@pytest.mark.asyncio
 async def test_export_documentation(sample_repo, tmp_path):
     async def sampling_handler(messages, params, context):
         return "doc body"

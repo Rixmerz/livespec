@@ -55,8 +55,13 @@ def register(mcp: FastMCP) -> None:
             f"Document missing symbols in `{module_glob}`. Steps:\n"
             f"1) `list_docs(target_type='symbol')` -> set of already-documented qnames.\n"
             f"2) `list_files(path_glob='{module_glob}')` then `find_symbol(query='*')` to enumerate.\n"
-            f"3) For each undocumented function/class above PageRank threshold, "
-            f"call `generate_docs_for_symbol`.\n"
+            f"3) For each undocumented function/class above PageRank threshold:\n"
+            f"   a) `get_symbol_info(identifier=qname, detail='full')` to read the source.\n"
+            f"   b) Write Markdown docs yourself based on the source.\n"
+            f"   c) `generate_docs_for_symbol(identifier=qname, content=<your_markdown>)`\n"
+            f"      to persist (works in any host). If you skip `content`, the tool\n"
+            f"      will try MCP sampling; in Claude Code that returns the prompt for\n"
+            f"      you to write and retry.\n"
             f"4) Report counts."
         )
 

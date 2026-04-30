@@ -65,13 +65,21 @@ def register(mcp: FastMCP) -> None:
     async def generate_docs_for_symbol(
         identifier: str,
         ctx: Context,
+        content: str | None = None,
         max_tokens: int = 600,
     ) -> dict[str, Any]:
-        """Generate Markdown docs for a symbol, delegating LLM work to the client via sampling.
+        """Persist Markdown docs for a symbol. Two modes:
 
-        The MCP client (Claude Desktop, Cursor, Claude Code) handles the actual
-        completion — no server-side API key required. The result is persisted in
-        SQLite and mirrored to `.mcp-docs/docs/symbol/<qname>.md`.
+        1. **Caller-supplied content** (works in any host, including Claude Code):
+           pass the markdown you wrote in `content`. The tool just stores it.
+        2. **Sampling fallback** (Claude Desktop, Cursor, OpenAI clients): omit
+           `content` and the tool will ask the host LLM via MCP sampling.
+
+        If sampling is unavailable AND `content` is missing, the tool returns
+        a ready-to-use prompt + source so the caller can write the doc and
+        retry with `content=...`.
+
+        The result is mirrored to `.mcp-docs/docs/symbol/<qname>.md`.
         """
         st = get_state()
         pid = st.project_id
@@ -93,26 +101,52 @@ def register(mcp: FastMCP) -> None:
             )
         except OSError:
             source = ""
+
+        if content is not None:
+            _persist_doc(st, "symbol", sym_d["qualified_name"], content, sym_d["body_hash"])
+            return {
+                "target": sym_d["qualified_name"],
+                "saved_to": f"doc://symbol/{sym_d['qualified_name']}",
+                "length": len(content),
+                "mode": "caller_supplied",
+            }
+
         prompt = _symbol_prompt(sym_d, source)
         try:
             response = await ctx.sample(prompt, max_tokens=max_tokens)
         except Exception as e:
-            return {"error": f"LLM sampling unavailable: {e}", "isError": True}
-        content = response.text if hasattr(response, "text") else str(response)
-        _persist_doc(st, "symbol", sym_d["qualified_name"], content, sym_d["body_hash"])
+            return {
+                "mode": "needs_caller_content",
+                "reason": f"sampling unavailable: {e}",
+                "instruction": (
+                    "Write Markdown docs for this symbol and re-call this tool "
+                    "with `content` set. Use the prompt + source below."
+                ),
+                "prompt": prompt,
+                "source": source,
+                "target": sym_d["qualified_name"],
+                "body_hash": sym_d["body_hash"],
+            }
+        content_str = response.text if hasattr(response, "text") else str(response)
+        _persist_doc(st, "symbol", sym_d["qualified_name"], content_str, sym_d["body_hash"])
         return {
             "target": sym_d["qualified_name"],
             "saved_to": f"doc://symbol/{sym_d['qualified_name']}",
-            "length": len(content),
+            "length": len(content_str),
+            "mode": "sampling",
         }
 
     @mcp.tool(annotations={"readOnlyHint": False, "idempotentHint": True, "openWorldHint": True})
     async def generate_docs_for_requirement(
         rf_id: str,
         ctx: Context,
+        content: str | None = None,
         max_tokens: int = 800,
     ) -> dict[str, Any]:
-        """Generate a one-page RF spec from its linked symbols, via MCP sampling."""
+        """Persist Markdown spec for an RF. Same dual-mode contract as
+        `generate_docs_for_symbol`: pass `content` (caller-written) or rely on
+        MCP sampling. Falls back to returning the prompt when sampling is
+        unsupported by the host."""
         st = get_state()
         pid = st.project_id
         rf = st.conn.execute(
@@ -130,17 +164,38 @@ def register(mcp: FastMCP) -> None:
                 (rf_d["id"],),
             )
         ]
+
+        if content is not None:
+            _persist_doc(st, "requirement", rf_d["rf_id"], content, None)
+            return {
+                "target": rf_d["rf_id"],
+                "saved_to": f"doc://requirement/{rf_d['rf_id']}",
+                "length": len(content),
+                "mode": "caller_supplied",
+            }
+
         prompt = _rf_prompt(rf_d, symbols)
         try:
             response = await ctx.sample(prompt, max_tokens=max_tokens)
         except Exception as e:
-            return {"error": f"LLM sampling unavailable: {e}", "isError": True}
-        content = response.text if hasattr(response, "text") else str(response)
-        _persist_doc(st, "requirement", rf_d["rf_id"], content, None)
+            return {
+                "mode": "needs_caller_content",
+                "reason": f"sampling unavailable: {e}",
+                "instruction": (
+                    "Write the RF spec in Markdown and re-call this tool with "
+                    "`content` set. Prompt and linked symbols below."
+                ),
+                "prompt": prompt,
+                "linked_symbols": symbols,
+                "target": rf_d["rf_id"],
+            }
+        content_str = response.text if hasattr(response, "text") else str(response)
+        _persist_doc(st, "requirement", rf_d["rf_id"], content_str, None)
         return {
             "target": rf_d["rf_id"],
             "saved_to": f"doc://requirement/{rf_d['rf_id']}",
-            "length": len(content),
+            "length": len(content_str),
+            "mode": "sampling",
         }
 
     @mcp.tool(annotations={"readOnlyHint": True, "idempotentHint": True})
