@@ -98,6 +98,32 @@ def register(mcp: FastMCP) -> None:
             return json.dumps({"error": f"Symbol '{qname}' not found"})
         return json.dumps(dict(row))
 
+    @mcp.resource("doc://symbol/{qname*}", mime_type="text/markdown")
+    def doc_symbol(qname: str) -> str:
+        st = get_state()
+        pid = st.project_id
+        row = st.conn.execute(
+            """SELECT content FROM doc
+               WHERE project_id=? AND target_type='symbol' AND target_key=?""",
+            (pid, qname),
+        ).fetchone()
+        if not row:
+            return f"# No doc for `{qname}`\n\nRun `generate_docs_for_symbol` first."
+        return row["content"]
+
+    @mcp.resource("doc://requirement/{rf_id}", mime_type="text/markdown")
+    def doc_requirement(rf_id: str) -> str:
+        st = get_state()
+        pid = st.project_id
+        row = st.conn.execute(
+            """SELECT content FROM doc
+               WHERE project_id=? AND target_type='requirement' AND target_key=?""",
+            (pid, rf_id),
+        ).fetchone()
+        if not row:
+            return f"# No doc for `{rf_id}`\n\nRun `generate_docs_for_requirement` first."
+        return row["content"]
+
     @mcp.resource("project://index/status", mime_type="application/json")
     def index_status() -> str:
         st = get_state()

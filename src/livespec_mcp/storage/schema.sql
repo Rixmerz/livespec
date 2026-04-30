@@ -135,6 +135,41 @@ CREATE TABLE IF NOT EXISTS doc (
 
 CREATE INDEX IF NOT EXISTS idx_doc_target ON doc(project_id, target_type, target_key);
 
+-- ===== RAG chunks =====
+CREATE TABLE IF NOT EXISTS chunk (
+    id INTEGER PRIMARY KEY,
+    project_id INTEGER NOT NULL REFERENCES project(id) ON DELETE CASCADE,
+    source_type TEXT NOT NULL,         -- symbol | requirement | doc | file
+    source_id INTEGER,                 -- symbol.id or rf.id (nullable for doc)
+    text_kind TEXT NOT NULL,           -- code | text
+    file_path TEXT,
+    start_line INTEGER,
+    end_line INTEGER,
+    text TEXT NOT NULL,
+    content_hash TEXT NOT NULL,
+    embedded_at TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_chunk_project ON chunk(project_id);
+CREATE INDEX IF NOT EXISTS idx_chunk_source ON chunk(project_id, source_type, source_id);
+CREATE INDEX IF NOT EXISTS idx_chunk_hash ON chunk(content_hash);
+
+-- FTS5 mirror over chunk.text. Always available (sqlite ships with FTS5).
+CREATE VIRTUAL TABLE IF NOT EXISTS chunk_fts USING fts5(
+    text, content='chunk', content_rowid='id', tokenize='unicode61'
+);
+
+CREATE TRIGGER IF NOT EXISTS chunk_ai AFTER INSERT ON chunk BEGIN
+    INSERT INTO chunk_fts(rowid, text) VALUES (new.id, new.text);
+END;
+CREATE TRIGGER IF NOT EXISTS chunk_ad AFTER DELETE ON chunk BEGIN
+    INSERT INTO chunk_fts(chunk_fts, rowid, text) VALUES('delete', old.id, old.text);
+END;
+CREATE TRIGGER IF NOT EXISTS chunk_au AFTER UPDATE ON chunk BEGIN
+    INSERT INTO chunk_fts(chunk_fts, rowid, text) VALUES('delete', old.id, old.text);
+    INSERT INTO chunk_fts(rowid, text) VALUES (new.id, new.text);
+END;
+
 -- ===== Index control =====
 CREATE TABLE IF NOT EXISTS index_run (
     id INTEGER PRIMARY KEY,

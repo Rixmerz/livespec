@@ -51,7 +51,7 @@ By default it picks the **current working directory** as workspace, or
 }
 ```
 
-## Tools
+## Tools (24)
 
 ### Indexing
 - `index_project(force=False)` — walk workspace, parse, persist
@@ -70,12 +70,22 @@ By default it picks the **current working directory** as workspace, or
 - `create_requirement(title, ...)`
 - `update_requirement(rf_id, ...)`
 - `list_requirements(status, module, priority, has_implementation)`
-- `link_requirement_to_code(rf_id, symbol_qname, relation, confidence)`
+- `link_requirement_to_code(rf_id, symbol_qname, relation, confidence, source, unlink)`
 - `get_requirement_implementation(rf_id)` — symbols + files + coverage
+- `suggest_rf_links(rf_id, limit, min_score)` — propose candidates from hybrid search
 - `scan_rf_annotations()` — auto-links via `@rf:RF-NNN` in docstrings
 
-### Search
-- `search(query, scope, limit)` — BM25 over symbols + RFs
+### Search / RAG
+- `search(query, scope, limit)` — hybrid FTS5 + vector (RRF when embeddings present)
+- `rebuild_chunks()` — AST-aware chunking of symbols and RFs
+- `embed_pending()` — fastembed dual-model (code + multilingual text), optional
+
+### Docs
+- `generate_docs_for_symbol(identifier, max_tokens)` — via MCP sampling
+- `generate_docs_for_requirement(rf_id, max_tokens)` — via MCP sampling
+- `detect_stale_docs(target_type)` — drift detection by `body_hash`
+- `list_docs(target_type)`
+- `export_documentation(format, out_subdir)` — markdown or JSON
 
 ## Resources
 
@@ -85,6 +95,18 @@ By default it picks the **current working directory** as workspace, or
 - `project://requirements/{rf_id}`
 - `project://files/{path*}`
 - `project://symbols/{qname*}`
+- `doc://symbol/{qname*}`
+- `doc://requirement/{rf_id}`
+
+## Prompts (slash commands)
+
+- `onboard_project`
+- `analyze_change_impact`
+- `audit_requirement_coverage`
+- `extract_requirements_from_module`
+- `document_undocumented_symbols`
+- `refresh_stale_docs`
+- `explain_symbol`
 
 ## Tests
 
@@ -102,6 +124,17 @@ In-memory FastMCP `Client(mcp)` so tests run without subprocess or network.
 | 1 — Indexing | ✅ | tree-sitter + Python AST, file-incremental, call graph |
 | 2 — Analysis | ✅ | NetworkX, impact, PageRank |
 | 3 — Requirements | ✅ | CRUD + linking + annotation matcher |
-| 4 — RAG/Embeddings | scaffold | fastembed + sqlite-vec + cAST chunking |
-| 5 — Doc generation | TODO | `generate_docs_for_symbol` via MCP sampling |
-| 6 — Polish | TODO | LLM re-rank matcher, prompts, watcher |
+| 4 — RAG/Embeddings | ✅ | AST chunking, FTS5, fastembed + sqlite-vec optional, RRF |
+| 5 — Doc generation | ✅ | `generate_docs_for_symbol/requirement` via MCP sampling, drift detect, export |
+| 6 — Polish | ✅ | `suggest_rf_links`, 7 prompts, doc:// resources |
+| 7 — Future | — | LanceDB scaling, more languages, watchdog filesystem watcher |
+
+## Optional: Embeddings
+
+```bash
+uv pip install -e ".[embeddings]"
+```
+
+Enables `fastembed` (Jina code + multilingual-e5-base) and `sqlite-vec` for the
+vector lane in `search`. First run downloads ~600MB of models into
+`.mcp-docs/models/`. Without these extras, search still works via FTS5.
