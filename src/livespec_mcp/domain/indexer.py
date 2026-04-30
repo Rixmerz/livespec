@@ -233,11 +233,15 @@ def _resolve_refs(conn: sqlite3.Connection, *, project_id: int) -> int:
     with that short name. If exactly one match -> high-confidence edge. Multiple
     matches -> connect to all (low-confidence weight 0.5). Zero matches -> drop.
     """
-    # Reset prior call edges so this is idempotent per run
+    # ON DELETE CASCADE on symbol already drops edges for symbols in changed
+    # files. We only need to wipe edges whose src is in unresolved_ref so that
+    # rebuilding from those refs is idempotent — edges from unchanged files stay.
     conn.execute(
         """DELETE FROM symbol_edge
            WHERE edge_type='calls' AND src_symbol_id IN (
-               SELECT s.id FROM symbol s JOIN file f ON f.id=s.file_id WHERE f.project_id=?)""",
+               SELECT DISTINCT u.src_symbol_id FROM unresolved_ref u
+               JOIN symbol s ON s.id = u.src_symbol_id
+               JOIN file f ON f.id = s.file_id WHERE f.project_id=?)""",
         (project_id,),
     )
     rows = conn.execute(
