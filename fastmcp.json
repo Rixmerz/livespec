@@ -1,0 +1,8 @@
+{
+  "$schema": "https://gofastmcp.com/public/schemas/fastmcp.json/v1.json",
+  "name": "livespec-mcp",
+  "version": "0.1.0",
+  "description": "Living documentation MCP with FR<->code traceability",
+  "entrypoint": "src/livespec_mcp/server.py:mcp",
+  "transport": "stdio"
+}

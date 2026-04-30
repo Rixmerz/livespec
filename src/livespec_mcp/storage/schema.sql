@@ -1,0 +1,149 @@
+-- livespec-mcp schema v1
+-- Five blocks: project, code (file/symbol), graph (edges), RFs, docs.
+
+PRAGMA foreign_keys = ON;
+PRAGMA journal_mode = WAL;
+
+CREATE TABLE IF NOT EXISTS project (
+    id INTEGER PRIMARY KEY,
+    name TEXT NOT NULL,
+    root TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS commit_snapshot (
+    id INTEGER PRIMARY KEY,
+    project_id INTEGER NOT NULL REFERENCES project(id) ON DELETE CASCADE,
+    git_sha TEXT,
+    captured_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- ===== Code =====
+CREATE TABLE IF NOT EXISTS file (
+    id INTEGER PRIMARY KEY,
+    project_id INTEGER NOT NULL REFERENCES project(id) ON DELETE CASCADE,
+    path TEXT NOT NULL,
+    language TEXT NOT NULL,
+    content_hash TEXT NOT NULL,
+    size_bytes INTEGER NOT NULL,
+    line_count INTEGER NOT NULL,
+    mtime REAL NOT NULL,
+    indexed_at TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(project_id, path)
+);
+
+CREATE INDEX IF NOT EXISTS idx_file_project ON file(project_id);
+CREATE INDEX IF NOT EXISTS idx_file_lang ON file(project_id, language);
+
+CREATE TABLE IF NOT EXISTS symbol (
+    id INTEGER PRIMARY KEY,
+    file_id INTEGER NOT NULL REFERENCES file(id) ON DELETE CASCADE,
+    parent_symbol_id INTEGER REFERENCES symbol(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    qualified_name TEXT NOT NULL,
+    kind TEXT NOT NULL,            -- function | class | method | module | variable
+    signature TEXT,
+    docstring TEXT,
+    body_hash TEXT,
+    start_line INTEGER NOT NULL,
+    end_line INTEGER NOT NULL,
+    UNIQUE(file_id, qualified_name, start_line)
+);
+
+CREATE INDEX IF NOT EXISTS idx_symbol_file ON symbol(file_id);
+CREATE INDEX IF NOT EXISTS idx_symbol_qname ON symbol(qualified_name);
+CREATE INDEX IF NOT EXISTS idx_symbol_name ON symbol(name);
+CREATE INDEX IF NOT EXISTS idx_symbol_parent ON symbol(parent_symbol_id);
+
+-- ===== Graph =====
+CREATE TABLE IF NOT EXISTS symbol_edge (
+    id INTEGER PRIMARY KEY,
+    src_symbol_id INTEGER NOT NULL REFERENCES symbol(id) ON DELETE CASCADE,
+    dst_symbol_id INTEGER NOT NULL REFERENCES symbol(id) ON DELETE CASCADE,
+    edge_type TEXT NOT NULL,       -- calls | imports | inherits | references
+    weight REAL NOT NULL DEFAULT 1.0,
+    UNIQUE(src_symbol_id, dst_symbol_id, edge_type)
+);
+
+CREATE INDEX IF NOT EXISTS idx_edge_src ON symbol_edge(src_symbol_id, edge_type);
+CREATE INDEX IF NOT EXISTS idx_edge_dst ON symbol_edge(dst_symbol_id, edge_type);
+
+-- Unresolved references kept for incremental resolve
+CREATE TABLE IF NOT EXISTS unresolved_ref (
+    id INTEGER PRIMARY KEY,
+    src_symbol_id INTEGER NOT NULL REFERENCES symbol(id) ON DELETE CASCADE,
+    target_name TEXT NOT NULL,
+    ref_type TEXT NOT NULL DEFAULT 'call',
+    line INTEGER
+);
+
+CREATE INDEX IF NOT EXISTS idx_unresolved_target ON unresolved_ref(target_name);
+CREATE INDEX IF NOT EXISTS idx_unresolved_src ON unresolved_ref(src_symbol_id);
+
+-- ===== Requirements =====
+CREATE TABLE IF NOT EXISTS module (
+    id INTEGER PRIMARY KEY,
+    project_id INTEGER NOT NULL REFERENCES project(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    description TEXT,
+    UNIQUE(project_id, name)
+);
+
+CREATE TABLE IF NOT EXISTS rf (
+    id INTEGER PRIMARY KEY,
+    project_id INTEGER NOT NULL REFERENCES project(id) ON DELETE CASCADE,
+    rf_id TEXT NOT NULL,             -- e.g. RF-042
+    title TEXT NOT NULL,
+    description TEXT,
+    module_id INTEGER REFERENCES module(id) ON DELETE SET NULL,
+    status TEXT NOT NULL DEFAULT 'draft',   -- draft | active | deprecated
+    priority TEXT NOT NULL DEFAULT 'medium',-- low | medium | high | critical
+    source TEXT,                     -- doc/file path or URL
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(project_id, rf_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_rf_status ON rf(project_id, status);
+CREATE INDEX IF NOT EXISTS idx_rf_module ON rf(module_id);
+
+CREATE TABLE IF NOT EXISTS rf_symbol (
+    id INTEGER PRIMARY KEY,
+    rf_id INTEGER NOT NULL REFERENCES rf(id) ON DELETE CASCADE,
+    symbol_id INTEGER NOT NULL REFERENCES symbol(id) ON DELETE CASCADE,
+    relation TEXT NOT NULL DEFAULT 'implements',  -- implements | tests | references
+    confidence REAL NOT NULL DEFAULT 1.0,
+    source TEXT NOT NULL DEFAULT 'manual',        -- manual | annotation | embedding | llm
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(rf_id, symbol_id, relation)
+);
+
+CREATE INDEX IF NOT EXISTS idx_rfsym_rf ON rf_symbol(rf_id);
+CREATE INDEX IF NOT EXISTS idx_rfsym_sym ON rf_symbol(symbol_id);
+
+-- ===== Docs =====
+CREATE TABLE IF NOT EXISTS doc (
+    id INTEGER PRIMARY KEY,
+    project_id INTEGER NOT NULL REFERENCES project(id) ON DELETE CASCADE,
+    target_type TEXT NOT NULL,      -- symbol | module | requirement
+    target_key TEXT NOT NULL,       -- qualified_name | module name | rf_id
+    content TEXT NOT NULL,
+    body_hash_at_write TEXT,        -- snapshot of symbol body_hash when generated
+    generated_at TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(project_id, target_type, target_key)
+);
+
+CREATE INDEX IF NOT EXISTS idx_doc_target ON doc(project_id, target_type, target_key);
+
+-- ===== Index control =====
+CREATE TABLE IF NOT EXISTS index_run (
+    id INTEGER PRIMARY KEY,
+    project_id INTEGER NOT NULL REFERENCES project(id) ON DELETE CASCADE,
+    started_at TEXT NOT NULL DEFAULT (datetime('now')),
+    finished_at TEXT,
+    files_total INTEGER DEFAULT 0,
+    files_changed INTEGER DEFAULT 0,
+    symbols_total INTEGER DEFAULT 0,
+    edges_total INTEGER DEFAULT 0,
+    error TEXT
+);
