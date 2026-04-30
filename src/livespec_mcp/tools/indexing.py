@@ -7,10 +7,25 @@ from typing import Any
 from fastmcp import FastMCP
 
 from livespec_mcp.domain.indexer import index_project as run_index
-from livespec_mcp.state import get_state
+from livespec_mcp.state import get_state, use_workspace as _use_ws
 
 
 def register(mcp: FastMCP) -> None:
+    @mcp.tool(annotations={"readOnlyHint": False, "idempotentHint": True})
+    def use_workspace(path: str) -> dict[str, Any]:
+        """Switch the active workspace at runtime, no restart needed.
+
+        Closes the current SQLite connection, points the server at `path`, and
+        opens a fresh `.mcp-docs/docs.db` there. Useful for demos and for
+        analyzing multiple repos from a single MCP server instance.
+        """
+        st = _use_ws(path)
+        return {
+            "workspace": str(st.settings.workspace),
+            "db_path": str(st.settings.db_path),
+            "state_dir": str(st.settings.state_dir),
+        }
+
     @mcp.tool(
         annotations={"readOnlyHint": False, "idempotentHint": True, "destructiveHint": False},
     )

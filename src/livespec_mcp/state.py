@@ -48,3 +48,15 @@ def reset_state() -> None:
         except Exception:
             pass
     _state = None
+
+
+def use_workspace(path: str) -> AppState:
+    """Switch the active workspace at runtime. Closes the old connection and
+    opens a fresh one against the new workspace. Returns the new state.
+    """
+    from pathlib import Path as _Path
+    import os as _os
+
+    _os.environ["LIVESPEC_WORKSPACE"] = str(_Path(path).expanduser().resolve())
+    reset_state()
+    return get_state()
