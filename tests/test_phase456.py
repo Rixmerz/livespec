@@ -49,10 +49,15 @@ async def test_suggest_rf_links(sample_repo):
             },
         )
         await c.call_tool("rebuild_chunks", {})
-        sug = (await c.call_tool("suggest_rf_links", {"rf_id": "RF-100", "limit": 5})).data
+        sug = (
+            await c.call_tool(
+                "suggest_rf_links",
+                {"rf_id": "RF-100", "limit": 5, "min_score": -100},
+            )
+        ).data
         assert sug["rf_id"] == "RF-100"
         names = {c["qualified_name"] for c in sug["candidates"]}
-        assert any("login" in n or "verify" in n or "API" in n for n in names)
+        assert any("login" in n or "verify" in n or "API" in n for n in names), names
 
 
 @pytest.mark.asyncio

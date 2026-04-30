@@ -131,9 +131,19 @@ def index_project(
             if rel not in seen:
                 conn.execute("DELETE FROM file WHERE id = ?", (row["id"],))
 
-    # Resolve refs (cross-file). Done outside the heavy txn for clarity.
-    edges = _resolve_refs(conn, project_id=project_id)
-    stats.edges_total = edges
+    # Resolve refs only if anything changed; otherwise re-running would wipe and
+    # rebuild against an empty unresolved_ref pool, deleting all edges.
+    if stats.files_changed > 0 or force:
+        _resolve_refs(conn, project_id=project_id)
+    stats.edges_total = int(
+        conn.execute(
+            """SELECT COUNT(*) c FROM symbol_edge e
+               JOIN symbol s ON s.id = e.src_symbol_id
+               JOIN file f ON f.id = s.file_id
+               WHERE f.project_id = ?""",
+            (project_id,),
+        ).fetchone()["c"]
+    )
     sym_total = conn.execute(
         "SELECT COUNT(*) c FROM symbol s JOIN file f ON f.id=s.file_id WHERE f.project_id=?",
         (project_id,),

@@ -214,7 +214,7 @@ def register(mcp: FastMCP) -> None:
     def suggest_rf_links(
         rf_id: str,
         limit: int = 10,
-        min_score: float = 0.05,
+        min_score: float = 0.0,
     ) -> dict[str, Any]:
         """Propose candidate symbols that may implement an RF.
 

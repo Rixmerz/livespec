@@ -407,8 +407,11 @@ def fts_search(
         rows = conn.execute(" ".join(sql), args).fetchall()
     except sqlite3.OperationalError:
         return []
+    # FTS5 bm25() returns negative values where smaller = better. Invert so the
+    # downstream contract (larger score = better) holds without overflow risk.
     for r in rows:
-        score = 1.0 / (1.0 + float(r["bm"]))
+        bm = float(r["bm"])
+        score = -bm
         out.append((int(r["id"]), score, dict(r)))
     return out
 
