@@ -8,6 +8,7 @@ v0.3 P1.1 adds `git_diff_impact` for CI/PR-review use cases.
 
 from __future__ import annotations
 
+import difflib
 import subprocess
 from typing import Any, Literal
 
@@ -24,6 +25,27 @@ from livespec_mcp.state import get_state
 
 
 _INFRA_NAME_SUFFIXES = ("_state", "_settings", "_config", "_session")
+
+
+def _is_implicit_entry_point(meta: dict) -> bool:
+    """Stricter subset of `_is_infrastructure`: only the cases where a symbol
+    has invisible callers (Python protocol dunders, FastMCP `register`, DI
+    helpers). Excludes the tiny-wrapper rule because a 1-line wrapper that
+    nobody calls IS a dead-code candidate."""
+    name = meta.get("name") or ""
+    qname = meta.get("qualified_name") or ""
+    kind = meta.get("kind") or ""
+    if name.startswith("__") and name.endswith("__"):
+        return True
+    if any(seg.startswith("__") and seg.endswith("__") for seg in qname.split(".")):
+        return True
+    if name == "register" and kind == "function":
+        return True
+    if kind in ("function", "method") and any(
+        name.endswith(suf) for suf in _INFRA_NAME_SUFFIXES
+    ):
+        return True
+    return False
 
 
 def _is_infrastructure(meta: dict) -> bool:
@@ -75,6 +97,75 @@ def _resolve_symbol(conn, project_id: int, identifier: str) -> dict | None:
     return None
 
 
+def did_you_mean_symbols(conn, project_id: int, identifier: str, limit: int = 3) -> list[dict]:
+    """Top-N symbol suggestions for a misspelled or partial identifier.
+
+    Used by tools that raise 'Symbol not found' to surface likely intended
+    targets in the error payload (P2.D3). Combines two passes:
+      1. SQL substring match on name / qualified_name (catches partials,
+         prefix mistypes).
+      2. difflib SequenceMatcher ratio on the short name (catches typos
+         where the substring path doesn't fire — e.g. 'logn' ≈ 'login').
+    Ranked by ratio descending. Project-scoped.
+    """
+    short = identifier.split(".")[-1]
+    needle = f"%{short}%"
+    rows = conn.execute(
+        """SELECT s.qualified_name, s.kind, f.path AS file_path, s.name
+           FROM symbol s JOIN file f ON f.id=s.file_id
+           WHERE f.project_id=?""",
+        (project_id,),
+    ).fetchall()
+    if not rows:
+        return []
+
+    name_to_rows: dict[str, list] = {}
+    for r in rows:
+        name_to_rows.setdefault(r["name"], []).append(r)
+
+    candidates = list(name_to_rows.keys())
+    matches = difflib.get_close_matches(short, candidates, n=limit * 2, cutoff=0.55)
+
+    seen: set[str] = set()
+    out: list[dict] = []
+    short_lower = short.lower()
+    # Substring hits first (treated as ratio=0.99 for ranking ties)
+    for r in rows:
+        if len(out) >= limit:
+            break
+        if short_lower in (r["name"] or "").lower() or short_lower in (r["qualified_name"] or "").lower():
+            qn = r["qualified_name"]
+            if qn in seen:
+                continue
+            seen.add(qn)
+            out.append(
+                {"qualified_name": qn, "kind": r["kind"], "file_path": r["file_path"]}
+            )
+    for m in matches:
+        if len(out) >= limit:
+            break
+        for r in name_to_rows.get(m, []):
+            qn = r["qualified_name"]
+            if qn in seen:
+                continue
+            seen.add(qn)
+            out.append(
+                {"qualified_name": qn, "kind": r["kind"], "file_path": r["file_path"]}
+            )
+            if len(out) >= limit:
+                break
+    return out
+
+
+def symbol_not_found_error(conn, project_id: int, identifier: str) -> dict:
+    """Build the standard 'Symbol not found' error payload with did_you_mean."""
+    return {
+        "error": f"Symbol '{identifier}' not found",
+        "isError": True,
+        "did_you_mean": did_you_mean_symbols(conn, project_id, identifier),
+    }
+
+
 def register(mcp: FastMCP) -> None:
     @mcp.tool(annotations={"readOnlyHint": True, "idempotentHint": True})
     def find_symbol(
@@ -121,7 +212,7 @@ def register(mcp: FastMCP) -> None:
         pid = st.project_id
         sym = _resolve_symbol(st.conn, pid, identifier)
         if not sym:
-            return {"error": f"Symbol '{identifier}' not found", "isError": True}
+            return symbol_not_found_error(st.conn, pid, identifier)
         callers_n = st.conn.execute(
             "SELECT COUNT(*) c FROM symbol_edge WHERE dst_symbol_id=? AND edge_type='calls'",
             (sym["id"],),
@@ -192,7 +283,7 @@ def register(mcp: FastMCP) -> None:
         pid = st.project_id
         sym = _resolve_symbol(st.conn, pid, identifier)
         if not sym:
-            return {"error": f"Symbol '{identifier}' not found", "isError": True}
+            return symbol_not_found_error(st.conn, pid, identifier)
         view = load_graph(st.conn, pid)
         sid = int(sym["id"])
         if sid not in view.g:
@@ -243,7 +334,7 @@ def register(mcp: FastMCP) -> None:
         if target_type == "symbol":
             sym = _resolve_symbol(st.conn, pid, target)
             if not sym:
-                return {"error": f"Symbol '{target}' not found", "isError": True}
+                return symbol_not_found_error(st.conn, pid, target)
             sid = int(sym["id"])
             impacted = ancestors_within(view.g, sid, max_depth) if sid in view.g else set()
             forward = descendants_within(view.g, sid, max_depth) if sid in view.g else set()
@@ -351,6 +442,192 @@ def register(mcp: FastMCP) -> None:
             "requirements_total": int(rf_total),
             "requirements_linked": int(rf_linked),
         }
+
+    @mcp.tool(annotations={"readOnlyHint": True, "idempotentHint": True})
+    def find_dead_code(
+        include_infrastructure: bool = False,
+        workspace: str | None = None,
+    ) -> dict[str, Any]:
+        """Symbols with zero callers and zero RF links — removal candidates.
+
+        Filters out, by default:
+        - Files under `tests/`, `scripts/`, `bin/`; `__main__.py`; `manage.py`
+        - Infrastructure (DI helpers, dunders, FastMCP `register` fns, ≤4-line
+          wrappers). Pass `include_infrastructure=True` to keep them.
+
+        Useful sanity check before a refactor: anything in the result is unreachable
+        from in-project callers AND not traceably implementing any RF.
+        """
+        st = get_state(workspace)
+        pid = st.project_id
+        rows = st.conn.execute(
+            """SELECT s.id, s.qualified_name, s.name, s.kind, s.start_line, s.end_line,
+                      f.path AS file_path
+               FROM symbol s JOIN file f ON f.id=s.file_id
+               WHERE f.project_id=?
+                 AND NOT EXISTS (
+                   SELECT 1 FROM symbol_edge e WHERE e.dst_symbol_id=s.id
+                 )
+                 AND NOT EXISTS (
+                   SELECT 1 FROM rf_symbol rs WHERE rs.symbol_id=s.id
+                 )
+               ORDER BY f.path, s.start_line""",
+            (pid,),
+        ).fetchall()
+
+        def is_entry_point_path(p: str) -> bool:
+            return (
+                p.startswith(("tests/", "bin/", "scripts/"))
+                or "/tests/" in p
+                or "/bin/" in p
+                or "/scripts/" in p
+                or p.endswith("/__main__.py")
+                or p == "__main__.py"
+                or p.endswith("/manage.py")
+                or p == "manage.py"
+            )
+
+        dead: list[dict[str, Any]] = []
+        for r in rows:
+            meta = dict(r)
+            if is_entry_point_path(meta["file_path"]):
+                continue
+            if not include_infrastructure and _is_implicit_entry_point(meta):
+                continue
+            dead.append({
+                "qualified_name": meta["qualified_name"],
+                "kind": meta["kind"],
+                "file_path": meta["file_path"],
+                "start_line": meta["start_line"],
+                "end_line": meta["end_line"],
+            })
+        return {"dead_symbols": dead, "count": len(dead)}
+
+    @mcp.tool(annotations={"readOnlyHint": True, "idempotentHint": True})
+    def audit_coverage(workspace: str | None = None) -> dict[str, Any]:
+        """RF coverage audit: what's missing / under-confident.
+
+        Three signals, all derived from existing tables (no new computation):
+        - `modules_without_rf`: files whose symbols have no `rf_symbol` link
+        - `rfs_without_implementation`: RFs with no `rf_symbol` row at all
+        - `rfs_low_confidence`: RFs whose avg(rf_symbol.confidence) < 0.7
+          (typically means only verb-anchored matches, no `@rf:` annotation)
+        """
+        st = get_state(workspace)
+        pid = st.project_id
+
+        modules_no_rf = [
+            r["path"]
+            for r in st.conn.execute(
+                """SELECT f.path FROM file f
+                   WHERE f.project_id=?
+                     AND NOT EXISTS (
+                       SELECT 1 FROM symbol s
+                       JOIN rf_symbol rs ON rs.symbol_id=s.id
+                       WHERE s.file_id=f.id
+                     )
+                   ORDER BY f.path""",
+                (pid,),
+            )
+        ]
+
+        rfs_no_impl = [
+            dict(r)
+            for r in st.conn.execute(
+                """SELECT r.rf_id, r.title, r.status, r.priority FROM rf r
+                   WHERE r.project_id=?
+                     AND NOT EXISTS (
+                       SELECT 1 FROM rf_symbol rs WHERE rs.rf_id=r.id
+                     )
+                   ORDER BY r.rf_id""",
+                (pid,),
+            )
+        ]
+
+        rfs_low_conf = [
+            {
+                "rf_id": r["rf_id"],
+                "title": r["title"],
+                "avg_confidence": round(float(r["avg_confidence"]), 3),
+                "link_count": int(r["link_count"]),
+            }
+            for r in st.conn.execute(
+                """SELECT r.rf_id, r.title,
+                          AVG(rs.confidence) AS avg_confidence,
+                          COUNT(rs.id) AS link_count
+                   FROM rf r JOIN rf_symbol rs ON rs.rf_id=r.id
+                   WHERE r.project_id=?
+                   GROUP BY r.id
+                   HAVING avg_confidence < 0.7
+                   ORDER BY avg_confidence ASC""",
+                (pid,),
+            )
+        ]
+
+        return {
+            "modules_without_rf": modules_no_rf,
+            "rfs_without_implementation": rfs_no_impl,
+            "rfs_low_confidence": rfs_low_conf,
+        }
+
+    @mcp.tool(annotations={"readOnlyHint": True, "idempotentHint": True})
+    def find_orphan_tests(
+        max_depth: int = 10,
+        workspace: str | None = None,
+    ) -> dict[str, Any]:
+        """Test functions whose descendant cone never reaches production code.
+
+        Heuristic: any function/method in a `tests/` folder (or matching
+        `*_test.*` / `test_*.*` naming) whose forward call graph contains
+        zero non-test symbols. Either disconnected fixtures, helpers used only
+        by other tests, or actually orphaned tests.
+        """
+        st = get_state(workspace)
+        pid = st.project_id
+        view = load_graph(st.conn, pid)
+
+        def is_test_path(p: str) -> bool:
+            base = p.rsplit("/", 1)[-1]
+            return (
+                p.startswith("tests/")
+                or "/tests/" in p
+                or base.startswith("test_")
+                or base.endswith("_test.py")
+                or base.endswith("_test.go")
+                or "_test." in base
+            )
+
+        test_rows = st.conn.execute(
+            """SELECT s.id, s.qualified_name, s.kind, f.path AS file_path
+               FROM symbol s JOIN file f ON f.id=s.file_id
+               WHERE f.project_id=? AND s.kind IN ('function', 'method')""",
+            (pid,),
+        ).fetchall()
+        test_syms = [dict(r) for r in test_rows if is_test_path(r["file_path"])]
+
+        orphans: list[dict[str, Any]] = []
+        for r in test_syms:
+            sid = int(r["id"])
+            descendants = (
+                descendants_within(view.g, sid, max_depth) if sid in view.g else set()
+            )
+            reaches_prod = False
+            for did in descendants:
+                meta = view.sym_meta.get(did)
+                if meta and not is_test_path(meta.get("file_path", "")):
+                    reaches_prod = True
+                    break
+            if not reaches_prod:
+                orphans.append({
+                    "qualified_name": r["qualified_name"],
+                    "file_path": r["file_path"],
+                    "kind": r["kind"],
+                    "reason": (
+                        "no outgoing calls" if not descendants
+                        else "descendant cone never escapes test files"
+                    ),
+                })
+        return {"orphan_tests": orphans, "count": len(orphans)}
 
     @mcp.tool(annotations={"readOnlyHint": True, "idempotentHint": True})
     def git_diff_impact(

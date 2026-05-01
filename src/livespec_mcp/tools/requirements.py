@@ -17,6 +17,7 @@ from pathlib import Path
 from livespec_mcp.domain.matcher import scan_annotations
 from livespec_mcp.domain.md_rfs import parse_rfs_markdown
 from livespec_mcp.state import get_state
+from livespec_mcp.tools.analysis import symbol_not_found_error
 
 
 def _next_rf_id(conn, project_id: int) -> str:
@@ -167,7 +168,7 @@ def register(mcp: FastMCP) -> None:
             (pid, symbol_qname),
         ).fetchone()
         if not sym:
-            return {"error": f"Symbol '{symbol_qname}' not found", "isError": True}
+            return symbol_not_found_error(st.conn, pid, symbol_qname)
         if unlink:
             st.conn.execute(
                 "DELETE FROM rf_symbol WHERE rf_id=? AND symbol_id=? AND relation=?",
