@@ -18,6 +18,7 @@ The new names disambiguate the two link concepts:
 
 from __future__ import annotations
 
+import re
 from typing import Any, Literal
 
 from fastmcp import FastMCP
@@ -216,6 +217,103 @@ def register(mcp: FastMCP) -> None:
         )
 
     @mcp.tool(annotations={"readOnlyHint": False, "idempotentHint": True})
+    def bulk_link_rf_symbols(
+        mappings: list[dict[str, Any]],
+        workspace: str | None = None,
+    ) -> dict[str, Any]:
+        """Batch-link N (rf_id, symbol_qname) pairs in a single transaction.
+
+        Each `mappings` entry accepts:
+            {
+              "rf_id": "RF-001",                          # required
+              "symbol_qname": "pkg.auth.login",            # required
+              "relation": "implements" | "tests" | "references",  # default implements
+              "confidence": 0.0..1.0,                      # default 1.0
+              "source": "manual" | "annotation" | "embedding" | "llm",  # default manual
+            }
+
+        Returns per-mapping result so the caller knows which entries
+        landed vs. which failed (RF/symbol not found, validation, etc.):
+            {
+              "linked": int, "skipped": int, "failed": int,
+              "results": [
+                {"rf_id": "RF-001", "symbol_qname": "...",
+                 "ok": bool, "linked": bool, "error": str | None},
+                ...
+              ]
+            }
+
+        Idempotent: re-linking an existing (rf, symbol, relation) is a no-op
+        (`linked: false` but `ok: true`). v0.7 B1 — closes the brownfield
+        migration friction where 50+ RFs needed individual round-trips.
+        """
+        st = get_state(workspace)
+        pid = st.project_id
+        results: list[dict[str, Any]] = []
+        n_linked = 0
+        n_skipped = 0
+        n_failed = 0
+        for m in mappings:
+            rf_id = m.get("rf_id")
+            symbol_qname = m.get("symbol_qname")
+            if not rf_id or not symbol_qname:
+                results.append({
+                    "rf_id": rf_id, "symbol_qname": symbol_qname,
+                    "ok": False, "linked": False,
+                    "error": "rf_id and symbol_qname are required",
+                })
+                n_failed += 1
+                continue
+            relation = m.get("relation", "implements")
+            confidence = float(m.get("confidence", 1.0))
+            source = m.get("source", "manual")
+            rf = st.conn.execute(
+                "SELECT id FROM rf WHERE project_id=? AND rf_id=?", (pid, rf_id)
+            ).fetchone()
+            if not rf:
+                results.append({
+                    "rf_id": rf_id, "symbol_qname": symbol_qname,
+                    "ok": False, "linked": False,
+                    "error": f"RF '{rf_id}' not found",
+                })
+                n_failed += 1
+                continue
+            sym = st.conn.execute(
+                """SELECT s.id FROM symbol s JOIN file f ON f.id=s.file_id
+                   WHERE f.project_id=? AND s.qualified_name=? LIMIT 1""",
+                (pid, symbol_qname),
+            ).fetchone()
+            if not sym:
+                results.append({
+                    "rf_id": rf_id, "symbol_qname": symbol_qname,
+                    "ok": False, "linked": False,
+                    "error": f"Symbol '{symbol_qname}' not found",
+                })
+                n_failed += 1
+                continue
+            cur = st.conn.execute(
+                """INSERT OR IGNORE INTO rf_symbol(rf_id, symbol_id, relation, confidence, source)
+                   VALUES(?,?,?,?,?)""",
+                (int(rf["id"]), int(sym["id"]), relation, confidence, source),
+            )
+            linked = cur.rowcount > 0
+            if linked:
+                n_linked += 1
+            else:
+                n_skipped += 1
+            results.append({
+                "rf_id": rf_id, "symbol_qname": symbol_qname,
+                "ok": True, "linked": linked, "error": None,
+            })
+        return {
+            "linked": n_linked,
+            "skipped": n_skipped,
+            "failed": n_failed,
+            "total": len(mappings),
+            "results": results,
+        }
+
+    @mcp.tool(annotations={"readOnlyHint": False, "idempotentHint": True})
     def link_requirement_to_code(
         rf_id: str,
         symbol_qname: str,
@@ -349,6 +447,109 @@ def register(mcp: FastMCP) -> None:
             "DELETE FROM rf WHERE project_id=? AND rf_id=?", (pid, rf_id)
         )
         return {"rf_id": rf_id, "deleted": cur.rowcount > 0}
+
+    @mcp.tool(annotations={"readOnlyHint": True, "idempotentHint": True})
+    def scan_docstrings_for_rf_hints(
+        limit: int = 200,
+        cursor: int = 0,
+        summary_only: bool = False,
+        workspace: str | None = None,
+    ) -> dict[str, Any]:
+        """Surface RF candidates from existing docstrings — brownfield helper.
+
+        Walks every symbol that has a docstring AND is not already linked
+        to any RF. For each one, extracts:
+          - the first sentence (up to ~140 chars)
+          - the leading action verb if present ("Validates...", "Handles...",
+            "Manages...", etc.)
+          - the symbol metadata
+
+        Useful when adopting livespec on an existing project: instead of
+        guessing at RFs from scratch, the agent reads a few hundred of
+        these hints and proposes RFs grouped by leading verb / module.
+
+        Returns also a `verb_histogram` so the agent can see which actions
+        dominate the codebase ("47 'Validates...', 31 'Handles...'") —
+        that's the input signal for v0.7 B2 (propose_requirements_from_codebase).
+
+        v0.7 B6 — heuristic only, no LLM. The agent decides which hints
+        become RFs.
+        """
+        st = get_state(workspace)
+        pid = st.project_id
+
+        rows = st.conn.execute(
+            """SELECT s.id, s.qualified_name, s.kind, s.docstring,
+                      s.start_line, s.end_line, f.path AS file_path
+               FROM symbol s JOIN file f ON f.id=s.file_id
+               WHERE f.project_id=? AND s.docstring IS NOT NULL AND s.docstring != ''
+                 AND NOT EXISTS (
+                   SELECT 1 FROM rf_symbol rs WHERE rs.symbol_id=s.id
+                 )
+               ORDER BY f.path, s.start_line""",
+            (pid,),
+        ).fetchall()
+
+        # Strip trivial non-actionable hints
+        _STOP_FIRST_WORDS = {
+            "this", "the", "a", "an", "returns", "true", "false", "none",
+            "todo", "fixme", "deprecated", "internal",
+        }
+        _SENT_END = re.compile(r"(?<=[.!?])\s+")
+
+        hints: list[dict[str, Any]] = []
+        verb_histogram: dict[str, int] = {}
+
+        for r in rows:
+            doc = (r["docstring"] or "").strip()
+            if not doc:
+                continue
+            # First sentence, capped
+            first_sent = _SENT_END.split(doc, maxsplit=1)[0].strip()
+            if not first_sent or first_sent.startswith("@"):
+                # Pure annotation lines like '@rf:RF-001' — already scanned
+                continue
+            first_sent = first_sent[:140]
+            # Leading word
+            tokens = first_sent.split()
+            if not tokens:
+                continue
+            first_word = tokens[0].lower().strip(",.;:")
+            if first_word in _STOP_FIRST_WORDS or len(first_word) < 3:
+                continue
+            verb_histogram[first_word] = verb_histogram.get(first_word, 0) + 1
+            hints.append({
+                "qualified_name": r["qualified_name"],
+                "kind": r["kind"],
+                "file_path": r["file_path"],
+                "start_line": r["start_line"],
+                "first_sentence": first_sent,
+                "leading_word": first_word,
+            })
+
+        # Top verbs descending
+        top_verbs = sorted(
+            verb_histogram.items(), key=lambda kv: kv[1], reverse=True
+        )[:25]
+
+        if summary_only:
+            return {
+                "count": len(hints),
+                "verb_histogram_top": [
+                    {"word": w, "n": n} for w, n in top_verbs
+                ],
+            }
+
+        page = hints[cursor : cursor + limit]
+        next_cursor = cursor + limit if cursor + limit < len(hints) else None
+        return {
+            "count": len(hints),
+            "verb_histogram_top": [
+                {"word": w, "n": n} for w, n in top_verbs
+            ],
+            "hints": page,
+            "next_cursor": next_cursor,
+        }
 
     @mcp.tool(annotations={"readOnlyHint": False, "idempotentHint": True})
     def scan_rf_annotations(workspace: str | None = None) -> dict[str, Any]:
