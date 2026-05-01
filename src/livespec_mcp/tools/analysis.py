@@ -9,6 +9,7 @@ v0.3 P1.1 adds `git_diff_impact` for CI/PR-review use cases.
 from __future__ import annotations
 
 import difflib
+import json
 import subprocess
 from typing import Any, Literal
 
@@ -25,6 +26,70 @@ from livespec_mcp.state import get_state
 
 
 _INFRA_NAME_SUFFIXES = ("_state", "_settings", "_config", "_session")
+
+# v0.5 P1: framework decorator names that imply hidden callers (HTTP routers,
+# CLI dispatchers, test frameworks, plugin systems, message brokers, MCP).
+# We match on the LAST dotted segment so `app.route`, `router.get`,
+# `bp.before_request`, `mcp.tool` all qualify. Keep this list short and well-
+# known; users can opt out via include_infrastructure=True.
+_ENTRY_POINT_DECORATOR_LASTSEG = frozenset({
+    # HTTP verbs (Flask/FastAPI/Bottle/etc.)
+    "route", "get", "post", "put", "delete", "patch", "head", "options",
+    "api_route", "websocket",
+    # Flask/FastAPI hooks
+    "before_request", "after_request", "errorhandler", "teardown_appcontext",
+    "before_first_request", "context_processor",
+    # CLI dispatchers
+    "command", "group",
+    # Task brokers
+    "task", "shared_task",
+    # Test frameworks
+    "fixture",
+    # FastMCP / Anthropic agent SDK
+    "tool", "resource", "prompt",
+    # Plugin systems / event dispatch
+    "hookimpl", "event", "event_handler", "handler", "listener",
+    # Cron / schedules
+    "cron", "schedule", "scheduled",
+})
+
+# Per-framework decorator presets for `find_endpoints(framework=...)`.
+_FRAMEWORK_DECORATOR_PATTERNS: dict[str, tuple[str, ...]] = {
+    "flask": (
+        "route", "get", "post", "put", "delete", "patch",
+        "before_request", "after_request", "errorhandler",
+    ),
+    "fastapi": (
+        "route", "get", "post", "put", "delete", "patch", "head", "options",
+        "api_route", "websocket",
+    ),
+    "click": ("command", "group"),
+    "pytest": ("fixture",),
+    "fastmcp": ("tool", "resource", "prompt"),
+    "celery": ("task", "shared_task"),
+    "django": ("login_required", "permission_required", "staff_member_required"),
+}
+
+
+def _decorator_lastseg(name: str) -> str:
+    """Return the last dotted segment of a decorator name, lowercase."""
+    return name.rsplit(".", 1)[-1].lower()
+
+
+def _has_entry_point_decorator(decorators_json: str | None) -> bool:
+    if not decorators_json:
+        return False
+    try:
+        names = json.loads(decorators_json)
+    except (json.JSONDecodeError, TypeError):
+        return False
+    return any(_decorator_lastseg(n) in _ENTRY_POINT_DECORATOR_LASTSEG for n in names)
+
+
+def _decorator_matches_any(name: str, patterns: tuple[str, ...]) -> bool:
+    """True if `name` equals or has-as-last-segment any of `patterns`."""
+    last = _decorator_lastseg(name)
+    return last in {p.lower() for p in patterns}
 
 
 def _is_implicit_entry_point(meta: dict) -> bool:
@@ -461,8 +526,8 @@ def register(mcp: FastMCP) -> None:
         st = get_state(workspace)
         pid = st.project_id
         rows = st.conn.execute(
-            """SELECT s.id, s.qualified_name, s.name, s.kind, s.start_line, s.end_line,
-                      f.path AS file_path
+            """SELECT s.id, s.qualified_name, s.name, s.kind, s.decorators,
+                      s.start_line, s.end_line, f.path AS file_path
                FROM symbol s JOIN file f ON f.id=s.file_id
                WHERE f.project_id=?
                  AND NOT EXISTS (
@@ -494,6 +559,13 @@ def register(mcp: FastMCP) -> None:
                 continue
             if not include_infrastructure and _is_implicit_entry_point(meta):
                 continue
+            # v0.5 P1: framework-decorated symbols have invisible callers
+            # (HTTP requests, CLI invocation, pytest collection, message
+            # brokers, MCP). Skip unless explicitly opted in.
+            if not include_infrastructure and _has_entry_point_decorator(
+                meta.get("decorators")
+            ):
+                continue
             dead.append({
                 "qualified_name": meta["qualified_name"],
                 "kind": meta["kind"],
@@ -502,6 +574,69 @@ def register(mcp: FastMCP) -> None:
                 "end_line": meta["end_line"],
             })
         return {"dead_symbols": dead, "count": len(dead)}
+
+    @mcp.tool(annotations={"readOnlyHint": True, "idempotentHint": True})
+    def find_endpoints(
+        framework: Literal[
+            "flask", "fastapi", "click", "pytest", "fastmcp", "celery", "django"
+        ] | None = None,
+        workspace: str | None = None,
+    ) -> dict[str, Any]:
+        """Symbols decorated with framework entry-point markers.
+
+        Useful as a reverse-engineering aid: "what HTTP routes does this app
+        expose?", "what CLI commands does this script support?", "which
+        pytest fixtures live in this repo?".
+
+        Pass `framework=None` (default) to surface every recognized
+        entry-point decorator across the project. Pass a specific framework
+        to filter to its decorator set (matched against the LAST dotted
+        segment of each decorator, so aliasing like `from flask import Flask
+        as App; @App().route(...)` still resolves).
+        """
+        st = get_state(workspace)
+        pid = st.project_id
+
+        rows = st.conn.execute(
+            """SELECT s.qualified_name, s.kind, s.decorators, s.start_line, s.end_line,
+                      f.path AS file_path
+               FROM symbol s JOIN file f ON f.id=s.file_id
+               WHERE f.project_id=? AND s.decorators IS NOT NULL
+               ORDER BY f.path, s.start_line""",
+            (pid,),
+        ).fetchall()
+
+        if framework is not None:
+            patterns = _FRAMEWORK_DECORATOR_PATTERNS.get(framework, ())
+
+            def keep(decs: list[str]) -> list[str]:
+                return [d for d in decs if _decorator_matches_any(d, patterns)]
+        else:
+            def keep(decs: list[str]) -> list[str]:
+                return [d for d in decs if _decorator_lastseg(d) in _ENTRY_POINT_DECORATOR_LASTSEG]
+
+        endpoints: list[dict[str, Any]] = []
+        for r in rows:
+            try:
+                decs = json.loads(r["decorators"] or "[]")
+            except (json.JSONDecodeError, TypeError):
+                continue
+            matching = keep(decs)
+            if not matching:
+                continue
+            endpoints.append({
+                "qualified_name": r["qualified_name"],
+                "kind": r["kind"],
+                "file_path": r["file_path"],
+                "start_line": r["start_line"],
+                "end_line": r["end_line"],
+                "decorators": matching,
+            })
+        return {
+            "framework": framework,
+            "endpoints": endpoints,
+            "count": len(endpoints),
+        }
 
     @mcp.tool(annotations={"readOnlyHint": True, "idempotentHint": True})
     def audit_coverage(workspace: str | None = None) -> dict[str, Any]:

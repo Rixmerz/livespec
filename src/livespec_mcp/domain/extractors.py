@@ -25,6 +25,7 @@ class ExtractedSymbol:
     start_line: int
     end_line: int
     parent_qname: str | None = None
+    decorators: list[str] = field(default_factory=list)  # v0.5 P1: ordered, dotted form
 
 
 @dataclass
@@ -103,6 +104,7 @@ def _py_extract(source: str, module_name: str) -> ExtractResult:
                 start_line=start,
                 end_line=end,
                 parent_qname=parent_qname,
+                decorators=_py_decorator_names(node),
             )
         )
         _collect_calls(node, qname, out)
@@ -127,6 +129,7 @@ def _py_extract(source: str, module_name: str) -> ExtractResult:
                 start_line=start,
                 end_line=end,
                 parent_qname=parent_qname,
+                decorators=_py_decorator_names(node),
             )
         )
         return qname
@@ -184,6 +187,42 @@ def _call_target_name(node: ast.AST) -> str | None:
         return node.id
     if isinstance(node, ast.Attribute):
         return node.attr
+    return None
+
+
+def _py_decorator_names(
+    node: ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef,
+) -> list[str]:
+    """Return ordered dotted names for each decorator on a Python def/class.
+
+    Captures both bare (`@route`) and called (`@app.route("/")`) forms, plus
+    deeply attribute-accessed (`@router.api.v1.get`). Falls back to
+    `ast.unparse(...)` for exotic decorators (lambdas, subscripts) so the
+    field is never empty for an actually-decorated symbol."""
+    out: list[str] = []
+    for d in getattr(node, "decorator_list", []) or []:
+        target = d.func if isinstance(d, ast.Call) else d
+        name = _decorator_dotted(target)
+        if name is None:
+            try:
+                name = ast.unparse(d)
+            except Exception:
+                name = None
+        if name:
+            out.append(name)
+    return out
+
+
+def _decorator_dotted(node: ast.AST) -> str | None:
+    """Return `a.b.c` for nested ast.Attribute on ast.Name; else None."""
+    parts: list[str] = []
+    cur: ast.AST | None = node
+    while isinstance(cur, ast.Attribute):
+        parts.append(cur.attr)
+        cur = cur.value
+    if isinstance(cur, ast.Name):
+        parts.append(cur.id)
+        return ".".join(reversed(parts))
     return None
 
 

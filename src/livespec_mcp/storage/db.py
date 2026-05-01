@@ -85,6 +85,19 @@ def _migrate_v1_to_v2(conn: sqlite3.Connection) -> None:
         except sqlite3.OperationalError:
             pass
 
+    # v0.5 P1: symbol.decorators (JSON array). Existing rows get NULL until
+    # next re-extract. Queue forced re-extract so the field populates without
+    # the user having to remember.
+    sym_cols = {r["name"] for r in conn.execute("PRAGMA table_info(symbol)")}
+    if "decorators" not in sym_cols:
+        try:
+            conn.execute("ALTER TABLE symbol ADD COLUMN decorators TEXT")
+            conn.execute(
+                "INSERT OR REPLACE INTO _migration_state(key, value) VALUES('needs_reextract', '1')"
+            )
+        except sqlite3.OperationalError:
+            pass
+
     # P0.2: detect a v0.2-era DB whose symbol_ref is empty even though edges
     # exist. That happens when the project was indexed before the persistent
     # ref table was introduced — partial reindex from such a state silently

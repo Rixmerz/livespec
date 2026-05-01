@@ -169,6 +169,108 @@ async def test_audit_coverage_transitive_split(workspace):
 
 
 @pytest.mark.asyncio
+async def test_find_dead_code_skips_decorated_handlers(workspace):
+    """v0.5 P1: a function decorated with a framework entry-point marker
+    (route/command/fixture/tool/...) must NOT be flagged as dead even when
+    nobody in the project calls it directly."""
+    pkg = workspace / "app"
+    pkg.mkdir()
+    (pkg / "__init__.py").write_text("")
+    (pkg / "routes.py").write_text(
+        "app = object()\n"
+        "\n"
+        "@app.route('/users')\n"
+        "def list_users():\n"
+        "    return []\n"
+        "\n"
+        "@app.before_request\n"
+        "def setup():\n"
+        "    pass\n"
+        "\n"
+        "@something.task\n"
+        "def background_job():\n"
+        "    return None\n"
+        "\n"
+        "def truly_dead_helper():\n"
+        "    return 'nobody calls me'\n"
+    )
+
+    async with Client(mcp) as c:
+        await c.call_tool("index_project", {})
+        out = (await c.call_tool("find_dead_code", {})).data
+
+    qnames = {d["qualified_name"] for d in out["dead_symbols"]}
+    assert "app.routes.list_users" not in qnames, (
+        f"@app.route handler must not be flagged as dead: {qnames}"
+    )
+    assert "app.routes.setup" not in qnames, (
+        f"@app.before_request handler must not be flagged: {qnames}"
+    )
+    assert "app.routes.background_job" not in qnames, (
+        f"@*.task handler must not be flagged: {qnames}"
+    )
+    assert "app.routes.truly_dead_helper" in qnames, (
+        f"plain helper with no callers SHOULD be flagged: {qnames}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_find_endpoints_all_and_per_framework(workspace):
+    """v0.5 P1: find_endpoints surfaces decorated symbols, with a
+    per-framework filter."""
+    pkg = workspace / "app"
+    pkg.mkdir()
+    (pkg / "__init__.py").write_text("")
+    (pkg / "main.py").write_text(
+        "app = object()\n"
+        "router = object()\n"
+        "\n"
+        "@app.route('/users')\n"
+        "def list_users():\n"
+        "    return []\n"
+        "\n"
+        "@router.get('/items')\n"
+        "def get_items():\n"
+        "    return []\n"
+        "\n"
+        "@click.command()\n"
+        "def cli_run():\n"
+        "    pass\n"
+        "\n"
+        "@pytest.fixture\n"
+        "def db():\n"
+        "    return None\n"
+        "\n"
+        "def plain():\n"
+        "    return 1\n"
+    )
+
+    async with Client(mcp) as c:
+        await c.call_tool("index_project", {})
+
+        # No framework filter -> all entry-point decorators
+        all_eps = (await c.call_tool("find_endpoints", {})).data
+        all_qnames = {e["qualified_name"] for e in all_eps["endpoints"]}
+        assert "app.main.list_users" in all_qnames
+        assert "app.main.get_items" in all_qnames
+        assert "app.main.cli_run" in all_qnames
+        assert "app.main.db" in all_qnames
+        assert "app.main.plain" not in all_qnames
+
+        # framework='click' -> only the click command
+        click_eps = (await c.call_tool("find_endpoints", {"framework": "click"})).data
+        click_qnames = {e["qualified_name"] for e in click_eps["endpoints"]}
+        assert "app.main.cli_run" in click_qnames
+        assert "app.main.list_users" not in click_qnames
+        assert "app.main.db" not in click_qnames
+
+        # framework='pytest' -> only fixtures
+        pyt_eps = (await c.call_tool("find_endpoints", {"framework": "pytest"})).data
+        pyt_qnames = {e["qualified_name"] for e in pyt_eps["endpoints"]}
+        assert pyt_qnames == {"app.main.db"}
+
+
+@pytest.mark.asyncio
 async def test_find_orphan_tests(workspace):
     """A test file whose calls only reach other tests is reported orphan."""
     (workspace / "src").mkdir()

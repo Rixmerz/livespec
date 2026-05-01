@@ -213,6 +213,7 @@ def _upsert_file(
 
 def _replace_symbols(conn: sqlite3.Connection, *, file_id: int, result: ExtractResult) -> None:
     """Insert symbols for a file and persist their refs to symbol_ref."""
+    import json as _json
     qname_to_id: dict[str, int] = {}
     for s in result.symbols:
         body_hash = xxhash.xxh3_128_hexdigest(s.body_hash_seed.encode("utf-8", errors="replace"))
@@ -220,13 +221,16 @@ def _replace_symbols(conn: sqlite3.Connection, *, file_id: int, result: ExtractR
             xxhash.xxh3_128_hexdigest(s.signature.encode("utf-8", errors="replace"))
             if s.signature else None
         )
+        decorators_json = _json.dumps(s.decorators) if s.decorators else None
         cur = conn.execute(
             """INSERT INTO symbol(file_id, parent_symbol_id, name, qualified_name, kind,
-                signature, signature_hash, docstring, body_hash, start_line, end_line)
-               VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
+                signature, signature_hash, docstring, body_hash, decorators,
+                start_line, end_line)
+               VALUES(?,?,?,?,?,?,?,?,?,?,?,?)""",
             (
                 file_id, None, s.name, s.qualified_name, s.kind,
-                s.signature, sig_hash, s.docstring, body_hash, s.start_line, s.end_line,
+                s.signature, sig_hash, s.docstring, body_hash, decorators_json,
+                s.start_line, s.end_line,
             ),
         )
         qname_to_id[s.qualified_name] = int(cur.lastrowid)

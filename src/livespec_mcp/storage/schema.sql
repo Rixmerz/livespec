@@ -47,6 +47,7 @@ CREATE TABLE IF NOT EXISTS symbol (
     signature_hash TEXT,           -- xxh3 of signature; drift trigger independent of body
     docstring TEXT,
     body_hash TEXT,
+    decorators TEXT,               -- JSON array of decorator names (Python today; extensible)
     start_line INTEGER NOT NULL,
     end_line INTEGER NOT NULL,
     UNIQUE(file_id, qualified_name, start_line)
