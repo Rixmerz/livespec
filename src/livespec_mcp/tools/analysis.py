@@ -244,17 +244,32 @@ def register(mcp: FastMCP) -> None:
 
         Returns lightweight refs (qualified_name, file, line, signature, kind).
         Use `get_symbol_info` for full details on a single match.
-        """
+
+        v0.7 (B5): separator-agnostic match. The query and the qualified_name
+        are both normalized so that `Type::method`, `Type.method`, and
+        `module/Type::method` all match the same symbols. Useful in Rust
+        repos where qnames mix `.` (file path) and `::` (impl method)
+        separators."""
         st = get_state(workspace)
         pid = st.project_id
+
+        # Normalize separators so `::` queries match `.`-separated stored
+        # qnames and vice-versa. SQLite's LIKE doesn't support regex, so we
+        # use the REPLACE() function on the column to compare normalized
+        # forms. The query is normalized in Python before binding.
+        normalized_query = query.replace("::", ".").replace("/", ".")
+        like = f"%{normalized_query}%"
         sql = [
             """SELECT s.id, s.name, s.qualified_name, s.kind, s.signature,
                       s.start_line, s.end_line, f.path as file_path
                FROM symbol s JOIN file f ON f.id=s.file_id
-               WHERE f.project_id=? AND (s.name LIKE ? OR s.qualified_name LIKE ?)"""
+               WHERE f.project_id=? AND (
+                   s.name LIKE ?
+                   OR s.qualified_name LIKE ?
+                   OR REPLACE(s.qualified_name, '::', '.') LIKE ?
+               )"""
         ]
-        like = f"%{query}%"
-        args: list[Any] = [pid, like, like]
+        args: list[Any] = [pid, f"%{query}%", f"%{query}%", like]
         if kind:
             sql.append("AND s.kind = ?")
             args.append(kind)
@@ -562,6 +577,9 @@ def register(mcp: FastMCP) -> None:
     @mcp.tool(annotations={"readOnlyHint": True, "idempotentHint": True})
     def find_dead_code(
         include_infrastructure: bool = False,
+        limit: int = 200,
+        cursor: int = 0,
+        summary_only: bool = False,
         workspace: str | None = None,
     ) -> dict[str, Any]:
         """Symbols with zero callers and zero RF links — removal candidates.
@@ -571,8 +589,14 @@ def register(mcp: FastMCP) -> None:
         - Infrastructure (DI helpers, dunders, FastMCP `register` fns, ≤4-line
           wrappers). Pass `include_infrastructure=True` to keep them.
 
-        Useful sanity check before a refactor: anything in the result is unreachable
-        from in-project callers AND not traceably implementing any RF.
+        v0.7 (B3): paginated. `limit` (default 200) caps `dead_symbols` per
+        call; `cursor` resumes from a previous call's `next_cursor`;
+        `summary_only=True` returns just the count + breakdown without the
+        list. The total count is always exact, regardless of pagination.
+
+        Useful sanity check before a refactor: anything in the result is
+        unreachable from in-project callers AND not traceably implementing
+        any RF.
         """
         st = get_state(workspace)
         pid = st.project_id
@@ -603,34 +627,62 @@ def register(mcp: FastMCP) -> None:
                 or p == "manage.py"
             )
 
-        dead: list[dict[str, Any]] = []
+        filtered: list[dict[str, Any]] = []
         for r in rows:
             meta = dict(r)
             if is_entry_point_path(meta["file_path"]):
                 continue
             if not include_infrastructure and _is_implicit_entry_point(meta):
                 continue
-            # v0.5 P1: framework-decorated symbols have invisible callers
-            # (HTTP requests, CLI invocation, pytest collection, message
-            # brokers, MCP). Skip unless explicitly opted in.
             if not include_infrastructure and _has_entry_point_decorator(
                 meta.get("decorators")
             ):
                 continue
-            dead.append({
-                "qualified_name": meta["qualified_name"],
-                "kind": meta["kind"],
-                "file_path": meta["file_path"],
-                "start_line": meta["start_line"],
-                "end_line": meta["end_line"],
-            })
-        return {"dead_symbols": dead, "count": len(dead)}
+            filtered.append(meta)
+
+        total = len(filtered)
+        # by_kind / by_dir breakdowns (cheap; useful for summary mode)
+        by_kind: dict[str, int] = {}
+        by_dir: dict[str, int] = {}
+        for m in filtered:
+            by_kind[m["kind"]] = by_kind.get(m["kind"], 0) + 1
+            top_dir = m["file_path"].split("/", 1)[0]
+            by_dir[top_dir] = by_dir.get(top_dir, 0) + 1
+
+        if summary_only:
+            return {
+                "count": total,
+                "by_kind": by_kind,
+                "by_top_dir": by_dir,
+            }
+
+        page = filtered[cursor : cursor + limit]
+        next_cursor = cursor + limit if cursor + limit < total else None
+        return {
+            "count": total,
+            "by_kind": by_kind,
+            "by_top_dir": by_dir,
+            "dead_symbols": [
+                {
+                    "qualified_name": m["qualified_name"],
+                    "kind": m["kind"],
+                    "file_path": m["file_path"],
+                    "start_line": m["start_line"],
+                    "end_line": m["end_line"],
+                }
+                for m in page
+            ],
+            "next_cursor": next_cursor,
+        }
 
     @mcp.tool(annotations={"readOnlyHint": True, "idempotentHint": True})
     def find_endpoints(
         framework: Literal[
             "flask", "fastapi", "click", "pytest", "fastmcp", "celery", "django"
         ] | None = None,
+        limit: int = 200,
+        cursor: int = 0,
+        summary_only: bool = False,
         workspace: str | None = None,
     ) -> dict[str, Any]:
         """Symbols decorated with framework entry-point markers.
@@ -683,14 +735,25 @@ def register(mcp: FastMCP) -> None:
                 "end_line": r["end_line"],
                 "decorators": matching,
             })
+        total = len(endpoints)
+        if summary_only:
+            return {"framework": framework, "count": total}
+        page = endpoints[cursor : cursor + limit]
+        next_cursor = cursor + limit if cursor + limit < total else None
         return {
             "framework": framework,
-            "endpoints": endpoints,
-            "count": len(endpoints),
+            "endpoints": page,
+            "count": total,
+            "next_cursor": next_cursor,
         }
 
     @mcp.tool(annotations={"readOnlyHint": True, "idempotentHint": True})
-    def audit_coverage(workspace: str | None = None) -> dict[str, Any]:
+    def audit_coverage(
+        limit: int = 200,
+        cursor: int = 0,
+        summary_only: bool = False,
+        workspace: str | None = None,
+    ) -> dict[str, Any]:
         """RF coverage audit: what's missing / under-confident.
 
         Five signals:
@@ -704,6 +767,10 @@ def register(mcp: FastMCP) -> None:
         - `rfs_without_implementation`: RFs with no `rf_symbol` row at all
         - `rfs_low_confidence`: RFs whose avg(rf_symbol.confidence) < 0.7
           (typically means only verb-anchored matches, no `@rf:` annotation)
+
+        v0.7 (B3): paginated. `limit` (default 200) caps each list per
+        call; `cursor` resumes; `summary_only=True` returns only the
+        counts. Counts are always exact regardless of pagination.
         """
         st = get_state(workspace)
         pid = st.project_id
@@ -794,17 +861,49 @@ def register(mcp: FastMCP) -> None:
             )
         ]
 
+        # v0.7 B3: pagination
+        counts = {
+            "modules_without_rf": len(modules_no_rf),
+            "modules_implicitly_covered": len(modules_implicit),
+            "modules_truly_orphan": len(modules_truly_orphan),
+            "rfs_without_implementation": len(rfs_no_impl),
+            "rfs_low_confidence": len(rfs_low_conf),
+        }
+        if summary_only:
+            return {"counts": counts}
+
+        def _page(items: list, c: int = cursor, n: int = limit) -> tuple[list, int | None]:
+            sliced = items[c : c + n]
+            nxt = c + n if c + n < len(items) else None
+            return sliced, nxt
+
+        mw_p, mw_next = _page(modules_no_rf)
+        mi_p, mi_next = _page(modules_implicit)
+        mt_p, mt_next = _page(modules_truly_orphan)
+        rfn_p, rfn_next = _page(rfs_no_impl)
+        rfl_p, rfl_next = _page(rfs_low_conf)
         return {
-            "modules_without_rf": modules_no_rf,
-            "modules_implicitly_covered": modules_implicit,
-            "modules_truly_orphan": modules_truly_orphan,
-            "rfs_without_implementation": rfs_no_impl,
-            "rfs_low_confidence": rfs_low_conf,
+            "counts": counts,
+            "modules_without_rf": mw_p,
+            "modules_implicitly_covered": mi_p,
+            "modules_truly_orphan": mt_p,
+            "rfs_without_implementation": rfn_p,
+            "rfs_low_confidence": rfl_p,
+            "next_cursor": {
+                "modules_without_rf": mw_next,
+                "modules_implicitly_covered": mi_next,
+                "modules_truly_orphan": mt_next,
+                "rfs_without_implementation": rfn_next,
+                "rfs_low_confidence": rfl_next,
+            },
         }
 
     @mcp.tool(annotations={"readOnlyHint": True, "idempotentHint": True})
     def find_orphan_tests(
         max_depth: int = 10,
+        limit: int = 200,
+        cursor: int = 0,
+        summary_only: bool = False,
         workspace: str | None = None,
     ) -> dict[str, Any]:
         """Test functions whose descendant cone never reaches production code.
@@ -813,6 +912,9 @@ def register(mcp: FastMCP) -> None:
         `*_test.*` / `test_*.*` naming) whose forward call graph contains
         zero non-test symbols. Either disconnected fixtures, helpers used only
         by other tests, or actually orphaned tests.
+
+        v0.7 (B3): paginated. `limit`/`cursor`/`summary_only` work as in
+        find_dead_code.
         """
         st = get_state(workspace)
         pid = st.project_id
@@ -859,13 +961,25 @@ def register(mcp: FastMCP) -> None:
                         else "descendant cone never escapes test files"
                     ),
                 })
-        return {"orphan_tests": orphans, "count": len(orphans)}
+        total = len(orphans)
+        if summary_only:
+            return {"count": total}
+        page = orphans[cursor : cursor + limit]
+        next_cursor = cursor + limit if cursor + limit < total else None
+        return {
+            "orphan_tests": page,
+            "count": total,
+            "next_cursor": next_cursor,
+        }
 
     @mcp.tool(annotations={"readOnlyHint": True, "idempotentHint": True})
     def git_diff_impact(
         base_ref: str = "HEAD~1",
         head_ref: str = "HEAD",
         max_depth: int = 5,
+        impacted_limit: int = 200,
+        impacted_cursor: int = 0,
+        summary_only: bool = False,
         workspace: str | None = None,
     ) -> dict[str, Any]:
         """Topological impact of a git diff: changed files -> RFs + callers + suggested tests.
@@ -880,6 +994,12 @@ def register(mcp: FastMCP) -> None:
 
         Returns an empty result with `error` if either ref is unknown to git.
         Run `index_project` first if results look stale.
+
+        v0.7 (B3): paginated. `impacted_limit` (default 200) caps the
+        `impacted_callers` list — the unbounded cone was the cause of
+        7M-char payloads on Rust monorepos. `summary_only=True` returns
+        counts + the small lists (changed_files, affected_requirements,
+        suggested_tests) without `changed_symbols` or `impacted_callers`.
         """
         st = get_state(workspace)
         pid = st.project_id
@@ -938,17 +1058,21 @@ def register(mcp: FastMCP) -> None:
 
         changed_paths = [p for p in proc.stdout.splitlines() if p.strip()]
         if not changed_paths:
-            return {
+            empty: dict[str, Any] = {
                 "base_ref": base_ref,
                 "head_ref": head_ref,
                 "changed_files": [],
                 "changed_files_indexed": [],
                 "changed_files_unindexed": [],
-                "changed_symbols": [],
-                "impacted_callers": [],
                 "affected_requirements": [],
                 "suggested_tests": [],
+                "counts": {"impacted_callers": 0, "changed_symbols": 0},
             }
+            if not summary_only:
+                empty["changed_symbols"] = []
+                empty["impacted_callers"] = []
+                empty["next_cursor"] = None
+            return empty
 
         view = load_graph(st.conn, pid)
 
@@ -1020,16 +1144,33 @@ def register(mcp: FastMCP) -> None:
                     suggested_tests_set.add(p)
         suggested_tests = sorted(suggested_tests_set)
 
-        return {
+        impacted_meta = [view.sym_meta[n] for n in impacted if n in view.sym_meta]
+        counts = {
+            "changed_files": len(changed_paths),
+            "changed_symbols": len(changed_symbol_meta),
+            "impacted_callers": len(impacted_meta),
+            "affected_requirements": len(affected_rfs),
+            "suggested_tests": len(suggested_tests),
+        }
+        base = {
             "base_ref": base_ref,
             "head_ref": head_ref,
             "changed_files": changed_paths,
             "changed_files_indexed": sorted(indexed_paths),
             "changed_files_unindexed": sorted(set(changed_paths) - indexed_paths),
-            "changed_symbols": changed_symbol_meta,
-            "impacted_callers": [
-                view.sym_meta[n] for n in impacted if n in view.sym_meta
-            ],
             "affected_requirements": affected_rfs,
             "suggested_tests": suggested_tests,
+            "counts": counts,
         }
+        if summary_only:
+            return base
+        page = impacted_meta[impacted_cursor : impacted_cursor + impacted_limit]
+        next_cursor = (
+            impacted_cursor + impacted_limit
+            if impacted_cursor + impacted_limit < len(impacted_meta)
+            else None
+        )
+        base["changed_symbols"] = changed_symbol_meta
+        base["impacted_callers"] = page
+        base["next_cursor"] = next_cursor
+        return base
