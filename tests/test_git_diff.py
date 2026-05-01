@@ -75,7 +75,8 @@ async def test_git_diff_impact_no_changes(git_repo):
 
 @pytest.mark.asyncio
 async def test_git_diff_impact_unknown_ref(git_repo):
-    """Unknown ref returns isError=True with a clear message."""
+    """Unknown ref returns isError=True with a short, agent-friendly message
+    (P0.A2 v0.5: no `git diff --help` dump)."""
     async with Client(mcp) as c:
         await c.call_tool("index_project", {})
         result = (
@@ -85,4 +86,23 @@ async def test_git_diff_impact_unknown_ref(git_repo):
             )
         ).data
         assert result.get("isError") is True
-        assert "git diff failed" in result["error"]
+        # Must be short — no multi-line --help dump
+        assert "\n" not in result["error"], (
+            f"error must be a single line, got: {result['error']!r}"
+        )
+        assert len(result["error"]) < 250
+        # Must mention the bad ref so the user knows what to fix
+        assert "definitely-not-a-ref" in result["error"] or "unknown" in result["error"].lower()
+
+
+@pytest.mark.asyncio
+async def test_git_diff_impact_not_a_git_repo(workspace, sample_repo):
+    """P0.A2 v0.5: workspace without git history -> short message, not the
+    `git --help` dump we used to surface."""
+    # sample_repo is on tmp without `git init`
+    async with Client(mcp) as c:
+        await c.call_tool("index_project", {})
+        result = (await c.call_tool("git_diff_impact", {})).data
+        assert result.get("isError") is True
+        assert "\n" not in result["error"]
+        assert "not a git repository" in result["error"].lower()

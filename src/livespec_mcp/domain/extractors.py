@@ -189,6 +189,40 @@ def _call_target_name(node: ast.AST) -> str | None:
 
 # ---------- Generic tree-sitter ----------
 
+
+def _normalize_ts_body(node, src_bytes: bytes) -> str:
+    """Reformat-stable body seed for tree-sitter languages.
+
+    Walks the syntax tree and emits only LEAF tokens joined by single spaces.
+    This makes the seed invariant under:
+    - any whitespace change (indent, blank lines, spacing around punctuation)
+    - comment add/remove (comment nodes are skipped by type prefix)
+    A real semantic change (literal, identifier, operator) still alters the
+    leaf token stream and produces a different hash.
+
+    Falls back to the raw source slice if the walk yields nothing (defensive).
+    """
+    parts: list[str] = []
+
+    def visit(n) -> None:
+        # Skip comment-like nodes regardless of grammar
+        ntype = n.type
+        if ntype == "comment" or "comment" in ntype:
+            return
+        if not n.children:
+            txt = src_bytes[n.start_byte : n.end_byte].decode("utf-8", errors="replace")
+            txt = txt.strip()
+            if txt:
+                parts.append(txt)
+            return
+        for c in n.children:
+            visit(c)
+
+    visit(node)
+    if not parts:
+        return src_bytes[node.start_byte : node.end_byte].decode("utf-8", errors="replace")
+    return " ".join(parts)
+
 # Node-type heuristics: covers most C-family + Go.
 _DEF_NODE_TYPES = {
     "function_declaration",
@@ -284,7 +318,7 @@ def _ts_extract(
                 kind=kind,
                 signature=signature,
                 docstring=None,
-                body_hash_seed=text(node),
+                body_hash_seed=_normalize_ts_body(node, src_bytes),
                 start_line=start_line,
                 end_line=end_line,
                 parent_qname=parent_qname,

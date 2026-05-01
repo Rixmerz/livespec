@@ -507,8 +507,14 @@ def register(mcp: FastMCP) -> None:
     def audit_coverage(workspace: str | None = None) -> dict[str, Any]:
         """RF coverage audit: what's missing / under-confident.
 
-        Three signals, all derived from existing tables (no new computation):
-        - `modules_without_rf`: files whose symbols have no `rf_symbol` link
+        Five signals:
+        - `modules_without_rf`: files whose symbols have no DIRECT `rf_symbol` link
+        - `modules_implicitly_covered`: subset of `modules_without_rf` whose
+          symbols are called transitively by an rf-linked symbol — covered
+          indirectly through the call graph (e.g. a data layer reached via
+          API handlers that carry the `@rf:` annotation)
+        - `modules_truly_orphan`: subset of `modules_without_rf` with NO direct
+          link AND no transitive coverage — the actually-actionable list
         - `rfs_without_implementation`: RFs with no `rf_symbol` row at all
         - `rfs_low_confidence`: RFs whose avg(rf_symbol.confidence) < 0.7
           (typically means only verb-anchored matches, no `@rf:` annotation)
@@ -530,6 +536,44 @@ def register(mcp: FastMCP) -> None:
                 (pid,),
             )
         ]
+
+        # Split direct-orphan into implicitly-covered vs truly-orphan via the
+        # call graph: a file is implicitly covered if any of its symbols has
+        # an rf-linked symbol in its ancestor cone (someone calls in here from
+        # an annotated entry point).
+        modules_implicit: list[str] = []
+        modules_truly_orphan: list[str] = []
+        if modules_no_rf:
+            view = load_graph(st.conn, pid)
+            rf_linked_sids: set[int] = {
+                int(r["symbol_id"])
+                for r in st.conn.execute(
+                    """SELECT DISTINCT rs.symbol_id FROM rf_symbol rs
+                       JOIN symbol s ON s.id=rs.symbol_id
+                       JOIN file f ON f.id=s.file_id
+                       WHERE f.project_id=?""",
+                    (pid,),
+                )
+            }
+            for path in modules_no_rf:
+                file_sids = {
+                    int(r["id"])
+                    for r in st.conn.execute(
+                        """SELECT s.id FROM symbol s
+                           JOIN file f ON f.id=s.file_id
+                           WHERE f.project_id=? AND f.path=?""",
+                        (pid, path),
+                    )
+                }
+                covered = False
+                if rf_linked_sids and file_sids:
+                    for sid in file_sids:
+                        if sid not in view.g:
+                            continue
+                        if ancestors_within(view.g, sid, 10) & rf_linked_sids:
+                            covered = True
+                            break
+                (modules_implicit if covered else modules_truly_orphan).append(path)
 
         rfs_no_impl = [
             dict(r)
@@ -566,6 +610,8 @@ def register(mcp: FastMCP) -> None:
 
         return {
             "modules_without_rf": modules_no_rf,
+            "modules_implicitly_covered": modules_implicit,
+            "modules_truly_orphan": modules_truly_orphan,
             "rfs_without_implementation": rfs_no_impl,
             "rfs_low_confidence": rfs_low_conf,
         }
@@ -664,12 +710,39 @@ def register(mcp: FastMCP) -> None:
         except FileNotFoundError:
             return {"error": "git not found on PATH", "isError": True}
         except subprocess.CalledProcessError as e:
-            return {
-                "error": f"git diff failed: {e.stderr.strip() or e.stdout.strip()}",
-                "isError": True,
-            }
+            stderr = (e.stderr or "").strip()
+            stdout = (e.stdout or "").strip()
+            # Boil down common git failure modes to a one-line summary so the
+            # agent (and the user) don't get drowned in `git diff --help`.
+            stderr_lower = stderr.lower()
+            if "not a git repository" in stderr_lower:
+                msg = (
+                    f"workspace is not a git repository: {ws_root}. "
+                    "git_diff_impact requires git history; run `git init` "
+                    "and at least one commit first."
+                )
+            elif "unknown revision" in stderr_lower or "bad revision" in stderr_lower:
+                msg = (
+                    f"unknown git ref(s): base_ref='{base_ref}', "
+                    f"head_ref='{head_ref}'. Check `git rev-parse` for both."
+                )
+            elif "ambiguous argument" in stderr_lower:
+                msg = (
+                    f"ambiguous ref: '{base_ref}..{head_ref}'. "
+                    "Use full SHAs or branch names that exist locally."
+                )
+            else:
+                # Truncate to keep payloads agent-friendly. First non-empty
+                # line of stderr (or stdout) is almost always the real cause;
+                # the rest is git's --help dump.
+                first_line = next(
+                    (ln for ln in (stderr or stdout).splitlines() if ln.strip()),
+                    "",
+                )
+                msg = f"git diff failed: {first_line[:200]}" if first_line else "git diff failed (no diagnostic output)"
+            return {"error": msg, "isError": True}
         except subprocess.TimeoutExpired:
-            return {"error": "git diff timed out", "isError": True}
+            return {"error": "git diff timed out after 10s", "isError": True}
 
         changed_paths = [p for p in proc.stdout.splitlines() if p.strip()]
         if not changed_paths:
