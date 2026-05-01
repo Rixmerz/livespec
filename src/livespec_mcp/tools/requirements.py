@@ -25,11 +25,37 @@ from fastmcp import FastMCP
 
 from pathlib import Path
 
+from livespec_mcp.domain.graph import load_graph, page_rank
 from livespec_mcp.domain.matcher import scan_annotations
 from livespec_mcp.domain.md_rfs import parse_rfs_markdown
 from livespec_mcp.state import get_state
 from livespec_mcp.tools._errors import mcp_error
 from livespec_mcp.tools.analysis import symbol_not_found_error
+
+
+def _humanize_module_segment(seg: str) -> str:
+    """auth_service -> 'Auth Service'; SyncQueue -> 'Sync Queue'."""
+    s = seg.replace("_", " ").replace("-", " ")
+    # Insert space before each uppercase letter that follows a lowercase
+    out: list[str] = []
+    for i, ch in enumerate(s):
+        if i > 0 and ch.isupper() and s[i - 1].islower():
+            out.append(" ")
+        out.append(ch)
+    title = "".join(out).strip()
+    # Title-case, but only if it was lowercase to begin with (avoid
+    # mangling acronyms like API, HTTP)
+    if title.islower():
+        title = title.title()
+    return title
+
+
+_DOC_FIRST_SENT_RE = re.compile(r"(?<=[.!?])\s+")
+_GENERIC_MODULE_NAMES = {
+    "src", "lib", "core", "common", "utils", "util", "helpers", "helper",
+    "tests", "test", "internal", "main", "mod", "index", "init", "__init__",
+    "app", "crates", "pkg",
+}
 
 
 def _next_rf_id(conn, project_id: int) -> str:
@@ -447,6 +473,171 @@ def register(mcp: FastMCP) -> None:
             "DELETE FROM rf WHERE project_id=? AND rf_id=?", (pid, rf_id)
         )
         return {"rf_id": rf_id, "deleted": cur.rowcount > 0}
+
+    @mcp.tool(annotations={"readOnlyHint": True, "idempotentHint": True})
+    def propose_requirements_from_codebase(
+        module_depth: int = 2,
+        min_symbols_per_group: int = 3,
+        max_proposals: int = 30,
+        skip_already_covered: bool = True,
+        workspace: str | None = None,
+    ) -> dict[str, Any]:
+        """Heuristic RF discovery for brownfield projects (v0.7 B2).
+
+        The killer feature for adopting livespec on an existing codebase.
+        Groups symbols by their qname prefix at `module_depth` (e.g. depth=2
+        means `pkg.auth.*` -> group "pkg.auth"), ranks groups by total
+        PageRank score, and proposes one RF candidate per actionable group:
+
+          {
+            "proposed_rf_id": "RF-007",
+            "title": "Auth",                       # humanized module name
+            "description": "...",                  # first sentence of top symbol's docstring
+            "module_key": "pkg.auth",
+            "symbol_count": 12,
+            "score": 0.0341,                       # sum of pagerank
+            "suggested_symbols": [{qualified_name, kind, file_path, pagerank}, ...]
+          }
+
+        Filters:
+        - Generic module names (src, lib, core, common, utils, ...) are not
+          used as RF titles — fall back to the previous segment.
+        - Already-RF-covered groups: skipped by default. Pass
+          `skip_already_covered=False` to also propose RFs for partially
+          covered modules (useful when adding sub-feature RFs alongside an
+          existing feature RF).
+        - Infrastructure / dunders / decorated handlers: excluded from
+          symbol counts (same heuristic as find_dead_code).
+
+        Output is sorted by group score descending. Pair with
+        bulk_link_rf_symbols + create_requirement to land accepted
+        proposals in two calls per RF: create the RF, then bulk-link its
+        symbols.
+        """
+        st = get_state(workspace)
+        pid = st.project_id
+        view = load_graph(st.conn, pid)
+        ranks = page_rank(view.g)
+
+        # Already-linked symbol IDs (for skip_already_covered)
+        linked_sids = {
+            int(r["symbol_id"])
+            for r in st.conn.execute(
+                """SELECT DISTINCT rs.symbol_id FROM rf_symbol rs
+                   JOIN symbol s ON s.id=rs.symbol_id
+                   JOIN file f ON f.id=s.file_id
+                   WHERE f.project_id=?""",
+                (pid,),
+            )
+        }
+
+        # Group symbols by qname prefix at module_depth
+        groups: dict[str, list[tuple[int, float, dict]]] = {}
+        for sid, score in ranks.items():
+            meta = view.sym_meta.get(sid)
+            if meta is None:
+                continue
+            # Skip non-actionable noise (dunders/registers/DI helpers)
+            from livespec_mcp.tools.analysis import _is_implicit_entry_point
+            if _is_implicit_entry_point(meta):
+                continue
+            qn = meta.get("qualified_name") or ""
+            parts = qn.split(".")
+            if len(parts) <= module_depth:
+                continue
+            group_key = ".".join(parts[:module_depth])
+            groups.setdefault(group_key, []).append((sid, score, meta))
+
+        # Build proposals
+        proposals: list[dict[str, Any]] = []
+        next_rf_n = 0
+        # Compute starting RF id offset based on existing RFs
+        last_rf = st.conn.execute(
+            "SELECT rf_id FROM rf WHERE project_id=? ORDER BY id DESC LIMIT 1",
+            (pid,),
+        ).fetchone()
+        if last_rf:
+            digits = "".join(c for c in last_rf["rf_id"] if c.isdigit())
+            next_rf_n = int(digits) if digits else 0
+
+        for group_key, syms in groups.items():
+            if len(syms) < min_symbols_per_group:
+                continue
+
+            # Skip groups that are already mostly covered
+            if skip_already_covered:
+                covered = sum(1 for sid, _, _ in syms if sid in linked_sids)
+                if covered >= len(syms) * 0.5:
+                    continue
+
+            # Sort by pagerank desc and pick top
+            syms.sort(key=lambda x: x[1], reverse=True)
+            top = syms[:10]
+
+            # Title: humanize the deepest non-generic segment of group_key
+            segments = group_key.split(".")
+            title_seg = segments[-1]
+            for seg in reversed(segments):
+                if seg.lower() not in _GENERIC_MODULE_NAMES:
+                    title_seg = seg
+                    break
+            title = _humanize_module_segment(title_seg)
+
+            # Description: first sentence of top symbol's docstring
+            top_sid = top[0][0]
+            doc_row = st.conn.execute(
+                "SELECT docstring FROM symbol WHERE id=?", (top_sid,)
+            ).fetchone()
+            description: str | None = None
+            if doc_row and doc_row["docstring"]:
+                first = _DOC_FIRST_SENT_RE.split(
+                    doc_row["docstring"].strip(), maxsplit=1
+                )[0].strip()
+                if first and not first.startswith("@"):
+                    description = first[:200]
+
+            score = sum(s for _, s, _ in top)
+
+            next_rf_n += 1
+            proposed_rf_id = f"RF-{next_rf_n:03d}"
+
+            proposals.append({
+                "proposed_rf_id": proposed_rf_id,
+                "title": title,
+                "description": description,
+                "module_key": group_key,
+                "symbol_count": len(syms),
+                "score": round(float(score), 6),
+                "suggested_symbols": [
+                    {
+                        "qualified_name": m["qualified_name"],
+                        "kind": m["kind"],
+                        "file_path": m["file_path"],
+                        "pagerank": round(float(s), 6),
+                    }
+                    for _, s, m in top
+                ],
+            })
+
+        proposals.sort(key=lambda p: p["score"], reverse=True)
+        proposals = proposals[:max_proposals]
+
+        # Re-number RF ids in score order so the highest-value group gets
+        # RF-{next}, second gets RF-{next+1}, etc. — keeps the suggestion
+        # naturally ordered.
+        if last_rf:
+            digits = "".join(c for c in last_rf["rf_id"] if c.isdigit())
+            base = int(digits) if digits else 0
+        else:
+            base = 0
+        for i, p in enumerate(proposals, start=1):
+            p["proposed_rf_id"] = f"RF-{base + i:03d}"
+
+        return {
+            "proposals": proposals,
+            "total_modules_examined": len(groups),
+            "module_depth": module_depth,
+        }
 
     @mcp.tool(annotations={"readOnlyHint": True, "idempotentHint": True})
     def scan_docstrings_for_rf_hints(
