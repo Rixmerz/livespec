@@ -37,6 +37,7 @@ CREATE TABLE IF NOT EXISTS symbol (
     qualified_name TEXT NOT NULL,
     kind TEXT NOT NULL,            -- function | class | method | module | variable
     signature TEXT,
+    signature_hash TEXT,           -- xxh3 of signature; drift trigger independent of body
     docstring TEXT,
     body_hash TEXT,
     start_line INTEGER NOT NULL,
@@ -61,18 +62,6 @@ CREATE TABLE IF NOT EXISTS symbol_edge (
 
 CREATE INDEX IF NOT EXISTS idx_edge_src ON symbol_edge(src_symbol_id, edge_type);
 CREATE INDEX IF NOT EXISTS idx_edge_dst ON symbol_edge(dst_symbol_id, edge_type);
-
--- Unresolved references kept for incremental resolve
-CREATE TABLE IF NOT EXISTS unresolved_ref (
-    id INTEGER PRIMARY KEY,
-    src_symbol_id INTEGER NOT NULL REFERENCES symbol(id) ON DELETE CASCADE,
-    target_name TEXT NOT NULL,
-    ref_type TEXT NOT NULL DEFAULT 'call',
-    line INTEGER
-);
-
-CREATE INDEX IF NOT EXISTS idx_unresolved_target ON unresolved_ref(target_name);
-CREATE INDEX IF NOT EXISTS idx_unresolved_src ON unresolved_ref(src_symbol_id);
 
 -- ===== Requirements =====
 CREATE TABLE IF NOT EXISTS module (
@@ -122,6 +111,7 @@ CREATE TABLE IF NOT EXISTS doc (
     target_key TEXT NOT NULL,       -- qualified_name | module name | rf_id
     content TEXT NOT NULL,
     body_hash_at_write TEXT,        -- snapshot of symbol body_hash when generated
+    signature_hash_at_write TEXT,   -- snapshot of symbol signature_hash when generated
     generated_at TEXT NOT NULL DEFAULT (datetime('now')),
     UNIQUE(project_id, target_type, target_key)
 );

@@ -15,16 +15,25 @@ from fastmcp import Context, FastMCP
 from livespec_mcp.state import get_state
 
 
-def _persist_doc(st, target_type: str, target_key: str, content: str, body_hash: str | None) -> None:
+def _persist_doc(
+    st,
+    target_type: str,
+    target_key: str,
+    content: str,
+    body_hash: str | None,
+    signature_hash: str | None = None,
+) -> None:
     pid = st.project_id
     st.conn.execute(
-        """INSERT INTO doc(project_id, target_type, target_key, content, body_hash_at_write)
-           VALUES(?,?,?,?,?)
+        """INSERT INTO doc(project_id, target_type, target_key, content,
+                            body_hash_at_write, signature_hash_at_write)
+           VALUES(?,?,?,?,?,?)
            ON CONFLICT(project_id, target_type, target_key)
            DO UPDATE SET content=excluded.content,
                          body_hash_at_write=excluded.body_hash_at_write,
+                         signature_hash_at_write=excluded.signature_hash_at_write,
                          generated_at=datetime('now')""",
-        (pid, target_type, target_key, content, body_hash),
+        (pid, target_type, target_key, content, body_hash, signature_hash),
     )
     # Mirror to filesystem
     safe_key = target_key.replace("/", "_").replace("..", "_")
@@ -84,8 +93,8 @@ def register(mcp: FastMCP) -> None:
         st = get_state()
         pid = st.project_id
         sym = st.conn.execute(
-            """SELECT s.id, s.name, s.qualified_name, s.kind, s.signature, s.docstring,
-                      s.start_line, s.end_line, s.body_hash, f.path AS file_path
+            """SELECT s.id, s.name, s.qualified_name, s.kind, s.signature, s.signature_hash,
+                      s.docstring, s.start_line, s.end_line, s.body_hash, f.path AS file_path
                FROM symbol s JOIN file f ON f.id=s.file_id
                WHERE f.project_id=? AND s.qualified_name=? LIMIT 1""",
             (pid, identifier),
@@ -103,7 +112,10 @@ def register(mcp: FastMCP) -> None:
             source = ""
 
         if content is not None:
-            _persist_doc(st, "symbol", sym_d["qualified_name"], content, sym_d["body_hash"])
+            _persist_doc(
+                st, "symbol", sym_d["qualified_name"], content,
+                sym_d["body_hash"], sym_d.get("signature_hash"),
+            )
             return {
                 "target": sym_d["qualified_name"],
                 "saved_to": f"doc://symbol/{sym_d['qualified_name']}",
@@ -128,7 +140,10 @@ def register(mcp: FastMCP) -> None:
                 "body_hash": sym_d["body_hash"],
             }
         content_str = response.text if hasattr(response, "text") else str(response)
-        _persist_doc(st, "symbol", sym_d["qualified_name"], content_str, sym_d["body_hash"])
+        _persist_doc(
+            st, "symbol", sym_d["qualified_name"], content_str,
+            sym_d["body_hash"], sym_d.get("signature_hash"),
+        )
         return {
             "target": sym_d["qualified_name"],
             "saved_to": f"doc://symbol/{sym_d['qualified_name']}",
@@ -204,28 +219,37 @@ def register(mcp: FastMCP) -> None:
     ) -> dict[str, Any]:
         """Find docs whose source has drifted since they were generated.
 
-        For symbols, compares `doc.body_hash_at_write` vs the current
-        `symbol.body_hash`. Stale docs should be regenerated via
-        `generate_docs_for_symbol`.
+        For symbols, a doc is stale when EITHER the body or the signature
+        changed since the doc was written. Signature drift catches contract
+        changes (parameter added, return type changed) that don't touch the
+        body. Stale docs should be regenerated via `generate_docs_for_symbol`.
         """
         st = get_state()
         pid = st.project_id
         stale: list[dict[str, Any]] = []
         if target_type in ("symbol", "all"):
             rows = st.conn.execute(
-                """SELECT d.target_key, d.body_hash_at_write, s.body_hash, s.qualified_name,
-                          d.generated_at
+                """SELECT d.target_key, d.body_hash_at_write, d.signature_hash_at_write,
+                          s.body_hash, s.signature_hash, s.qualified_name, d.generated_at
                    FROM doc d JOIN symbol s ON s.qualified_name = d.target_key
                    JOIN file f ON f.id = s.file_id
                    WHERE d.project_id=? AND f.project_id=? AND d.target_type='symbol'""",
                 (pid, pid),
             ).fetchall()
             for r in rows:
+                drift = []
                 if r["body_hash_at_write"] != r["body_hash"]:
+                    drift.append("body")
+                if (
+                    r["signature_hash_at_write"] is not None
+                    and r["signature_hash_at_write"] != r["signature_hash"]
+                ):
+                    drift.append("signature")
+                if drift:
                     stale.append({
                         "type": "symbol",
                         "target": r["qualified_name"],
-                        "drift": "body_hash changed",
+                        "drift": "+".join(drift) + " changed",
                         "generated_at": r["generated_at"],
                     })
         if target_type in ("requirement", "all"):

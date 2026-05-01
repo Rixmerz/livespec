@@ -35,6 +35,8 @@ def _migrate_v1_to_v2(conn: sqlite3.Connection) -> None:
     """Drop dead tables/columns from v1 schemas. Idempotent."""
     # commit_snapshot was never written; simply drop if present.
     conn.execute("DROP TABLE IF EXISTS commit_snapshot")
+    # unresolved_ref is now resolved in-memory per run (P1.3); drop the persisted table.
+    conn.execute("DROP TABLE IF EXISTS unresolved_ref")
 
     # file.size_bytes — drop column if present (SQLite supports DROP COLUMN since 3.35).
     cols = {r["name"] for r in conn.execute("PRAGMA table_info(file)")}
@@ -57,6 +59,20 @@ def _migrate_v1_to_v2(conn: sqlite3.Connection) -> None:
     if "error" in cols:
         try:
             conn.execute("ALTER TABLE index_run DROP COLUMN error")
+        except sqlite3.OperationalError:
+            pass
+
+    # P2.4: add signature_hash columns if missing
+    sym_cols = {r["name"] for r in conn.execute("PRAGMA table_info(symbol)")}
+    if "signature_hash" not in sym_cols:
+        try:
+            conn.execute("ALTER TABLE symbol ADD COLUMN signature_hash TEXT")
+        except sqlite3.OperationalError:
+            pass
+    doc_cols = {r["name"] for r in conn.execute("PRAGMA table_info(doc)")}
+    if "signature_hash_at_write" not in doc_cols:
+        try:
+            conn.execute("ALTER TABLE doc ADD COLUMN signature_hash_at_write TEXT")
         except sqlite3.OperationalError:
             pass
 

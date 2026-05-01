@@ -1,5 +1,10 @@
 """Project indexer: walks workspace, extracts symbols+refs, persists to SQLite,
-and resolves call edges by name matching."""
+and resolves call edges by name matching.
+
+Design note: refs are kept in a per-run in-memory dict keyed by `src_symbol_id`,
+so resolution happens once after every changed file has been re-extracted.
+There is no on-disk `unresolved_ref` table — that was a v1 leak of an
+implementation detail into the schema and the source of two regression bugs."""
 
 from __future__ import annotations
 
@@ -89,6 +94,10 @@ def index_project(
     }
     seen: set[str] = set()
 
+    # In-memory ref pool collected during this run. Maps src_symbol_id -> list of
+    # (target_name, ref_type). Resolved into edges after all files are processed.
+    pending_refs: list[tuple[int, str, str]] = []
+
     with transaction(conn):
         for p in files:
             stats.files_total += 1
@@ -123,17 +132,19 @@ def index_project(
                 line_count=line_count,
                 mtime=mtime,
             )
-            _replace_symbols(conn, file_id=file_id, result=result)
+            new_refs = _replace_symbols(conn, file_id=file_id, result=result)
+            pending_refs.extend(new_refs)
 
         # Remove deleted files
         for rel, row in existing.items():
             if rel not in seen:
                 conn.execute("DELETE FROM file WHERE id = ?", (row["id"],))
 
-    # Resolve refs only if anything changed; otherwise re-running would wipe and
-    # rebuild against an empty unresolved_ref pool, deleting all edges.
-    if stats.files_changed > 0 or force:
-        _resolve_refs(conn, project_id=project_id)
+    # Resolve only the refs we just collected; edges from untouched files survive
+    # because we never touched their src symbols (no cascade).
+    if pending_refs:
+        _resolve_refs(conn, project_id=project_id, pending=pending_refs)
+
     stats.edges_total = int(
         conn.execute(
             """SELECT COUNT(*) c FROM symbol_edge e
@@ -179,7 +190,7 @@ def _upsert_file(
                indexed_at=datetime('now') WHERE id=?""",
             (language, content_hash, line_count, mtime, file_id),
         )
-        # Wipe old symbols (cascade also wipes edges)
+        # Wipe old symbols (cascade also wipes edges with src OR dst in those symbols)
         conn.execute("DELETE FROM symbol WHERE file_id=?", (file_id,))
         return file_id
     cur = conn.execute(
@@ -190,68 +201,62 @@ def _upsert_file(
     return int(cur.lastrowid)
 
 
-def _replace_symbols(conn: sqlite3.Connection, *, file_id: int, result: ExtractResult) -> None:
-    # Insert symbols, build qname -> id map for refs
+def _replace_symbols(
+    conn: sqlite3.Connection, *, file_id: int, result: ExtractResult
+) -> list[tuple[int, str, str]]:
+    """Insert symbols for a file and return the refs collected, with src ids
+    resolved to symbol.id values (so the caller can append them to the in-memory
+    pending_refs pool without another DB round-trip)."""
     qname_to_id: dict[str, int] = {}
-    # First pass: insert without parent
     for s in result.symbols:
         body_hash = xxhash.xxh3_128_hexdigest(s.body_hash_seed.encode("utf-8", errors="replace"))
+        sig_hash = (
+            xxhash.xxh3_128_hexdigest(s.signature.encode("utf-8", errors="replace"))
+            if s.signature else None
+        )
         cur = conn.execute(
             """INSERT INTO symbol(file_id, parent_symbol_id, name, qualified_name, kind,
-                signature, docstring, body_hash, start_line, end_line)
-               VALUES(?,?,?,?,?,?,?,?,?,?)""",
+                signature, signature_hash, docstring, body_hash, start_line, end_line)
+               VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
             (
                 file_id, None, s.name, s.qualified_name, s.kind,
-                s.signature, s.docstring, body_hash, s.start_line, s.end_line,
+                s.signature, sig_hash, s.docstring, body_hash, s.start_line, s.end_line,
             ),
         )
         qname_to_id[s.qualified_name] = int(cur.lastrowid)
-    # Second pass: link parents
     for s in result.symbols:
         if s.parent_qname and s.parent_qname in qname_to_id:
             conn.execute(
                 "UPDATE symbol SET parent_symbol_id=? WHERE id=?",
                 (qname_to_id[s.parent_qname], qname_to_id[s.qualified_name]),
             )
-    # Refs: stash unresolved for cross-file resolution
+    refs: list[tuple[int, str, str]] = []
     for r in result.refs:
         src_id = qname_to_id.get(r.src_qname)
         if src_id is None:
             continue
-        conn.execute(
-            "INSERT INTO unresolved_ref(src_symbol_id, target_name, ref_type, line) VALUES(?,?,?,?)",
-            (src_id, r.target_name, r.ref_type, r.line),
-        )
+        refs.append((src_id, r.target_name, r.ref_type))
+    return refs
 
 
-def _resolve_refs(conn: sqlite3.Connection, *, project_id: int) -> int:
-    """Resolve unresolved_ref by short-name matching across the project.
+def _resolve_refs(
+    conn: sqlite3.Connection,
+    *,
+    project_id: int,
+    pending: list[tuple[int, str, str]],
+) -> int:
+    """Resolve in-memory refs by short-name matching against all symbols in the
+    project. One match -> high-confidence edge (weight 1.0). Multiple matches ->
+    connect to all (weight 0.5). Zero matches -> drop.
 
-    Strategy: for each unresolved_ref.target_name, find all symbols in the project
-    with that short name. If exactly one match -> high-confidence edge. Multiple
-    matches -> connect to all (low-confidence weight 0.5). Zero matches -> drop.
+    The src symbols are necessarily in files that were just re-extracted, so
+    their existing edges were already cascaded by the symbol DELETE in
+    `_upsert_file`. We only INSERT here — no DELETE on the project-wide edge
+    table — which preserves edges from unchanged files.
     """
-    # ON DELETE CASCADE on symbol already drops edges for symbols in changed
-    # files. We only need to wipe edges whose src is in unresolved_ref so that
-    # rebuilding from those refs is idempotent — edges from unchanged files stay.
-    conn.execute(
-        """DELETE FROM symbol_edge
-           WHERE edge_type='calls' AND src_symbol_id IN (
-               SELECT DISTINCT u.src_symbol_id FROM unresolved_ref u
-               JOIN symbol s ON s.id = u.src_symbol_id
-               JOIN file f ON f.id = s.file_id WHERE f.project_id=?)""",
-        (project_id,),
-    )
-    rows = conn.execute(
-        """SELECT u.id, u.src_symbol_id, u.target_name
-           FROM unresolved_ref u
-           JOIN symbol s ON s.id = u.src_symbol_id
-           JOIN file f ON f.id = s.file_id
-           WHERE f.project_id = ?""",
-        (project_id,),
-    ).fetchall()
+    if not pending:
+        return 0
 
-    # Build name index
     name_index: dict[str, list[int]] = {}
     for r in conn.execute(
         """SELECT s.id, s.name FROM symbol s JOIN file f ON f.id=s.file_id WHERE f.project_id=?""",
@@ -261,33 +266,22 @@ def _resolve_refs(conn: sqlite3.Connection, *, project_id: int) -> int:
 
     edge_count = 0
     seen_pairs: set[tuple[int, int]] = set()
-    for u in rows:
-        targets = name_index.get(u["target_name"], [])
+    for src_id, target_name, _ref_type in pending:
+        targets = name_index.get(target_name, [])
         if not targets:
             continue
         weight = 1.0 if len(targets) == 1 else 0.5
         for tid in targets:
-            if tid == u["src_symbol_id"]:
+            if tid == src_id:
                 continue
-            key = (int(u["src_symbol_id"]), int(tid))
+            key = (src_id, tid)
             if key in seen_pairs:
                 continue
             seen_pairs.add(key)
-            try:
-                conn.execute(
-                    """INSERT OR IGNORE INTO symbol_edge(src_symbol_id, dst_symbol_id, edge_type, weight)
-                       VALUES(?,?,?,?)""",
-                    (u["src_symbol_id"], tid, "calls", weight),
-                )
-                edge_count += 1
-            except sqlite3.IntegrityError:
-                pass
-
-    # Clear unresolved
-    conn.execute(
-        """DELETE FROM unresolved_ref
-           WHERE src_symbol_id IN (
-             SELECT s.id FROM symbol s JOIN file f ON f.id=s.file_id WHERE f.project_id=?)""",
-        (project_id,),
-    )
+            conn.execute(
+                """INSERT OR IGNORE INTO symbol_edge(src_symbol_id, dst_symbol_id, edge_type, weight)
+                   VALUES(?,?,?,?)""",
+                (src_id, tid, "calls", weight),
+            )
+            edge_count += 1
     return edge_count
