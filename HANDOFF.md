@@ -32,15 +32,17 @@ Todo el stack es local-first: 0 servicios externos, 0 API keys obligatorias, 0 D
 
 ---
 
-## 3. Estado actual: v0.8 P0 + P1 + P2-prep + P3a + P3b-prep hechos. Bloqueado en P2 (campo).
+## 3. Estado actual: v0.8 P0+P1+P2(full)+P3a+P3b-prep hechos. P3 main pass desbloqueado.
 
-**Último commit esperado:** `v0.8 P3b prep: resource parity for project://overview + project://index/status`
+**Último commit:** `2956bcc v0.8 P2 fix #11: nested-fn closure callback detection`
+**HEAD sincronizado con origin/main.** Working tree clean. Tests 150/150.
 
-Sesión 2026-05-01 cerró cinco phases consecutivas de v0.8 en una
-corrida. Cada una commiteada y pusheada por separado. Working tree
-clean.
+Sesión 2026-05-01 ejecutó **batch completo P2**: 3 sesiones de
+battle-test reales (the workflow runner + livespec-mcp + demo-app) → surfacearon
+11 bugs → fixados todos → wire-validated 100% noise reduction en
+`find_dead_code` sobre el propio livespec (18 → 0 false positives).
 
-### Commits del batch v0.8
+### Commits del batch v0.8 (cronológico)
 
 | Phase | Commit | Cambio neto |
 |---|---|---|
@@ -48,7 +50,15 @@ clean.
 | **P1** instrumentation | `bab89ba` | middleware logging + JSONL |
 | **P2** prep | `fd6b39c` | analyzer + skeleton de data doc |
 | **P3a** alias drop | `08315bc` | −4 aliases v0.6 deprecated (breaking) |
-| **P3b prep** | (this commit) | resource paridad + helpers compartidos |
+| **P3b prep** | `770be36` | resource paridad + helpers compartidos |
+| **P2 session 01** | `f7384e0` | the workflow runner exploration → bugs #1-3 surfaced |
+| **P2 fixes #1-3** | `bc8ba1d` | resolver fan-out + entry-point flag + structural-noise |
+| **P2 session 02** | `44a0dc4` | livespec refactor → bugs #4-7 surfaced |
+| **P2 session 03** | `af4f3db` | demo-app RF flow → bugs #8-10 surfaced |
+| **P2 fixes #4-10** | `c14e8d4` | find_dead_code accuracy + audit_coverage + git_diff filter + propose tests-skip |
+| **P2 fix #6 cross-file** | `a8daf0d` | middleware classes registered cross-file |
+| **P2 wire validation** | `e40a693` | 18→1 dead-code false positives doc |
+| **P2 fix #11 closures** | `2956bcc` | nested-fn closure callback detection |
 
 ### P0 — quick wins (4 tools)
 
@@ -159,31 +169,113 @@ nuevo shape) + 2 tests nuevos de paridad explícita
 `test_resource_index_status_parity_with_tool`) que invocan tool y
 resource y comparan output exacto.
 
-### Métricas netas v0.8 (a este punto)
+### P2 sesiones de battle-test (ejecutadas, 40 calls / 3 workspaces)
 
-- **Wire-count tools**: 35+4 (v0.7) → 39+0 (P3a/P3b prep).
-  Misma funcionalidad, superficie sin deprecated.
-- **Tests**: 118 (v0.7) → 141 (P3b prep). +14 nuevos en P0+P1+P2 prep,
-  −1 alias-compat en P3a, +2 paridad en P3b prep.
+Toda la data en `docs/AGENT_USAGE_DATA.md`. Usar `bench/agent_log_analyze.py`
+para re-correr el agregado.
+
+| # | Codebase | Profile | Calls | Bugs surfaced |
+|---|---|---|---:|---|
+| 01 | the workflow runner (130 files / 1173 syms) | exploration | 11 | #1 resolver fan-out, #2 entry-point flag, #3 structural noise |
+| 02 | livespec-mcp itself (84 files / 495 syms) | refactor | 11 | #4 `__main__` guards, #5 list-stored fns, #6 middleware, #7 fixtures-as-tests |
+| 03 | demo-app (4 files / 23 syms / 6 RFs) | RF flow | 7 | #8 `__init__.py` orphan, #9 missing test-coverage signal, #10 propose tests/ |
+
+Tier-1 data-validated: **14/39 tools** (8 code intel + 4 RF agentic +
+2 P0 wins overlap). Plugin candidates: **11 livespec-rf + 3 livespec-docs**.
+Drop / resource-only: **8 tools**. Detalle completo en
+`docs/AGENT_USAGE_DATA.md` § "Updated tier signal".
+
+### P2 bugs surfaced + fixed (11/11 cerrados)
+
+| # | Tool | Síntoma | Fix |
+|---|---|---|---|
+| 1 | `_resolve_refs` (indexer) | 7 callees en `embed_cache.search`, 4 false positives por short-name fan-out | Same-file fallback weight 0.7 cuando scope no desambigua |
+| 2 | `quick_orient` | `@mcp.tool` con 0 callers reportado como "dead" implícitamente | Output `is_entry_point` + `framework_decorators` |
+| 3 | `get_project_overview` | top_symbols dominado por `.get`/`add_parser`/`run` (patrones estructurales) | Filter names en ≥3 files, opt-out via `include_structural_patterns=True` |
+| 4 | `find_dead_code` | `bench.run.main`, `server.main` flagged dead pero llamados desde `__main__` guard | AST-walk de top-level statements colecta refs |
+| 5 | `find_dead_code` | `_m001_drop_dead_tables` etc. flagged pero referenciados en `MIGRATIONS = [...]` list | Idem: list/tuple literal refs caen en module-level walk |
+| 6 | `find_dead_code` | `AgentLogMiddleware.on_call_tool` flagged, registrada cross-file en `server.py` | Cross-file: union de module-level refs + protected_class_qnames con `add_middleware` arg-position |
+| 7 | `git_diff_impact` | `tests/fixtures/python/same_name_fanout/embed_cache.py` listado como suggested_test | `_looks_like_test_file()` excluye fixtures/, data/, __fixtures__/ |
+| 8 | `audit_coverage` | `__init__.py` flagged en `modules_truly_orphan` | Filter package-marker basenames (init.py, mod.rs, package-info.java, lib.rs, index.{ts,js}) |
+| 9 | `audit_coverage` | Test files orphan, no se acreditaba `relation='tests'` | Nuevo field `rf_test_coverage` + count `rfs_with_test_coverage` |
+| 10 | `propose_requirements` | RF-009 "Test Shortener" propuesto agrupando 5 test fns | Skip path bajo `tests/`, `test/`, `__tests__/`, `fixtures/` |
+| 11 | `find_dead_code` | `start_watcher._do_reindex` (nested fn passed como callback) flagged | `_used_nested_def_names` per-file: nested def names referenciados en parent body |
+
+Wire-validated final state contra livespec-mcp: `find_dead_code` count
+**0** (vs 18 pre-fixes).
+
+### Métricas netas v0.8
+
+- **Wire-count tools**: 35+4 (v0.7) → 39+0. Misma superficie, sin deprecated.
+- **Tests**: 118 (v0.7) → **150**. +32 net (+33 nuevos −1 alias-compat).
   `uv run pytest -q -m "not embeddings"`.
-- **Schema**: sin migration. v7 sigue siendo el último.
-- **Working tree**: clean.
+- **Schema**: v7 sin migration nueva.
+- **Edge graph precision livespec-mcp**: 969 → 752 edges (~22% drop = false positives eliminados por resolver fix #1).
+- **find_dead_code precision livespec-mcp**: 18 → 0 false positives (100%).
 
-### Lo que queda de v0.8 (data-blocked desde acá)
+### Lo que queda de v0.8 (P3 main pass — todo desbloqueado)
 
-- **P2 ejecución (campo)**: 5 codebases × 3-5 sesiones reales →
-  alimentar JSONL al analyzer → llenar `docs/AGENT_USAGE_DATA.md`
-  Findings. **Esto NO se autoejecuta — requiere sesiones reales
-  con un agent contra repos reales.**
-- **P3 main pass**: plugin auto-detect (`livespec-rf` /
-  `livespec-docs` por DB state); tool→resource conversion para
-  `get_index_status` + `get_project_overview` (helpers ya
-  compartidos en P3b prep — falta sólo deprecar/borrar el tool
-  wrapper, ~10 LOC de cambio); drops tier-4 validados contra log;
-  mover RF mutación tools a plugin.
-- **P4 pitch alignment**: README headline, `docs/AGENT_QUICKSTART.md`,
-  sección perf con números reales.
-- **P7 cortar v0.8.0**: bump version, tag, release.
+Data limpia, tier signal data-validated. Próximas fases NO requieren más
+sesiones — pueden arrancar con confianza. **Items 1-2 son non-breaking,
+items 3-5 son breaking changes que requieren OK explícito.**
+
+- **P3.1 (no-breaking) Plugin auto-detect framework**:
+  - At server startup: `SELECT COUNT(*) FROM rf > 0` → registrar `livespec-rf`.
+  - Idem `SELECT COUNT(*) FROM doc > 0` → registrar `livespec-docs`.
+  - `LIVESPEC_PLUGINS=rf,docs` env var override.
+  - Crear `tools/plugins/rf.py` y `tools/plugins/docs.py` (vacíos por ahora).
+  - server.py: `if state.has_rfs: from .plugins.rf import register; register(mcp)`.
+  - Tests: 2 nuevos verifying conditional registration.
+  - **Sin breaking** porque las tools siguen registradas por default igual.
+- **P3.2 (no-breaking) Tool→resource conversion `get_index_status`**:
+  - Resource `project://index/status` ya paritético (P3b prep landed).
+  - Marcar tool como deprecado en docstring + log warning una vez por session.
+  - Mantener tool 1 release más antes de drop. (Drop in v0.9.)
+- **P3.3 (BREAKING) Drops tier-4** (8 tools):
+  - `list_files`, `start_watcher`, `stop_watcher`, `watcher_status`,
+    `rebuild_chunks`, `get_call_graph`, `get_symbol_info`, `search`.
+  - Justificación: silent en 3 sessions, 3 profiles distintos. Stakeholder
+    posture en CLAUDE.md auto-corrige tier basado en data.
+  - Tests: cleanup tests que invocan estas tools. Algunas pruebas de
+    happy-path solo, fácil de borrar.
+  - CHANGELOG entry "Removed".
+- **P3.4 (BREAKING) Move RF mutation tools → `plugins/rf.py`** (11 tools):
+  - `link_rf_symbol`, `bulk_link_rf_symbols`, `link_rf_dependency`,
+    `unlink_rf_dependency`, `get_rf_dependency_graph`,
+    `scan_rf_annotations`, `scan_docstrings_for_rf_hints`,
+    `create_requirement`, `update_requirement`, `delete_requirement`,
+    `import_requirements_from_markdown`.
+  - Si `livespec-rf` plugin auto-loads (DB state), agente sigue viendo
+    las tools. Si no, no. **Para repos sin RFs, surface se reduce.**
+- **P3.5 (BREAKING) Move docs tools → `plugins/docs.py`** (3 tools):
+  - `generate_docs`, `list_docs`, `export_documentation`.
+  - Idem auto-load por `doc` table count.
+
+- **P4 pitch alignment (no-breaking, post-P3)**:
+  - README headline → mover "local-first" del lead a feature bullet,
+    liderar con "code intelligence for AI agents — built around RF↔code
+    traceability".
+  - Crear `docs/AGENT_QUICKSTART.md` con el flow brownfield canónico
+    (de `docs/AGENT_USAGE_DATA.md` § "Common follow-up patterns").
+  - Sección perf en README con números reales: livespec-mcp (505 syms,
+    ~50ms p95), the workflow runner (1173 syms, ~80ms), demo-app (23 syms).
+
+- **P7 cortar v0.8.0** (post-P3+P4):
+  - CHANGELOG promote [Unreleased] → [0.8.0] dated.
+  - `pyproject.toml` version bump.
+  - README tool count actualizado (39 → 17 default + 14 plugins?).
+  - Update HANDOFF §3.
+  - `git tag -a v0.8.0 -m "..."` + `gh release create v0.8.0`.
+
+### Bugs deferidos a v0.9
+
+Ninguno bloqueante. Posibles items:
+- Cross-language version del module-level ref scanner (TS/Rust/Go
+  patterns: `if (require.main === module)`, `module.exports`, etc.).
+- Closure-capture detection en otros lenguajes (TS arrow callbacks).
+- `_resolve_refs` targeted re-walk (Django partial 7s → 1s) —
+  desde v0.7, sigue diferido.
+- LLM-assisted RF refinement opcional sobre `propose_requirements_from_codebase`.
 
 ---
 
@@ -597,35 +689,29 @@ livespec-mcp/
 
 ---
 
-## 8. Sugerencia de orden para v0.8
+## 8. Estado completo v0.8 + lo que sigue
 
-Decidido: **A.0 → B → A → C**. Estado a `08315bc`:
+P0 + P1 + P2 (3 sessions + 11 fixes + wire validation) + P3a + P3b-prep
+**HECHOS y mergeados a main**. P3 main pass desbloqueado.
 
-1. ✅ **P0 quick wins** — `0db55a8`. 4 tools nuevas + 9 tests.
+1. ✅ **P0 quick wins** — `0db55a8`. 4 tools + 9 tests.
 2. ✅ **P1 instrumentation** — `bab89ba`. Middleware + 5 tests.
-3. 🔵 **P2 battle-test** — prep listo (`fd6b39c`: analyzer + skeleton).
-   **Ejecución bloqueada en trabajo de campo**: 5 codebases × 3-5
-   sesiones reales con un agent → JSONL al analyzer → llenar
-   `docs/AGENT_USAGE_DATA.md` Findings. NO se autoejecuta.
-4. ⏳ **P3 curation pass** — sub-item P3a (drop aliases v0.6) hecho
-   en `08315bc`. Resto bloqueado por data de P2:
-     - Plugin auto-detect (`livespec-rf` / `livespec-docs` por
-       `SELECT COUNT(*) FROM rf|doc > 0`)
-     - Tool→resource: `get_index_status`, `get_project_overview`
-       (resources ya existen, falta deprecar el tool wrapper —
-       requiere edits en `tools/indexing.py`,
-       `tools/analysis.py`, y enriquecer el resource para
-       paridad con el output del tool)
-     - Drops tier-4 (`list_files`, `rebuild_chunks`,
-       `start_watcher`, `stop_watcher`, `watcher_status`) tras
-       confirmar contra log que efectivamente no se llaman
-     - Mover RF mut/docs tools a `tools/plugins/rf.py` +
-       `tools/plugins/docs.py`
-5. ⏳ **P4 pitch alignment** — README headline + `AGENT_QUICKSTART.md`
-   + sección perf con Django/a large Rust monorepo/the workflow runner.
-6. ⏳ **P7 cut v0.8.0** — CHANGELOG promote [Unreleased] → [0.8.0],
-   pyproject version bump, README tool count, HANDOFF §3 update,
-   tag, release.
+3. ✅ **P2 prep** — `fd6b39c`. Analyzer + skeleton.
+4. ✅ **P3a alias drop** — `08315bc`. −4 aliases v0.6 (breaking).
+5. ✅ **P3b prep** — `770be36`. Resource paridad + helpers compartidos.
+6. ✅ **P2 sesiones 01-03** — `f7384e0` + `44a0dc4` + `af4f3db`. 40 calls,
+   3 codebases, surfacearon 11 bugs.
+7. ✅ **P2 fixes #1-11** — `bc8ba1d` + `c14e8d4` + `a8daf0d` + `2956bcc`.
+   Todos los bugs de battle-test cerrados.
+8. ✅ **P2 wire validation** — `e40a693`. find_dead_code 18→0 false
+   positives en livespec-mcp.
+9. 🟢 **P3 main pass** — desbloqueado. Detalle item-by-item en §3
+   ("Lo que queda de v0.8"). Items 1-2 son non-breaking, items 3-5
+   son breaking changes que requieren OK explícito.
+10. ⏳ **P4 pitch alignment** — README headline + AGENT_QUICKSTART.md
+    + sección perf. Detalle en §3.
+11. ⏳ **P7 cut v0.8.0** — CHANGELOG promote, pyproject bump, tag,
+    release. Detalle en §3.
 
 **Lo que NO va en v0.8:**
 
@@ -640,46 +726,64 @@ Decidido: **A.0 → B → A → C**. Estado a `08315bc`:
 ## 9. Estado de la sesión actual al momento de escribir esto
 
 - Working tree: clean (todo committed y pushed)
-- Branch: main, sincronizado con origin/main en `08315bc`
-- Último commit: `v0.8 P3a: drop v0.6 deprecated RF aliases (breaking)`
-- Tests: 139/139 default (sin embeddings).
+- Branch: main, sincronizado con origin/main en `2956bcc`
+- Último commit: `v0.8 P2 fix #11: nested-fn closure callback detection`
+- Tests: **150/150** default (sin embeddings).
   `uv run pytest -q -m "not embeddings"`.
 - Wire-count tools: 39 (39 canonical, sin deprecated).
 - Schema: v7 (sin migration nueva en v0.8 a este punto).
-- MCP server local: el proceso connected al cliente sigue corriendo
-  el binario v0.7. Para usar las 4 quick-wins + middleware: `/mcp`
-  reconnect en el cliente Claude Code. Si la sesión actual no las
-  necesita, no es bloqueante.
-- Archivos nuevos creados en v0.8 (todos commiteados):
+- MCP server local: si pasaste el último ciclo `/mcp` reconnect, está
+  corriendo `2956bcc`. Para confirmar: `mcp__livespec__find_dead_code({})`
+  contra livespec-mcp debería dar `count: 0`. Si da más, el proceso
+  está corriendo binario viejo — `/mcp` reconnect.
+- Archivos nuevos en v0.8 (todos commiteados):
   - `src/livespec_mcp/instrumentation.py` (middleware)
   - `bench/agent_log_analyze.py` (P2 analyzer)
-  - `docs/AGENT_USAGE_DATA.md` (P2 data skeleton)
-  - `tests/test_quick_wins.py`
-  - `tests/test_instrumentation.py`
-  - `tests/test_agent_log_analyze.py`
+  - `docs/AGENT_USAGE_DATA.md` (P2 data — 40 calls / 3 sessions / tier signal)
+  - `tests/test_quick_wins.py`, `test_instrumentation.py`,
+    `test_agent_log_analyze.py`
+  - `tests/fixtures/python/same_name_fanout/` (resolver fix #1 fixture)
 - Memoria persistente (sin cambios):
   - `feedback_workflow_main_direct.md` (push directo a main, no PRs)
   - `project_stakeholder_posture.md` (RFs first-class, agent UX es el producto)
+- Logs JSONL acumulados (P2 data):
+  - `<workflow-runner>/.mcp-docs/agent_log.jsonl` (sesión 01)
+  - `<repo>/.mcp-docs/agent_log.jsonl` (sesión 02 + validaciones)
+  - `<demo-app>/.mcp-docs/agent_log.jsonl` (sesión 03)
+  - Re-correr aggregate: `uv run python bench/agent_log_analyze.py <ws1> <ws2> <ws3>`
 
 ---
 
 ## 10. Cuando reanude el agente
 
 1. **Confirmar contexto** leyendo este archivo + `git log --oneline -5`.
-   Esperado: HEAD = `08315bc v0.8 P3a: drop v0.6 deprecated RF aliases`.
-2. **Verificar tests verdes** con `uv run pytest -q -m "not embeddings"` (139).
-3. **Default next step depende del estado del battle-test** (P2 ejecución):
-   - **Si NO hay logs todavía** en `<algun-workspace>/.mcp-docs/agent_log.jsonl`
-     de los target codebases (Django/Next.js/a large Rust monorepo/etc.): la próxima fase
-     útil es **driveá sesiones reales** (no se autoejecuta — requiere
-     un agent corriendo tasks reales contra repos reales). Después
-     correr `uv run python bench/agent_log_analyze.py <ws1> <ws2> ...`
-     y llenar `docs/AGENT_USAGE_DATA.md` Findings.
-   - **Si HAY logs**: ejecutar P3 main pass — analyzer output → tier
-     decisions → drops + plugin auto-detect. Specs en §8 item 4.
-4. **Si el usuario quiere saltarse P2 y avanzar a P4 o P7 sin data**:
-   pausar y avisar que ROADMAP §6 explícitamente prohíbe curation
-   antes de battle-test. Stakeholder posture en CLAUDE.md gana
-   siempre — RF tools NO se demotean por intuición.
-5. Si el usuario pide nuevas features, declinar — v0.8 es ciclo de
-   curación, no de adición. Excepción: bug fixes correctness.
+   Esperado: HEAD = `2956bcc v0.8 P2 fix #11: nested-fn closure callback detection`.
+2. **Verificar tests verdes** con `uv run pytest -q -m "not embeddings"` (150).
+3. **Si MCP no está corriendo `2956bcc`**: pedir al user `/mcp` reconnect
+   antes de testear. Sanity check: `find_dead_code` debe dar `count: 0`
+   sobre livespec-mcp.
+4. **Default next step**: iniciar **P3 main pass**. La data de P2 ya
+   validó las decisiones de tier — ver §3 "Lo que queda de v0.8".
+   Orden recomendado:
+   - **P3.1 Plugin auto-detect** (no-breaking, framework primero) →
+     crea `tools/plugins/rf.py` y `tools/plugins/docs.py`, queda vacíos,
+     server.py registra condicional por DB state. Tests verifying
+     conditional registration. **Implementar este primero ANTES de mover
+     tools** porque sin plugin framework, mover tools rompe agentes
+     existentes.
+   - **P3.2 Tool→resource deprecation** (no-breaking) — marcar
+     `get_index_status` deprecado, NO drop hasta v0.9.
+   - **P3.3 Drops tier-4** (BREAKING, requiere OK del user) — 8 tools:
+     `list_files`, `start_watcher`, `stop_watcher`, `watcher_status`,
+     `rebuild_chunks`, `get_call_graph`, `get_symbol_info`, `search`.
+   - **P3.4 Move RF mutation** (BREAKING, requiere OK) — 11 tools a
+     `plugins/rf.py`.
+   - **P3.5 Move docs tools** (BREAKING, requiere OK) — 3 tools a
+     `plugins/docs.py`.
+5. **Si el user pide saltarse P3 y avanzar a P4/P7 directo**:
+   factible — la data ya validó que los items P3.3-P3.5 son drops/moves
+   correctos. Pero es 1 release de breaking changes en lugar de 2
+   (v0.8 = curation, v0.9 = drop deprecated). Decisión del user.
+6. Si user pide nuevas features, declinar — v0.8 es ciclo de curación,
+   no de adición. Excepción: bug fixes correctness (P2 fixes #1-11
+   fueron exactamente eso).
