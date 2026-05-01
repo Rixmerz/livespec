@@ -1,4 +1,9 @@
-"""Indexing tools: index_project, get_index_status, list_files."""
+"""Indexing tools: index_project, get_index_status, list_files.
+
+Every tool accepts an optional `workspace` argument. When omitted, the server
+falls back to the LIVESPEC_WORKSPACE env var or the current working directory
+(P1.1 multi-tenant). `use_workspace` is retained as a deprecated alias.
+"""
 
 from __future__ import annotations
 
@@ -13,11 +18,11 @@ from livespec_mcp.state import get_state, use_workspace as _use_ws
 def register(mcp: FastMCP) -> None:
     @mcp.tool(annotations={"readOnlyHint": False, "idempotentHint": True})
     def use_workspace(path: str) -> dict[str, Any]:
-        """Switch the active workspace at runtime, no restart needed.
+        """Set the default workspace for subsequent tool calls.
 
-        Closes the current SQLite connection, points the server at `path`, and
-        opens a fresh `.mcp-docs/docs.db` there. Useful for demos and for
-        analyzing multiple repos from a single MCP server instance.
+        Deprecated in favor of passing `workspace=...` to each tool, but kept
+        for v0.1 callers and convenience. Sets LIVESPEC_WORKSPACE in the env
+        and pre-warms the LRU cache for the path.
         """
         st = _use_ws(path)
         return {
@@ -26,17 +31,14 @@ def register(mcp: FastMCP) -> None:
             "state_dir": str(st.settings.state_dir),
         }
 
-    @mcp.tool(
-        annotations={"readOnlyHint": False, "idempotentHint": True, "destructiveHint": False},
-    )
-    def index_project(force: bool = False) -> dict[str, Any]:
-        """Walk the workspace, parse code, and persist symbols + call edges to SQLite.
+    @mcp.tool(annotations={"readOnlyHint": False, "idempotentHint": True, "destructiveHint": False})
+    def index_project(force: bool = False, workspace: str | None = None) -> dict[str, Any]:
+        """Walk the workspace, parse code, persist symbols + call edges.
 
-        Re-uses cached files (xxh3 content hash); pass force=True to re-extract everything.
-        Idempotent across runs. Returns counts and per-language breakdown.
+        File-incremental via xxh3 content hash; pass force=True to re-extract.
         Use after pulling new commits or when documentation feels stale.
         """
-        st = get_state()
+        st = get_state(workspace)
         with st.lock():
             stats = run_index(st.settings, st.conn, force=force)
         return {
@@ -50,22 +52,18 @@ def register(mcp: FastMCP) -> None:
         }
 
     @mcp.tool(annotations={"readOnlyHint": True, "idempotentHint": True})
-    def get_index_status() -> dict[str, Any]:
-        """Report current index status: latest run, totals, freshness.
-
-        Use to decide if `index_project` should run again.
-        """
-        st = get_state()
+    def get_index_status(workspace: str | None = None) -> dict[str, Any]:
+        """Report current index status: latest run, totals, freshness."""
+        st = get_state(workspace)
         pid = st.project_id
         last = st.conn.execute(
-            """SELECT * FROM index_run WHERE project_id=? ORDER BY id DESC LIMIT 1""",
-            (pid,),
+            "SELECT * FROM index_run WHERE project_id=? ORDER BY id DESC LIMIT 1", (pid,)
         ).fetchone()
         files = st.conn.execute(
             "SELECT COUNT(*) c FROM file WHERE project_id=?", (pid,)
         ).fetchone()["c"]
         syms = st.conn.execute(
-            """SELECT COUNT(*) c FROM symbol s JOIN file f ON f.id=s.file_id WHERE f.project_id=?""",
+            "SELECT COUNT(*) c FROM symbol s JOIN file f ON f.id=s.file_id WHERE f.project_id=?",
             (pid,),
         ).fetchone()["c"]
         edges = st.conn.execute(
@@ -92,13 +90,10 @@ def register(mcp: FastMCP) -> None:
         language: str | None = None,
         limit: int = 200,
         cursor: int = 0,
+        workspace: str | None = None,
     ) -> dict[str, Any]:
-        """List indexed files with optional filters and pagination.
-
-        Returns lightweight metadata (path, language, lines, hash). Use `find_symbol`
-        or `get_symbol_info` to drill into contents.
-        """
-        st = get_state()
+        """List indexed files with optional filters and pagination."""
+        st = get_state(workspace)
         pid = st.project_id
         sql = ["SELECT id, path, language, line_count, content_hash, mtime FROM file WHERE project_id=?"]
         args: list[Any] = [pid]

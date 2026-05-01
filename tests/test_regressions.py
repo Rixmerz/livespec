@@ -81,8 +81,12 @@ async def test_signature_drift_marks_doc_stale(sample_repo):
         await c.call_tool("index_project", {})
         # Persist a doc so there's something to compare against
         await c.call_tool(
-            "generate_docs_for_symbol",
-            {"identifier": "pkg.auth.verify", "content": "doc for verify"},
+            "generate_docs",
+            {
+                "target_type": "symbol",
+                "identifier": "pkg.auth.verify",
+                "content": "doc for verify",
+            },
         )
         # Mutate the SIGNATURE of verify (not its body)
         auth_path = sample_repo / "pkg" / "auth.py"
@@ -91,26 +95,31 @@ async def test_signature_drift_marks_doc_stale(sample_repo):
         assert text != new, "fixture must contain the original verify signature"
         auth_path.write_text(new)
         await c.call_tool("index_project", {"force": True})
-        stale = (await c.call_tool("detect_stale_docs", {"target_type": "symbol"})).data
+        stale = (
+            await c.call_tool("list_docs", {"target_type": "symbol", "only_stale": True})
+        ).data
         targets = {s["target"]: s["drift"] for s in stale["stale"]}
         assert "pkg.auth.verify" in targets, f"signature drift not detected: {stale}"
         assert "signature" in targets["pkg.auth.verify"]
 
 
 @pytest.mark.asyncio
-async def test_suggest_rf_links_default_min_score_returns_results(sample_repo):
-    """Regression: default min_score must not silently filter all candidates."""
+async def test_search_returns_positive_scores_for_rf_query(sample_repo):
+    """Regression: scores must be positive and search must return results for
+    natural-language queries derived from an RF (the use case suggest_rf_links
+    used to cover before P1.2 deleted it)."""
     async with Client(mcp) as c:
         await c.call_tool("index_project", {})
         await c.call_tool(
             "create_requirement",
-            {"title": "Login flow", "rf_id": "RF-200"},
+            {"title": "Login flow", "description": "User authenticates by password", "rf_id": "RF-200"},
         )
         await c.call_tool("rebuild_chunks", {})
-        # Default min_score should now be 0.0 (was 0.05 which filtered everything
-        # because BM25 scores were also negative — both bugs together).
-        sug = (await c.call_tool("suggest_rf_links", {"rf_id": "RF-200", "limit": 5})).data
-        assert len(sug["candidates"]) > 0, (
-            "suggest_rf_links returned 0 candidates with default min_score — "
-            "either the score normalization or the default threshold is broken again"
-        )
+        results = (
+            await c.call_tool(
+                "search",
+                {"query": "Login flow user authenticates password", "scope": "code", "limit": 5},
+            )
+        ).data
+        assert len(results["results"]) > 0
+        assert all(r["score"] > 0 for r in results["results"])

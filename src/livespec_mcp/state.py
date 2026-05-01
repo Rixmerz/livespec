@@ -1,13 +1,32 @@
-"""Shared server state: settings + DB connection."""
+"""Multi-tenant per-workspace state cache.
+
+Design (P1.1): the server is a long-running process that may be asked to
+analyze multiple workspaces in a single session — Claude Code shells, multi-
+repo agents, parallel pytest workers. We keep an LRU cache of `AppState`
+keyed by absolute workspace path. Each AppState owns its own SQLite
+connection against the corresponding `.mcp-docs/docs.db`.
+
+Backward compatibility:
+- `get_state()` (no args) resolves to the workspace from the env var
+  `LIVESPEC_WORKSPACE` or the current working directory, matching v0.1.
+- `get_state(workspace=path)` returns the state for a specific workspace.
+- `use_workspace(path)` is kept as a deprecated alias that simply preheats
+  the cache; tools should pass `workspace` directly instead.
+"""
 
 from __future__ import annotations
 
+import os
 import sqlite3
 import threading
+from collections import OrderedDict
 from dataclasses import dataclass
+from pathlib import Path
 
 from livespec_mcp.config import Settings
 from livespec_mcp.storage.db import connect, get_or_create_project
+
+_LRU_MAX = 8
 
 
 @dataclass
@@ -26,37 +45,66 @@ class AppState:
         return self._lock
 
 
-_state: AppState | None = None
+_cache: "OrderedDict[Path, AppState]" = OrderedDict()
+_cache_lock = threading.Lock()
 
 
-def get_state() -> AppState:
-    global _state
-    if _state is None:
-        settings = Settings.load()
+def _resolve_workspace(path: str | Path | None) -> Path:
+    if path is None:
+        path = os.environ.get("LIVESPEC_WORKSPACE") or os.environ.get(
+            "DOCS_BRAIN_WORKSPACE", os.getcwd()
+        )
+    return Path(str(path)).expanduser().resolve()
+
+
+def get_state(workspace: str | Path | None = None) -> AppState:
+    """Return the AppState for the given workspace, opening it if needed.
+
+    With workspace=None, resolves via env var or cwd (v0.1 behaviour).
+    """
+    ws = _resolve_workspace(workspace)
+    with _cache_lock:
+        st = _cache.get(ws)
+        if st is not None:
+            _cache.move_to_end(ws)  # mark as most-recent
+            return st
+        # New workspace — build state, evict LRU if needed
+        settings = Settings(
+            workspace=ws,
+            state_dir=ws / ".mcp-docs",
+            db_path=ws / ".mcp-docs" / "docs.db",
+            docs_dir=ws / ".mcp-docs" / "docs",
+            models_dir=ws / ".mcp-docs" / "models",
+        )
         settings.ensure_dirs()
         conn = connect(settings.db_path)
-        _state = AppState(settings=settings, conn=conn, _lock=threading.Lock())
-    return _state
+        new_state = AppState(settings=settings, conn=conn, _lock=threading.Lock())
+        _cache[ws] = new_state
+        if len(_cache) > _LRU_MAX:
+            _, evicted = _cache.popitem(last=False)
+            try:
+                evicted.conn.close()
+            except Exception:
+                pass
+        return new_state
 
 
 def reset_state() -> None:
-    """For tests."""
-    global _state
-    if _state is not None:
-        try:
-            _state.conn.close()
-        except Exception:
-            pass
-    _state = None
+    """For tests: drop every cached workspace."""
+    with _cache_lock:
+        for st in _cache.values():
+            try:
+                st.conn.close()
+            except Exception:
+                pass
+        _cache.clear()
 
 
 def use_workspace(path: str) -> AppState:
-    """Switch the active workspace at runtime. Closes the old connection and
-    opens a fresh one against the new workspace. Returns the new state.
-    """
-    from pathlib import Path as _Path
-    import os as _os
+    """Deprecated: prefer passing `workspace=` to each tool call.
 
-    _os.environ["LIVESPEC_WORKSPACE"] = str(_Path(path).expanduser().resolve())
-    reset_state()
-    return get_state()
+    Kept for v0.1 callers. Sets the env var so subsequent get_state(None)
+    calls resolve here, and warms the cache for `path`.
+    """
+    os.environ["LIVESPEC_WORKSPACE"] = str(_resolve_workspace(path))
+    return get_state(path)

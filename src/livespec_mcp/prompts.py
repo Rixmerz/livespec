@@ -58,10 +58,9 @@ def register(mcp: FastMCP) -> None:
             f"3) For each undocumented function/class above PageRank threshold:\n"
             f"   a) `get_symbol_info(identifier=qname, detail='full')` to read the source.\n"
             f"   b) Write Markdown docs yourself based on the source.\n"
-            f"   c) `generate_docs_for_symbol(identifier=qname, content=<your_markdown>)`\n"
-            f"      to persist (works in any host). If you skip `content`, the tool\n"
-            f"      will try MCP sampling; in Claude Code that returns the prompt for\n"
-            f"      you to write and retry.\n"
+            f"   c) `generate_docs(target_type='symbol', identifier=qname, content=<markdown>)`.\n"
+            f"      Without `content` the tool will try MCP sampling; in Claude Code\n"
+            f"      that returns the prompt for you to write and retry.\n"
             f"4) Report counts."
         )
 
@@ -70,8 +69,8 @@ def register(mcp: FastMCP) -> None:
         """Detect stale docs and regenerate them."""
         return (
             "Refresh drifted docs. Steps:\n"
-            "1) `detect_stale_docs(target_type='all')` — list drift.\n"
-            "2) For each, run `generate_docs_for_symbol` or `generate_docs_for_requirement`.\n"
+            "1) `list_docs(target_type='all', only_stale=True)` — list drift.\n"
+            "2) For each, regenerate with `generate_docs(target_type=..., identifier=...)`.\n"
             "3) Report a diff summary."
         )
 
@@ -81,7 +80,8 @@ def register(mcp: FastMCP) -> None:
         return (
             f"Explain `{qname}` end-to-end:\n"
             f"1) `get_symbol_info(identifier='{qname}', detail='full')`.\n"
-            f"2) `find_references(identifier='{qname}')` for caller context.\n"
-            f"3) `analyze_impact(target_type='symbol', target='{qname}')` for blast radius.\n"
+            f"2) `analyze_impact(target_type='symbol', target='{qname}', max_depth=1)`\n"
+            f"   to list direct callers (replaces the old `find_references`).\n"
+            f"3) `analyze_impact(target_type='symbol', target='{qname}')` for full blast radius.\n"
             f"4) Synthesize: purpose, who depends on it, which RFs are affected."
         )

@@ -70,41 +70,58 @@ By default it picks the **current working directory** as workspace, or
 }
 ```
 
-## Tools (24)
+## Tools (20)
+
+Every tool accepts an optional `workspace: str` argument. When omitted, the
+server resolves to `LIVESPEC_WORKSPACE` env var or the current working
+directory. The runtime caches one DB connection per workspace (LRU=8), so a
+single MCP server instance can serve multiple repos in parallel.
 
 ### Indexing
-- `index_project(force=False)` — walk workspace, parse, persist
-- `get_index_status()` — last run, totals, freshness
-- `list_files(path_glob, language, limit, cursor)`
+- `use_workspace(path)` — set the default workspace (deprecated; prefer per-call `workspace=...`)
+- `index_project(force=False, workspace=None)` — walk, parse, persist
+- `get_index_status(workspace=None)`
+- `list_files(path_glob, language, limit, cursor, workspace=None)`
 
 ### Analysis
-- `find_symbol(query, kind, limit)`
-- `get_symbol_info(identifier, detail)` — `summary` or `full` (with source body)
-- `get_call_graph(identifier, direction, max_depth)`
-- `find_references(identifier, limit)`
-- `analyze_impact(target_type, target, max_depth)` — symbol/file/requirement
-- `get_project_overview()` — languages + top symbols by PageRank
+- `find_symbol(query, kind, limit, workspace=None)`
+- `get_symbol_info(identifier, detail, workspace=None)` — `summary` or `full`
+- `get_call_graph(identifier, direction, max_depth, workspace=None)`
+- `analyze_impact(target_type, target, max_depth, workspace=None)` — symbol/file/requirement.
+  Use `max_depth=1` for a "find references"-style direct callers list.
+- `get_project_overview(workspace=None)`
 
 ### Requirements
 - `create_requirement(title, ...)`
 - `update_requirement(rf_id, ...)`
 - `list_requirements(status, module, priority, has_implementation)`
 - `link_requirement_to_code(rf_id, symbol_qname, relation, confidence, source, unlink)`
-- `get_requirement_implementation(rf_id)` — symbols + files + coverage
-- `suggest_rf_links(rf_id, limit, min_score)` — propose candidates from hybrid search
-- `scan_rf_annotations()` — auto-links via `@rf:RF-NNN` in docstrings
+- `get_requirement_implementation(rf_id)`
+- `scan_rf_annotations()` — two-level matcher: `@rf:RF-NNN` (1.0) vs verb-anchored (0.7),
+  with negation guard. See `domain/matcher.py`.
 
 ### Search / RAG
 - `search(query, scope, limit)` — hybrid FTS5 + vector (RRF when embeddings present)
-- `rebuild_chunks()` — AST-aware chunking of symbols and RFs
-- `embed_pending()` — fastembed dual-model (code + multilingual text), optional
+- `rebuild_chunks(embed='auto')` — AST-aware chunking; `embed='yes'/'no'/'auto'` controls
+  whether vectors are generated when `[embeddings]` extras are installed
 
 ### Docs
-- `generate_docs_for_symbol(identifier, max_tokens)` — via MCP sampling
-- `generate_docs_for_requirement(rf_id, max_tokens)` — via MCP sampling
-- `detect_stale_docs(target_type)` — drift detection by `body_hash`
-- `list_docs(target_type)`
+- `generate_docs(target_type, identifier, content?, max_tokens?)` — three modes:
+  caller_supplied / sampling / needs_caller_content. Works in Claude Code
+  (caller mode) and Cursor/Desktop (sampling mode).
+- `list_docs(target_type, only_stale=False)` — list or surface drifted docs
+  (drift triggers on body_hash OR signature_hash mismatch).
 - `export_documentation(format, out_subdir)` — markdown or JSON
+
+### Migrating from v0.1
+| Removed | Use instead |
+|---------|-------------|
+| `find_references(identifier)` | `analyze_impact(target_type='symbol', target=qname, max_depth=1)` then read `impacted_callers` |
+| `suggest_rf_links(rf_id)` | `search(query=<rf.title + rf.description>, scope='code')` and post-filter |
+| `embed_pending()` | `rebuild_chunks(embed='yes')` |
+| `generate_docs_for_symbol(identifier)` | `generate_docs(target_type='symbol', identifier=...)` |
+| `generate_docs_for_requirement(rf_id)` | `generate_docs(target_type='requirement', identifier=rf_id)` |
+| `detect_stale_docs(target_type)` | `list_docs(target_type, only_stale=True)` |
 
 ## Resources
 

@@ -1,4 +1,9 @@
-"""Analysis tools: find_symbol, get_symbol_info, get_call_graph, find_references, analyze_impact."""
+"""Analysis tools.
+
+P1.2 consolidation: `find_references` removed — use
+`analyze_impact(target_type='symbol', target=qname, max_depth=1)` and read
+the `impacted_callers` list (matches the old shape).
+"""
 
 from __future__ import annotations
 
@@ -7,7 +12,6 @@ from typing import Any, Literal
 from fastmcp import FastMCP
 
 from livespec_mcp.domain.graph import (
-    GraphView,
     ancestors_within,
     descendants_within,
     load_graph,
@@ -44,13 +48,14 @@ def register(mcp: FastMCP) -> None:
         query: str,
         kind: str | None = None,
         limit: int = 50,
+        workspace: str | None = None,
     ) -> dict[str, Any]:
         """Search symbols by name substring or qualified name.
 
         Returns lightweight refs (qualified_name, file, line, signature, kind).
-        Use `get_symbol_info` to fetch full details for a single symbol.
+        Use `get_symbol_info` for full details on a single match.
         """
-        st = get_state()
+        st = get_state(workspace)
         pid = st.project_id
         sql = [
             """SELECT s.id, s.name, s.qualified_name, s.kind, s.signature,
@@ -72,12 +77,14 @@ def register(mcp: FastMCP) -> None:
     def get_symbol_info(
         identifier: str,
         detail: Literal["summary", "full"] = "summary",
+        workspace: str | None = None,
     ) -> dict[str, Any]:
         """Detail for a single symbol by qualified_name (preferred) or short name.
 
-        `summary`: metadata + counts. `full`: also includes source body, callers/callees, RFs.
+        `summary`: metadata + counts. `full`: also includes source body, callers,
+        callees, and linked RFs.
         """
-        st = get_state()
+        st = get_state(workspace)
         pid = st.project_id
         sym = _resolve_symbol(st.conn, pid, identifier)
         if not sym:
@@ -92,8 +99,7 @@ def register(mcp: FastMCP) -> None:
         ).fetchone()["c"]
         rfs = st.conn.execute(
             """SELECT r.rf_id, r.title, rs.relation, rs.confidence
-               FROM rf_symbol rs JOIN rf r ON r.id=rs.rf_id
-               WHERE rs.symbol_id=?""",
+               FROM rf_symbol rs JOIN rf r ON r.id=rs.rf_id WHERE rs.symbol_id=?""",
             (sym["id"],),
         ).fetchall()
         out: dict[str, Any] = {
@@ -128,7 +134,6 @@ def register(mcp: FastMCP) -> None:
             ).fetchall()
             out["callers"] = [dict(r) for r in callers]
             out["callees"] = [dict(r) for r in callees]
-            # Source body
             try:
                 fp = st.settings.workspace / sym["file_path"]
                 lines = fp.read_text(encoding="utf-8", errors="replace").splitlines()
@@ -144,13 +149,13 @@ def register(mcp: FastMCP) -> None:
         identifier: str,
         direction: Literal["forward", "backward", "both"] = "both",
         max_depth: int = 3,
+        workspace: str | None = None,
     ) -> dict[str, Any]:
-        """Subgraph of calls around a symbol up to a depth.
+        """Subgraph of calls around a symbol up to `max_depth`.
 
         forward = what this calls; backward = what calls this; both = union.
-        Returns nodes + edges suitable for visualization or further analysis.
         """
-        st = get_state()
+        st = get_state(workspace)
         pid = st.project_id
         sym = _resolve_symbol(st.conn, pid, identifier)
         if not sym:
@@ -171,39 +176,20 @@ def register(mcp: FastMCP) -> None:
         }
 
     @mcp.tool(annotations={"readOnlyHint": True, "idempotentHint": True})
-    def find_references(identifier: str, limit: int = 200) -> dict[str, Any]:
-        """List call-sites where a symbol is referenced (find usages).
-
-        Equivalent to backward callers. For deeper dependency analysis use `analyze_impact`.
-        """
-        st = get_state()
-        pid = st.project_id
-        sym = _resolve_symbol(st.conn, pid, identifier)
-        if not sym:
-            return {"error": f"Symbol '{identifier}' not found", "isError": True}
-        rows = st.conn.execute(
-            """SELECT s.qualified_name, s.kind, f.path, s.start_line
-               FROM symbol_edge e JOIN symbol s ON s.id=e.src_symbol_id
-               JOIN file f ON f.id=s.file_id
-               WHERE e.dst_symbol_id=? AND e.edge_type='calls'
-               ORDER BY f.path, s.start_line LIMIT ?""",
-            (sym["id"], limit),
-        ).fetchall()
-        return {"target": sym["qualified_name"], "references": [dict(r) for r in rows]}
-
-    @mcp.tool(annotations={"readOnlyHint": True, "idempotentHint": True})
     def analyze_impact(
         target_type: Literal["symbol", "file", "requirement"],
         target: str,
         max_depth: int = 5,
+        workspace: str | None = None,
     ) -> dict[str, Any]:
         """Topological impact analysis: what changes if `target` changes.
 
-        - symbol: backward cone of callers + RFs that touch any reached symbol
-        - file:   union of impacts from every symbol in the file
-        - requirement: forward cone from every symbol implementing the RF + their callers
+        - symbol: backward cone of callers + RFs that touch any reached symbol.
+          Set max_depth=1 to get the equivalent of a "find references".
+        - file:   union of impacts from every symbol in the file.
+        - requirement: forward cone from every symbol implementing the RF + their callers.
         """
-        st = get_state()
+        st = get_state(workspace)
         pid = st.project_id
         view = load_graph(st.conn, pid)
 
@@ -285,9 +271,9 @@ def register(mcp: FastMCP) -> None:
         return {"error": f"Unknown target_type '{target_type}'", "isError": True}
 
     @mcp.tool(annotations={"readOnlyHint": True, "idempotentHint": True})
-    def get_project_overview() -> dict[str, Any]:
+    def get_project_overview(workspace: str | None = None) -> dict[str, Any]:
         """High-level snapshot: languages, modules, top symbols by PageRank, RF coverage."""
-        st = get_state()
+        st = get_state(workspace)
         pid = st.project_id
         langs = [
             dict(r)

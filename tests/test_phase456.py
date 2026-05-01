@@ -37,7 +37,9 @@ async def test_rebuild_chunks_and_search(sample_repo):
 
 
 @pytest.mark.asyncio
-async def test_suggest_rf_links(sample_repo):
+async def test_search_replaces_suggest_rf_links(sample_repo):
+    """P1.2: suggest_rf_links removed. Use search(scope='code') with the RF
+    title+description as the query and post-filter in the agent."""
     async with Client(mcp) as c:
         await c.call_tool("index_project", {})
         await c.call_tool(
@@ -49,15 +51,17 @@ async def test_suggest_rf_links(sample_repo):
             },
         )
         await c.call_tool("rebuild_chunks", {})
-        sug = (
+        # The agent's job: build query from RF metadata, hit search, post-filter
+        results = (
             await c.call_tool(
-                "suggest_rf_links",
-                {"rf_id": "RF-100", "limit": 5, "min_score": -100},
+                "search",
+                {"query": "User login flow authenticates password verification", "scope": "code", "limit": 5},
             )
         ).data
-        assert sug["rf_id"] == "RF-100"
-        names = {c["qualified_name"] for c in sug["candidates"]}
-        assert any("login" in n or "verify" in n or "API" in n for n in names), names
+        assert "results" in results
+        assert len(results["results"]) > 0
+        # Results expose source_id (symbol id) — the agent maps them with get_symbol_info
+        # before calling link_requirement_to_code.
 
 
 @pytest.mark.asyncio
@@ -70,8 +74,8 @@ async def test_generate_docs_for_symbol_with_stub_sampling(sample_repo):
         await c.call_tool("index_project", {})
         result = (
             await c.call_tool(
-                "generate_docs_for_symbol",
-                {"identifier": "pkg.auth.login"},
+                "generate_docs",
+                {"target_type": "symbol", "identifier": "pkg.auth.login"},
             )
         ).data
         assert result["target"] == "pkg.auth.login"
@@ -92,7 +96,7 @@ async def test_detect_stale_docs(sample_repo):
 
     async with Client(mcp, sampling_handler=sampling_handler) as c:
         await c.call_tool("index_project", {})
-        await c.call_tool("generate_docs_for_symbol", {"identifier": "pkg.auth.login"})
+        await c.call_tool("generate_docs", {"target_type": "symbol", "identifier": "pkg.auth.login"})
 
         # Mutate the source so body_hash drifts
         login_path = sample_repo / "pkg" / "auth.py"
@@ -107,7 +111,9 @@ async def test_detect_stale_docs(sample_repo):
         login_path.write_text(text)
         await c.call_tool("index_project", {"force": True})
 
-        stale = (await c.call_tool("detect_stale_docs", {"target_type": "symbol"})).data
+        stale = (
+            await c.call_tool("list_docs", {"target_type": "symbol", "only_stale": True})
+        ).data
         targets = {s["target"] for s in stale["stale"]}
         assert "pkg.auth.login" in targets
 
@@ -119,8 +125,9 @@ async def test_generate_docs_caller_supplied(sample_repo):
         await c.call_tool("index_project", {})
         result = (
             await c.call_tool(
-                "generate_docs_for_symbol",
+                "generate_docs",
                 {
+                    "target_type": "symbol",
                     "identifier": "pkg.auth.login",
                     "content": "## login\n\nAutentica un usuario.",
                 },
@@ -140,8 +147,8 @@ async def test_generate_docs_no_sampling_returns_prompt(sample_repo):
         await c.call_tool("index_project", {})
         result = (
             await c.call_tool(
-                "generate_docs_for_symbol",
-                {"identifier": "pkg.auth.login"},
+                "generate_docs",
+                {"target_type": "symbol", "identifier": "pkg.auth.login"},
             )
         ).data
         assert result["mode"] == "needs_caller_content"
@@ -157,7 +164,7 @@ async def test_export_documentation(sample_repo, tmp_path):
 
     async with Client(mcp, sampling_handler=sampling_handler) as c:
         await c.call_tool("index_project", {})
-        await c.call_tool("generate_docs_for_symbol", {"identifier": "pkg.auth.login"})
+        await c.call_tool("generate_docs", {"target_type": "symbol", "identifier": "pkg.auth.login"})
         out = (
             await c.call_tool(
                 "export_documentation", {"format": "json", "out_subdir": "export"}
