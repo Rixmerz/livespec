@@ -943,12 +943,38 @@ def register(mcp: FastMCP) -> None:
         # only callable within this indexed scope, so absence of in-project
         # callers IS a real dead-code signal.
 
+        # v0.8 P2 sessions 02 fix (bug #6 cross-file refs): build a UNION
+        # of module-level referenced names across all .py files in the
+        # project. Closes the gap where a class is defined in module A
+        # but registered with the framework in module B (e.g.
+        # `mcp.add_middleware(AgentLogMiddleware())` in server.py vs the
+        # class def in instrumentation.py). False-skip risk is bounded
+        # because we only protect symbols whose SHORT name appears in
+        # any module-level ref position — a cross-file collision still
+        # has to share that name. Empty for projects with no .py files.
+        global_module_refs: set[str] = set()
+        workspace_path = st.settings.workspace
+        for path_row in st.conn.execute(
+            "SELECT f.path FROM file f WHERE f.project_id=? AND f.path LIKE '%.py'",
+            (pid,),
+        ):
+            try:
+                global_module_refs |= _module_level_referenced_names(
+                    str(workspace_path / path_row["path"])
+                )
+            except Exception:
+                # Bad file paths shouldn't kill the whole audit.
+                continue
+
         # v0.8 P2 sessions 02 fix (bug #6 method propagation): a class
         # whose CONSTRUCTOR is called from anywhere in the indexed code
         # has its methods reachable through duck-typing (FastMCP middleware
         # hooks, ABCs, plugin patterns). Pre-compute the set of classes
         # with at least one inbound edge — methods of those classes
         # should not be dead-flagged even if their own callers are zero.
+        # Augment with classes whose name appears in `global_module_refs`
+        # (covers the constructor-call-in-arg-position case the extractor
+        # doesn't capture as an edge).
         protected_class_qnames = {
             r["qualified_name"]
             for r in st.conn.execute(
@@ -962,7 +988,6 @@ def register(mcp: FastMCP) -> None:
             )
         }
 
-        workspace_path = st.settings.workspace
         filtered: list[dict[str, Any]] = []
         for r in rows:
             meta = dict(r)
@@ -977,23 +1002,22 @@ def register(mcp: FastMCP) -> None:
             if not include_public and (meta.get("visibility") in _PUBLIC_VIS):
                 continue
 
-            # v0.8 P2 sessions 02 fix (bugs #4 #5 #6): for Python files,
-            # check if the symbol is referenced at module level — covers
-            # `__main__` guard calls and dispatch-table function references
-            # (e.g. MIGRATIONS list). For class methods, also accept the
-            # parent class being a "protected class" (has inbound edges
-            # anywhere in the project — typically constructor calls).
+            # v0.8 P2 sessions 02 fix (bugs #4 #5 #6): symbol is referenced
+            # at module level somewhere in the project — covers `__main__`
+            # guard calls, dispatch-table fn refs (MIGRATIONS list), and
+            # cross-file framework registration like
+            # `mcp.add_middleware(MyMiddleware())` in server.py vs the
+            # class def in instrumentation.py. For class methods, the
+            # parent class either appears in module-level refs OR has
+            # inbound edges in the call graph.
             if not include_infrastructure:
                 qname_parts = meta["qualified_name"].split(".")
-                if meta["file_path"].endswith(".py"):
-                    abs_path = workspace_path / meta["file_path"]
-                    module_refs = _module_level_referenced_names(str(abs_path))
-                    if meta["name"] in module_refs:
-                        continue
-                    if meta["kind"] == "method" and len(qname_parts) >= 2:
-                        if qname_parts[-2] in module_refs:
-                            continue
+                if meta["name"] in global_module_refs:
+                    continue
                 if meta["kind"] == "method" and len(qname_parts) >= 2:
+                    parent_class_short = qname_parts[-2]
+                    if parent_class_short in global_module_refs:
+                        continue
                     parent_class_qname = ".".join(qname_parts[:-1])
                     if parent_class_qname in protected_class_qnames:
                         continue
