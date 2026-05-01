@@ -48,9 +48,13 @@ que pueblan el menú de tools del agente sin agregar valor a tasks típicos.
 
 ## 2. Tool tier-list desde perspectiva agentic
 
-### Tier 1 — el toolkit core (8 tools, lo que un agente usa todos los días)
+### Tier 1 — el toolkit core (10 tools, lo que un agente usa todos los días)
 
 Estos resuelven preguntas que un agente se hace en cada task no trivial.
+
+**Regla de split:** Tool va a tier-1 SI un agente HACE esa pregunta.
+Tool va a plugin SI un humano la ejecuta para mutar metadata, o un agente
+sólo la corre 1× durante onboarding.
 
 | Tool | Pregunta que resuelve | Frecuencia esperada |
 |------|----------------------|---------------------|
@@ -62,25 +66,35 @@ Estos resuelven preguntas que un agente se hace en cada task no trivial.
 | `find_dead_code` | ¿Hay código no alcanzable? | rara vez pero alto valor |
 | `audit_coverage` | ¿Qué falta tracear? (cuando hay RFs) | rara vez |
 | `propose_requirements_from_codebase` | Dame el mapa arquitectónico (brownfield) | 1× al adoptar livespec |
+| `get_requirement_implementation` | ¿Qué código implementa RF-042? (README lead question #1) | cuando agente investiga RF |
+| `list_requirements` | ¿Qué RFs existen en este repo? (RF discoverability) | 1× al orientarse |
 
-**Estos 8 son el ~80% del valor real.**
+**Estos 10 son el toolkit agentic central.** Las dos últimas (RF
+agentic queries) se promovieron desde tier-2 plugin después de
+notar que `get_requirement_implementation` contesta literalmente la
+primera pregunta del README — bug en la versión inicial de esta tier list.
 
-### Tier 2 — RF management plugin (carga opt-in)
+### Tier 2 — RF management plugin (auto-on si rf table tiene rows)
 
-Si el usuario no piensa en términos de RFs, estos contaminan el menú:
+**Mecanismo de activación:** server queries DB al startup. Si
+`SELECT COUNT(*) FROM rf > 0`, el plugin se registra automáticamente.
+Override via `LIVESPEC_PLUGINS=rf` o `LIVESPEC_PLUGINS=` para
+forzar/desactivar. Cero fricción cognitiva — agente que llega a un
+repo que ya adoptó RFs encuentra las tools de mutación sin configurar nada.
 
-- `create_requirement`, `update_requirement`, `delete_requirement`
-- `list_requirements`, `get_requirement_implementation`
-- `link_rf_symbol`, `bulk_link_rf_symbols`
-- `link_rf_dependency`, `unlink_rf_dependency`, `get_rf_dependency_graph`
-- `scan_rf_annotations`, `import_requirements_from_markdown`
-- `scan_docstrings_for_rf_hints`
+Tools que MUTAN o son ceremony humana:
 
-**Propuesta v0.8**: mover a un módulo cargable via flag/config. Si el
-proyecto no tiene `.mcp-docs/rf/` populado, no aparecen. Reduce el menu de
-35 a ~22 tools por default.
+- `create_requirement`, `update_requirement`, `delete_requirement` (CRUD)
+- `link_rf_symbol`, `bulk_link_rf_symbols` (manual + bulk linking)
+- `link_rf_dependency`, `unlink_rf_dependency` (modeling RF→RF)
+- `get_rf_dependency_graph` (redundante con `analyze_impact(target_type='requirement')` cascade — la pregunta agentic ya está cubierta)
+- `scan_rf_annotations`, `scan_docstrings_for_rf_hints` (bulk re-scan)
+- `import_requirements_from_markdown` (bulk import)
 
-### Tier 3 — docs management plugin (carga opt-in)
+11 tools. Quedan invisibles en el menú de un agente fresco si el repo
+todavía no tiene RFs.
+
+### Tier 3 — docs management plugin (auto-on si doc table tiene rows)
 
 Estos tools son features de **humanos** que querían bulk doc gen, no de
 **agentes** que ya escriben código y docs como parte natural de su LLM:
@@ -90,24 +104,24 @@ Estos tools son features de **humanos** que querían bulk doc gen, no de
 - `list_docs`
 - `export_documentation`
 
-**Propuesta v0.8**: mover a plugin separado. Reduce el menu otros 3 tools.
+3 tools. Mismo mecanismo que el RF plugin: registro automático si
+`doc` table tiene rows. Override via `LIVESPEC_PLUGINS=docs`.
 
-### Tier 4 — utility con uso marginal
+### Tier 4 — utility con uso marginal (decisiones tomadas para v0.8)
 
-- `get_call_graph` — `analyze_impact` cubre lo mismo con mejor metadata
-- `get_project_overview` — útil 1× por sesión, no por minuto
-- `get_index_status` — telemetry, no workflow
-- `find_orphan_tests` — útil pero raro
-- `find_endpoints` — útil pero solo para projects con decorators framework
-- `list_files` — `Grep` cubre el caso
-- `search`, `rebuild_chunks` — el host del agente ya tiene búsqueda; valor
-  marginal vs. costo de entender
-- `start_watcher`, `stop_watcher`, `watcher_status` — net-negativo para un
-  agente que está editando (auto-reindex es race condition trap)
+| Tool | Decisión | Razón |
+|------|----------|-------|
+| `find_orphan_tests` | **Tier 1** (promovido) | aggregator agentic real, útil en QA tasks |
+| `find_endpoints` | **Tier 1** (promovido) | útil en framework projects, decorator-aware |
+| `get_call_graph` | **Tier 1** (mantener) | edge list explícita, distinto shape que `analyze_impact` |
+| `get_project_overview` | **Resource** `project://overview` | útil 1× por sesión, no merece tool slot |
+| `get_index_status` | **Resource** `project://index/status` | telemetry, no workflow |
+| `list_files` | **DROP** | `Grep` host con path glob cubre |
+| `search` | **Plugin** `livespec-rag` (auto-on con embeddings extras) | host ya busca; valor marginal sin embeddings |
+| `rebuild_chunks` | **DROP** (auto-run dentro de `index_project`) | usuario no debería gestionar chunks manualmente |
+| `start_watcher` / `stop_watcher` / `watcher_status` | **DROP** | race condition trap para agente editando; net-negativo |
 
-**Propuesta v0.8**: revisar uno por uno, dejar solo los que pasan el test
-"¿lo llamaría yo, agente, en un task típico?". Algunos quedan, otros van
-a plugin tier-2.
+5 tools dropeadas. 2 promovidas a tier-1. 2 movidas a resources. 1 movida a plugin RAG.
 
 ---
 
@@ -151,64 +165,100 @@ a plugin tier-2.
 
 ## 4. Plan recomendado para v0.8
 
-**No más features. Curation + sharpening.** Tres pillars:
+**No más features. Data primero, después curation.** Tres pillars en
+orden **B → A → C** (battle-test antes de cortar, no al revés).
 
-### Pillar A — toolkit reorganization (½-1 día)
+> **Cambio respecto a la versión inicial:** la primera versión de este
+> documento ordenó Pillar A (curation) antes de Pillar B (battle-test).
+> Ese orden es backwards — §6 self-admite que la tier list es opinion-based.
+> Cortar tools sin data se basa en intuición; battle-test primero da
+> evidence-based cuts. Quick wins (parte de A) se mantienen tempranos
+> porque son agent-UX wins que conviene validar EN el battle-test.
 
-1. **Drop deprecated v0.6 aliases** (`link_requirement_to_code`, `link_requirements`,
-   `unlink_requirements`, `get_requirement_dependencies`). Promesa cumplida
-   ("through v0.7"); v0.8 los elimina.
+### Pillar A.0 — quick wins primero (½ día)
 
-2. **Plugin-tier separation**:
-   - Default load: tier-1 (8 tools) + critical aggregators
-   - Plugin: RF management (12 tools) — opt-in via config flag o presence
-     of `.mcp-docs/rf/` populated
-   - Plugin: docs management (3 tools) — opt-in idem
-   - Reduce default menu de 35 a ~12 tools
+Construir antes del battle-test para que entren en el log:
 
-3. **Add tier-1 quick wins**:
-   - `get_symbol_source(qname)`
-   - `who_calls(qname)` / `who_does_this_call(qname)`
-   - `quick_orient(qname)`
-   - `grep_in_indexed_files(pattern, ...)`
+- `get_symbol_source(qname)` — body extraction sin pasar por `get_symbol_info`
+- `who_calls(qname)` — alias semántico de `analyze_impact(direction='backward', depth=1)`
+- `who_does_this_call(qname)` — alias semántico de `analyze_impact(direction='forward', depth=1)`
+- `quick_orient(qname)` — composite: símbolo + 5 callers + 5 callees + RFs + first-line docstring
 
-### Pillar B — agent battle-test (1 día)
+`grep_in_indexed_files` se difiere a v0.9 — host del agente cubre con
+`Grep` + path glob; valor incremental no justifica el slot.
 
-Esto es lo más importante y se postergó por demasiado tiempo:
+### Pillar B — agent battle-test (1-2 días) **PRIMERO**
 
-1. Elegir 5 codebases medium-sized (10K-50K símbolos): mix de Python,
-   TypeScript, Rust.
+Lo más importante. Validar empíricamente la tier list antes de cortar.
 
-2. Para cada uno, dar a Claude (o GPT-4) **tasks reales no de testing**:
+1. **Instrumentación primero (½ día):** middleware en `server.py` que
+   captura por cada tool call:
+   ```
+   {tool_name, args_redacted, result_chars, latency_ms,
+    agent_followed_up_with: tool_name | None,
+    result_cited_in_final_answer: bool}
+   ```
+   Output a `.mcp-docs/agent_log.jsonl`. Sin este contrato, post-mortem
+   es feel-based — el `result_cited_in_final_answer` es la señal de
+   utilidad real que separa "se llamó" de "sirvió".
+
+2. **5 codebases medium-sized (10K-50K símbolos):** mix Python (Django o
+   FastAPI repo), TypeScript (Next.js app), Rust (a large Rust monorepo o actix repo),
+   más 2 elegidos en el momento.
+
+3. **3-5 sessions por codebase = 15-25 logs.** Para cada uno, dar a
+   Claude tasks reales NO de testing:
    - "Implementá feature X dado este description"
    - "Fixeá el bug donde Y se comporta mal"
    - "Refactorá el módulo Z para usar dependency injection"
 
-3. **Logging**: capturar cada tool call, sus argumentos, su latencia, y un
-   side-channel de "el agente al final usó este resultado o lo descartó?".
+4. **Análisis post-mortem:** qué tools se llamaron, cuáles nunca, qué
+   tools devolvieron data que el agente citó vs descartó.
 
-4. **Análisis post-mortem**: qué tools se llamaron, cuáles nunca, dónde el
-   agente se atascó esperando data que no le vino. Ese signal es oro para
-   v0.9.
+5. Output: `docs/AGENT_USAGE_DATA.md` con números reales reemplazando
+   las especulaciones de §2.
 
-5. Output: `docs/AGENT_USAGE_DATA.md` con números reales reemplazando las
-   especulaciones de este documento.
+### Pillar A — curation pass (½-1 día) **DESPUÉS del battle-test**
+
+Una vez con data:
+
+1. **Drop deprecated v0.6 aliases** (`link_requirement_to_code`, `link_requirements`,
+   `unlink_requirements`, `get_requirement_dependencies`). Promesa cumplida
+   ("through v0.7"); v0.8 los elimina. (Sin necesidad de data — es promesa.)
+
+2. **Drop tier-4 decididos** (`list_files`, `rebuild_chunks`, watcher×3).
+   `get_index_status` + `get_project_overview` → resources. (Sin necesidad
+   de data — son net-negativo o redundantes.)
+
+3. **Plugin-tier separation con auto-detect:**
+   - `server.py` query DB al startup: `SELECT COUNT(*) FROM rf` y
+     `SELECT COUNT(*) FROM doc`. Si > 0, registrar plugin correspondiente.
+   - `LIVESPEC_PLUGINS=rf,docs,rag` env var override.
+   - Plugin RF (10 tools): CRUD + linking + bulk + RF-RF + scan + import.
+   - Plugin docs (3 tools): generate_docs, list_docs, export_documentation.
+   - Plugin RAG (2 tools): search, rebuild_chunks (auto-on con embeddings extras).
+
+4. **Validar contra log del battle-test:** cualquier tool que el log
+   muestre como "nunca llamado por agente, alta latencia" se reconsidera
+   como candidato a drop o a plugin.
 
 ### Pillar C — pitch + docs alignment (½ día)
 
 1. **README headline change**: de "living traceability + on-demand docs" a
    **"local-first code intelligence for AI agents — call graph, impact
-   analysis, RF traceability (optional)"**. Pone "lo que se usa todos los
-   días" primero y RF como overlay.
+   analysis, RF↔code traceability"**. RF traceability NO va como
+   "(optional)" — es el diferenciador defensible (CLAUDE.md stakeholder
+   posture). El plugin-tier es implementation detail, no marketing.
 
 2. **`docs/AGENT_QUICKSTART.md`**: una página explicando "primer flow de
    un agente que llega cold a un repo". 5-6 calls que cubren el 80% del
    uso real:
    ```
    index_project()
-   propose_requirements_from_codebase()  # opcional, brownfield
+   propose_requirements_from_codebase()  # brownfield onboarding
    find_symbol("MyThing")
    get_symbol_info("module.MyThing", detail="full")
+   get_requirement_implementation("RF-042")  # README lead question
    analyze_impact(target_type="symbol", target="module.MyThing.method")
    git_diff_impact()  # post-cambio
    ```
@@ -216,6 +266,10 @@ Esto es lo más importante y se postergó por demasiado tiempo:
 3. **Performance section** del README con números reales (Django 40K,
    a large Rust monorepo 60K, the workflow runner 1K) y guidance: "para repos > 30K símbolos, usar
    `summary_only=True` por default en aggregator tools".
+
+4. **Sección "agent vs human user"**: README explícito sobre quién es
+   el target (agentes IA), qué tools default ven, qué plugins se
+   activan automáticamente. Honestidad estratégica.
 
 ---
 
@@ -225,12 +279,17 @@ Distinto de v0.5/v0.6/v0.7 que se midieron en "features shipped":
 
 | Métrica | Baseline (v0.7) | Target (v0.8) |
 |---------|----------------|----------------|
-| Tools en default menu | 35 + 4 aliases | ~12-15 |
-| Tools en plugins (opt-in) | 0 | ~20 |
-| Real agent sessions logged | 0 | ≥5 |
-| Tools que ningún agente llama en logged sessions | desconocido | ≤3 |
-| Tools que TODO agente llama | desconocido | identificados (será input para v0.9) |
-| README dice "AI agents" en el headline | No | Sí |
+| Tools en default menu (sin RFs en repo) | 35 + 4 aliases | ~14 (10 tier-1 + 4 quick wins) |
+| Tools auto-on con plugin RF (rf table populada) | 35 + 4 aliases | ~24 (14 + 10 plugin RF) |
+| Tools auto-on con plugin RF + docs | 35 + 4 aliases | ~27 (24 + 3 plugin docs) |
+| Tools dropeadas | 0 | 5 (`list_files`, `rebuild_chunks`, watcher×3) |
+| Resources nuevos (ex-tools) | 0 | 2 (`project://overview`, `project://index/status`) |
+| Real agent sessions logged | 0 | ≥15 (5 codebases × 3 tasks min) |
+| Tools llamadas en ≥3 logged sessions | desconocido | ≥10 (validación tier-1) |
+| Tools llamadas en 0 logged sessions | desconocido | identificadas → revisar |
+| Tools cuyo `result_cited_in_final_answer=True` ≥50% | desconocido | identificadas → input v0.9 |
+| README dice "AI agents" en headline | No | Sí |
+| README RF positioning | "(optional)" risk | "differentiator" explícito |
 
 ---
 
@@ -247,8 +306,34 @@ Cosas que afirmé arriba sin evidencia empírica robusta:
    a large Rust monorepo pero no en otros monorepos grandes.
 4. **"El call graph es lo más universal"** — afirmación que pediría
    verificación en battle-test antes de tirarla en marketing.
+5. **Self-correction post-CLAUDE.md (commit posterior):** la versión
+   inicial de este documento puso sólo 2 RF tools en tier-1 (`audit_coverage`
+   + `propose_requirements_from_codebase`). Sub-conteo. README línea 8
+   lidera con "¿Qué código implementa el RF-042?" — pregunta contestada
+   por `get_requirement_implementation`, que estaba en tier-2 plugin.
+   Bug de la tier list, no de la stakeholder posture. Promoción de
+   `get_requirement_implementation` + `list_requirements` a tier-1
+   resuelve la inconsistencia interna y honra la trayectoria evolutiva
+   del proyecto: v0.3 hizo el `@rf:` scan automático (RF stays fresh),
+   v0.5 invirtió pesado en RF dependency graph (modeling), v0.7 construyó
+   `propose_requirements_from_codebase` (zero-friction adoption). Cada
+   release hizo RFs MÁS centrales, no menos. La tier list inicial
+   contradecía esa trayectoria.
+6. **Sesgo del autor:** este documento lo escribió la misma sesión Claude
+   que construyó v0.1→v0.7. Riesgos identificados:
+   - **Recency bias:** redactado tras ver el menú de 35 tools en uso
+     simulado. Reflejo "cortar lo poco usado". Tools poco usadas EN ESTA
+     SESIÓN (donde RFs ya estaban cargados) son ceremony de creación —
+     pero en adopción brownfield real esas mismas tools serían
+     intensamente usadas durante la primera hora.
+   - **Survivor bias agentic:** Claude que escribió todo conoce el grafo
+     de calls de memoria, no necesita `find_symbol` cada minuto. Claude
+     fresco en repo ajeno SÍ lo necesita. Frecuencias estimadas en la
+     tabla tier-1 podrían sub-estimar para agentes nuevos.
 
-**Validar estas hipótesis es exactamente el work del Pillar B de v0.8.**
+**Validar 1-4 es exactamente el work del Pillar B de v0.8.** Item 5 ya
+quedó resuelto en este commit. Item 6 es contexto para futuros
+maintainers leyendo este doc — tomarlo con escepticismo proporcional.
 
 ---
 
@@ -269,16 +354,31 @@ Cosas que afirmé arriba sin evidencia empírica robusta:
 > **Estado v0.7**: técnicamente sólido (118 tests, schema v7, 35 tools,
 > migration framework, error shape unificado, brownfield onboarding via
 > `propose_requirements_from_codebase`). Como producto agentic está al
-> ~70%: le falta curation (cortar a 1/3 los tools, mover el resto a
-> plugins) y battle-test real con agentes resolviendo tasks no de testing.
+> ~70%: le falta curation evidence-based + battle-test real con agentes
+> resolviendo tasks no de testing.
 >
-> **v0.8 NO debería agregar features.** Debería:
-> 1. Podar a tier-1 toolkit (~12 tools default)
-> 2. Mover RF + doc management a plugins opt-in
-> 3. Agregar 3-4 quick wins agent-first (`get_symbol_source`, `who_calls`,
->    `quick_orient`)
-> 4. Hacer el primer battle-test logged con 5 codebases reales
-> 5. Realinear pitch del README
+> **v0.8 NO debería agregar features.** Orden **B → A → C** (data antes
+> que cortar):
+>
+> 1. **A.0 Quick wins** (½ día): `get_symbol_source`, `who_calls`,
+>    `who_does_this_call`, `quick_orient`. Construir antes para entrar
+>    en el log del battle-test.
+> 2. **B Battle-test instrumentado** (1-2 días): middleware logging,
+>    5 codebases × 3-5 sessions, capturar `result_cited_in_final_answer`.
+>    Output: `docs/AGENT_USAGE_DATA.md`.
+> 3. **A Curation pass** (½-1 día): drop aliases v0.6, drop tier-4
+>    decididos (5 tools), plugin auto-detect por DB state, mover
+>    RF mutación + docs management a plugins. Validar contra log.
+> 4. **C Pitch alignment** (½ día): README headline agentic, RF como
+>    diferenciador (NO "optional"), `AGENT_QUICKSTART.md`, performance
+>    section con números reales.
+>
+> Tier-1 default (10 tools): code intel core 8 + 2 RF agentic
+> (`audit_coverage`, `propose_requirements_from_codebase`,
+> `get_requirement_implementation`, `list_requirements` — los últimos
+> 2 promovidos al resolver discrepancia con README lead questions).
+> Plus 4 quick wins = 14 tools default sin RFs en repo. Plugin RF
+> auto-on (24 total) cuando `rf` table tiene rows.
 >
 > El siguiente inflection point del proyecto NO viene de más código.
 > Viene de validar empíricamente qué tools un agente realmente usa.

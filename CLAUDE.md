@@ -173,18 +173,60 @@ produce duplicate symbols at the same line. Keep the first occurrence
 
 ### Tool tier vision (v0.8 target — not yet implemented)
 
-Per ROADMAP.md, the ~35 tools today should be split:
+The ~35 tools today should be split by **agent usage shape**, not by
+"feature category". Two principles drive the split:
 
-- **Tier 1 default** (~12 tools): index_project, find_symbol,
-  get_symbol_info, analyze_impact, git_diff_impact, audit_coverage,
-  find_dead_code, propose_requirements_from_codebase, plus 3-4 quick wins
-  to add (`get_symbol_source`, `who_calls`, `quick_orient`, `grep_in_indexed_files`)
-- **Tier 2 plugin** (RF management, ~12 tools): create/update/delete RFs,
-  linking tools, bulk_link_rf_symbols, RF-RF graph
-- **Tier 3 plugin** (docs management, ~3 tools): generate_docs, list_docs,
-  export_documentation
+1. **Stakeholder posture wins:** RF traceability is the differentiator
+   defensible. Tools that answer agent questions about RFs stay in
+   the default menu. README leads with "¿Qué código implementa el
+   RF-042?" — the tool that answers that (`get_requirement_implementation`)
+   must be tier-1.
+2. **Plugin auto-activation by DB state, not config flag.** Server
+   queries DB at startup; if `rf` table has rows, RF plugin loads.
+   If `doc` table has rows, docs plugin loads. `LIVESPEC_PLUGINS`
+   env override available for power users. Zero cognitive friction
+   for agents adopting brownfield repos.
 
-This curation is the headline of v0.8.
+#### Tier 1 default (~16 tools)
+
+**Code intel core (8):** `index_project`, `find_symbol`, `get_symbol_info`,
+`analyze_impact`, `git_diff_impact`, `find_dead_code`, `find_orphan_tests`,
+`find_endpoints`.
+
+**RF agentic — questions an agent ASKS (4):** `audit_coverage`,
+`propose_requirements_from_codebase`, `get_requirement_implementation`
+(README lead question), `list_requirements` (RF discoverability).
+
+**Quick wins to add (4):** `get_symbol_source`, `who_calls`,
+`who_does_this_call`, `quick_orient` — agent-UX wins independent of curation.
+
+#### Plugin `livespec-rf` (auto-on if rf table has rows, ~10 tools)
+
+CRUD + linking + bulk + RF-RF graph + scan + import. Ceremony a HUMAN
+runs to mutate RF state, not questions an agent asks during work.
+Specifically: `create_requirement`, `update_requirement`,
+`delete_requirement`, `link_rf_symbol`, `bulk_link_rf_symbols`,
+`link_rf_dependency`, `unlink_rf_dependency`, `get_rf_dependency_graph`
+(redundant with `analyze_impact(target_type='requirement')` cascade),
+`scan_rf_annotations`, `scan_docstrings_for_rf_hints`,
+`import_requirements_from_markdown`.
+
+#### Plugin `livespec-docs` (auto-on if doc table has rows, 3 tools)
+
+`generate_docs`, `list_docs`, `export_documentation`. Bulk doc
+generation is a human-tier feature; agents already write docs as
+part of their LLM output.
+
+#### Drops (no plugin, no opt-in — gone)
+
+`list_files` (Grep host with path glob covers), `get_index_status`
+(re-expose as `project://index/status` resource), `start_watcher` /
+`stop_watcher` / `watcher_status` (race-condition trap for editing
+agents per ROADMAP §2 tier-4), `rebuild_chunks` (auto-run inside
+`index_project`).
+
+This curation is the headline of v0.8 — but it lands AFTER battle-test
+data, not before. See ROADMAP §4 Pillar B → A → C ordering.
 
 ---
 
@@ -263,6 +305,13 @@ user wants to override.
   Anything new must be justified against the tier-1 toolkit goal.
 - **Don't drop RF tools.** They feel nicho but they're the differentiator
   for the serious-software-org segment.
+- **Don't demote `get_requirement_implementation` or `list_requirements`
+  out of tier-1.** They answer the README's lead questions
+  ("¿Qué código implementa el RF-042?", "qué RFs existen"). Demoting them
+  recreates the discrepancy that v0.8 alignment fixed.
+- **Don't curate before battle-test.** ROADMAP §6 self-admits the tier
+  list is opinion-based. v0.8 lands instrumentation + 5-codebase logged
+  sessions FIRST; tool drops happen with data, not intuition.
 - **Don't reuse migration version numbers.** Append-only or you corrupt
   user databases.
 - **Don't add a custom error shape.** Use `mcp_error()`. If the existing
