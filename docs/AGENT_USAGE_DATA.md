@@ -46,6 +46,7 @@ size; another should be a language under-represented in the others
 | # | Date | Codebase | Task | Calls | Session id |
 |---|---|---|---|---:|---|
 | 01 | 2026-05-01 | the workflow runner (Python, 130 files / 1173 syms / 4174 edges) | exploration: trace `proxy_tools_search` dispatch flow from MCP entry | 11 | `dfc19fd1-e97f-4501-9315-b8873eafe785` |
+| 02 | 2026-05-01 | livespec-mcp itself (Python+8 langs, 84 files / 495 syms / 742 edges) | refactor: identify dead-code / refactor opportunities post-bug-fixes; also validate the 3 fixes landed in real signal | 11 (this session, 22 cumulative) | post-`bc8ba1d` |
 
 Caveats: n=1 session, exploratory task only (no refactor/bugfix
 yet). Treat all findings below as **first-pulse signal**, not
@@ -198,10 +199,147 @@ session — distinct from curation decisions:
 
 | # | Codebase | Task profile | Goal |
 |---|---|---|---|
-| 02 | livespec-mcp itself | refactor: extract another helper / modify a tool surface | exercises `who_calls`, `analyze_impact`, `git_diff_impact`, `audit_coverage` |
 | 03 | demo-app | RF flow: `list_requirements` → `get_requirement_implementation` → `link_rf_symbol` | validates RF tier-1 hypothesis |
 | 04 | Django subset (TBD) | bugfix: trace a known issue | scale check, larger codebase |
 | 05 | TS/JS app (TBD) | feature: add an endpoint | language coverage |
+
+---
+
+## Session 02 — livespec-mcp refactor profile (2026-05-01)
+
+### Aggregate (sessions 01 + 02 combined)
+
+| tool | calls | errors | p50 ms | p95 ms | max chars |
+|---|---:|---:|---:|---:|---:|
+| `who_calls` | 5 | 0 | 1 | 8 | 7194 |
+| `quick_orient` | 4 | 0 | 8 | 60 | 3298 |
+| `index_project` | 3 | 0 | 352 | 400 | 764 |
+| `who_does_this_call` | 3 | 0 | 0 | 1 | 9514 |
+| `get_project_overview` | 2 | 0 | 74 | 74 | 10462 |
+| `get_index_status` | 2 | 0 | 1 | 1 | 788 |
+| `find_dead_code` | 2 | 0 | 2 | 2 | 6624 |
+| `find_symbol` | 2 | 0 | 2 | 2 | 698 |
+| `get_symbol_source` | 3 | 0 | 1 | 1 | 3745 |
+| `audit_coverage` | 1 | 0 | 1 | 1 | 420 |
+| `analyze_impact` | 1 | 0 | 1 | 1 | 5523 |
+| `git_diff_impact` | 1 | 0 | 34 | 34 | 3125 |
+
+10 distinct tools used out of 39 across 22 calls / 3 sessions.
+
+### Validation of bug fixes #1, #2, #3 in production
+
+- **Bug #1 (resolver fan-out)**: edges count on livespec-mcp dropped
+  from 969 → 742 after re-index with the fix (−227, ~23% reduction).
+  All `who_calls` / `who_does_this_call` results in this session
+  showed clean cones — no more `.get` x4 modules pollution. Resolver
+  test (`test_same_name_fanout_prefers_same_file`) green in CI.
+- **Bug #2 (entry-point flag)**: `quick_orient(register.index_project)`
+  returned `is_entry_point: true, framework_decorators: ["mcp.tool"]`
+  and `callers_count: 0` — agent sees "0 callers BUT entry point",
+  no longer ambiguous. `quick_orient(compute_index_status)`
+  (helper, not decorated) returns `is_entry_point: false` — correct.
+- **Bug #3 (structural noise)**: `get_project_overview` top_symbols
+  now leads with `parse_annotations`, `connect`, `Settings`,
+  `mcp_error`, `extract` — actual semantic anchors of livespec.
+  `structural_patterns_filtered` returned
+  `["Greeter", "__init__", "greet", "helper", "list_tools", "main",
+  "register", "run", "topLevelOne", "top_level_one"]` — exactly the
+  noise (test fixtures + `register` outers + multi-module `__init__`).
+
+The fixes are real, end-to-end. Subsequent sessions can trust the
+call graph signal.
+
+### NEW bugs surfaced in session 02 (`find_dead_code` false positives)
+
+`find_dead_code` over livespec-mcp itself returned 18 candidates,
+but 9 of them are NOT dead — they're entry points the detector
+misses. This is **higher-impact than the previous 3 bugs because
+it directly contradicts the tool's contract** ("anything in the
+result is unreachable from in-project callers AND not implementing
+any RF AND not exposed publicly"). Concrete misses:
+
+4. **`if __name__ == "__main__":` block not recognized as entry
+   point.** Flagged: `bench.run.main`, `bench.agent_log_analyze.main`,
+   `src.livespec_mcp.server.main`. All three are CLI entry points.
+   Fix: when a function is named `main` AND its module ends with a
+   `__main__` guard call to it, treat as entry point. Or: detect any
+   function name appearing as the body of `if __name__ == "__main__":`
+   in the same file.
+
+5. **Functions stored in tuples / lists not detected as referenced.**
+   Flagged: `storage.db._m001_drop_dead_tables` through
+   `_m007_visibility` (6 of them). They're called via the `MIGRATIONS`
+   list of `(version, name, fn)` tuples — `fn` is a function reference
+   the static analyzer doesn't follow. Fix: when a name appears as a
+   bare attribute reference (not a call) in a list/tuple/dict literal,
+   add a "referenced" edge of weight 0.6 (lower than calls but enough
+   to keep dead-code suppressed). Same pattern would catch decorators
+   stored in tables, plugin registries, etc.
+
+6. **Framework middleware lifecycle hooks not flagged as entry
+   points.** Flagged: `instrumentation.AgentLogMiddleware.on_call_tool`,
+   plus the class itself. FastMCP invokes these via duck-typing, no
+   call site in the user's code. Fix: extend
+   `_ENTRY_POINT_DECORATOR_LASTSEG` to include "method names commonly
+   used by middleware frameworks" (`on_call_tool`, `on_request`,
+   `on_event`, `dispatch`) OR (cleaner) detect the pattern of a class
+   being passed to `add_middleware()` / similar registration call.
+
+7. **`suggested_tests` in `git_diff_impact` includes test fixtures.**
+   `git_diff_impact(HEAD~3..HEAD)` listed
+   `tests/fixtures/python/same_name_fanout/embed_cache.py` in
+   `suggested_tests` — that's a fixture file, not a test. Fix:
+   filter `tests/` matches to only files named `test_*.py` /
+   `*_test.py`, exclude fixture subdirs (`tests/fixtures/`,
+   `tests/data/`).
+
+These 4 are filed for v0.8 P3 main pass. None blocks further sessions
+— they're contract-level UX bugs in `find_dead_code` and
+`git_diff_impact`, not signal pollution like #1-3 were.
+
+### Decisions taken from session 02
+
+- ✅ Bug fixes #1/#2/#3 confirmed working in production. Lock them in.
+- ⚠️  `find_dead_code` accuracy on livespec-mcp itself is poor (9/18
+  false positives). Do NOT use it as a refactor primary; prefer
+  manual review backed by `who_calls`. Future fix lands as bug #5.
+- ✅ `who_calls`, `quick_orient`, `analyze_impact` all show clean
+  cones post-resolver-fix. They are the **trustable** refactor tools
+  right now.
+- 📌 `audit_coverage` returned `modules_truly_orphan: 84` for
+  livespec-mcp — expected (livespec is meant to be USED on
+  RF-active codebases, not necessarily dogfooded on its own code).
+  This is a **design data point**: a project with 0 RFs still gets
+  meaningful answers from livespec because the code-intel layer is
+  RF-independent. RF tier-1 placement is justified, but RF tools
+  must NOT error out / refuse on RF-empty repos.
+
+### Updated tier signal (n=2 sessions, mixed profiles)
+
+**Used in ≥1 session AND likely tier-1 by usage**:
+`index_project`, `get_project_overview`, `find_symbol`,
+`quick_orient`, `who_calls`, `who_does_this_call`,
+`get_symbol_source`, `analyze_impact`, `git_diff_impact`,
+`find_dead_code`, `audit_coverage`. **11/39.**
+
+**Silent across both sessions** (priors say drop, still need n=3+):
+`list_files`, `start_watcher`, `stop_watcher`, `watcher_status`,
+`rebuild_chunks`, `get_call_graph` (subsumed by who_calls + 
+who_does_this_call composition), `get_symbol_info` (subsumed by
+quick_orient + get_symbol_source).
+
+**Untouched RF tools** (need session 03 against RF-active repo):
+`list_requirements`, `get_requirement_implementation`,
+`propose_requirements_from_codebase`, `scan_rf_annotations`,
+`scan_docstrings_for_rf_hints`, `link_rf_symbol`,
+`bulk_link_rf_symbols`, `link_rf_dependency`, `unlink_rf_dependency`,
+`get_rf_dependency_graph`, `create_requirement`, `update_requirement`,
+`delete_requirement`, `import_requirements_from_markdown`.
+
+`get_index_status` was called 2x — but both as quick orientation
+right after `index_project`, which is the purview of the
+`project://index/status` resource. **Tool-wrapper drop case
+strengthened**, do it in P3 main pass.
 
 ## Methodology notes
 
