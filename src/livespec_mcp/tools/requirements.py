@@ -27,6 +27,7 @@ from pathlib import Path
 from livespec_mcp.domain.matcher import scan_annotations
 from livespec_mcp.domain.md_rfs import parse_rfs_markdown
 from livespec_mcp.state import get_state
+from livespec_mcp.tools._errors import mcp_error
 from livespec_mcp.tools.analysis import symbol_not_found_error
 
 
@@ -98,7 +99,10 @@ def register(mcp: FastMCP) -> None:
             "SELECT id FROM rf WHERE project_id=? AND rf_id=?", (pid, rf_id)
         ).fetchone()
         if not row:
-            return {"error": f"RF '{rf_id}' not found", "isError": True}
+            return mcp_error(
+                f"RF '{rf_id}' not found",
+                hint="check `list_requirements()` for known RF ids",
+            )
         rf_pk = int(row["id"])
         sets: list[str] = []
         args: list[Any] = []
@@ -169,7 +173,10 @@ def register(mcp: FastMCP) -> None:
             "SELECT id FROM rf WHERE project_id=? AND rf_id=?", (pid, rf_id)
         ).fetchone()
         if not rf:
-            return {"error": f"RF '{rf_id}' not found", "isError": True}
+            return mcp_error(
+                f"RF '{rf_id}' not found",
+                hint="check `list_requirements()` for known RF ids",
+            )
         sym = st.conn.execute(
             """SELECT s.id FROM symbol s JOIN file f ON f.id=s.file_id
                WHERE f.project_id=? AND s.qualified_name=? LIMIT 1""",
@@ -238,7 +245,10 @@ def register(mcp: FastMCP) -> None:
             (pid, rf_id),
         ).fetchone()
         if not rf:
-            return {"error": f"RF '{rf_id}' not found", "isError": True}
+            return mcp_error(
+                f"RF '{rf_id}' not found",
+                hint="check `list_requirements()` for known RF ids",
+            )
         rows = st.conn.execute(
             """SELECT s.qualified_name, s.kind, s.signature, s.start_line, s.end_line,
                       f.path, rs.relation, rs.confidence, rs.source
@@ -282,7 +292,10 @@ def register(mcp: FastMCP) -> None:
         if not p.is_absolute():
             p = st.settings.workspace / path
         if not p.exists():
-            return {"error": f"file not found: {p}", "isError": True}
+            return mcp_error(
+                f"file not found: {p}",
+                hint="path is resolved relative to the workspace root if not absolute",
+            )
         text = p.read_text(encoding="utf-8", errors="replace")
         parsed = parse_rfs_markdown(text)
         created = 0
@@ -362,7 +375,7 @@ def register(mcp: FastMCP) -> None:
         st = get_state(workspace)
         pid = st.project_id
         if parent_rf_id == child_rf_id:
-            return {"error": "An RF cannot depend on itself", "isError": True}
+            return mcp_error("An RF cannot depend on itself")
         parent = st.conn.execute(
             "SELECT id, rf_id FROM rf WHERE project_id=? AND rf_id=?",
             (pid, parent_rf_id),
@@ -372,9 +385,15 @@ def register(mcp: FastMCP) -> None:
             (pid, child_rf_id),
         ).fetchone()
         if not parent:
-            return {"error": f"RF '{parent_rf_id}' not found", "isError": True}
+            return mcp_error(
+                f"RF '{parent_rf_id}' not found",
+                hint="check `list_requirements()` for known RF ids",
+            )
         if not child:
-            return {"error": f"RF '{child_rf_id}' not found", "isError": True}
+            return mcp_error(
+                f"RF '{child_rf_id}' not found",
+                hint="check `list_requirements()` for known RF ids",
+            )
         descendants: set[int] = set()
         frontier = [int(child["id"])]
         while frontier:
@@ -388,13 +407,11 @@ def register(mcp: FastMCP) -> None:
                     continue
                 descendants.add(cid)
                 if cid == int(parent["id"]):
-                    return {
-                        "error": (
-                            f"would create a cycle: {child_rf_id} already "
-                            f"transitively depends on {parent_rf_id}"
-                        ),
-                        "isError": True,
-                    }
+                    return mcp_error(
+                        f"would create a cycle: {child_rf_id} already "
+                        f"transitively depends on {parent_rf_id}",
+                        hint="walk the existing graph with `get_rf_dependency_graph` to see the conflicting path",
+                    )
                 frontier.append(cid)
         cur = st.conn.execute(
             """INSERT OR IGNORE INTO rf_dependency(parent_rf_id, child_rf_id, kind)
@@ -518,7 +535,10 @@ def register(mcp: FastMCP) -> None:
             (pid, rf_id),
         ).fetchone()
         if not root:
-            return {"error": f"RF '{rf_id}' not found", "isError": True}
+            return mcp_error(
+                f"RF '{rf_id}' not found",
+                hint="check `list_requirements()` for known RF ids",
+            )
         root_id = int(root["id"])
 
         visited: set[int] = {root_id}

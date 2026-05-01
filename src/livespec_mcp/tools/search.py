@@ -13,6 +13,7 @@ from fastmcp import FastMCP
 
 from livespec_mcp.domain import rag
 from livespec_mcp.state import get_state
+from livespec_mcp.tools._errors import mcp_error
 
 
 def register(mcp: FastMCP) -> None:
@@ -72,7 +73,10 @@ def register(mcp: FastMCP) -> None:
             with st.lock():
                 embed_stats = rag.embed_pending(st.conn, pid)
         elif embed == "yes":
-            return {"error": "embed=yes but extras missing", "isError": True}
+            return mcp_error(
+                "embed=yes but extras missing",
+                hint="install with `pip install -e \".[embeddings]\"` to enable fastembed + sqlite-vec",
+            )
 
         total = st.conn.execute(
             "SELECT COUNT(*) c FROM chunk WHERE project_id=?", (pid,)

@@ -21,6 +21,7 @@ from typing import Any, Literal
 from fastmcp import Context, FastMCP
 
 from livespec_mcp.state import get_state
+from livespec_mcp.tools._errors import mcp_error
 from livespec_mcp.tools.analysis import symbol_not_found_error
 
 
@@ -163,7 +164,10 @@ def register(mcp: FastMCP) -> None:
             "SELECT * FROM rf WHERE project_id=? AND rf_id=?", (pid, identifier)
         ).fetchone()
         if not rf:
-            return {"error": f"RF '{identifier}' not found", "isError": True}
+            return mcp_error(
+                f"RF '{identifier}' not found",
+                hint="check `list_requirements()` for known RF ids",
+            )
         rf_d = dict(rf)
         symbols = [
             dict(r)

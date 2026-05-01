@@ -23,6 +23,7 @@ from livespec_mcp.domain.graph import (
     subgraph_edges,
 )
 from livespec_mcp.state import get_state
+from livespec_mcp.tools._errors import mcp_error
 
 
 _INFRA_NAME_SUFFIXES = ("_state", "_settings", "_config", "_session")
@@ -224,11 +225,11 @@ def did_you_mean_symbols(conn, project_id: int, identifier: str, limit: int = 3)
 
 def symbol_not_found_error(conn, project_id: int, identifier: str) -> dict:
     """Build the standard 'Symbol not found' error payload with did_you_mean."""
-    return {
-        "error": f"Symbol '{identifier}' not found",
-        "isError": True,
-        "did_you_mean": did_you_mean_symbols(conn, project_id, identifier),
-    }
+    return mcp_error(
+        f"Symbol '{identifier}' not found",
+        did_you_mean=did_you_mean_symbols(conn, project_id, identifier),
+        hint="run `find_symbol(query=<short_name>)` to discover qualified names",
+    )
 
 
 def register(mcp: FastMCP) -> None:
@@ -419,7 +420,10 @@ def register(mcp: FastMCP) -> None:
                 )
             ]
             if not sids:
-                return {"error": f"File '{target}' not indexed", "isError": True}
+                return mcp_error(
+                    f"File '{target}' not indexed",
+                    hint="run `index_project()` or check `list_files(path_glob=...)` for the correct path",
+                )
             impacted: set[int] = set()
             for sid in sids:
                 if sid in view.g:
@@ -436,7 +440,10 @@ def register(mcp: FastMCP) -> None:
                 "SELECT id, rf_id FROM rf WHERE project_id=? AND rf_id=?", (pid, target)
             ).fetchone()
             if not rf:
-                return {"error": f"RF '{target}' not found", "isError": True}
+                return mcp_error(
+                    f"RF '{target}' not found",
+                    hint="check `list_requirements()` for known RF ids",
+                )
 
             # v0.5 P2: include backward RFs in the dependency graph (RFs that
             # require / extend this one). A change to RF-001 ripples to RF-042
@@ -498,7 +505,10 @@ def register(mcp: FastMCP) -> None:
                 "downstream": [view.sym_meta[n] for n in forward if n in view.sym_meta],
                 "upstream_callers": [view.sym_meta[n] for n in backward if n in view.sym_meta],
             }
-        return {"error": f"Unknown target_type '{target_type}'", "isError": True}
+        return mcp_error(
+            f"Unknown target_type '{target_type}'",
+            hint="target_type must be one of: 'symbol', 'file', 'requirement'",
+        )
 
     @mcp.tool(annotations={"readOnlyHint": True, "idempotentHint": True})
     def get_project_overview(
@@ -884,7 +894,10 @@ def register(mcp: FastMCP) -> None:
                 timeout=10,
             )
         except FileNotFoundError:
-            return {"error": "git not found on PATH", "isError": True}
+            return mcp_error(
+                "git not found on PATH",
+                hint="install git and ensure it is on PATH for this MCP server process",
+            )
         except subprocess.CalledProcessError as e:
             stderr = (e.stderr or "").strip()
             stdout = (e.stdout or "").strip()
@@ -916,9 +929,12 @@ def register(mcp: FastMCP) -> None:
                     "",
                 )
                 msg = f"git diff failed: {first_line[:200]}" if first_line else "git diff failed (no diagnostic output)"
-            return {"error": msg, "isError": True}
+            return mcp_error(msg)
         except subprocess.TimeoutExpired:
-            return {"error": "git diff timed out after 10s", "isError": True}
+            return mcp_error(
+                "git diff timed out after 10s",
+                hint="narrow the ref range or check for a runaway git hook",
+            )
 
         changed_paths = [p for p in proc.stdout.splitlines() if p.strip()]
         if not changed_paths:
