@@ -47,6 +47,7 @@ size; another should be a language under-represented in the others
 |---|---|---|---|---:|---|
 | 01 | 2026-05-01 | the workflow runner (Python, 130 files / 1173 syms / 4174 edges) | exploration: trace `proxy_tools_search` dispatch flow from MCP entry | 11 | `dfc19fd1-e97f-4501-9315-b8873eafe785` |
 | 02 | 2026-05-01 | livespec-mcp itself (Python+8 langs, 84 files / 495 syms / 742 edges) | refactor: identify dead-code / refactor opportunities post-bug-fixes; also validate the 3 fixes landed in real signal | 11 (this session, 22 cumulative) | post-`bc8ba1d` |
+| 03 | 2026-05-01 | demo-app (Python, 4 files / 23 syms / 26 edges, 6 RFs / 6 linked) | RF flow: validate `get_requirement_implementation` README-lead answer + `audit_coverage` + `propose_requirements_from_codebase` against an RF-active codebase | 7 (40 cumulative) | post-`44a0dc4` |
 
 Caveats: n=1 session, exploratory task only (no refactor/bugfix
 yet). Treat all findings below as **first-pulse signal**, not
@@ -199,7 +200,6 @@ session — distinct from curation decisions:
 
 | # | Codebase | Task profile | Goal |
 |---|---|---|---|
-| 03 | demo-app | RF flow: `list_requirements` → `get_requirement_implementation` → `link_rf_symbol` | validates RF tier-1 hypothesis |
 | 04 | Django subset (TBD) | bugfix: trace a known issue | scale check, larger codebase |
 | 05 | TS/JS app (TBD) | feature: add an endpoint | language coverage |
 
@@ -355,3 +355,177 @@ strengthened**, do it in P3 main pass.
   times in one session by a flailing agent looks the same as a tool
   called 50 times across 50 different sessions. Sample size matters;
   prefer raw count + sessions-with-call.
+
+---
+
+## Session 03 — demo-app RF flow (2026-05-01)
+
+### Aggregate (sessions 01 + 02 + 03 combined)
+
+40 calls, 3 sessions, 3 distinct workspaces, 15 distinct tools used
+out of 39.
+
+| tool | calls | errors | sessions | category |
+|---|---:|---:|---:|---|
+| `quick_orient` | 6 | 0 | 2 | code intel (P0) |
+| `index_project` | 5 | 0 | 3 | code intel |
+| `who_calls` | 5 | 0 | 1 | code intel (P0) |
+| `get_project_overview` | 4 | 0 | 3 | code intel |
+| `get_symbol_source` | 3 | 0 | 2 | code intel (P0) |
+| `who_does_this_call` | 3 | 0 | 2 | code intel (P0) |
+| `get_requirement_implementation` | 2 | 0 | 1 | RF |
+| `audit_coverage` | 2 | 0 | 2 | RF |
+| `get_index_status` | 2 | 0 | 2 | code intel |
+| `find_dead_code` | 2 | 0 | 1 | code intel |
+| `find_symbol` | 2 | 0 | 2 | code intel |
+| `list_requirements` | 1 | 0 | 1 | RF |
+| `propose_requirements_from_codebase` | 1 | 0 | 1 | RF |
+| `analyze_impact` | 1 | 0 | 1 | code intel |
+| `git_diff_impact` | 1 | 0 | 1 | code intel |
+
+**24 silent tools** (none of: `bulk_link_rf_symbols`,
+`create_requirement`, `delete_requirement`, `update_requirement`,
+`link_rf_symbol`, `link_rf_dependency`, `unlink_rf_dependency`,
+`get_rf_dependency_graph`, `import_requirements_from_markdown`,
+`scan_rf_annotations`, `scan_docstrings_for_rf_hints`,
+`get_call_graph`, `get_symbol_info`, `list_files`, `start_watcher`,
+`stop_watcher`, `watcher_status`, `rebuild_chunks`,
+`export_documentation`, `generate_docs`, `list_docs`, `search`,
+`bulk_link_rf_symbols`).
+
+### RF tools — validation against an RF-active codebase
+
+`get_requirement_implementation("RF-001")` returned the linked
+implementation in 1 round-trip, with confidence=1.0 and
+source="annotation". The README's lead question — "¿Qué código
+implementa el RF-042?" — works as advertised.
+
+`list_requirements` returned all 6 RFs with module + priority +
+status + link_count. Useful for orienting at the start of an
+RF-active session.
+
+`audit_coverage` worked but exposed two issues (see #8, #9 below).
+
+`propose_requirements_from_codebase(skip_already_covered=False)`
+returned 3 proposals — 2 useful (Store, Api groupings), 1 noise
+(test module proposal, see #10 below).
+
+**RF tier-1 placement validated by data.** `get_requirement_implementation`
++ `list_requirements` + `audit_coverage` + `propose_requirements_from_codebase`
+all answered real questions an agent on an RF-active repo would ask.
+Mutation tools (`link_rf_symbol`, `create_requirement`, etc.) still
+silent — those are human-ceremony tools per the original tier-vision
+in CLAUDE.md, which the data corroborates.
+
+### NEW bugs surfaced in session 03
+
+8. **`audit_coverage` should auto-exclude `__init__.py` from
+   `modules_truly_orphan`.** `shortener/__init__.py` flagged as
+   truly orphan, but `__init__.py` is never the right place to put
+   `@rf:` annotations (no-op imports / package marker). Fix: filter
+   modules whose basename is `__init__.py` from
+   `modules_truly_orphan` and `modules_without_rf`. Same for Java
+   `package-info.java`, Rust `mod.rs`, etc.
+
+9. **`audit_coverage` doesn't surface RF test coverage as a positive
+   signal.** Test files (`tests/test_shortener.py`) flagged as
+   truly orphan even though they exercise the RF-linked symbols.
+   The schema already supports `relation: tests` in `rf_symbol`. Fix:
+   either (a) auto-link test files to the RFs of the symbols they
+   call (matcher extension), or (b) add a `tests_per_rf` field to
+   `audit_coverage` output that counts test edges as a separate
+   coverage signal. Option (a) is the longer fix; (b) is the cheap
+   immediate one.
+
+10. **`propose_requirements_from_codebase` doesn't filter test
+    modules.** Returned a `RF-009 "Test Shortener"` proposal grouping
+    the 5 test functions as a "feature". Tests aren't a feature
+    per se. Fix: skip module groups whose path is under `tests/` or
+    `__tests__/` (mirror the find_dead_code skip-list).
+
+These are all low-priority compared to bugs #1-7 — the RF flow's
+hot path (`get_requirement_implementation`, `list_requirements`)
+is clean, and the noise is on the periphery (audit edge cases,
+proposal noise). Queue for v0.8 P3 or v0.9.
+
+### Decisions taken from session 03
+
+- ✅ **RF tools tier-1 placement is data-validated.**
+  `get_requirement_implementation`, `list_requirements`,
+  `audit_coverage`, `propose_requirements_from_codebase` answered
+  real questions in the only repo profile (RF-active) where they
+  should be exercised.
+- ✅ **RF mutation tools (link, bulk_link, create/update/delete RF,
+  scan_*) belong in plugin tier per original CLAUDE.md vision.**
+  They were silent in the brownfield-discovery flow (an agent that
+  *queries* RFs, not *manages* them — which is the human role).
+- ⚠️  3 RF UX gaps (audit_coverage edge cases, proposal noise).
+  Lower priority than bugs #1-7 — none affect the hot path.
+- ✅ **livespec gracefully handles 0-RF repos** (session 02 had
+  `modules_truly_orphan: 84` for livespec itself, no errors). RF
+  tools were silent, not erroring. Confirms RF is a differentiator,
+  not a precondition.
+
+### Updated tier signal (n=3 sessions, 3 profiles, 40 calls)
+
+**Tier-1 (data-validated, ≥1 use across sessions of relevant profile)**:
+1. `index_project` — every session
+2. `get_project_overview` — every session
+3. `find_symbol` — orient on unfamiliar names
+4. `quick_orient` — first-contact composite (P0 win)
+5. `who_calls` — backward cone (P0 win, refactor profile)
+6. `who_does_this_call` — forward cone (P0 win, exploration)
+7. `get_symbol_source` — body extraction (P0 win)
+8. `analyze_impact` — wider blast radius
+9. `git_diff_impact` — PR review
+10. `find_dead_code` — refactor profile
+11. `audit_coverage` — RF profile (the workflow runner session 02 — 0 RFs — also
+    invoked it productively)
+12. `get_requirement_implementation` — README's lead question
+13. `list_requirements` — RF orientation
+14. `propose_requirements_from_codebase` — brownfield onboarding
+
+14/39 tools data-validated as tier-1.
+
+**Plugin candidates (RF mutation, silent in agent flows)**:
+`link_rf_symbol`, `bulk_link_rf_symbols`, `link_rf_dependency`,
+`unlink_rf_dependency`, `get_rf_dependency_graph`,
+`scan_rf_annotations`, `scan_docstrings_for_rf_hints`,
+`create_requirement`, `update_requirement`, `delete_requirement`,
+`import_requirements_from_markdown`. **11 tools** — exactly the set
+CLAUDE.md `## Tool tier vision` flagged as `livespec-rf` plugin.
+
+**Plugin candidates (docs, untouched)**:
+`generate_docs`, `list_docs`, `export_documentation`. **3 tools** —
+matches CLAUDE.md `livespec-docs` plugin proposal.
+
+**Tier-4 / drop candidates (silent across all sessions)**:
+`list_files`, `start_watcher`, `stop_watcher`, `watcher_status`,
+`rebuild_chunks`, `get_call_graph`, `get_symbol_info`,
+`get_index_status` (called only as immediate-after-index orientation,
+which the resource subsumes), `search`, `bulk_link_rf_symbols`. The
+last is a mutation tool that lands in plugin, not drop. **8 tools**
+to drop / move to resource.
+
+**Coverage gap remaining**: refactor profile against a non-Python
+codebase (TS/JS feature work) and a scale check (Django/a large Rust monorepo). But
+the v0.8 curation **can be drafted now from this data**, with
+known-unknowns flagged for v0.9 follow-up.
+
+### Stakeholder posture lock-in
+
+This data corroborates everything in CLAUDE.md `## Stakeholder
+posture`:
+- RFs are first-class — RF tier-1 tools (4) all earned their slots.
+- Agent UX is the product — the 4 P0 quick wins (`quick_orient`,
+  `who_calls`, `who_does_this_call`, `get_symbol_source`) account
+  for 17/40 calls (43% of all session traffic) across 2 sessions
+  on different repos. They were the right wins to build first.
+- Tool tier vision (CLAUDE.md `## Tool tier vision`) holds: the
+  proposed plugin `livespec-rf` (RF mutation) maps 1:1 with the
+  silent-in-agent-flows set; `livespec-docs` plugin maps 1:1 with
+  the docs-management silent set.
+
+The v0.8 P3 main pass — drops + plugin auto-detect — can land on
+this data without further sessions. Sessions 04-05 (Django scale +
+TS feature) are nice-to-have but no longer blocking.
