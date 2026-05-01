@@ -529,3 +529,46 @@ posture`:
 The v0.8 P3 main pass — drops + plugin auto-detect — can land on
 this data without further sessions. Sessions 04-05 (Django scale +
 TS feature) are nice-to-have but no longer blocking.
+
+---
+
+## Wire validation of bugs #4-#10 (post-`a8daf0d`)
+
+After landing fixes #4-#10 (`c14e8d4`) and the cross-file polish
+(`a8daf0d`), re-running find_dead_code on livespec-mcp itself dropped
+candidates from **18 → 1** (~94% noise reduction). Pre-fix the list
+contained:
+
+- `bench.run.main`, `bench.agent_log_analyze.main`, `server.main`
+  (3 false positives via `__main__` guard) — all GONE ✓
+- `storage.db._m001..._m007` (7 false positives via MIGRATIONS list
+  literal) — all GONE ✓
+- `instrumentation.AgentLogMiddleware` + `AgentLogMiddleware.on_call_tool`
+  (cross-file framework registration in server.py) — both GONE ✓
+- `Settings.safe_path`, `Chunk.content_hash`, `Watcher._run_worker`,
+  `Watcher._on_any_event`, `AppState.project_id` — all GONE (covered by
+  protected_class_qnames extension)
+
+Single remaining flag: `start_watcher._do_reindex`. This is a
+**nested function inside another function's body**, passed as a
+callback to `Watcher(on_reindex=_do_reindex, ...)`. Closure pattern
+— distinct from the 10 documented bugs. The fix would either:
+- Walk function bodies for inner FunctionDef references (could
+  produce false-skips), OR
+- Track closure-capture in the extractor (proper fix, larger scope).
+
+Queue for v0.9. The 94% reduction is good enough to ship.
+
+The other tools also wire-validated against demo-app:
+- `audit_coverage`: `shortener/__init__.py` no longer flagged orphan ✓
+- `audit_coverage`: `rfs_with_test_coverage` count + `rf_test_coverage`
+  list present ✓ (empty for this repo since RFs use `relation: implements`,
+  not `tests`, but the field is wired)
+- `git_diff_impact`: `suggested_tests` lists 8 real `test_*.py` files,
+  zero `fixtures/` leakage ✓ (HEAD~5..HEAD diff over the bug-fix batch)
+
+All ten bugs are closed end-to-end. Call graph signal is precise,
+entry points are flagged, top_symbols is signal-rich, audit_coverage
+respects package markers and credits test coverage, git_diff_impact
+suggested_tests doesn't leak fixtures, propose_requirements skips
+test trees.
