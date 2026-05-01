@@ -350,6 +350,167 @@ def register(mcp: FastMCP) -> None:
         return out
 
     @mcp.tool(annotations={"readOnlyHint": True, "idempotentHint": True})
+    def get_symbol_source(
+        qname: str,
+        workspace: str | None = None,
+    ) -> dict[str, Any]:
+        """Source body for a symbol — file slice between start_line and end_line.
+
+        Lighter alternative to `get_symbol_info(detail='full')` when only the
+        body text is needed. Returns `{qualified_name, file_path, start_line,
+        end_line, source, body_hash}`. Resolution accepts either a fully-
+        qualified name (preferred) or a short name when unambiguous.
+        """
+        st = get_state(workspace)
+        pid = st.project_id
+        sym = _resolve_symbol(st.conn, pid, qname)
+        if not sym:
+            return symbol_not_found_error(st.conn, pid, qname)
+        try:
+            fp = st.settings.workspace / sym["file_path"]
+            lines = fp.read_text(encoding="utf-8", errors="replace").splitlines()
+            start = max(sym["start_line"] - 1, 0)
+            end = min(sym["end_line"], len(lines))
+            source = "\n".join(lines[start:end])
+        except OSError as e:
+            return mcp_error(
+                f"file unreadable: {sym['file_path']}",
+                hint=str(e),
+            )
+        return {
+            "qualified_name": sym["qualified_name"],
+            "file_path": sym["file_path"],
+            "start_line": sym["start_line"],
+            "end_line": sym["end_line"],
+            "source": source,
+            "body_hash": sym["body_hash"],
+        }
+
+    @mcp.tool(annotations={"readOnlyHint": True, "idempotentHint": True})
+    def who_calls(
+        qname: str,
+        max_depth: int = 1,
+        workspace: str | None = None,
+    ) -> dict[str, Any]:
+        """Symbols that call `qname` (transitive backward cone up to max_depth).
+
+        Slim alias of `analyze_impact(target_type='symbol', target=qname,
+        max_depth=...)` that returns only the callers list — no forward cone,
+        no RF rollup. Use when an agent only needs the answer to "what would
+        break if I touched this?".
+        """
+        st = get_state(workspace)
+        pid = st.project_id
+        sym = _resolve_symbol(st.conn, pid, qname)
+        if not sym:
+            return symbol_not_found_error(st.conn, pid, qname)
+        view = load_graph(st.conn, pid)
+        sid = int(sym["id"])
+        callers = ancestors_within(view.g, sid, max_depth) if sid in view.g else set()
+        return {
+            "root": sym["qualified_name"],
+            "max_depth": max_depth,
+            "callers": [view.sym_meta[n] for n in callers if n in view.sym_meta],
+            "count": len(callers),
+        }
+
+    @mcp.tool(annotations={"readOnlyHint": True, "idempotentHint": True})
+    def who_does_this_call(
+        qname: str,
+        max_depth: int = 1,
+        workspace: str | None = None,
+    ) -> dict[str, Any]:
+        """Symbols that `qname` calls (transitive forward cone up to max_depth).
+
+        Forward-direction counterpart of `who_calls`.
+        """
+        st = get_state(workspace)
+        pid = st.project_id
+        sym = _resolve_symbol(st.conn, pid, qname)
+        if not sym:
+            return symbol_not_found_error(st.conn, pid, qname)
+        view = load_graph(st.conn, pid)
+        sid = int(sym["id"])
+        callees = descendants_within(view.g, sid, max_depth) if sid in view.g else set()
+        return {
+            "root": sym["qualified_name"],
+            "max_depth": max_depth,
+            "callees": [view.sym_meta[n] for n in callees if n in view.sym_meta],
+            "count": len(callees),
+        }
+
+    @mcp.tool(annotations={"readOnlyHint": True, "idempotentHint": True})
+    def quick_orient(
+        qname: str,
+        workspace: str | None = None,
+    ) -> dict[str, Any]:
+        """Composite snapshot — collapses 3-4 tool calls into one.
+
+        Returns the symbol's metadata (kind, signature, file, line range),
+        the first non-empty line of its docstring, the top-5 direct callers
+        and top-5 direct callees ranked by PageRank, and any linked RFs.
+        Designed for an agent's first contact with an unfamiliar symbol:
+        instead of `find_symbol` -> `get_symbol_info` -> `analyze_impact`
+        -> `get_requirement_implementation`, run this once.
+        """
+        st = get_state(workspace)
+        pid = st.project_id
+        sym = _resolve_symbol(st.conn, pid, qname)
+        if not sym:
+            return symbol_not_found_error(st.conn, pid, qname)
+        sid = int(sym["id"])
+        view = load_graph(st.conn, pid)
+        ranks = page_rank(view.g) if sid in view.g else {}
+
+        callers_all = ancestors_within(view.g, sid, 1) if sid in view.g else set()
+        callees_all = descendants_within(view.g, sid, 1) if sid in view.g else set()
+
+        def _topn(ids: set[int], n: int = 5) -> list[dict[str, Any]]:
+            scored = sorted(
+                (
+                    (view.sym_meta[i], ranks.get(i, 0.0))
+                    for i in ids
+                    if i in view.sym_meta
+                ),
+                key=lambda x: x[1],
+                reverse=True,
+            )
+            return [
+                {**meta, "pagerank": round(score, 6)}
+                for meta, score in scored[:n]
+            ]
+
+        rfs = st.conn.execute(
+            """SELECT r.rf_id, r.title, rs.relation, rs.confidence
+               FROM rf_symbol rs JOIN rf r ON r.id=rs.rf_id WHERE rs.symbol_id=?""",
+            (sid,),
+        ).fetchall()
+
+        docstring_lead = None
+        ds = sym["docstring"]
+        if ds:
+            for line in ds.splitlines():
+                stripped = line.strip()
+                if stripped:
+                    docstring_lead = stripped
+                    break
+
+        return {
+            "qualified_name": sym["qualified_name"],
+            "kind": sym["kind"],
+            "signature": sym["signature"],
+            "file_path": sym["file_path"],
+            "start_line": sym["start_line"],
+            "end_line": sym["end_line"],
+            "docstring_lead": docstring_lead,
+            "callers_count": len(callers_all),
+            "callees_count": len(callees_all),
+            "top_callers": _topn(callers_all),
+            "top_callees": _topn(callees_all),
+            "requirements": [dict(r) for r in rfs],
+        }
+
+    @mcp.tool(annotations={"readOnlyHint": True, "idempotentHint": True})
     def get_call_graph(
         identifier: str,
         direction: Literal["forward", "backward", "both"] = "both",

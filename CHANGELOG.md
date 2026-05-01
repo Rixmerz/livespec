@@ -6,7 +6,28 @@ follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
-_Nothing yet._
+### Added — v0.8 P0 quick wins
+- **`get_symbol_source(qname)`** — body slice extraction. Lighter than
+  `get_symbol_info(detail='full')` when only the source text is needed.
+  Returns `{qualified_name, file_path, start_line, end_line, source,
+  body_hash}`.
+- **`who_calls(qname, max_depth=1)`** — agentic alias for the backward
+  cone of `analyze_impact`. Returns only the caller list, no forward
+  cone, no RF rollup. Use when the agent's question is "what would
+  break if I touched this?".
+- **`who_does_this_call(qname, max_depth=1)`** — forward-direction
+  counterpart of `who_calls`.
+- **`quick_orient(qname)`** — composite first-contact snapshot.
+  Combines symbol metadata, the first non-empty docstring line, the
+  top-5 direct callers and top-5 direct callees ranked by PageRank, and
+  any linked RFs. Replaces a typical `find_symbol` → `get_symbol_info`
+  → `analyze_impact` → `get_requirement_implementation` chain with a
+  single call.
+
+### Tooling
+- Tools: 35 → 39 (+ 4 deprecated v0.6 aliases still present → wire
+  count 43).
+- Tests: 118 → 127 (+9 in `tests/test_quick_wins.py`).
 
 ---
 

@@ -90,7 +90,7 @@ By default it picks the **current working directory** as workspace, or
 }
 ```
 
-## Tools (35 + 4 deprecated aliases through v0.7)
+## Tools (39 + 4 deprecated aliases through v0.7)
 
 Every tool accepts an optional `workspace: str` argument. When omitted, the
 server resolves to `LIVESPEC_WORKSPACE` env var or the current working
@@ -105,6 +105,10 @@ single MCP server instance can serve multiple repos in parallel.
 ### Analysis
 - `find_symbol(query, kind, limit, workspace=None)`
 - `get_symbol_info(identifier, detail, workspace=None)` — `summary` or `full`
+- `get_symbol_source(qname, workspace=None)` — body slice only (lighter than `get_symbol_info(detail='full')`). v0.8.
+- `who_calls(qname, max_depth=1, workspace=None)` — slim agentic alias of `analyze_impact` backward cone. Returns just the callers list. v0.8.
+- `who_does_this_call(qname, max_depth=1, workspace=None)` — forward-direction counterpart of `who_calls`. v0.8.
+- `quick_orient(qname, workspace=None)` — composite snapshot: metadata + docstring lead + top-5 callers/callees by PageRank + linked RFs. Replaces 3-4 calls with one when an agent first lands on an unfamiliar symbol. v0.8.
 - `get_call_graph(identifier, direction, max_depth, workspace=None)`
 - `analyze_impact(target_type, target, max_depth, workspace=None)` — symbol/file/requirement.
   Use `max_depth=1` for a "find references"-style direct callers list.
