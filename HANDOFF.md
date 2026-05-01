@@ -32,53 +32,154 @@ Todo el stack es local-first: 0 servicios externos, 0 API keys obligatorias, 0 D
 
 ---
 
-## 3. Estado actual: pre-v0.8 — doc alignment cerrado, listo para P0
+## 3. Estado actual: v0.8 P0 + P1 + P2-prep + P3a hechos. Bloqueado en P2 (campo).
 
-**Último commit en main:** `b6a3e8b docs: align CLAUDE.md + ROADMAP.md on RF tier-1 placement for v0.8`
+**Último commit en main:** `08315bc v0.8 P3a: drop v0.6 deprecated RF aliases (breaking)`
 
-Sesión 2026-05-01 cerró una discrepancia interna en los docs antes de
-arrancar v0.8. ZERO código tocado, sólo CLAUDE.md + ROADMAP.md.
+Sesión 2026-05-01 cerró cuatro phases consecutivas de v0.8 en una
+corrida. Cada una commiteada y pusheada por separado. Working tree
+clean.
 
-**Qué se resolvió:**
+### Commits del batch v0.8
 
-Discrepancia entre **CLAUDE.md "Stakeholder posture"** ("RF traceability
-es el diferenciador defensible") y la tier-vision original que ponía
-sólo 2 RF tools en tier-1 (`audit_coverage`, `propose_requirements_from_codebase`).
-Trigger: README línea 8 lidera con "¿Qué código implementa el RF-042?"
-— pregunta contestada por `get_requirement_implementation`, que estaba
-en tier-2 plugin. Bug de la tier list, no de la stakeholder posture.
+| Phase | Commit | Cambio neto |
+|---|---|---|
+| **P0** quick wins | `0db55a8` | +4 tools agentic en `tools/analysis.py` |
+| **P1** instrumentation | `bab89ba` | middleware logging + JSONL |
+| **P2** prep | `fd6b39c` | analyzer + skeleton de data doc |
+| **P3a** alias drop | `08315bc` | −4 aliases v0.6 deprecated (breaking) |
 
-**Cambios concretos en commit `b6a3e8b`:**
+### P0 — quick wins (4 tools)
 
-1. **Tier-1 default ahora 14-16 tools** (8 code intel + 4 RF agentic +
-   4 quick wins por construir):
-   - +get_requirement_implementation (README lead question #1)
-   - +list_requirements (RF discoverability)
-   - find_orphan_tests + find_endpoints promovidos desde tier-4
+Vivo en `tools/analysis.py` después de `get_symbol_info`. Construidas
+ANTES del battle-test para que aparezcan en el log de P2.
 
-2. **Plugin auto-detect por DB state** (no config flag):
-   - `livespec-rf` auto-on si `SELECT COUNT(*) FROM rf > 0` (10 tools)
-   - `livespec-docs` auto-on si `SELECT COUNT(*) FROM doc > 0` (3 tools)
-   - `LIVESPEC_PLUGINS` env var override
+- **`get_symbol_source(qname)`** — slice del body sin el payload
+  pesado de `get_symbol_info(detail='full')`.
+- **`who_calls(qname, max_depth=1)`** — alias slim del backward
+  cone de `analyze_impact`. Sólo callers, sin RF rollup.
+- **`who_does_this_call(qname, max_depth=1)`** — contraparte forward.
+- **`quick_orient(qname)`** — composite: metadata + 1ª línea de
+  docstring + top-5 callers/callees por PageRank + RFs vinculados.
+  Reemplaza `find_symbol → get_symbol_info → analyze_impact →
+  get_requirement_implementation` con 1 sola call.
 
-3. **5 drops decididos** (no plugin, no opt-in):
-   - `list_files`, `rebuild_chunks`, `start_watcher`, `stop_watcher`, `watcher_status`
+Tests: `tests/test_quick_wins.py` con 9 cases (happy path + edge
+cases + did_you_mean para qname inválido).
 
-4. **2 ex-tools → resources**: `get_index_status`, `get_project_overview`
+### P1 — instrumentation middleware
 
-5. **v0.8 plan reordenado de A→B→C a A.0→B→A→C** (battle-test antes
-   de cortar, no después). ROADMAP §6 self-admite que el tier list
-   inicial era opinion-based.
+Archivo nuevo `src/livespec_mcp/instrumentation.py` con
+`AgentLogMiddleware`. Registrado en `server.py` antes de los tool
+register calls.
 
-6. **ROADMAP §6 self-correction items 5+6**: explicit acknowledgment
-   del under-counting de RFs + identificación de sesgos del autor
-   (recency bias + survivor bias agentic).
+- Schema por línea (JSONL): `{ts, tool_name, args_redacted,
+  latency_ms, result_chars, error, session_id, workspace}`.
+- Output: `<workspace>/.mcp-docs/agent_log.jsonl`. La carpeta
+  `.mcp-docs/` ya está gitignored.
+- Args redactados: cualquier string que contenga el path absoluto
+  del workspace se reescribe a `<workspace>/...`. Logs compartibles
+  sin filtrar `$HOME`.
+- Opt-out: `LIVESPEC_AGENT_LOG=0`.
+- Errores de write se tragan en silencio. La middleware NUNCA debe
+  romper dispatch.
+- `result_cited_in_final_answer` (mencionado en HANDOFF original NO
+  lo escribe la middleware. Es post-hoc — annotation manual o
+  heurística que cruza qnames del result vs el texto final del agent.
 
-**Tests:** 118/118 verdes (sin embeddings). `uv run pytest -q -m "not embeddings"`.
+Tests: `tests/test_instrumentation.py` con 5 cases (schema completo,
+multi-call orden, redaction, mcp_error semantics donde error=None,
+opt-out por env var).
+
+### P2 — battle-test harness (prep, no ejecución)
+
+P2 mismo es trabajo de campo (correr sesiones reales contra Django/
+Next.js/a large Rust monorepo/etc.) y no se puede automatizar sin perder el signal.
+Esta sub-phase preparó las herramientas para ejecutarlo después.
+
+- **`bench/agent_log_analyze.py`** — agrega N streams JSONL.
+  Output:
+  - Tabla por tool: calls, errors, p50/p95 latency, p50/max chars.
+  - Top 20 follow-up pairs `A→B` dentro de session_id (cross-session
+    no cuenta — sería ruido).
+  - Silent tools: registradas pero nunca llamadas → drop candidates.
+  - Markdown por defecto, `--json` para diffs entre runs.
+- **`docs/AGENT_USAGE_DATA.md`** — esqueleto con tabla de codebases
+  objetivo (Django/Next.js/a large Rust monorepo + 2 TBD), notas de metodología,
+  secciones de Findings vacías a llenar después.
+
+Tests: `tests/test_agent_log_analyze.py` con 8 cases (malformed-line
+skip, workspace-dir resolution, totals, per-tool stats, follow-up
+pairs containment within sessions, silent-tools diff, Markdown
+render smoke, empty input).
+
+### P3a — drop v0.6 aliases (breaking)
+
+Promesa de v0.7 cumplida. ROADMAP §4 item 1 lo flageaba como "no data
+needed". Removidos 4 `@mcp.tool` blocks de `tools/requirements.py`:
+
+| Removido | Usar en su lugar |
+|---|---|
+| `link_requirement_to_code` | `link_rf_symbol` |
+| `link_requirements` | `link_rf_dependency` |
+| `unlink_requirements` | `unlink_rf_dependency` |
+| `get_requirement_dependencies` | `get_rf_dependency_graph` |
+
+Cambios en tests: 1 test alias-compat removido (`test_v0_5_aliases_still_work`),
+3 sites renombrados a canonical en `test_did_you_mean.py`,
+`test_indexing.py`, `test_phase456.py`.
+
+### Métricas netas v0.8 (a este punto)
+
+- **Wire-count tools**: 35+4 (v0.7) → 39+0 (P3a). Misma funcionalidad,
+  superficie sin deprecated.
+- **Tests**: 118 (v0.7) → 139 (P3a). +14 nuevos −1 alias-compat.
+  `uv run pytest -q -m "not embeddings"`.
+- **Schema**: sin migration. v7 sigue siendo el último.
+- **Working tree**: clean. main sincronizado con origin/main en `08315bc`.
+
+### Lo que queda de v0.8 (data-blocked desde acá)
+
+- **P2 ejecución (campo)**: 5 codebases × 3-5 sesiones reales →
+  alimentar JSONL al analyzer → llenar `docs/AGENT_USAGE_DATA.md`
+  Findings. **Esto NO se autoejecuta — requiere sesiones reales
+  con un agent contra repos reales.**
+- **P3 main pass**: plugin auto-detect (`livespec-rf` /
+  `livespec-docs` por DB state); tool→resource conversion para
+  `get_index_status` + `get_project_overview` (resources ya
+  existen, falta deprecar/borrar tool wrapper); drops tier-4
+  validados contra log; mover RF mutación tools a plugin.
+- **P4 pitch alignment**: README headline, `docs/AGENT_QUICKSTART.md`,
+  sección perf con números reales.
+- **P7 cortar v0.8.0**: bump version, tag, release.
 
 ---
 
-## 3a. Estado previo: v0.7 listo — brownfield onboarding
+## 3a. Estado previo: pre-v0.8 — doc alignment cerrado, listo para P0
+
+**Commit:** `b6a3e8b docs: align CLAUDE.md + ROADMAP.md on RF tier-1 placement for v0.8`
+
+Sesión previa cerró una discrepancia interna en los docs antes de
+arrancar v0.8. ZERO código tocado, sólo CLAUDE.md + ROADMAP.md.
+
+**Qué se resolvió:** Discrepancia entre **CLAUDE.md "Stakeholder
+posture"** ("RF traceability es el diferenciador defensible") y la
+tier-vision original que ponía sólo 2 RF tools en tier-1
+(`audit_coverage`, `propose_requirements_from_codebase`). Trigger:
+README línea 8 lidera con "¿Qué código implementa el RF-042?" —
+pregunta contestada por `get_requirement_implementation`, que estaba
+en tier-2 plugin. Bug de la tier list, no de la stakeholder posture.
+
+Cambios concretos en `b6a3e8b`: tier-1 default a 14-16 tools (8 code
+intel + 4 RF agentic + 4 quick wins por construir, ahora hechos en P0);
+plugin auto-detect por DB state (decidido pero no implementado todavía
+— es P3 main); 5 drops tier-4 decididos; 2 ex-tools → resources
+(decidido); plan v0.8 reordenado A→B→C a A.0→B→A→C; ROADMAP §6
+self-correction sobre under-counting + biases del autor.
+
+---
+
+## 3b. Estado previo: v0.7 listo — brownfield onboarding
 
 **v0.7.0** (2026-05-01): cierra el gap entre "proyecto fresco con livespec
 día 1" y "monorepo Rust de 50K símbolos al que adopto livespec un martes".
@@ -466,19 +567,33 @@ livespec-mcp/
 
 ## 8. Sugerencia de orden para v0.8
 
-Decidido (post commit `b6a3e8b`): **A.0 → B → A → C**.
+Decidido: **A.0 → B → A → C**. Estado a `08315bc`:
 
-1. **P0 quick wins** (½-1 día) — `get_symbol_source`, `who_calls`,
-   `who_does_this_call`, `quick_orient`. Construir antes para que entren
-   en el log del battle-test.
-2. **P1 instrumentation** (½-1 día) — middleware logging contract en
-   `server.py`. Sin esto P2 no produce data utilizable.
-3. **P2 battle-test** (1-2 días) — 5 codebases × 3-5 sessions =
-   15-25 logs. Output: `docs/AGENT_USAGE_DATA.md`.
-4. **P3 curation pass** (½-1 día) — drops + plugin auto-detect +
-   move RF mut/docs a plugins. Validar contra el log.
-5. **P4 pitch alignment** (½ día) — README + `AGENT_QUICKSTART.md`.
-6. **P7 cut v0.8.0** — CHANGELOG, version, tag, release.
+1. ✅ **P0 quick wins** — `0db55a8`. 4 tools nuevas + 9 tests.
+2. ✅ **P1 instrumentation** — `bab89ba`. Middleware + 5 tests.
+3. 🔵 **P2 battle-test** — prep listo (`fd6b39c`: analyzer + skeleton).
+   **Ejecución bloqueada en trabajo de campo**: 5 codebases × 3-5
+   sesiones reales con un agent → JSONL al analyzer → llenar
+   `docs/AGENT_USAGE_DATA.md` Findings. NO se autoejecuta.
+4. ⏳ **P3 curation pass** — sub-item P3a (drop aliases v0.6) hecho
+   en `08315bc`. Resto bloqueado por data de P2:
+     - Plugin auto-detect (`livespec-rf` / `livespec-docs` por
+       `SELECT COUNT(*) FROM rf|doc > 0`)
+     - Tool→resource: `get_index_status`, `get_project_overview`
+       (resources ya existen, falta deprecar el tool wrapper —
+       requiere edits en `tools/indexing.py`,
+       `tools/analysis.py`, y enriquecer el resource para
+       paridad con el output del tool)
+     - Drops tier-4 (`list_files`, `rebuild_chunks`,
+       `start_watcher`, `stop_watcher`, `watcher_status`) tras
+       confirmar contra log que efectivamente no se llaman
+     - Mover RF mut/docs tools a `tools/plugins/rf.py` +
+       `tools/plugins/docs.py`
+5. ⏳ **P4 pitch alignment** — README headline + `AGENT_QUICKSTART.md`
+   + sección perf con Django/a large Rust monorepo/the workflow runner.
+6. ⏳ **P7 cut v0.8.0** — CHANGELOG promote [Unreleased] → [0.8.0],
+   pyproject version bump, README tool count, HANDOFF §3 update,
+   tag, release.
 
 **Lo que NO va en v0.8:**
 
@@ -493,15 +608,24 @@ Decidido (post commit `b6a3e8b`): **A.0 → B → A → C**.
 ## 9. Estado de la sesión actual al momento de escribir esto
 
 - Working tree: clean (todo committed y pushed)
-- Branch: main, sincronizado con origin/main en `b6a3e8b`
-- Último commit: `docs: align CLAUDE.md + ROADMAP.md on RF tier-1 placement for v0.8`
-- Tests: 118/118 default (sin embeddings)
-- MCP server local: el proceso connected al cliente sigue corriendo el
-  binario v0.7 — `/mcp` reconnect lo cargaría, pero esta sesión no tocó
-  código del server (solo docs), así que no es necesario reconectar.
-- venv: `.venv/` con todas las deps incluidas embeddings + hypothesis + psutil
-- bench cache: `~/.cache/livespec-bench/requests/` con repo clonado
-- Memoria persistente:
+- Branch: main, sincronizado con origin/main en `08315bc`
+- Último commit: `v0.8 P3a: drop v0.6 deprecated RF aliases (breaking)`
+- Tests: 139/139 default (sin embeddings).
+  `uv run pytest -q -m "not embeddings"`.
+- Wire-count tools: 39 (39 canonical, sin deprecated).
+- Schema: v7 (sin migration nueva en v0.8 a este punto).
+- MCP server local: el proceso connected al cliente sigue corriendo
+  el binario v0.7. Para usar las 4 quick-wins + middleware: `/mcp`
+  reconnect en el cliente Claude Code. Si la sesión actual no las
+  necesita, no es bloqueante.
+- Archivos nuevos creados en v0.8 (todos commiteados):
+  - `src/livespec_mcp/instrumentation.py` (middleware)
+  - `bench/agent_log_analyze.py` (P2 analyzer)
+  - `docs/AGENT_USAGE_DATA.md` (P2 data skeleton)
+  - `tests/test_quick_wins.py`
+  - `tests/test_instrumentation.py`
+  - `tests/test_agent_log_analyze.py`
+- Memoria persistente (sin cambios):
   - `feedback_workflow_main_direct.md` (push directo a main, no PRs)
   - `project_stakeholder_posture.md` (RFs first-class, agent UX es el producto)
 
@@ -510,10 +634,20 @@ Decidido (post commit `b6a3e8b`): **A.0 → B → A → C**.
 ## 10. Cuando reanude el agente
 
 1. **Confirmar contexto** leyendo este archivo + `git log --oneline -5`.
-2. **Verificar tests verdes** con `uv run pytest -q -m "not embeddings"` (118).
-3. **Empezar v0.8 P0** (quick wins) — 4 tools nuevas en `tools/analysis.py`
-   y `tools/requirements.py`. Specs en §4 arriba.
-4. **No re-discutir el plan v0.8 ni la tier list.** Está decidida en
-   commit `b6a3e8b`. Stakeholder posture en CLAUDE.md gana siempre.
-5. Si el usuario quiere cambiar el orden o agregar features, ahí sí
-   pausar y revisar — pero la default es ejecutar P0 quick wins.
+   Esperado: HEAD = `08315bc v0.8 P3a: drop v0.6 deprecated RF aliases`.
+2. **Verificar tests verdes** con `uv run pytest -q -m "not embeddings"` (139).
+3. **Default next step depende del estado del battle-test** (P2 ejecución):
+   - **Si NO hay logs todavía** en `<algun-workspace>/.mcp-docs/agent_log.jsonl`
+     de los target codebases (Django/Next.js/a large Rust monorepo/etc.): la próxima fase
+     útil es **driveá sesiones reales** (no se autoejecuta — requiere
+     un agent corriendo tasks reales contra repos reales). Después
+     correr `uv run python bench/agent_log_analyze.py <ws1> <ws2> ...`
+     y llenar `docs/AGENT_USAGE_DATA.md` Findings.
+   - **Si HAY logs**: ejecutar P3 main pass — analyzer output → tier
+     decisions → drops + plugin auto-detect. Specs en §8 item 4.
+4. **Si el usuario quiere saltarse P2 y avanzar a P4 o P7 sin data**:
+   pausar y avisar que ROADMAP §6 explícitamente prohíbe curation
+   antes de battle-test. Stakeholder posture en CLAUDE.md gana
+   siempre — RF tools NO se demotean por intuición.
+5. Si el usuario pide nuevas features, declinar — v0.8 es ciclo de
+   curación, no de adición. Excepción: bug fixes correctness.
