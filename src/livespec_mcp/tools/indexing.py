@@ -15,7 +15,39 @@ from typing import Any
 from fastmcp import FastMCP
 
 from livespec_mcp.domain.indexer import index_project as run_index
-from livespec_mcp.state import get_state
+from livespec_mcp.state import AppState, get_state
+
+
+def compute_index_status(st: AppState) -> dict[str, Any]:
+    """Module-level so resources.py and the tool wrapper share one source of truth."""
+    pid = st.project_id
+    last = st.conn.execute(
+        "SELECT * FROM index_run WHERE project_id=? ORDER BY id DESC LIMIT 1", (pid,)
+    ).fetchone()
+    files = st.conn.execute(
+        "SELECT COUNT(*) c FROM file WHERE project_id=?", (pid,)
+    ).fetchone()["c"]
+    syms = st.conn.execute(
+        "SELECT COUNT(*) c FROM symbol s JOIN file f ON f.id=s.file_id WHERE f.project_id=?",
+        (pid,),
+    ).fetchone()["c"]
+    edges = st.conn.execute(
+        """SELECT COUNT(*) c FROM symbol_edge e JOIN symbol s ON s.id=e.src_symbol_id
+           JOIN file f ON f.id=s.file_id WHERE f.project_id=?""",
+        (pid,),
+    ).fetchone()["c"]
+    rfs = st.conn.execute(
+        "SELECT COUNT(*) c FROM rf WHERE project_id=?", (pid,)
+    ).fetchone()["c"]
+    return {
+        "workspace": str(st.settings.workspace),
+        "project_id": pid,
+        "files": int(files),
+        "symbols": int(syms),
+        "edges": int(edges),
+        "requirements": int(rfs),
+        "last_run": dict(last) if last else None,
+    }
 
 
 def register(mcp: FastMCP) -> None:
@@ -63,35 +95,7 @@ def register(mcp: FastMCP) -> None:
     @mcp.tool(annotations={"readOnlyHint": True, "idempotentHint": True})
     def get_index_status(workspace: str | None = None) -> dict[str, Any]:
         """Report current index status: latest run, totals, freshness."""
-        st = get_state(workspace)
-        pid = st.project_id
-        last = st.conn.execute(
-            "SELECT * FROM index_run WHERE project_id=? ORDER BY id DESC LIMIT 1", (pid,)
-        ).fetchone()
-        files = st.conn.execute(
-            "SELECT COUNT(*) c FROM file WHERE project_id=?", (pid,)
-        ).fetchone()["c"]
-        syms = st.conn.execute(
-            "SELECT COUNT(*) c FROM symbol s JOIN file f ON f.id=s.file_id WHERE f.project_id=?",
-            (pid,),
-        ).fetchone()["c"]
-        edges = st.conn.execute(
-            """SELECT COUNT(*) c FROM symbol_edge e JOIN symbol s ON s.id=e.src_symbol_id
-               JOIN file f ON f.id=s.file_id WHERE f.project_id=?""",
-            (pid,),
-        ).fetchone()["c"]
-        rfs = st.conn.execute(
-            "SELECT COUNT(*) c FROM rf WHERE project_id=?", (pid,)
-        ).fetchone()["c"]
-        return {
-            "workspace": str(st.settings.workspace),
-            "project_id": pid,
-            "files": int(files),
-            "symbols": int(syms),
-            "edges": int(edges),
-            "requirements": int(rfs),
-            "last_run": dict(last) if last else None,
-        }
+        return compute_index_status(get_state(workspace))
 
     @mcp.tool(annotations={"readOnlyHint": True, "idempotentHint": True})
     def list_files(

@@ -135,5 +135,30 @@ async def test_resource_overview(sample_repo):
         res = await c.read_resource("project://overview")
         body = res[0].text
         data = json.loads(body)
-        assert data["files"] >= 2
-        assert data["symbols"] >= 4
+        # v0.8 P3 prep: project://overview is paritetic with get_project_overview
+        assert "languages" in data
+        assert "top_symbols" in data
+        assert "requirements_total" in data
+        assert "requirements_linked" in data
+
+
+@pytest.mark.asyncio
+async def test_resource_overview_parity_with_tool(sample_repo):
+    """project://overview output must match get_project_overview tool output."""
+    async with Client(mcp) as c:
+        await c.call_tool("index_project", {})
+        tool_data = (await c.call_tool("get_project_overview", {})).data
+        res = await c.read_resource("project://overview")
+        resource_data = json.loads(res[0].text)
+        assert tool_data == resource_data
+
+
+@pytest.mark.asyncio
+async def test_resource_index_status_parity_with_tool(sample_repo):
+    """project://index/status output must match get_index_status tool output."""
+    async with Client(mcp) as c:
+        await c.call_tool("index_project", {})
+        tool_data = (await c.call_tool("get_index_status", {})).data
+        res = await c.read_resource("project://index/status")
+        resource_data = json.loads(res[0].text)
+        assert tool_data == resource_data

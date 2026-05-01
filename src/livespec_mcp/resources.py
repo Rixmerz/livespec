@@ -7,25 +7,15 @@ import json
 from fastmcp import FastMCP
 
 from livespec_mcp.state import get_state
+from livespec_mcp.tools.analysis import compute_project_overview
+from livespec_mcp.tools.indexing import compute_index_status
 
 
 def register(mcp: FastMCP) -> None:
     @mcp.resource("project://overview", mime_type="application/json")
     def project_overview() -> str:
-        st = get_state()
-        pid = st.project_id
-        files = st.conn.execute("SELECT COUNT(*) c FROM file WHERE project_id=?", (pid,)).fetchone()["c"]
-        syms = st.conn.execute(
-            "SELECT COUNT(*) c FROM symbol s JOIN file f ON f.id=s.file_id WHERE f.project_id=?",
-            (pid,),
-        ).fetchone()["c"]
-        rfs = st.conn.execute("SELECT COUNT(*) c FROM rf WHERE project_id=?", (pid,)).fetchone()["c"]
-        return json.dumps({
-            "workspace": str(st.settings.workspace),
-            "files": int(files),
-            "symbols": int(syms),
-            "requirements": int(rfs),
-        })
+        """Tool-parity view of get_project_overview (default include_infrastructure=False)."""
+        return json.dumps(compute_project_overview(get_state()))
 
     @mcp.resource("project://requirements", mime_type="application/json")
     def list_requirements() -> str:
@@ -148,9 +138,5 @@ def register(mcp: FastMCP) -> None:
 
     @mcp.resource("project://index/status", mime_type="application/json")
     def index_status() -> str:
-        st = get_state()
-        pid = st.project_id
-        last = st.conn.execute(
-            "SELECT * FROM index_run WHERE project_id=? ORDER BY id DESC LIMIT 1", (pid,)
-        ).fetchone()
-        return json.dumps({"last_run": dict(last) if last else None})
+        """Tool-parity view of get_index_status."""
+        return json.dumps(compute_index_status(get_state()))

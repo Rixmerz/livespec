@@ -22,7 +22,7 @@ from livespec_mcp.domain.graph import (
     page_rank,
     subgraph_edges,
 )
-from livespec_mcp.state import get_state
+from livespec_mcp.state import AppState, get_state
 from livespec_mcp.tools._errors import mcp_error
 
 
@@ -112,6 +112,48 @@ def _is_implicit_entry_point(meta: dict) -> bool:
     ):
         return True
     return False
+
+
+def compute_project_overview(
+    st: AppState, include_infrastructure: bool = False
+) -> dict[str, Any]:
+    """Module-level shared computation. Resources and the tool wrapper use this."""
+    pid = st.project_id
+    langs = [
+        dict(r)
+        for r in st.conn.execute(
+            "SELECT language, COUNT(*) files FROM file WHERE project_id=? GROUP BY language",
+            (pid,),
+        )
+    ]
+    view = load_graph(st.conn, pid)
+    ranks = page_rank(view.g)
+    ordered = sorted(ranks.items(), key=lambda x: x[1], reverse=True)
+    top_syms: list[dict[str, Any]] = []
+    for sid, score in ordered:
+        meta = view.sym_meta.get(sid)
+        if meta is None:
+            continue
+        if not include_infrastructure and _is_infrastructure(meta):
+            continue
+        top_syms.append({**meta, "pagerank": round(score, 6)})
+        if len(top_syms) >= 20:
+            break
+    rf_total = st.conn.execute(
+        "SELECT COUNT(*) c FROM rf WHERE project_id=?", (pid,)
+    ).fetchone()["c"]
+    rf_linked = st.conn.execute(
+        """SELECT COUNT(DISTINCT r.id) c FROM rf r
+           JOIN rf_symbol rs ON rs.rf_id=r.id WHERE r.project_id=?""",
+        (pid,),
+    ).fetchone()["c"]
+    return {
+        "workspace": str(st.settings.workspace),
+        "languages": langs,
+        "top_symbols": top_syms,
+        "requirements_total": int(rf_total),
+        "requirements_linked": int(rf_linked),
+    }
 
 
 def _is_infrastructure(meta: dict) -> bool:
@@ -697,43 +739,7 @@ def register(mcp: FastMCP) -> None:
         helpers, FastMCP `register` outer fns, dunders, one-line wrappers).
         Pass `include_infrastructure=True` to see the unfiltered ranking.
         """
-        st = get_state(workspace)
-        pid = st.project_id
-        langs = [
-            dict(r)
-            for r in st.conn.execute(
-                "SELECT language, COUNT(*) files FROM file WHERE project_id=? GROUP BY language",
-                (pid,),
-            )
-        ]
-        view = load_graph(st.conn, pid)
-        ranks = page_rank(view.g)
-        ordered = sorted(ranks.items(), key=lambda x: x[1], reverse=True)
-        top_syms: list[dict[str, Any]] = []
-        for sid, score in ordered:
-            meta = view.sym_meta.get(sid)
-            if meta is None:
-                continue
-            if not include_infrastructure and _is_infrastructure(meta):
-                continue
-            top_syms.append({**meta, "pagerank": round(score, 6)})
-            if len(top_syms) >= 20:
-                break
-        rf_total = st.conn.execute(
-            "SELECT COUNT(*) c FROM rf WHERE project_id=?", (pid,)
-        ).fetchone()["c"]
-        rf_linked = st.conn.execute(
-            """SELECT COUNT(DISTINCT r.id) c FROM rf r
-               JOIN rf_symbol rs ON rs.rf_id=r.id WHERE r.project_id=?""",
-            (pid,),
-        ).fetchone()["c"]
-        return {
-            "workspace": str(st.settings.workspace),
-            "languages": langs,
-            "top_symbols": top_syms,
-            "requirements_total": int(rf_total),
-            "requirements_linked": int(rf_linked),
-        }
+        return compute_project_overview(get_state(workspace), include_infrastructure)
 
     @mcp.tool(annotations={"readOnlyHint": True, "idempotentHint": True})
     def find_dead_code(

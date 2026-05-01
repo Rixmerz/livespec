@@ -32,11 +32,11 @@ Todo el stack es local-first: 0 servicios externos, 0 API keys obligatorias, 0 D
 
 ---
 
-## 3. Estado actual: v0.8 P0 + P1 + P2-prep + P3a hechos. Bloqueado en P2 (campo).
+## 3. Estado actual: v0.8 P0 + P1 + P2-prep + P3a + P3b-prep hechos. Bloqueado en P2 (campo).
 
-**Último commit en main:** `08315bc v0.8 P3a: drop v0.6 deprecated RF aliases (breaking)`
+**Último commit esperado:** `v0.8 P3b prep: resource parity for project://overview + project://index/status`
 
-Sesión 2026-05-01 cerró cuatro phases consecutivas de v0.8 en una
+Sesión 2026-05-01 cerró cinco phases consecutivas de v0.8 en una
 corrida. Cada una commiteada y pusheada por separado. Working tree
 clean.
 
@@ -48,6 +48,7 @@ clean.
 | **P1** instrumentation | `bab89ba` | middleware logging + JSONL |
 | **P2** prep | `fd6b39c` | analyzer + skeleton de data doc |
 | **P3a** alias drop | `08315bc` | −4 aliases v0.6 deprecated (breaking) |
+| **P3b prep** | (this commit) | resource paridad + helpers compartidos |
 
 ### P0 — quick wins (4 tools)
 
@@ -129,14 +130,44 @@ Cambios en tests: 1 test alias-compat removido (`test_v0_5_aliases_still_work`),
 3 sites renombrados a canonical en `test_did_you_mean.py`,
 `test_indexing.py`, `test_phase456.py`.
 
+### P3b prep — resource paridad (no-data, no-breaking-tools)
+
+Prep mecánico para la conversión tool→resource pendiente en P3 main.
+ZERO data necesaria — solo refactor estructural. Tools mantienen su
+contrato; resources ahora devuelven el mismo payload que sus tools
+homónimos. Cuando llegue data de P2 y se decida deprecar los tool
+wrappers, el corte es de una línea.
+
+- **`compute_index_status(st)`** extraído a module-level en
+  `tools/indexing.py`. Tool `get_index_status` y resource
+  `project://index/status` lo comparten. Resource ahora devuelve
+  `{workspace, project_id, files, symbols, edges, requirements,
+  last_run}` (antes solo `{last_run}`). Backward compatible —
+  solo añade fields.
+- **`compute_project_overview(st, include_infrastructure=False)`**
+  extraído a module-level en `tools/analysis.py`. Tool
+  `get_project_overview` y resource `project://overview` lo
+  comparten. Resource ahora devuelve `{workspace, languages,
+  top_symbols (con PageRank), requirements_total,
+  requirements_linked}` (antes `{workspace, files, symbols,
+  requirements}`). **Breaking en resource shape** — el tool no
+  cambia.
+
+Tests: `tests/test_indexing.py` actualizado (test viejo asserts el
+nuevo shape) + 2 tests nuevos de paridad explícita
+(`test_resource_overview_parity_with_tool`,
+`test_resource_index_status_parity_with_tool`) que invocan tool y
+resource y comparan output exacto.
+
 ### Métricas netas v0.8 (a este punto)
 
-- **Wire-count tools**: 35+4 (v0.7) → 39+0 (P3a). Misma funcionalidad,
-  superficie sin deprecated.
-- **Tests**: 118 (v0.7) → 139 (P3a). +14 nuevos −1 alias-compat.
+- **Wire-count tools**: 35+4 (v0.7) → 39+0 (P3a/P3b prep).
+  Misma funcionalidad, superficie sin deprecated.
+- **Tests**: 118 (v0.7) → 141 (P3b prep). +14 nuevos en P0+P1+P2 prep,
+  −1 alias-compat en P3a, +2 paridad en P3b prep.
   `uv run pytest -q -m "not embeddings"`.
 - **Schema**: sin migration. v7 sigue siendo el último.
-- **Working tree**: clean. main sincronizado con origin/main en `08315bc`.
+- **Working tree**: clean.
 
 ### Lo que queda de v0.8 (data-blocked desde acá)
 
@@ -146,9 +177,10 @@ Cambios en tests: 1 test alias-compat removido (`test_v0_5_aliases_still_work`),
   con un agent contra repos reales.**
 - **P3 main pass**: plugin auto-detect (`livespec-rf` /
   `livespec-docs` por DB state); tool→resource conversion para
-  `get_index_status` + `get_project_overview` (resources ya
-  existen, falta deprecar/borrar tool wrapper); drops tier-4
-  validados contra log; mover RF mutación tools a plugin.
+  `get_index_status` + `get_project_overview` (helpers ya
+  compartidos en P3b prep — falta sólo deprecar/borrar el tool
+  wrapper, ~10 LOC de cambio); drops tier-4 validados contra log;
+  mover RF mutación tools a plugin.
 - **P4 pitch alignment**: README headline, `docs/AGENT_QUICKSTART.md`,
   sección perf con números reales.
 - **P7 cortar v0.8.0**: bump version, tag, release.
