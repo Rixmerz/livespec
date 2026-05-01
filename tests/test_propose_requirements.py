@@ -187,3 +187,43 @@ async def test_humanize_title_avoids_generic_segments(workspace):
     # Underscore -> space, title-cased
     assert "auth_service" not in {t.lower().replace(" ", "_") for t in titles} or \
            any("Auth Service" == t for t in titles)
+
+
+@pytest.mark.asyncio
+async def test_propose_requirements_skips_test_modules(workspace):
+    """v0.8 P2 fix #10: tests/ should not generate RF proposals.
+
+    Earlier behavior: a tests/ folder with N test functions produced
+    an 'RF-N Test Shortener'-style proposal grouping test fns as a
+    'feature'. Tests exercise features; they are not features themselves.
+    """
+    pkg = workspace / "pkg"
+    pkg.mkdir()
+    (pkg / "__init__.py").write_text("")
+    (pkg / "feature.py").write_text(
+        "def widget():\n    return 1\n"
+        "def helper_a():\n    return 1\n"
+        "def helper_b():\n    return 1\n"
+    )
+    tests = workspace / "tests"
+    tests.mkdir()
+    (tests / "test_widget.py").write_text(
+        "from pkg.feature import widget\n"
+        "def test_one():\n    assert widget() == 1\n"
+        "def test_two():\n    assert widget() == 1\n"
+        "def test_three():\n    assert widget() == 1\n"
+    )
+
+    async with Client(mcp) as c:
+        await c.call_tool("index_project", {})
+        out = (
+            await c.call_tool(
+                "propose_requirements_from_codebase",
+                {"module_depth": 1, "min_symbols_per_group": 2},
+            )
+        ).data
+    keys = {p["module_key"] for p in out["proposals"]}
+    titles = {p["title"] for p in out["proposals"]}
+    assert not any("test" in k.lower() for k in keys), (
+        f"tests/ should not generate proposals: keys={keys}, titles={titles}"
+    )

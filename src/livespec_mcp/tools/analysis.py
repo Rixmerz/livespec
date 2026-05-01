@@ -8,9 +8,12 @@ v0.3 P1.1 adds `git_diff_impact` for CI/PR-review use cases.
 
 from __future__ import annotations
 
+import ast
 import difflib
 import json
 import subprocess
+from functools import lru_cache
+from pathlib import Path
 from typing import Any, Literal
 
 from fastmcp import FastMCP
@@ -91,6 +94,63 @@ def _decorator_matches_any(name: str, patterns: tuple[str, ...]) -> bool:
     """True if `name` equals or has-as-last-segment any of `patterns`."""
     last = _decorator_lastseg(name)
     return last in {p.lower() for p in patterns}
+
+
+def _collect_module_refs(node: ast.AST, into: set[str]) -> None:
+    """Walk an AST node, collecting Name/Attribute identifiers, but PRUNE
+    bodies of nested function/class defs so refs inside their scopes are
+    NOT counted as module-level. Decorators, base classes, default-arg
+    expressions, and class-level type-annotations *are* still walked.
+    """
+    if isinstance(node, ast.Name):
+        into.add(node.id)
+        return
+    if isinstance(node, ast.Attribute):
+        into.add(node.attr)
+        if isinstance(node.value, ast.AST):
+            _collect_module_refs(node.value, into)
+        return
+    skip_field = None
+    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+        skip_field = "body"
+    for field_name, child in ast.iter_fields(node):
+        if field_name == skip_field:
+            continue
+        if isinstance(child, list):
+            for item in child:
+                if isinstance(item, ast.AST):
+                    _collect_module_refs(item, into)
+        elif isinstance(child, ast.AST):
+            _collect_module_refs(child, into)
+
+
+@lru_cache(maxsize=128)
+def _module_level_referenced_names(file_path_abs: str) -> frozenset[str]:
+    """Names referenced at Python module top-level (outside any function /
+    class body). Captures three patterns that fool the "zero callers ⇒
+    dead code" heuristic:
+
+      1. ``if __name__ == "__main__": main()`` → `main` is referenced.
+      2. ``MIGRATIONS = [(1, "n", _m001_drop_dead_tables), ...]`` → the
+         migration fns appear in a module-level list literal.
+      3. ``mcp.add_middleware(AgentLogMiddleware())`` → the middleware
+         class is referenced; its method hooks (`on_call_tool`, etc.) are
+         entry points reached via duck-typing.
+
+    Cached because find_dead_code may evaluate many candidates per file.
+    Non-Python files return empty (these patterns are Python-specific;
+    other-language extractor work lands later). On parse failure we
+    return empty rather than raising — find_dead_code keeps working.
+    """
+    try:
+        source = Path(file_path_abs).read_text(encoding="utf-8", errors="replace")
+        tree = ast.parse(source)
+    except (OSError, SyntaxError, ValueError):
+        return frozenset()
+    refs: set[str] = set()
+    for top_node in tree.body:
+        _collect_module_refs(top_node, refs)
+    return frozenset(refs)
 
 
 def _is_implicit_entry_point(meta: dict) -> bool:
@@ -883,6 +943,26 @@ def register(mcp: FastMCP) -> None:
         # only callable within this indexed scope, so absence of in-project
         # callers IS a real dead-code signal.
 
+        # v0.8 P2 sessions 02 fix (bug #6 method propagation): a class
+        # whose CONSTRUCTOR is called from anywhere in the indexed code
+        # has its methods reachable through duck-typing (FastMCP middleware
+        # hooks, ABCs, plugin patterns). Pre-compute the set of classes
+        # with at least one inbound edge — methods of those classes
+        # should not be dead-flagged even if their own callers are zero.
+        protected_class_qnames = {
+            r["qualified_name"]
+            for r in st.conn.execute(
+                """SELECT DISTINCT s.qualified_name FROM symbol s
+                   JOIN file f ON f.id=s.file_id
+                   WHERE f.project_id=? AND s.kind='class'
+                     AND EXISTS (
+                       SELECT 1 FROM symbol_edge e WHERE e.dst_symbol_id=s.id
+                     )""",
+                (pid,),
+            )
+        }
+
+        workspace_path = st.settings.workspace
         filtered: list[dict[str, Any]] = []
         for r in rows:
             meta = dict(r)
@@ -896,6 +976,28 @@ def register(mcp: FastMCP) -> None:
                 continue
             if not include_public and (meta.get("visibility") in _PUBLIC_VIS):
                 continue
+
+            # v0.8 P2 sessions 02 fix (bugs #4 #5 #6): for Python files,
+            # check if the symbol is referenced at module level — covers
+            # `__main__` guard calls and dispatch-table function references
+            # (e.g. MIGRATIONS list). For class methods, also accept the
+            # parent class being a "protected class" (has inbound edges
+            # anywhere in the project — typically constructor calls).
+            if not include_infrastructure:
+                qname_parts = meta["qualified_name"].split(".")
+                if meta["file_path"].endswith(".py"):
+                    abs_path = workspace_path / meta["file_path"]
+                    module_refs = _module_level_referenced_names(str(abs_path))
+                    if meta["name"] in module_refs:
+                        continue
+                    if meta["kind"] == "method" and len(qname_parts) >= 2:
+                        if qname_parts[-2] in module_refs:
+                            continue
+                if meta["kind"] == "method" and len(qname_parts) >= 2:
+                    parent_class_qname = ".".join(qname_parts[:-1])
+                    if parent_class_qname in protected_class_qnames:
+                        continue
+
             filtered.append(meta)
 
         total = len(filtered)
@@ -1014,7 +1116,7 @@ def register(mcp: FastMCP) -> None:
     ) -> dict[str, Any]:
         """RF coverage audit: what's missing / under-confident.
 
-        Five signals:
+        Six signals:
         - `modules_without_rf`: files whose symbols have no DIRECT `rf_symbol` link
         - `modules_implicitly_covered`: subset of `modules_without_rf` whose
           symbols are called transitively by an rf-linked symbol — covered
@@ -1025,13 +1127,36 @@ def register(mcp: FastMCP) -> None:
         - `rfs_without_implementation`: RFs with no `rf_symbol` row at all
         - `rfs_low_confidence`: RFs whose avg(rf_symbol.confidence) < 0.7
           (typically means only verb-anchored matches, no `@rf:` annotation)
+        - `rf_test_coverage` (v0.8 P2 fix #9): RFs that have ≥1 `relation='tests'`
+          link, with the count. Use this to spot RFs implemented but not
+          tested (RF in this list with low test_count → coverage gap).
 
         v0.7 (B3): paginated. `limit` (default 200) caps each list per
         call; `cursor` resumes; `summary_only=True` returns only the
         counts. Counts are always exact regardless of pagination.
+
+        v0.8 P2 fix #8: package-marker files (`__init__.py`,
+        `package-info.java`, `mod.rs`) are auto-excluded from
+        `modules_without_rf` — `@rf:` annotations on a no-op import
+        marker would never be the right place anyway.
         """
         st = get_state(workspace)
         pid = st.project_id
+
+        # v0.8 P2 fix #8: filter package-marker basenames out of the
+        # "modules without RF" candidate set. They are import infrastructure,
+        # never the right home for a `@rf:` annotation.
+        _PACKAGE_MARKER_BASENAMES = frozenset({
+            "__init__.py",
+            "package-info.java",
+            "mod.rs",
+            "lib.rs",
+            "index.ts",  # only when content-empty / re-export only — kept here for the common case
+            "index.js",
+        })
+
+        def _is_package_marker(path: str) -> bool:
+            return path.rsplit("/", 1)[-1] in _PACKAGE_MARKER_BASENAMES
 
         modules_no_rf = [
             r["path"]
@@ -1046,6 +1171,7 @@ def register(mcp: FastMCP) -> None:
                    ORDER BY f.path""",
                 (pid,),
             )
+            if not _is_package_marker(r["path"])
         ]
 
         # Split direct-orphan into implicitly-covered vs truly-orphan via the
@@ -1119,6 +1245,24 @@ def register(mcp: FastMCP) -> None:
             )
         ]
 
+        # v0.8 P2 fix #9: RFs with at least one rf_symbol row whose
+        # relation is 'tests'. Schema already supports this; surface it.
+        rf_test_coverage = [
+            {
+                "rf_id": r["rf_id"],
+                "title": r["title"],
+                "test_count": int(r["test_count"]),
+            }
+            for r in st.conn.execute(
+                """SELECT r.rf_id, r.title, COUNT(rs.id) AS test_count
+                   FROM rf r JOIN rf_symbol rs ON rs.rf_id=r.id
+                   WHERE r.project_id=? AND rs.relation='tests'
+                   GROUP BY r.id
+                   ORDER BY test_count DESC, r.rf_id""",
+                (pid,),
+            )
+        ]
+
         # v0.7 B3: pagination
         counts = {
             "modules_without_rf": len(modules_no_rf),
@@ -1126,6 +1270,7 @@ def register(mcp: FastMCP) -> None:
             "modules_truly_orphan": len(modules_truly_orphan),
             "rfs_without_implementation": len(rfs_no_impl),
             "rfs_low_confidence": len(rfs_low_conf),
+            "rfs_with_test_coverage": len(rf_test_coverage),
         }
         if summary_only:
             return {"counts": counts}
@@ -1140,6 +1285,7 @@ def register(mcp: FastMCP) -> None:
         mt_p, mt_next = _page(modules_truly_orphan)
         rfn_p, rfn_next = _page(rfs_no_impl)
         rfl_p, rfl_next = _page(rfs_low_conf)
+        rftc_p, rftc_next = _page(rf_test_coverage)
         return {
             "counts": counts,
             "modules_without_rf": mw_p,
@@ -1147,12 +1293,14 @@ def register(mcp: FastMCP) -> None:
             "modules_truly_orphan": mt_p,
             "rfs_without_implementation": rfn_p,
             "rfs_low_confidence": rfl_p,
+            "rf_test_coverage": rftc_p,
             "next_cursor": {
                 "modules_without_rf": mw_next,
                 "modules_implicitly_covered": mi_next,
                 "modules_truly_orphan": mt_next,
                 "rfs_without_implementation": rfn_next,
                 "rfs_low_confidence": rfl_next,
+                "rf_test_coverage": rftc_next,
             },
         }
 
@@ -1381,7 +1529,30 @@ def register(mcp: FastMCP) -> None:
 
         # Suggested tests: files under a tests/ folder OR matching *_test.* /
         # test_*.* whose symbols are in `impacted` (i.e. test functions that call
-        # something we touched).
+        # something we touched). v0.8 P2 session-02 fix (bug #7): exclude
+        # tests/fixtures/, tests/data/, tests/_*.py — fixtures and helpers
+        # are not test runners. Require basename to match test_*.py /
+        # *_test.{py,ts,tsx,js,go,rs,...} when the file is inside tests/.
+        def _looks_like_test_file(path: str) -> bool:
+            base = path.rsplit("/", 1)[-1]
+            in_tests_tree = path.startswith("tests/") or "/tests/" in path
+            # Fixtures / data directories: never test runners.
+            if "/fixtures/" in path or path.startswith("fixtures/"):
+                return False
+            if "/__fixtures__/" in path or "/data/" in path:
+                return False
+            # Must be a recognizable test file by name.
+            if base.startswith("test_") and "." in base:
+                return True
+            if "_test." in base:
+                return True
+            if base.startswith("test.") or ".test." in base:
+                return True
+            # Inside tests/ but unrecognizable name (e.g. `helpers.py`,
+            # `conftest.py` — conftest is pytest infra, not a runner)
+            # → not a suggested test.
+            return False and in_tests_tree  # explicit: never default-true
+
         suggested_tests_set: set[str] = set()
         if all_touched:
             placeholders = ",".join("?" * len(all_touched))
@@ -1392,14 +1563,8 @@ def register(mcp: FastMCP) -> None:
                     WHERE f.project_id=? AND e.dst_symbol_id IN ({placeholders})""",
                 [pid, *list(all_touched)],
             ):
-                p = r["path"]
-                if (
-                    p.startswith("tests/")
-                    or "/tests/" in p
-                    or "test_" in p.rsplit("/", 1)[-1]
-                    or "_test." in p
-                ):
-                    suggested_tests_set.add(p)
+                if _looks_like_test_file(r["path"]):
+                    suggested_tests_set.add(r["path"])
         suggested_tests = sorted(suggested_tests_set)
 
         impacted_meta = [view.sym_meta[n] for n in impacted if n in view.sym_meta]

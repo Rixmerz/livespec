@@ -106,3 +106,74 @@ async def test_git_diff_impact_not_a_git_repo(workspace, sample_repo):
         assert result.get("isError") is True
         assert "\n" not in result["error"]
         assert "not a git repository" in result["error"].lower()
+
+
+@pytest.mark.asyncio
+async def test_git_diff_impact_excludes_test_fixtures(workspace):
+    """v0.8 P2 fix #7: suggested_tests must filter out test fixtures and
+    helper files. Only files matching test_*.py / *_test.{py,...} count
+    as test runners."""
+    pkg = workspace / "pkg"
+    pkg.mkdir()
+    (pkg / "__init__.py").write_text("")
+    (pkg / "feature.py").write_text(
+        "def widget():\n"
+        "    return 1\n"
+    )
+
+    tests = workspace / "tests"
+    tests.mkdir()
+    # Real test runner — should appear in suggested_tests
+    (tests / "test_feature.py").write_text(
+        "from pkg.feature import widget\n"
+        "\n"
+        "def test_widget():\n"
+        "    assert widget() == 1\n"
+    )
+    # Fixture file under tests/fixtures/ — should NOT appear
+    fixtures = tests / "fixtures"
+    fixtures.mkdir()
+    (fixtures / "data_widget.py").write_text(
+        "from pkg.feature import widget\n"
+        "\n"
+        "def make_data():\n"
+        "    return widget()\n"
+    )
+    # Helper file inside tests/ but not a test runner — should NOT appear
+    (tests / "helpers.py").write_text(
+        "from pkg.feature import widget\n"
+        "\n"
+        "def helper():\n"
+        "    return widget()\n"
+    )
+
+    _git(workspace, "init", "-q")
+    _git(workspace, "config", "user.email", "test@example.com")
+    _git(workspace, "config", "user.name", "test")
+    _git(workspace, "add", ".")
+    _git(workspace, "commit", "-q", "-m", "initial")
+    # Touch feature.py so it's a "changed file" against HEAD~0/HEAD
+    (pkg / "feature.py").write_text(
+        (pkg / "feature.py").read_text() + "\ndef extra():\n    return 2\n"
+    )
+    _git(workspace, "add", ".")
+    _git(workspace, "commit", "-q", "-m", "extra")
+
+    async with Client(mcp) as c:
+        await c.call_tool("index_project", {})
+        result = (
+            await c.call_tool(
+                "git_diff_impact",
+                {"base_ref": "HEAD~1", "head_ref": "HEAD"},
+            )
+        ).data
+
+    assert "tests/test_feature.py" in result["suggested_tests"], (
+        f"real test runner missing: {result['suggested_tests']}"
+    )
+    assert not any("fixtures/" in p for p in result["suggested_tests"]), (
+        f"fixtures/ leaked into suggested_tests: {result['suggested_tests']}"
+    )
+    assert "tests/helpers.py" not in result["suggested_tests"], (
+        f"helpers.py is not a test runner: {result['suggested_tests']}"
+    )

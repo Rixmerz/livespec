@@ -511,6 +511,19 @@ def register(mcp: FastMCP) -> None:
             )
         }
 
+        # v0.8 P2 fix #10: skip test modules — they exercise features but
+        # aren't features themselves. Mirrors find_dead_code's entry-point
+        # path filter.
+        def _is_test_path(p: str) -> bool:
+            return (
+                p.startswith(("tests/", "test/", "bin/", "scripts/"))
+                or "/tests/" in p
+                or "/test/" in p
+                or "/__tests__/" in p
+                or "/__fixtures__/" in p
+                or "/fixtures/" in p
+            )
+
         # Group symbols by qname prefix at module_depth
         groups: dict[str, list[tuple[int, float, dict]]] = {}
         for sid, score in ranks.items():
@@ -520,6 +533,8 @@ def register(mcp: FastMCP) -> None:
             # Skip non-actionable noise (dunders/registers/DI helpers)
             from livespec_mcp.tools.analysis import _is_implicit_entry_point
             if _is_implicit_entry_point(meta):
+                continue
+            if _is_test_path(meta.get("file_path") or ""):
                 continue
             qn = meta.get("qualified_name") or ""
             parts = qn.split(".")
