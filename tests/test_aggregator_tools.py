@@ -351,6 +351,62 @@ async def test_find_dead_code_skips_module_level_refs(workspace):
 
 
 @pytest.mark.asyncio
+async def test_find_dead_code_skips_nested_callback_closures(workspace):
+    """v0.8 P2 fix #11: nested function defs whose name is referenced in
+    their parent function's body (closure callback pattern) must NOT be
+    flagged dead.
+
+    Real-world case from livespec itself:
+
+        def start_watcher(...):
+            def _do_reindex():
+                ...
+            watcher = Watcher(on_reindex=_do_reindex)  # <- closure ref
+            ...
+
+    `_do_reindex` has zero call-edges (the parent passes it by reference,
+    doesn't call it). Without this fix it looks dead.
+    """
+    pkg = workspace / "pkg"
+    pkg.mkdir()
+    (pkg / "__init__.py").write_text("")
+    (pkg / "watcher.py").write_text(
+        "class Watcher:\n"
+        "    def __init__(self, on_event):\n"
+        "        self.on_event = on_event\n"
+        "    def fire(self):\n"
+        "        self.on_event()\n"
+        "\n"
+        "def start():\n"
+        "    def _on_event_callback():\n"
+        "        return 'changed'\n"
+        "\n"
+        "    def _truly_unused_inner():\n"
+        "        return 'never used'\n"
+        "\n"
+        "    w = Watcher(on_event=_on_event_callback)\n"
+        "    w.fire()\n"
+        "    return w\n"
+    )
+
+    async with Client(mcp) as c:
+        await c.call_tool("index_project", {})
+        out = (await c.call_tool("find_dead_code", {})).data
+
+    qnames = {d["qualified_name"] for d in out["dead_symbols"]}
+
+    # Used-as-callback nested def must NOT be flagged.
+    assert "pkg.watcher.start._on_event_callback" not in qnames, (
+        f"_on_event_callback referenced as callback in parent body should not be dead: {qnames}"
+    )
+    # Sanity: nested def that IS truly unused (no reference in parent body)
+    # IS still flagged.
+    assert "pkg.watcher.start._truly_unused_inner" in qnames, (
+        f"_truly_unused_inner has zero refs in parent body — should be flagged: {qnames}"
+    )
+
+
+@pytest.mark.asyncio
 async def test_find_dead_code_skips_decorated_handlers(workspace):
     """v0.5 P1: a function decorated with a framework entry-point marker
     (route/command/fixture/tool/...) must NOT be flagged as dead even when

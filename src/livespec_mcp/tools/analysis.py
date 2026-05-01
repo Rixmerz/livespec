@@ -125,6 +125,105 @@ def _collect_module_refs(node: ast.AST, into: set[str]) -> None:
 
 
 @lru_cache(maxsize=128)
+def _used_nested_def_names(file_path_abs: str) -> frozenset[str]:
+    """Names of function/class defs nested inside another function whose
+    name is referenced within the enclosing function's body.
+
+    The pattern this catches:
+
+        def start_watcher():
+            def _do_reindex():
+                ...
+            watcher = Watcher(on_reindex=_do_reindex)  # closure callback
+            ...
+
+    `_do_reindex` has zero call edges (the enclosing function passes it
+    by reference, doesn't *call* it itself), so without this helper it
+    looks dead. The reference inside `start_watcher`'s body is enough
+    signal to mark it as live.
+
+    Recursively walks every FunctionDef, AsyncFunctionDef, and ClassDef
+    in the AST so deeply nested defs are also covered. Same caveats as
+    `_module_level_referenced_names`: parse failure → empty set,
+    Python-only.
+    """
+    try:
+        source = Path(file_path_abs).read_text(encoding="utf-8", errors="replace")
+        tree = ast.parse(source)
+    except (OSError, SyntaxError, ValueError):
+        return frozenset()
+
+    used: set[str] = set()
+
+    def _visit_scope(scope: ast.AST) -> None:
+        # Find direct nested defs in this scope's body (not transitive —
+        # those will be visited recursively).
+        if not isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            return
+        nested_def_names: set[str] = set()
+        for stmt in scope.body:
+            if isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                nested_def_names.add(stmt.name)
+
+        if nested_def_names:
+            # Collect Name/Attribute references in scope.body, EXCLUDING
+            # the body of the nested defs themselves (those refs are
+            # internal to the nested fn, not "uses" of it).
+            referenced: set[str] = set()
+            for stmt in scope.body:
+                # Skip the nested def's own body recursion — but keep its
+                # decorators, args, default values which may reference
+                # sibling nested defs.
+                if isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    for sub in ast.walk(stmt.args):
+                        if isinstance(sub, ast.Name):
+                            referenced.add(sub.id)
+                    for dec in stmt.decorator_list:
+                        for sub in ast.walk(dec):
+                            if isinstance(sub, ast.Name):
+                                referenced.add(sub.id)
+                            elif isinstance(sub, ast.Attribute):
+                                referenced.add(sub.attr)
+                    if stmt.returns:
+                        for sub in ast.walk(stmt.returns):
+                            if isinstance(sub, ast.Name):
+                                referenced.add(sub.id)
+                    continue
+                if isinstance(stmt, ast.ClassDef):
+                    for base in stmt.bases:
+                        for sub in ast.walk(base):
+                            if isinstance(sub, ast.Name):
+                                referenced.add(sub.id)
+                    for dec in stmt.decorator_list:
+                        for sub in ast.walk(dec):
+                            if isinstance(sub, ast.Name):
+                                referenced.add(sub.id)
+                            elif isinstance(sub, ast.Attribute):
+                                referenced.add(sub.attr)
+                    continue
+                for sub in ast.walk(stmt):
+                    if isinstance(sub, ast.Name):
+                        referenced.add(sub.id)
+                    elif isinstance(sub, ast.Attribute):
+                        referenced.add(sub.attr)
+            used.update(nested_def_names & referenced)
+
+        # Recurse into all child scopes so nested-of-nested defs are found.
+        for child in ast.walk(scope):
+            if child is scope:
+                continue
+            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                _visit_scope(child)
+
+    # Top-level scopes: every direct child function/class in the module.
+    for top in tree.body:
+        if isinstance(top, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            _visit_scope(top)
+
+    return frozenset(used)
+
+
+@lru_cache(maxsize=128)
 def _module_level_referenced_names(file_path_abs: str) -> frozenset[str]:
     """Names referenced at Python module top-level (outside any function /
     class body). Captures three patterns that fool the "zero callers ⇒
@@ -952,16 +1051,25 @@ def register(mcp: FastMCP) -> None:
         # because we only protect symbols whose SHORT name appears in
         # any module-level ref position — a cross-file collision still
         # has to share that name. Empty for projects with no .py files.
+        #
+        # Plus per-file: nested-def closure callbacks (`def _foo():` inside
+        # a function whose name is then passed as `cb=_foo` to a
+        # constructor) — needs to be per-file because nested-fn names like
+        # `_do_reindex` are intentionally local and would otherwise have
+        # global-name false-skip risk.
         global_module_refs: set[str] = set()
+        nested_uses_by_file: dict[str, frozenset[str]] = {}
         workspace_path = st.settings.workspace
         for path_row in st.conn.execute(
             "SELECT f.path FROM file f WHERE f.project_id=? AND f.path LIKE '%.py'",
             (pid,),
         ):
             try:
-                global_module_refs |= _module_level_referenced_names(
-                    str(workspace_path / path_row["path"])
-                )
+                abs_path = str(workspace_path / path_row["path"])
+                global_module_refs |= _module_level_referenced_names(abs_path)
+                nested_uses = _used_nested_def_names(abs_path)
+                if nested_uses:
+                    nested_uses_by_file[path_row["path"]] = nested_uses
             except Exception:
                 # Bad file paths shouldn't kill the whole audit.
                 continue
@@ -1013,6 +1121,14 @@ def register(mcp: FastMCP) -> None:
             if not include_infrastructure:
                 qname_parts = meta["qualified_name"].split(".")
                 if meta["name"] in global_module_refs:
+                    continue
+                # v0.8 P2 fix #11: nested-fn closure callback. A function
+                # defined inside another function whose name is referenced
+                # within the parent's body (e.g. `Watcher(on_reindex=_do)`)
+                # is reachable as a callback even with zero call-edges.
+                # Per-file lookup so nested names don't cross-collide.
+                file_nested = nested_uses_by_file.get(meta["file_path"])
+                if file_nested and meta["name"] in file_nested:
                     continue
                 if meta["kind"] == "method" and len(qname_parts) >= 2:
                     parent_class_short = qname_parts[-2]
