@@ -32,7 +32,53 @@ Todo el stack es local-first: 0 servicios externos, 0 API keys obligatorias, 0 D
 
 ---
 
-## 3. Estado actual: v0.7 listo — brownfield onboarding
+## 3. Estado actual: pre-v0.8 — doc alignment cerrado, listo para P0
+
+**Último commit en main:** `b6a3e8b docs: align CLAUDE.md + ROADMAP.md on RF tier-1 placement for v0.8`
+
+Sesión 2026-05-01 cerró una discrepancia interna en los docs antes de
+arrancar v0.8. ZERO código tocado, sólo CLAUDE.md + ROADMAP.md.
+
+**Qué se resolvió:**
+
+Discrepancia entre **CLAUDE.md "Stakeholder posture"** ("RF traceability
+es el diferenciador defensible") y la tier-vision original que ponía
+sólo 2 RF tools en tier-1 (`audit_coverage`, `propose_requirements_from_codebase`).
+Trigger: README línea 8 lidera con "¿Qué código implementa el RF-042?"
+— pregunta contestada por `get_requirement_implementation`, que estaba
+en tier-2 plugin. Bug de la tier list, no de la stakeholder posture.
+
+**Cambios concretos en commit `b6a3e8b`:**
+
+1. **Tier-1 default ahora 14-16 tools** (8 code intel + 4 RF agentic +
+   4 quick wins por construir):
+   - +get_requirement_implementation (README lead question #1)
+   - +list_requirements (RF discoverability)
+   - find_orphan_tests + find_endpoints promovidos desde tier-4
+
+2. **Plugin auto-detect por DB state** (no config flag):
+   - `livespec-rf` auto-on si `SELECT COUNT(*) FROM rf > 0` (10 tools)
+   - `livespec-docs` auto-on si `SELECT COUNT(*) FROM doc > 0` (3 tools)
+   - `LIVESPEC_PLUGINS` env var override
+
+3. **5 drops decididos** (no plugin, no opt-in):
+   - `list_files`, `rebuild_chunks`, `start_watcher`, `stop_watcher`, `watcher_status`
+
+4. **2 ex-tools → resources**: `get_index_status`, `get_project_overview`
+
+5. **v0.8 plan reordenado de A→B→C a A.0→B→A→C** (battle-test antes
+   de cortar, no después). ROADMAP §6 self-admite que el tier list
+   inicial era opinion-based.
+
+6. **ROADMAP §6 self-correction items 5+6**: explicit acknowledgment
+   del under-counting de RFs + identificación de sesgos del autor
+   (recency bias + survivor bias agentic).
+
+**Tests:** 118/118 verdes (sin embeddings). `uv run pytest -q -m "not embeddings"`.
+
+---
+
+## 3a. Estado previo: v0.7 listo — brownfield onboarding
 
 **v0.7.0** (2026-05-01): cierra el gap entre "proyecto fresco con livespec
 día 1" y "monorepo Rust de 50K símbolos al que adopto livespec un martes".
@@ -62,7 +108,7 @@ for p in proposals.proposals[:N]:
 
 ---
 
-## 3a. Estado previo: v0.6 listo, hardening release
+## 3b. Estado previo: v0.6 listo, hardening release
 
 **v0.6.0** (2026-05-01): hardening / debt-paydown release. No new features
 significativas; foco en sanear lo que se acumuló.
@@ -155,94 +201,122 @@ b465fa7 feat: bootstrap livespec-mcp (Phases 0-3)
 
 ---
 
-## 4. Pendiente: v0.4 candidates (no priorizado, elegir batch en sesión)
+## 4. Pendiente: v0.8 phases (orden A.0 → B → A → C, decidido)
 
-### Tema A — Multi-language parity (cerrar la deuda de P0.4)
+**Trigger:** ROADMAP §4 + commit `b6a3e8b`. Battle-test ANTES de curation
+porque tier list es opinion-based (ROADMAP §6 self-admit).
 
-**A1. Scoped resolution por imports en TS/JS**
-P0.4 sólo cubre Python. TS/JS tienen imports estáticos similares (`import { foo } from './bar'`, `const x = require('./y')`). El extractor `_ts_extract` debería detectar `import_statement` y `require_call`, mapear local_name → source_module, y usarlo en `_resolve_refs` igual que Python.
-- Archivos: `src/livespec_mcp/domain/extractors.py:_ts_extract`
-- Tests: extender `tests/test_extractors.py` para validar que un fixture con imports cross-file produce edges weight=1.0 y no 0.5.
+### v0.8 P0 — Quick wins (½-1 día)
 
-**A2. Scoped resolution para Go (package imports)**
-Go usa `import "path/to/pkg"` y referencias por `pkg.Func()`. Similar a A1 pero con sintaxis Go.
+Construir antes del battle-test para que entren en el log. Todos viven
+en `tools/analysis.py` (alias semánticos sobre `analyze_impact`) y
+`tools/requirements.py` (composite tools).
 
-**A3. Scoped resolution para Rust (use statements)**
-`use crate::module::Item` → tabla local→fully-qualified. Más complejo por el sistema de módulos.
+- **`get_symbol_source(qname, workspace=None)`** — body extraction sin
+  pasar por `get_symbol_info(detail='full')`. Devuelve `{qname, source,
+  start_line, end_line, file}`. Cache hit si symbol no cambió por
+  body_hash.
+- **`who_calls(qname, max_depth=1, workspace=None)`** — alias agentic
+  de `analyze_impact(target_type='symbol', target=qname, direction='backward', max_depth)`.
+  Devuelve sólo callers, no el payload completo de impact.
+- **`who_does_this_call(qname, max_depth=1, workspace=None)`** — idem
+  forward direction.
+- **`quick_orient(qname, workspace=None)`** — composite: símbolo +
+  5 top callers + 5 top callees + linked RFs + first-line docstring.
+  Reemplaza 3-4 calls separadas con 1.
 
-**A4. Hardening Ruby + PHP**
-- Ruby: `require 'foo'` y constantes globales — los refs hoy son weight=0.5 globales
-- PHP: `use App\Service\X` namespaces
+Tests: agregar `tests/test_quick_wins.py` con 4 happy paths + 4 edge
+cases (qname no existe → `did_you_mean`, symbol sin body, etc.).
 
-**A5. Notebook (.ipynb) support**
-Parsear notebooks Jupyter como secuencia de cells Python. Útil para data science repos. Requiere parser dedicado (no tree-sitter).
+### v0.8 P1 — Battle-test instrumentation (½-1 día)
 
-### Tema B — New domain features
+Middleware en `server.py` que envuelve cada tool dispatch:
 
-**B1. RF dependency graph (RF-A depends-on RF-B)**
-Hoy las RFs son independientes. Modelar dependencias permitiría: "si RF-001 cambia de status, propaga a sus dependientes". Schema: nueva tabla `rf_dependency(parent_rf_id, child_rf_id, kind)`. Tools: `link_requirements(parent, child)`, `analyze_impact(target_type='requirement')` extendido para incluir descendientes RF.
+```python
+{
+    "tool_name": str,
+    "args_redacted": dict,  # paths/secrets stripped
+    "result_chars": int,
+    "latency_ms": int,
+    "agent_followed_up_with": str | None,  # next tool call name
+    "result_cited_in_final_answer": bool,  # filled post-session
+    "session_id": str,
+    "workspace": str,
+    "ts": ISO8601,
+}
+```
 
-**B2. `find_dead_code()` tool**
-Símbolos con 0 callers (ancestor cone vacío) Y 0 rf_symbol links. Candidatos a borrar. Filtrar entry points (funciones decoradas con `@app.route`, `@mcp.tool`, `if __name__ == "__main__"`, archivos en `bin/`).
+Output a `.mcp-docs/agent_log.jsonl`. `result_cited_in_final_answer`
+se llena vía side-channel (manual annotation post-session, o heurística
+por overlap de qnames entre tool result y agent's text output).
 
-**B3. `audit_coverage()` tool**
-Reporte: módulos sin ningún RF asociado, RFs sin implementation, RFs con confidence promedio < 0.7. Ya existe el material en list_requirements + get_requirement_implementation; sería un agregador único.
+Tests: invariante "todo dispatch produce ≥1 log line", redacción de
+paths absolutos, no logs de calls fallidos antes del middleware.
 
-**B4. `bulk_link_requirements(mappings: list[dict])`**
-Hoy `link_requirement_to_code` es uno por uno. Para migrar un proyecto con 50 RFs es tedioso. Bulk acepta lista de `{rf_id, symbol_qname, ...}`.
+### v0.8 P2 — Battle-test execution (1-2 días)
 
-**B5. `find_orphan_tests()` tool**
-Tests que no llaman a ningún símbolo del código de producción (potencialmente desconectados). Usa el grafo: tests/* cuyo descendant cone no contiene src/*.
+5 codebases medium-sized + 3-5 sessions cada uno = 15-25 logs.
 
-**B6. Per-project `.livespec.toml` config**
-Ignore patterns extra, max file size override, lenguajes a skipear, base path para tests. Hoy todo está hardcoded en `domain/indexer.py:DEFAULT_IGNORES`.
+| Codebase | Lang | Tasks |
+|----------|------|-------|
+| Django (subset) | Python | feature, bugfix, refactor |
+| Next.js boilerplate | TS | feature, bugfix, refactor |
+| a large Rust monorepo (subset) | Rust | feature, bugfix, refactor |
+| ? | ? | elegir en sesión |
+| ? | ? | elegir en sesión |
 
-### Tema C — Quality & release
+Output: `docs/AGENT_USAGE_DATA.md` con números reales reemplazando las
+especulaciones de ROADMAP §2.
 
-**C1. Tag `v0.3.0` + GitHub Release**
-Crear tag, generar release notes en GitHub UI o `gh release create`. Cambelog desde commits.
+### v0.8 P3 — Curation pass data-driven (½-1 día)
 
-**C2. CI: verificar que el workflow de GitHub Actions PASA**
-`.github/workflows/ci.yml` está checked-in pero nunca corrió en GitHub aún (recién pushed). Posibles fixes: cache hit, paths de tree-sitter wheels en Linux (la pin `<1.6.3` es macOS-only — Linux puede usar 1.6.3+).
+Cuando el log dice qué se usó y qué no:
 
-**C3. Performance regression CI**
-Job opcional que corre `bench/run.py --quick`, compara JSON con `bench/results-baseline.json`, falla si cold_ms regresa >20%. Postear comentario en PR.
+1. **Drop deprecated v0.6 aliases** (`link_requirement_to_code`,
+   `link_requirements`, `unlink_requirements`,
+   `get_requirement_dependencies`). Sin necesidad de data — promesa.
+2. **Drop tier-4 decididos** (5 tools): `list_files`, `rebuild_chunks`,
+   `start_watcher`, `stop_watcher`, `watcher_status`.
+3. **`get_index_status` + `get_project_overview` → resources**
+   (`project://index/status`, `project://overview`).
+4. **Plugin auto-detect en `server.py`**:
+   - At startup, query `SELECT COUNT(*) FROM rf` y `... FROM doc`.
+   - Si > 0, register plugin tools dinámicamente.
+   - `LIVESPEC_PLUGINS` env var override.
+5. **Move RF mutación tools to `tools/plugins/rf.py`** (10 tools).
+6. **Move docs management to `tools/plugins/docs.py`** (3 tools).
+7. **Validar contra log**: cualquier tool nunca llamada en 15+ sessions
+   se marca como candidato a drop o plugin. Opt-in para v0.9.
 
-**C4. Más property tests**
-- `git_diff_impact`: cualquier diff válido devuelve estructura consistente
-- `_is_infrastructure`: ningún símbolo "real" (>20 líneas, sin nombre dunder/register) clasifica como infra
-- `_resolve_refs`: con scope_module no-None y target en scope, weight es siempre 1.0 o 0.9
+### v0.8 P4 — Pitch alignment (½ día)
 
-**C5. Documentation site (mkdocs)**
-- `docs/` con páginas: getting started, tools reference (auto-generado del docstring de cada tool), troubleshooting
-- `mkdocs.yml` con material theme
-- GitHub Pages deployment
+1. **README headline** → "local-first code intelligence for AI agents
+   — call graph, impact analysis, RF↔code traceability". RF como
+   diferenciador, NO "(optional)".
+2. **`docs/AGENT_QUICKSTART.md`** — primer flow de un agente cold:
+   ```
+   index_project()
+   propose_requirements_from_codebase()
+   find_symbol("MyThing")
+   get_symbol_info("module.MyThing", detail="full")
+   get_requirement_implementation("RF-042")
+   analyze_impact(target_type="symbol", target="...")
+   git_diff_impact()
+   ```
+3. **Performance section** del README con números Django/a large Rust monorepo/the workflow runner +
+   guidance "para repos > 30K símbolos, summary_only=True default".
+4. **Sección "agent vs human user"** explícita.
 
-**C6. CHANGELOG.md**
-v0.1 → v0.2 → v0.3 con highlights y breaking changes (find_references, suggest_rf_links, embed_pending, generate_docs_for_*, detect_stale_docs eliminados).
+### v0.8 P7 — Cut v0.8.0
 
-**C7. CONTRIBUTING.md**
-Cómo agregar un lenguaje (fixture + entry en `EXT_LANGUAGE` + tests). Cómo agregar una tool. Convención de commits (feat/fix/refactor + co-author Claude).
+- CHANGELOG promote [Unreleased] → [0.8.0]
+- pyproject.toml version bump
+- README tool count + roadmap row
+- HANDOFF.md §3 update
+- `git tag -a v0.8.0 -m "..."` + push
+- `gh release create v0.8.0`
 
-### Tema D — Hardening profundo
-
-**D1. Watcher cleanup on shutdown**
-Hoy si el server muere con un watcher activo, el thread daemon termina pero los `.mcp-docs/docs.db-wal` pueden quedar en estado raro. Agregar `atexit.register(_stop_all_watchers)` en `domain/watcher.py`.
-
-**D2. Symbol body extraction más robusto**
-Hoy `body_hash_seed` para Python es `ast.dump(node)` que incluye line numbers en algunos casos. Verificar que pequeños whitespace changes no disparen drift falso. Posible: normalizar el AST antes de hashear.
-
-**D3. Error contextual en tools**
-Hoy errores como "Symbol 'foo' not found" no sugieren alternativas. Devolver top-3 `find_symbol(query='foo')` matches en el campo `did_you_mean`. Patrón ya pseudocodeado en design doc original.
-
-**D4. SQLite write lock detection**
-Si el server está siendo usado mientras otro proceso (CI por ejemplo) corre `index_project`, los locks pueden producir errores opacos. Detectar `database is locked` y devolver mensaje claro.
-
-**D5. `code://file/{path}` resource**
-Análogo a `code://symbol/{qname}`: devolver el archivo completo. Útil para "dame el archivo que implementa RF-X".
-
-**D6. LLM re-rank tercer nivel del matcher**
-v0.2 plan original hablaba de esto. Cuando hay N candidatos para un RF y la confianza es media, dispatch a `ctx.sample()` con prompt validador. Postergado hasta que más hosts soporten sampling.
+**Total estimado v0.8: 4-6 días enfocados.**
 
 ---
 
@@ -291,29 +365,27 @@ cd <repo>
 # 1. Ver estado actual
 git status
 git log --oneline -5
+# Esperado: HEAD = b6a3e8b "docs: align CLAUDE.md + ROADMAP.md..."
 
 # 2. Verificar que tests siguen verdes
-uv run pytest -q -m "not embeddings"      # 51 tests
-uv run pytest -m embeddings                # 2 tests (necesita ~30s primera vez para load model)
+uv run pytest -q -m "not embeddings"      # 118 tests
+uv run pytest -m embeddings                # 2 tests (~30s primera vez)
 
-# 3. (Opcional) ver el bench actual
-uv run python bench/run.py --quick
+# 3. Próxima fase: v0.8 P0 (quick wins). Ver §4 arriba.
 
-# 4. Decidir qué tema atacar (A/B/C/D arriba)
+# 4. Crear tasks via TaskCreate, marcarlos in_progress al empezar
 
-# 5. Crear tasks via TaskCreate, marcarlos in_progress al empezar
-
-# 6. Para cada tarea:
+# 5. Para cada tarea:
 #    - leer archivo objetivo
 #    - hacer cambio mínimo
 #    - correr test específico
 #    - si pasa: marcar completed, seguir
 #    - si falla: fix antes de avanzar
 
-# 7. Cada batch coherente -> 1 commit
+# 6. Cada batch coherente -> 1 commit
 git add -A
 git commit -m "$(cat <<'EOF'
-v0.4 Pn: short-summary
+v0.8 Pn: short-summary
 
 Detailed body...
 
@@ -322,7 +394,7 @@ EOF
 )"
 git push
 
-# 8. Si tocás MCP server code, el cliente Claude Code necesita /mcp reconnect
+# 7. Si tocás MCP server code, el cliente Claude Code necesita /mcp reconnect
 #    para cargar los cambios (proceso largo-running, no auto-reload).
 ```
 
@@ -392,44 +464,56 @@ livespec-mcp/
 
 ---
 
-## 8. Sugerencia de orden para v0.4
+## 8. Sugerencia de orden para v0.8
 
-Si pidiera mi opinión, atacaría en este orden:
+Decidido (post commit `b6a3e8b`): **A.0 → B → A → C**.
 
-1. **C1 + C6** (1 hora): tag v0.3.0 + CHANGELOG. Cierra la versión actual, da punto de partida limpio para v0.4.
-2. **C2** (30 min): verificar que el CI workflow pasa en GitHub. Si falla, fix.
-3. **A1 + A2** (medio día): scoped resolution para TS/JS y Go. Lleva el "honesto" de v0.2 al siguiente nivel — los 6 lenguajes ya testeados ahora también tienen edges precisos, no sólo símbolos.
-4. **B2 + B3** (medio día): `find_dead_code` + `audit_coverage`. Dos tools que son agregadores de queries existentes — bajo costo, alto valor demostrable.
-5. **B1** (1 día): RF dependencies. Cambio de schema + 2 tools nuevas. Es el feature de modelado que faltaba.
-6. **D1 + D3** (medio día): watcher cleanup + did_you_mean. UX polish.
+1. **P0 quick wins** (½-1 día) — `get_symbol_source`, `who_calls`,
+   `who_does_this_call`, `quick_orient`. Construir antes para que entren
+   en el log del battle-test.
+2. **P1 instrumentation** (½-1 día) — middleware logging contract en
+   `server.py`. Sin esto P2 no produce data utilizable.
+3. **P2 battle-test** (1-2 días) — 5 codebases × 3-5 sessions =
+   15-25 logs. Output: `docs/AGENT_USAGE_DATA.md`.
+4. **P3 curation pass** (½-1 día) — drops + plugin auto-detect +
+   move RF mut/docs a plugins. Validar contra el log.
+5. **P4 pitch alignment** (½ día) — README + `AGENT_QUICKSTART.md`.
+6. **P7 cut v0.8.0** — CHANGELOG, version, tag, release.
 
-Eso te deja con v0.4 en ~3-4 días enfocados, sin tocar embeddings ni HTTP transport.
+**Lo que NO va en v0.8:**
 
-Lo que NO pondría en v0.4:
-- HTTP transport (compromete local-first)
-- LanceDB (sin user con >2M chunks aún)
-- Dashboard UI (out of scope)
-- LSP-grade resolution (meses)
-- Multi-process indexer (bottleneck no es CPU)
+- Features nuevas (incluso `pre-flight token budget` y `search_by_signature`).
+- HTTP transport (compromete local-first).
+- LLM-assisted RF refinement sobre B2 (deferred desde v0.7, sigue deferred).
+- `_resolve_refs` targeted re-walk (deferred desde v0.7, sigue deferred).
+- mkdocs site (deferred desde v0.5).
 
 ---
 
 ## 9. Estado de la sesión actual al momento de escribir esto
 
 - Working tree: clean (todo committed y pushed)
-- Branch: main, sincronizado con origin/main en `40a2cfc`
-- Tests: 51/51 default + 2/2 embeddings = 53/53
-- MCP server local: el proceso connected al cliente sigue corriendo el binario VIEJO (anterior a v0.3) — un `/mcp` reconnect cargaría el nuevo
+- Branch: main, sincronizado con origin/main en `b6a3e8b`
+- Último commit: `docs: align CLAUDE.md + ROADMAP.md on RF tier-1 placement for v0.8`
+- Tests: 118/118 default (sin embeddings)
+- MCP server local: el proceso connected al cliente sigue corriendo el
+  binario v0.7 — `/mcp` reconnect lo cargaría, pero esta sesión no tocó
+  código del server (solo docs), así que no es necesario reconectar.
 - venv: `.venv/` con todas las deps incluidas embeddings + hypothesis + psutil
 - bench cache: `~/.cache/livespec-bench/requests/` con repo clonado
+- Memoria persistente:
+  - `feedback_workflow_main_direct.md` (push directo a main, no PRs)
+  - `project_stakeholder_posture.md` (RFs first-class, agent UX es el producto)
 
 ---
 
-## 10. Una pregunta antes de empezar
+## 10. Cuando reanude el agente
 
-Cuando el agente reanude, debería primero:
-
-1. Confirmar contexto leyendo este archivo + `git log --oneline -10`
-2. Preguntar al usuario: ¿qué tema (A/B/C/D) atacar? O sugerir el orden de §8.
-
-NO empezar a programar sin confirmar dirección. v0.3 fue un sprint largo y conviene reset de prioridades.
+1. **Confirmar contexto** leyendo este archivo + `git log --oneline -5`.
+2. **Verificar tests verdes** con `uv run pytest -q -m "not embeddings"` (118).
+3. **Empezar v0.8 P0** (quick wins) — 4 tools nuevas en `tools/analysis.py`
+   y `tools/requirements.py`. Specs en §4 arriba.
+4. **No re-discutir el plan v0.8 ni la tier list.** Está decidida en
+   commit `b6a3e8b`. Stakeholder posture en CLAUDE.md gana siempre.
+5. Si el usuario quiere cambiar el orden o agregar features, ahí sí
+   pausar y revisar — pero la default es ejecutar P0 quick wins.
