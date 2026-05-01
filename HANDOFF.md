@@ -32,7 +32,28 @@ Todo el stack es local-first: 0 servicios externos, 0 API keys obligatorias, 0 D
 
 ---
 
-## 3. Estado actual: v0.3 cerrado
+## 3. Estado actual: v0.4 en PR (#1), v0.3 tagueado
+
+**Tag + Release v0.3.0** — pushed, GitHub Release publicado en
+https://github.com/Rixmerz/livespec-mcp/releases/tag/v0.3.0 (apunta al
+commit `40a2cfc`).
+
+**Branch v0.4-p0-release-hygiene** (PR #1) tiene P0 + P1 + P2 + P3 cocinados:
+- P0: CHANGELOG.md retroactivo + fix CI (uv venv en vez de --system, era
+  PEP 668 sobre `/usr` en Ubuntu)
+- P1: scoped resolution para TS/JS/Go/Ruby/PHP. `call_target_and_leftmost`
+  ahora lee `receiver`/`scope`/`object`. Edge weight=1.0 cross-file en 5
+  lenguajes nuevos.
+- P2: `find_dead_code`, `audit_coverage`, `find_orphan_tests` (+3 tools, 26
+  → 29). `did_you_mean` en errores Symbol-not-found (5 sites). Watcher
+  atexit cleanup.
+- P3: README + CHANGELOG actualizados.
+
+Tests: 51 → 69 default. CI verde en HEAD del branch.
+
+---
+
+## 3a. Estado previo: v0.3 cerrado
 
 **Commits en main (top-down, más reciente primero):**
 ```
