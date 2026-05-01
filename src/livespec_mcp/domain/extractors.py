@@ -206,6 +206,11 @@ _DEF_NODE_TYPES = {
     "enum_item",
     # Go: structs/interfaces declared as type_spec inside type_declaration
     "type_spec",
+    # Ruby
+    "method",            # def foo
+    "singleton_method",  # def self.foo
+    "class",             # class Foo
+    "module",            # module Foo
 }
 
 _CALL_NODE_TYPES = {
@@ -214,6 +219,12 @@ _CALL_NODE_TYPES = {
     "method_invocation",
     "invocation_expression",
     "call",
+    # PHP-specific
+    "function_call_expression",
+    "method_call_expression",
+    "scoped_call_expression",
+    "member_call_expression",
+    # Ruby is just `call` (already covered)
 }
 
 # Anonymous function literals — name comes from the surrounding binding

@@ -47,6 +47,18 @@ def _call_targets(result):
             {"helper", "topLevelOne", "Sample", "Greeter", "greet"},
             {"helper"},
         ),
+        # Ruby (P2.2)
+        (
+            FIXTURES / "ruby" / "sample.rb",
+            {"helper", "top_level_one", "Greeter", "initialize", "greet"},
+            {"helper"},
+        ),
+        # PHP (P2.2)
+        (
+            FIXTURES / "php" / "sample.php",
+            {"helper", "topLevelOne", "Greeter", "__construct", "greet"},
+            {"helper"},
+        ),
     ],
 )
 def test_extractor_basic(fixture_path: Path, must_have_symbols: set[str], must_have_calls: set[str]):

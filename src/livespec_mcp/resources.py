@@ -124,6 +124,28 @@ def register(mcp: FastMCP) -> None:
             return f"# No doc for `{rf_id}`\n\nRun `generate_docs_for_requirement` first."
         return row["content"]
 
+    @mcp.resource("code://symbol/{qname*}", mime_type="text/plain")
+    def code_symbol(qname: str) -> str:
+        """Raw source body of a symbol (no JSON wrapping). Drop into context."""
+        st = get_state()
+        pid = st.project_id
+        row = st.conn.execute(
+            """SELECT s.start_line, s.end_line, f.path FROM symbol s
+               JOIN file f ON f.id=s.file_id
+               WHERE f.project_id=? AND s.qualified_name=? LIMIT 1""",
+            (pid, qname),
+        ).fetchone()
+        if not row:
+            return f"# Symbol '{qname}' not found in this workspace"
+        try:
+            fp = st.settings.workspace / row["path"]
+            lines = fp.read_text(encoding="utf-8", errors="replace").splitlines()
+            start = max(int(row["start_line"]) - 1, 0)
+            end = min(int(row["end_line"]), len(lines))
+            return "\n".join(lines[start:end])
+        except OSError as e:
+            return f"# Error reading source: {e}"
+
     @mcp.resource("project://index/status", mime_type="application/json")
     def index_status() -> str:
         st = get_state()

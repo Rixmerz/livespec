@@ -12,7 +12,10 @@ from typing import Any, Literal
 
 from fastmcp import FastMCP
 
+from pathlib import Path
+
 from livespec_mcp.domain.matcher import scan_annotations
+from livespec_mcp.domain.md_rfs import parse_rfs_markdown
 from livespec_mcp.state import get_state
 
 
@@ -216,6 +219,67 @@ def register(mcp: FastMCP) -> None:
             "symbols": [dict(r) for r in rows],
             "files": files,
             "coverage": {"symbol_count": len(rows), "file_count": len(files)},
+        }
+
+    @mcp.tool(annotations={"readOnlyHint": False, "idempotentHint": True})
+    def import_requirements_from_markdown(
+        path: str,
+        workspace: str | None = None,
+    ) -> dict[str, Any]:
+        """Bulk-create / update RFs from a Markdown spec file.
+
+        Format expected: `## RF-NNN: Title` headers, with `**Prioridad:** alta`
+        and `**Módulo:** auth` metadata lines (Spanish or English variants).
+        Idempotent: re-import updates existing RFs in place rather than duplicating.
+
+        Path is resolved relative to the workspace root if not absolute.
+        """
+        st = get_state(workspace)
+        pid = st.project_id
+        p = Path(path)
+        if not p.is_absolute():
+            p = st.settings.workspace / path
+        if not p.exists():
+            return {"error": f"file not found: {p}", "isError": True}
+        text = p.read_text(encoding="utf-8", errors="replace")
+        parsed = parse_rfs_markdown(text)
+        created = 0
+        updated = 0
+        for prf in parsed:
+            module_id = None
+            if prf.module:
+                row = st.conn.execute(
+                    "SELECT id FROM module WHERE project_id=? AND name=?", (pid, prf.module)
+                ).fetchone()
+                if row:
+                    module_id = int(row["id"])
+                else:
+                    cur = st.conn.execute(
+                        "INSERT INTO module(project_id, name) VALUES(?,?)", (pid, prf.module)
+                    )
+                    module_id = int(cur.lastrowid)
+            existing = st.conn.execute(
+                "SELECT id FROM rf WHERE project_id=? AND rf_id=?", (pid, prf.rf_id)
+            ).fetchone()
+            if existing:
+                st.conn.execute(
+                    """UPDATE rf SET title=?, description=?, status=?, priority=?,
+                       module_id=?, updated_at=datetime('now') WHERE id=?""",
+                    (prf.title, prf.description, prf.status, prf.priority, module_id, existing["id"]),
+                )
+                updated += 1
+            else:
+                st.conn.execute(
+                    """INSERT INTO rf(project_id, rf_id, title, description, module_id, status, priority)
+                       VALUES(?,?,?,?,?,?,?)""",
+                    (pid, prf.rf_id, prf.title, prf.description, module_id, prf.status, prf.priority),
+                )
+                created += 1
+        return {
+            "source": str(p),
+            "parsed": len(parsed),
+            "created": created,
+            "updated": updated,
         }
 
     @mcp.tool(annotations={"readOnlyHint": False, "idempotentHint": True, "destructiveHint": True})

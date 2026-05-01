@@ -99,6 +99,38 @@ def _bench_repo(workspace: Path) -> dict[str, Any]:
 
     db_size_mb = settings.db_path.stat().st_size / (1024 * 1024) if settings.db_path.exists() else 0
 
+    # P2.4: memory footprint of NetworkX graph + PageRank.
+    memory: dict[str, Any] = {}
+    try:
+        import psutil
+
+        from livespec_mcp.domain.graph import load_graph, page_rank
+
+        process = psutil.Process()
+        rss_before_mb = process.memory_info().rss / (1024 * 1024)
+        conn = connect(settings.db_path)
+        # Need a project_id for load_graph
+        project_id = conn.execute("SELECT id FROM project LIMIT 1").fetchone()
+        if project_id is not None:
+            view = load_graph(conn, int(project_id["id"]))
+            rss_after_load_mb = process.memory_info().rss / (1024 * 1024)
+            t = time.perf_counter()
+            ranks = page_rank(view.g)
+            pr_ms = (time.perf_counter() - t) * 1000
+            rss_after_pr_mb = process.memory_info().rss / (1024 * 1024)
+            memory = {
+                "rss_before_mb": round(rss_before_mb, 1),
+                "rss_after_load_mb": round(rss_after_load_mb, 1),
+                "rss_after_pagerank_mb": round(rss_after_pr_mb, 1),
+                "graph_nodes": view.g.number_of_nodes(),
+                "graph_edges": view.g.number_of_edges(),
+                "pagerank_ms": round(pr_ms, 1),
+                "ranks_computed": len(ranks),
+            }
+        conn.close()
+    except ImportError:
+        memory = {"skipped": "psutil not installed"}
+
     return {
         "files": cold.files_total,
         "symbols": cold.symbols_total,
@@ -111,6 +143,7 @@ def _bench_repo(workspace: Path) -> dict[str, Any]:
         "loc_per_sec": (
             round(cold.symbols_total * 1000 / cold_ms, 0) if cold_ms > 0 else 0
         ),
+        "memory": memory,
     }
 
 

@@ -1,21 +1,30 @@
 {
   "results": {
     "requests": {
-      "cold_ms": 317.6,
-      "db_mb": 0.85,
-      "edges": 2095,
+      "cold_ms": 356.4,
+      "db_mb": 0.87,
+      "edges": 2092,
       "files": 36,
       "languages": {
         "python": 36
       },
-      "loc_per_sec": 2346.0,
+      "loc_per_sec": 2090.0,
+      "memory": {
+        "graph_edges": 2092,
+        "graph_nodes": 745,
+        "pagerank_ms": 84.1,
+        "ranks_computed": 745,
+        "rss_after_load_mb": 51.0,
+        "rss_after_pagerank_mb": 58.9,
+        "rss_before_mb": 49.7
+      },
       "partial": {
-        "edges_total": 2095,
+        "edges_total": 2092,
         "files_changed": 1,
-        "ms": 21.1
+        "ms": 25.3
       },
       "symbols": 745,
-      "warm_ms": 4.9
+      "warm_ms": 5.1
     }
   }
 }
