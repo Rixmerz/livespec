@@ -28,13 +28,13 @@ Honest table — only languages with a passing test suite are claimed.
 | Language | Status | What's covered |
 |----------|--------|----------------|
 | **Python** | ✅ Tested | Functions, classes, methods, decorators, calls — uses `ast` for full precision. Imports drive scoped resolution (P0.4). |
-| **Go** | ✅ Tested | Functions, struct types via `type_spec`, struct methods, calls |
+| **Go** | ✅ Tested | Functions, struct types via `type_spec`, struct methods, calls. **Scoped resolution** via `import` + alias (P1.A2 v0.4). |
 | **Java** | ✅ Tested | Classes, methods, calls (`method_invocation`) |
-| **JavaScript** | ✅ Tested | Function declarations, **arrow functions** assigned to const/let, classes, methods |
-| **TypeScript** | ✅ Tested | Same as JS plus typed signatures (`.ts` and `.tsx`) |
+| **JavaScript** | ✅ Tested | Function declarations, **arrow functions** assigned to const/let, classes, methods. **Scoped resolution** via ES6 `import` and CommonJS `require` (P1.A1 v0.4). |
+| **TypeScript** | ✅ Tested | Same as JS plus typed signatures (`.ts` and `.tsx`). **Scoped resolution** via ES6 `import` (P1.A1 v0.4). |
 | **Rust** | ✅ Tested | Free functions, struct/enum types, **`impl` block methods** as `Type::method`, traits |
-| **Ruby** | ✅ Tested | `def`, `class`, `module`, `singleton_method`, calls |
-| **PHP** | ✅ Tested | Classes, methods, function/method/scoped call expressions |
+| **Ruby** | ✅ Tested | `def`, `class`, `module`, `singleton_method`, calls. Best-effort scoped resolution via `require_relative` + receiver field (P1.A4 v0.4). |
+| **PHP** | ✅ Tested | Classes, methods, function/method/scoped call expressions. Best-effort scoped resolution via `use Namespace\X` for `Class::method()` (P1.A4 v0.4); instance-method calls are not scoped. |
 | C, C++, C#, Kotlin, Swift, Scala | ⚠️ Untested | The generic tree-sitter extractor will *attempt* to parse these (they're listed in `EXT_LANGUAGE`) but no test suite covers them. Symbol coverage may be partial — open an issue with a fixture if you need a specific language hardened. |
 
 The extractor is a heuristic over hardcoded tree-sitter node types
@@ -72,7 +72,7 @@ By default it picks the **current working directory** as workspace, or
 }
 ```
 
-## Tools (26)
+## Tools (29)
 
 Every tool accepts an optional `workspace: str` argument. When omitted, the
 server resolves to `LIVESPEC_WORKSPACE` env var or the current working
@@ -97,6 +97,14 @@ single MCP server instance can serve multiple repos in parallel.
 - `git_diff_impact(base_ref="HEAD~1", head_ref="HEAD", max_depth=5, workspace=None)` —
   changed files → impacted callers → affected RFs → suggested test files. The CI/PR-review
   entry point.
+- `find_dead_code(include_infrastructure=False, workspace=None)` — symbols with
+  zero callers and zero RF links. Skips entry-point paths (`tests/`, `bin/`,
+  `scripts/`, `__main__.py`, `manage.py`) and implicit entry points (dunders,
+  FastMCP `register`, DI helpers) by default.
+- `audit_coverage(workspace=None)` — RF coverage report: modules without
+  any RF, RFs without implementation, RFs with avg confidence < 0.7.
+- `find_orphan_tests(max_depth=10, workspace=None)` — test functions whose
+  forward call cone never reaches a non-test symbol.
 
 ### Requirements
 - `create_requirement(title, ...)`
@@ -182,6 +190,7 @@ In-memory FastMCP `Client(mcp)` so tests run without subprocess or network.
 | 6 — Polish | ✅ | 7 prompts, doc:// resources, two-level @rf: matcher with negation guard |
 | 7 — v0.2 | ✅ | Multi-tenant state, tool consolidation 25→23, persistent refs, watcher, bench suite |
 | 8 — v0.3 | ✅ | Auto-scan post-index, PageRank infra filter, scoped resolution by imports, `git_diff_impact`, embeddings smoke real, Ruby+PHP fixtures, hypothesis property tests, memory bench, GitHub Actions CI, `code://` resource, `delete_requirement`, markdown RF importer |
+| 9 — v0.4 | 🚧 | Scoped resolution for TS/JS/Go/Ruby/PHP, `find_dead_code` / `audit_coverage` / `find_orphan_tests`, `did_you_mean` on Symbol-not-found errors, watcher `atexit` cleanup, CI venv fix |
 
 ## Optional: Embeddings
 

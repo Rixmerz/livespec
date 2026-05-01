@@ -12,6 +12,7 @@ called repeatedly without leaking observers.
 
 from __future__ import annotations
 
+import atexit
 import threading
 import time
 from dataclasses import dataclass, field
@@ -150,3 +151,25 @@ def unregister_watcher(workspace: Path) -> bool:
 def all_watchers() -> dict[Path, Watcher]:
     with _registry_lock:
         return dict(_registry)
+
+
+def stop_all_watchers() -> int:
+    """Stop and unregister every active watcher. Idempotent. Returns the
+    number of watchers stopped.
+
+    Registered with atexit so a server shutdown flushes WAL files cleanly
+    instead of leaving observer threads racing with interpreter teardown."""
+    with _registry_lock:
+        watchers = list(_registry.items())
+        _registry.clear()
+    stopped = 0
+    for _ws, w in watchers:
+        try:
+            w.stop()
+            stopped += 1
+        except Exception:
+            pass
+    return stopped
+
+
+atexit.register(stop_all_watchers)

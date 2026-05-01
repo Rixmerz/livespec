@@ -21,6 +21,7 @@ from typing import Any, Literal
 from fastmcp import Context, FastMCP
 
 from livespec_mcp.state import get_state
+from livespec_mcp.tools.analysis import symbol_not_found_error
 
 
 def _persist_doc(
@@ -108,7 +109,7 @@ def register(mcp: FastMCP) -> None:
                 (pid, identifier),
             ).fetchone()
             if not sym:
-                return {"error": f"Symbol '{identifier}' not found", "isError": True}
+                return symbol_not_found_error(st.conn, pid, identifier)
             sym_d = dict(sym)
             try:
                 fp = st.settings.workspace / sym_d["file_path"]

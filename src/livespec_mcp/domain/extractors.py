@@ -234,7 +234,12 @@ _ANONYMOUS_FN_TYPES = {
 }
 
 
-def _ts_extract(source: str, language: str, module_name: str) -> ExtractResult:
+def _ts_extract(
+    source: str,
+    language: str,
+    module_name: str,
+    current_dir: tuple[str, ...] = (),
+) -> ExtractResult:
     out = ExtractResult()
     try:
         parser = get_parser(language)
@@ -242,6 +247,15 @@ def _ts_extract(source: str, language: str, module_name: str) -> ExtractResult:
         return out
     src_bytes = source.encode("utf-8", errors="replace")
     tree = parser.parse(src_bytes)
+
+    if language in ("javascript", "typescript"):
+        out.imports.update(_ts_collect_imports(tree.root_node, src_bytes, current_dir))
+    elif language == "go":
+        out.imports.update(_go_collect_imports(tree.root_node, src_bytes))
+    elif language == "ruby":
+        out.imports.update(_rb_collect_imports(tree.root_node, src_bytes, current_dir))
+    elif language == "php":
+        out.imports.update(_php_collect_imports(tree.root_node, src_bytes))
 
     def text(n) -> str:
         return src_bytes[n.start_byte : n.end_byte].decode("utf-8", errors="replace")
@@ -364,37 +378,415 @@ def _ts_collect_calls(def_node, src_qname: str, src_bytes: bytes, out: ExtractRe
     def text(n) -> str:
         return src_bytes[n.start_byte : n.end_byte].decode("utf-8", errors="replace")
 
-    def call_target(call_node) -> str | None:
-        # Field "function" or "object" varies; try common ones
+    def call_target_and_leftmost(call_node) -> tuple[str | None, str | None]:
+        # Ruby/PHP receiver-bearing calls: method/name field is the bare target,
+        # and the leftmost (for scope lookup) lives in `receiver` (Ruby) or
+        # `scope` (PHP scoped_call_expression).
+        receiver_text: str | None = None
+        if hasattr(call_node, "child_by_field_name"):
+            for fname in ("receiver", "scope", "object"):
+                rn = call_node.child_by_field_name(fname)
+                if rn is not None:
+                    rt = text(rn).strip().lstrip("$").lstrip("\\")
+                    if rt:
+                        receiver_text = rt.split(".")[0].split("\\")[-1]
+                        break
         for field_name in ("function", "name", "method"):
             child = call_node.child_by_field_name(field_name) if hasattr(call_node, "child_by_field_name") else None
             if child is not None:
-                # If it's an attribute access, take the rightmost identifier
-                t = text(child)
+                t = text(child).split("(")[0].strip()
                 if "." in t:
-                    return t.rsplit(".", 1)[-1]
-                return t.split("(")[0].strip()
-        # Fallback: first identifier child
+                    parts = [p for p in t.split(".") if p]
+                    if not parts:
+                        return None, None
+                    return parts[-1], parts[0]
+                if receiver_text:
+                    return t, receiver_text
+                return t, t
         for c in call_node.children:
             if c.type in ("identifier", "field_identifier"):
-                return text(c)
-        return None
+                t = text(c)
+                return t, receiver_text or t
+        return None, None
 
     def walk(node):
         if node.type in _CALL_NODE_TYPES:
-            tgt = call_target(node)
+            tgt, leftmost = call_target_and_leftmost(node)
             if tgt:
+                # P1.A1: scope_module from imports map. Direct hit on target name
+                # (named import), else leftmost identifier (namespace/default import
+                # used as `mod.func()`).
+                scope = out.imports.get(tgt)
+                if scope is None and leftmost and leftmost != tgt:
+                    scope = out.imports.get(leftmost)
                 out.refs.append(
                     ExtractedRef(
                         src_qname=src_qname,
                         target_name=tgt,
                         line=node.start_point[0] + 1,
+                        scope_module=scope,
                     )
                 )
         for c in node.children:
             walk(c)
 
     walk(def_node)
+
+
+# ---------- TS/JS import scanner (P1.A1) ----------
+
+
+def _resolve_module_path(source: str, current_dir: tuple[str, ...]) -> str:
+    """Map a TS/JS import source string to a dotted module path matching the
+    indexer's qname format. Relative paths ('./x', '../y') are resolved against
+    `current_dir`; bare specifiers ('lodash', '@scope/pkg') are returned as-is
+    (they won't match any in-project symbol, so the resolver harmlessly falls
+    through to the global fallback weight=0.5)."""
+    if not source.startswith(("./", "../")):
+        return source
+    parts = list(current_dir)
+    for seg in source.split("/"):
+        if seg in ("", "."):
+            continue
+        if seg == "..":
+            if parts:
+                parts.pop()
+            continue
+        parts.append(seg)
+    if parts and parts[-1] in ("index", "index.ts", "index.tsx", "index.js", "index.jsx"):
+        parts.pop()
+    if parts:
+        last = parts[-1]
+        for ext in (".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"):
+            if last.endswith(ext):
+                parts[-1] = last[: -len(ext)]
+                break
+    return ".".join(parts)
+
+
+def _ts_collect_imports(
+    root_node, src_bytes: bytes, current_dir: tuple[str, ...]
+) -> dict[str, str]:
+    """Scan top-level ES6 imports + CommonJS requires in a JS/TS module.
+
+    Returns local_name -> source_module mapping, where source_module is the
+    dotted path of an in-project file (relative imports) or the raw bare
+    specifier (external packages — harmless, never resolves)."""
+    imports: dict[str, str] = {}
+
+    def text(n) -> str:
+        return src_bytes[n.start_byte : n.end_byte].decode("utf-8", errors="replace")
+
+    def unquote(s: str) -> str:
+        if len(s) >= 2 and s[0] in ("'", '"', "`") and s[-1] == s[0]:
+            return s[1:-1]
+        return s
+
+    def import_source(import_node) -> str | None:
+        src = (
+            import_node.child_by_field_name("source")
+            if hasattr(import_node, "child_by_field_name") else None
+        )
+        if src is not None:
+            return unquote(text(src))
+        for c in import_node.children:
+            if c.type == "string":
+                return unquote(text(c))
+        return None
+
+    def collect_clause(clause_node, module: str) -> None:
+        for c in clause_node.children:
+            if c.type == "identifier":
+                imports[text(c)] = module
+            elif c.type == "namespace_import":
+                for nc in c.children:
+                    if nc.type == "identifier":
+                        imports[text(nc)] = module
+            elif c.type == "named_imports":
+                for spec in c.children:
+                    if spec.type != "import_specifier":
+                        continue
+                    name_n = (
+                        spec.child_by_field_name("name")
+                        if hasattr(spec, "child_by_field_name") else None
+                    )
+                    alias_n = (
+                        spec.child_by_field_name("alias")
+                        if hasattr(spec, "child_by_field_name") else None
+                    )
+                    if alias_n is not None:
+                        imports[text(alias_n)] = module
+                    elif name_n is not None:
+                        imports[text(name_n)] = module
+                    else:
+                        for sc in spec.children:
+                            if sc.type == "identifier":
+                                imports[text(sc)] = module
+                                break
+
+    def collect_require(declarator_node) -> None:
+        value = (
+            declarator_node.child_by_field_name("value")
+            if hasattr(declarator_node, "child_by_field_name") else None
+        )
+        if value is None or value.type not in ("call_expression", "call"):
+            return
+        fn = (
+            value.child_by_field_name("function")
+            if hasattr(value, "child_by_field_name") else None
+        )
+        if fn is None or text(fn) != "require":
+            return
+        args = (
+            value.child_by_field_name("arguments")
+            if hasattr(value, "child_by_field_name") else None
+        )
+        if args is None:
+            return
+        source: str | None = None
+        for a in args.children:
+            if a.type == "string":
+                source = unquote(text(a))
+                break
+        if source is None:
+            return
+        module = _resolve_module_path(source, current_dir)
+        name = (
+            declarator_node.child_by_field_name("name")
+            if hasattr(declarator_node, "child_by_field_name") else None
+        )
+        if name is None:
+            return
+        if name.type == "identifier":
+            imports[text(name)] = module
+        elif name.type == "object_pattern":
+            for c in name.children:
+                if c.type == "shorthand_property_identifier_pattern":
+                    imports[text(c)] = module
+                elif c.type == "pair_pattern":
+                    val = (
+                        c.child_by_field_name("value")
+                        if hasattr(c, "child_by_field_name") else None
+                    )
+                    if val is not None and val.type == "identifier":
+                        imports[text(val)] = module
+
+    # Walk only top-level statements (program → child).
+    for child in root_node.children:
+        if child.type == "import_statement":
+            source = import_source(child)
+            if source is None:
+                continue
+            module = _resolve_module_path(source, current_dir)
+            clause = (
+                child.child_by_field_name("import_clause")
+                if hasattr(child, "child_by_field_name") else None
+            )
+            if clause is not None:
+                collect_clause(clause, module)
+            else:
+                for c in child.children:
+                    if c.type == "import_clause":
+                        collect_clause(c, module)
+        elif child.type in ("lexical_declaration", "variable_declaration"):
+            for c in child.children:
+                if c.type == "variable_declarator":
+                    collect_require(c)
+    return imports
+
+
+# ---------- Go import scanner (P1.A2) ----------
+
+
+def _go_collect_imports(root_node, src_bytes: bytes) -> dict[str, str]:
+    """Scan top-level Go imports.
+
+    Returns local_name -> scope_module mapping. The scope is the last segment
+    of the import path (the package name as Go conventions assume), regardless
+    of any alias — matches the indexer's qname format because every symbol in
+    a package gets a qname containing that package segment.
+
+    Skips `_` (blank) and `.` (dot) imports."""
+    imports: dict[str, str] = {}
+
+    def text(n) -> str:
+        return src_bytes[n.start_byte : n.end_byte].decode("utf-8", errors="replace")
+
+    def unquote(s: str) -> str:
+        if len(s) >= 2 and s[0] in ("'", '"', "`") and s[-1] == s[0]:
+            return s[1:-1]
+        return s
+
+    def add_spec(spec) -> None:
+        path_n = (
+            spec.child_by_field_name("path")
+            if hasattr(spec, "child_by_field_name") else None
+        )
+        if path_n is None:
+            for c in spec.children:
+                if c.type in ("interpreted_string_literal", "raw_string_literal"):
+                    path_n = c
+                    break
+        if path_n is None:
+            return
+        path = unquote(text(path_n)).strip()
+        if not path:
+            return
+        scope = path.rsplit("/", 1)[-1]
+        name_n = (
+            spec.child_by_field_name("name")
+            if hasattr(spec, "child_by_field_name") else None
+        )
+        if name_n is not None:
+            local = text(name_n).strip()
+            if local in (".", "_", ""):
+                return
+        else:
+            local = scope
+        imports[local] = scope
+
+    for child in root_node.children:
+        if child.type != "import_declaration":
+            continue
+        for c in child.children:
+            if c.type == "import_spec_list":
+                for spec in c.children:
+                    if spec.type == "import_spec":
+                        add_spec(spec)
+            elif c.type == "import_spec":
+                add_spec(c)
+    return imports
+
+
+# ---------- Ruby require_relative scanner (P1.A4 best-effort) ----------
+
+
+def _rb_collect_imports(
+    root_node, src_bytes: bytes, current_dir: tuple[str, ...]
+) -> dict[str, str]:
+    """Scan top-level `require_relative 'foo/bar'` calls in Ruby.
+
+    Each relative require seeds an entry whose KEY is the basename (so a call
+    like `Bar.thing` or `bar` from the requiring file matches it heuristically)
+    and whose VALUE is the dotted module path under current_dir. Best-effort —
+    Ruby has no static binding from require to constant names, so this only
+    helps when the calling code uses the basename verbatim. `require 'foo'`
+    (non-relative, library load) is ignored.
+    """
+    imports: dict[str, str] = {}
+
+    def text(n) -> str:
+        return src_bytes[n.start_byte : n.end_byte].decode("utf-8", errors="replace")
+
+    def unquote(s: str) -> str:
+        if len(s) >= 2 and s[0] in ("'", '"') and s[-1] == s[0]:
+            return s[1:-1]
+        return s
+
+    for child in root_node.children:
+        # tree-sitter-ruby parses `require_relative "x"` as a `call` node with
+        # method=identifier "require_relative" and arguments=argument_list.
+        if child.type not in ("call", "method_call", "command"):
+            continue
+        method_n = (
+            child.child_by_field_name("method")
+            if hasattr(child, "child_by_field_name") else None
+        )
+        if method_n is None:
+            for c in child.children:
+                if c.type == "identifier":
+                    method_n = c
+                    break
+        if method_n is None or text(method_n) != "require_relative":
+            continue
+        # Find the string argument
+        arg_text: str | None = None
+        for c in child.children:
+            if c.type in ("argument_list", "command_argument_list"):
+                for ac in c.children:
+                    if ac.type == "string":
+                        arg_text = unquote(text(ac))
+                        break
+                if arg_text:
+                    break
+            elif c.type == "string":
+                arg_text = unquote(text(c))
+                break
+        if not arg_text:
+            continue
+        path = arg_text
+        if path.endswith(".rb"):
+            path = path[:-3]
+        parts = list(current_dir)
+        for seg in path.split("/"):
+            if seg in ("", "."):
+                continue
+            if seg == "..":
+                if parts:
+                    parts.pop()
+                continue
+            parts.append(seg)
+        if not parts:
+            continue
+        basename = parts[-1]
+        scope = ".".join(parts)
+        # Map the basename (lowercase + capitalized + camel) to the scope.
+        imports[basename] = scope
+        cap = basename[:1].upper() + basename[1:]
+        if cap != basename:
+            imports[cap] = scope
+    return imports
+
+
+# ---------- PHP `use` namespace scanner (P1.A4 best-effort) ----------
+
+
+def _php_collect_imports(root_node, src_bytes: bytes) -> dict[str, str]:
+    """Scan top-level PHP `use Some\\Namespace\\X;` and `use Foo\\Bar as Baz;`.
+
+    Returns local_name -> scope_module where scope_module is the dotted form
+    of the fully-qualified name. Resolution is heuristic: PHP qnames in this
+    project are file-derived (not namespace-derived), so the scope only helps
+    when the imported class lives in a file path that mirrors its namespace.
+    """
+    imports: dict[str, str] = {}
+
+    def text(n) -> str:
+        return src_bytes[n.start_byte : n.end_byte].decode("utf-8", errors="replace")
+
+    def visit(node):
+        if node.type in ("namespace_use_declaration", "use_declaration"):
+            # Children include namespace_use_clause(s) and `use` keyword
+            for c in node.children:
+                if c.type in ("namespace_use_clause", "use_clause"):
+                    handle_clause(c)
+            return
+        for c in node.children:
+            visit(c)
+
+    def handle_clause(clause):
+        # Clause shape: qualified_name [ as alias ]
+        qname_n = None
+        alias_n = None
+        for c in clause.children:
+            if c.type in ("qualified_name", "name", "namespace_name"):
+                qname_n = c
+            elif c.type in ("namespace_aliasing_clause", "use_alias"):
+                for ac in c.children:
+                    if ac.type in ("name", "identifier"):
+                        alias_n = ac
+        if qname_n is None:
+            return
+        full = text(qname_n).strip().lstrip("\\")
+        if not full:
+            return
+        parts = full.replace("/", "\\").split("\\")
+        local = text(alias_n).strip() if alias_n is not None else parts[-1]
+        scope = ".".join(parts)
+        imports[local] = scope
+
+    visit(root_node)
+    return imports
 
 
 # ---------- Dispatcher ----------
@@ -409,4 +801,5 @@ def extract(path: Path, source: str, project_root: Path) -> tuple[str, ExtractRe
     module_name = ".".join(rel.with_suffix("").parts)
     if lang == "python":
         return lang, _py_extract(source, module_name)
-    return lang, _ts_extract(source, lang, module_name)
+    current_dir = rel.parent.parts
+    return lang, _ts_extract(source, lang, module_name, current_dir)

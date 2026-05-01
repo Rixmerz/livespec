@@ -27,6 +27,24 @@ async def test_watcher_lifecycle(sample_repo):
 
 
 @pytest.mark.asyncio
+async def test_stop_all_watchers_clears_registry(sample_repo):
+    """P2.D1: stop_all_watchers (atexit hook) shuts every registered watcher
+    and clears the registry. Calling it again is a no-op."""
+    from livespec_mcp.domain.watcher import all_watchers, stop_all_watchers
+
+    async with Client(mcp) as c:
+        await c.call_tool("start_watcher", {"debounce_seconds": 0.2})
+        assert len(all_watchers()) == 1
+
+        stopped = stop_all_watchers()
+        assert stopped == 1
+        assert all_watchers() == {}
+
+        # Idempotent
+        assert stop_all_watchers() == 0
+
+
+@pytest.mark.asyncio
 async def test_watcher_reindexes_on_file_change(sample_repo):
     """Touching a Python file under the workspace must trigger a re-index."""
     async with Client(mcp) as c:

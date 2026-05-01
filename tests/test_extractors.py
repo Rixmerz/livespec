@@ -112,3 +112,36 @@ def test_rust_impl_block_methods():
     assert any("Greeter::greet" in q for q in qnames), f"Greeter::greet qname not found: {qnames}"
     # Calls
     assert "helper" in _call_targets(result)
+
+
+@pytest.mark.parametrize(
+    "lang_dir,main_file",
+    [
+        ("typescript", "main.ts"),
+        ("javascript", "main.js"),
+    ],
+)
+def test_ts_js_scoped_resolution_imports(lang_dir: str, main_file: str):
+    """P1.A1: ES6 imports / CommonJS requires populate `imports` + `scope_module`
+    on call refs. Named, namespace, default and CJS destructuring/whole-module
+    forms must all resolve to a dotted in-project module path that matches the
+    indexer's qname format."""
+    root = FIXTURES / lang_dir / "cross_module"
+    p = root / main_file
+    _, result = extract(p, p.read_text(encoding="utf-8"), root)
+
+    # Imports map populated
+    assert "helper" in result.imports, f"named import 'helper' missing: {result.imports}"
+    assert result.imports["helper"] == "helpers"
+    assert "utils" in result.imports, f"namespace/whole-module 'utils' missing: {result.imports}"
+    assert result.imports["utils"] == "utils"
+
+    # Refs carry scope_module — both for direct named call (helper())
+    # and for member access on a namespace (utils.format())
+    refs_by_target = {r.target_name: r.scope_module for r in result.refs}
+    assert refs_by_target.get("helper") == "helpers", (
+        f"helper() should be scoped to 'helpers', got: {refs_by_target}"
+    )
+    assert refs_by_target.get("format") == "utils", (
+        f"utils.format() should be scoped to 'utils' via leftmost lookup, got: {refs_by_target}"
+    )
