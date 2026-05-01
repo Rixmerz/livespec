@@ -4,7 +4,18 @@ All notable changes to this project are documented here. Format loosely
 follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), versioning
 follows [SemVer](https://semver.org/).
 
-## [Unreleased] — v0.4 in progress
+## [Unreleased]
+
+_Nothing yet._
+
+---
+
+## [0.4.0] — 2026-05-01
+
+The "multi-language parity + agent UX" release. Closes the scoped-resolution
+debt from P0.4 across 5 more languages, adds three aggregator tools that
+reuse the call graph + RF tables for free, and surfaces `did_you_mean`
+suggestions on misspelled symbol identifiers.
 
 ### Added
 - **Scoped resolution for TS/JS, Go, Ruby, PHP** (P1) — closes the multi-language
@@ -164,5 +175,6 @@ Bootstrap. Phases 0–6 of the original design.
   `project://files/{path*}`, `project://symbols/{qname*}`,
   `doc://symbol/{qname*}`, `doc://requirement/{rf_id}`.
 
-[Unreleased]: https://github.com/Rixmerz/livespec-mcp/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/Rixmerz/livespec-mcp/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/Rixmerz/livespec-mcp/releases/tag/v0.4.0
 [0.3.0]: https://github.com/Rixmerz/livespec-mcp/releases/tag/v0.3.0

@@ -1,6 +1,6 @@
 [project]
 name = "livespec-mcp"
-version = "0.1.0"
+version = "0.4.0"
 description = "Local-first MCP server for living documentation with bidirectional FR<->code traceability"
 readme = "README.md"
 requires-python = ">=3.10"
