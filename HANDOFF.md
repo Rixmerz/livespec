@@ -32,7 +32,28 @@ Todo el stack es local-first: 0 servicios externos, 0 API keys obligatorias, 0 D
 
 ---
 
-## 3. Estado actual: v0.5 listo, mergeado a main, taggeado
+## 3. Estado actual: v0.6 listo, hardening release
+
+**v0.6.0** (2026-05-01): hardening / debt-paydown release. No new features
+significativas; foco en sanear lo que se acumuló.
+- **P0**: borré `use_workspace` (deprecated desde v0.2). Breaking.
+- **P1**: renames clarificadores en RF tools — `link_rf_symbol` (RF→code) vs `link_rf_dependency` (RF→RF). Aliases viejos quedan hasta v0.7.
+- **P2**: migration framework explícito con `schema_migrations` table. Se acabaron los try/except OperationalError dispersos.
+- **P3**: Django stress test (40K símbolos, 1M edges). Documentado en bench/. Hot fix: dedup de symbols por (qname, start_line) para shims tipo `if/else def x:`. Graph cache por (db, project, run_id) — load_graph cuesta ~4s en Django, ahora se cachea.
+- **P4**: helper `mcp_error` unificado. Todos los errors ahora `{error, isError, did_you_mean?, hint?}`. Hints actionables agregados.
+- **P5**: README pitch honesto — "living traceability + on-demand docs", no "living documentation". Tabla explícita de qué vive y qué no.
+
+32 tools (+ 4 aliases deprecated), 97 tests, schema migrations v6.
+
+**Diferido a v0.7:**
+- `_resolve_refs` targeted re-walk (partial reindex Django: 7s → ~1s)
+- Auto-doc-on-drift watcher mode (gap conocido, requiere UX care)
+- Drop aliases v0.6
+- Multi-tenant memory pressure (LRU por RSS, no por count)
+
+---
+
+## 3a. Estado previo: v0.5 listo, mergeado a main, taggeado
 
 **v0.5.0 release** (2026-05-01): self-improvement desde feedback real.
 - **P0 (bugs reales en demo):** audit_coverage direct/transitive, git_diff_impact error limpio, body_hash AST normalize.

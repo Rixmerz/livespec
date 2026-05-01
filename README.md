@@ -1,21 +1,39 @@
 # livespec-mcp
 
-Local-first MCP server for **living documentation** with bidirectional
-**Functional Requirement <-> code** traceability.
+Local-first MCP server for **living traceability + on-demand docs** with
+bidirectional **Functional Requirement <-> code** linking.
 
 Index a workspace once, then ask questions like:
 
 - ¿Qué código implementa el RF-042?
 - Si modifico la función `auth.verify`, ¿qué RFs y qué llamadores se ven afectados?
 - ¿Qué módulos no tienen ningún RF asociado?
+- ¿Qué RFs dependen de RF-042 transitivamente?
+
+### What "living" actually means here
+
+| Layer | Lives | How |
+|---|---|---|
+| Symbol index | ✅ | xxh3 content-hash incremental + watcher (`start_watcher`) |
+| Call graph + edges | ✅ | re-resolved on every change; persistent `symbol_ref` |
+| RF ↔ code links | ✅ | auto-scan of `@rf:` annotations after every `index_project` |
+| RF ↔ RF graph | ✅ | explicit, but cycle-checked; `link_rf_dependency` tool |
+| Drift detection | ✅ | body_hash + signature_hash on every symbol; `list_docs(only_stale=True)` |
+| **Generated docs content** | ❌ on-demand | `generate_docs` requires either an LLM-capable caller (`content=...`) or an MCP host that supports sampling. There is no auto-regenerate-on-drift mode (deferred to v0.7+) — drift is only *detected*, not *fixed*. |
+
+So: traceability is live, docs are not. If your workflow is "give me an
+agent that always knows which code implements which requirement, and which
+tests probably break when X changes" — this is exactly what the project is
+good at. If you wanted "writes my doc comments while I sleep" — not yet.
 
 ## Stack
 
 - **FastMCP 2.14** (stdio transport)
-- **SQLite** (single `docs.db` file, ACID, WAL)
+- **SQLite** (single `docs.db` file, ACID, WAL, explicit migration framework)
 - **tree-sitter + tree-sitter-language-pack** for multi-language parsing
 - **Python `ast`** for high-precision Python extraction
-- **NetworkX** for call graph and topological impact analysis
+- **NetworkX** for call graph and topological impact analysis (cached per
+  index run)
 - BM25 keyword search out of the box; embeddings (Jina code + multilingual-e5)
   are an optional `[embeddings]` extra (Phase 4)
 
@@ -72,7 +90,7 @@ By default it picks the **current working directory** as workspace, or
 }
 ```
 
-## Tools (33)
+## Tools (32 + 4 deprecated aliases through v0.7)
 
 Every tool accepts an optional `workspace: str` argument. When omitted, the
 server resolves to `LIVESPEC_WORKSPACE` env var or the current working
@@ -200,7 +218,8 @@ In-memory FastMCP `Client(mcp)` so tests run without subprocess or network.
 | 7 — v0.2 | ✅ | Multi-tenant state, tool consolidation 25→23, persistent refs, watcher, bench suite |
 | 8 — v0.3 | ✅ | Auto-scan post-index, PageRank infra filter, scoped resolution by imports, `git_diff_impact`, embeddings smoke real, Ruby+PHP fixtures, hypothesis property tests, memory bench, GitHub Actions CI, `code://` resource, `delete_requirement`, markdown RF importer |
 | 9 — v0.4 | ✅ | Scoped resolution for TS/JS/Go/Ruby/PHP, `find_dead_code` / `audit_coverage` / `find_orphan_tests`, `did_you_mean` on Symbol-not-found errors, watcher `atexit` cleanup, CI venv fix |
-| 10 — v0.5 | 🚧 | Bug fixes from real-repo demo, decorators as first-class field + `find_endpoints`, RF dependency graph (requires/extends/conflicts) with `analyze_impact` cascade, matcher multi-RF + confidence override + `@not_rf:` negation + golden dataset, Rust `use` scoped resolution |
+| 10 — v0.5 | ✅ | Bug fixes from real-repo demo, decorators as first-class field + `find_endpoints`, RF dependency graph (requires/extends/conflicts) with `analyze_impact` cascade, matcher multi-RF + confidence override + `@not_rf:` negation + golden dataset, Rust `use` scoped resolution |
+| 11 — v0.6 | 🚧 | Hardening: explicit migration framework, unified error shape, RF link tools renamed, deprecated `use_workspace` removed, Django stress test (40K symbols), graph cache, README pitch reframe |
 
 ## Optional: Embeddings
 

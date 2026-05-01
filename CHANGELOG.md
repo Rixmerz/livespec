@@ -10,6 +10,88 @@ _Nothing yet._
 
 ---
 
+## [0.6.0] — 2026-05-01
+
+The "hardening" release. Stops the feature treadmill to pay down debt:
+explicit migration framework, unified error shape, performance baseline on
+a 40K-symbol repo with the obvious hotspot patched, deprecated tools
+removed, ambiguous tool names disambiguated. Pitch reframed honestly —
+"living traceability + on-demand docs" instead of overclaiming on the docs
+side.
+
+### Removed (breaking)
+- **`use_workspace` MCP tool** (deprecated since v0.2). Pass
+  `workspace=<path>` to every tool, or set `LIVESPEC_WORKSPACE` in the env.
+
+### Renamed (deprecated aliases retained through v0.7)
+- `link_requirement_to_code`     → `link_rf_symbol`
+- `link_requirements`            → `link_rf_dependency`
+- `unlink_requirements`          → `unlink_rf_dependency`
+- `get_requirement_dependencies` → `get_rf_dependency_graph`
+
+The old names still work — they delegate to the new implementations and
+will be removed in v0.7. Naming disambiguates the two link concepts:
+`link_rf_symbol` (RF → code) vs `link_rf_dependency` (RF → RF).
+
+### Added
+- **Explicit migration framework** (P2) — replaces ad-hoc
+  `_migrate_v1_to_v2` with `schema_migrations(version, name, applied_at)`
+  table backing an ordered, append-only migration list. Each migration
+  is a small idempotent function; once applied, the version is recorded
+  so subsequent connects skip already-applied work. Six migrations
+  registered, retroactively covering every v0.1→v0.5 schema change.
+- **Unified error payload helper** (P4) — `tools/_errors.py:mcp_error()`
+  enforces a single shape across every tool error site:
+  `{error, isError, did_you_mean?, hint?}`. Refactored ~15 sites in
+  analysis, requirements, docs, and search tools. Removed the legacy
+  `warning` field on `analyze_impact`.
+- **Hints on actionable errors** — RF-not-found, symbol-not-found,
+  file-not-indexed, cycle-detected, embeddings-missing, git-not-on-PATH,
+  git-timeout. Each one now ships with a one-line `hint` field telling
+  the agent what to run next.
+- **Graph cache** (P3) — `domain/graph.py` now caches the loaded
+  `GraphView` keyed by `(db_path, project_id, last_index_run_id)`.
+  Building the NetworkX object from SQL costs ~4s on a 40K-symbol repo
+  and was repeated on every analysis call; cache hits drop to µs and
+  invalidate automatically when a new index run lands.
+- **Django stress test** (P3) — `bench/run.py --large` runs against
+  Django 5.1.4 (~40K symbols, 1M edges). Numbers documented in
+  `bench/README.md`.
+
+### Fixed
+- **Duplicate (qname, start_line) crash** — Django's compatibility shims
+  (`def cached_property(...)` defined twice under a Python-version `if`)
+  produced symbols that tripped the v0.6 schema's UNIQUE constraint.
+  `_replace_symbols` now deduplicates by `(qname, start_line)` before
+  insert, keeping the first occurrence (source order).
+
+### Changed
+- **README pitch** — was "living documentation"; now "living
+  traceability + on-demand docs" with an explicit table calling out
+  what is/isn't auto-maintained. Drift is detected, not fixed —
+  auto-doc-on-drift is a deferred v0.7+ candidate.
+
+### Deferred to v0.7
+- **`_resolve_refs` targeted re-walk** — partial reindex on Django
+  takes 7s because the resolver re-walks all 1M `symbol_ref` rows. Filter
+  to refs whose `target_name` matches a name in the changed file.
+- **Auto-doc-on-drift watcher mode** — optional, opt-in, with a clear
+  cost UX (LLM calls implicit).
+- **Multi-tenant memory pressure handling** — current LRU=8 doesn't
+  consider per-workspace RSS; a Django-scale cache could hit ~5GB worst
+  case across 8 workspaces.
+- **Drop deprecated v0.6 aliases** (`link_requirement_to_code`,
+  `link_requirements`, `unlink_requirements`,
+  `get_requirement_dependencies`).
+
+### Tooling
+- Tests: 83 → 97 (+4 migrations, +6 error shape, +3 graph cache, +1
+  alias-still-works).
+- Tool count: 33 → 32 (use_workspace removed) plus 4 deprecated aliases
+  through v0.7. Wire count during the deprecation window: 36.
+
+---
+
 ## [0.5.0] — 2026-05-01
 
 The "self-improvement from real-world usage" release. Bug fixes from a
@@ -257,7 +339,8 @@ Bootstrap. Phases 0–6 of the original design.
   `project://files/{path*}`, `project://symbols/{qname*}`,
   `doc://symbol/{qname*}`, `doc://requirement/{rf_id}`.
 
-[Unreleased]: https://github.com/Rixmerz/livespec-mcp/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/Rixmerz/livespec-mcp/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/Rixmerz/livespec-mcp/releases/tag/v0.6.0
 [0.5.0]: https://github.com/Rixmerz/livespec-mcp/releases/tag/v0.5.0
 [0.4.0]: https://github.com/Rixmerz/livespec-mcp/releases/tag/v0.4.0
 [0.3.0]: https://github.com/Rixmerz/livespec-mcp/releases/tag/v0.3.0
