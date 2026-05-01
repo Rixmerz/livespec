@@ -5,6 +5,7 @@ from __future__ import annotations
 from fastmcp import FastMCP
 
 from livespec_mcp import prompts, resources
+from livespec_mcp.instrumentation import AgentLogMiddleware
 from livespec_mcp.tools import analysis, docs, indexing, requirements, search, watcher
 
 mcp = FastMCP(
@@ -16,6 +17,8 @@ mcp = FastMCP(
         "Start with `index_project()` then `get_project_overview()`."
     ),
 )
+
+mcp.add_middleware(AgentLogMiddleware())
 
 indexing.register(mcp)
 analysis.register(mcp)

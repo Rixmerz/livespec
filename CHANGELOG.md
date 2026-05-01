@@ -24,10 +24,22 @@ follows [SemVer](https://semver.org/).
   → `analyze_impact` → `get_requirement_implementation` chain with a
   single call.
 
+### Added — v0.8 P1 instrumentation
+- **Agent dispatch logging middleware**
+  (`src/livespec_mcp/instrumentation.py`). Writes one JSONL line per
+  `tools/call` to `<workspace>/.mcp-docs/agent_log.jsonl` with
+  `{ts, tool_name, args_redacted, latency_ms, result_chars, error,
+  session_id, workspace}`. Args are redacted: any string containing
+  the absolute workspace path is rewritten to `<workspace>/...` so
+  logs are shareable. `LIVESPEC_AGENT_LOG=0` disables. Failures
+  writing the log are swallowed — instrumentation never breaks
+  dispatch. Sets up the v0.8 P2 battle-test (5 codebases × 3-5
+  sessions) and feeds the v0.8 P3 data-driven curation pass.
+
 ### Tooling
 - Tools: 35 → 39 (+ 4 deprecated v0.6 aliases still present → wire
   count 43).
-- Tests: 118 → 127 (+9 in `tests/test_quick_wins.py`).
+- Tests: 118 → 132 (+9 quick wins, +5 instrumentation).
 
 ---
 
