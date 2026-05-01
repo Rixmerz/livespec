@@ -1,0 +1,37 @@
+{"text": "@rf:RF-001", "expected": [{"rf_id": "RF-001", "relation": "implements", "confidence": 1.0}]}
+{"text": "@implements:RF-042", "expected": [{"rf_id": "RF-042", "relation": "implements", "confidence": 1.0}]}
+{"text": "@tests:RF-007", "expected": [{"rf_id": "RF-007", "relation": "tests", "confidence": 1.0}]}
+{"text": "@references:RF-013", "expected": [{"rf_id": "RF-013", "relation": "references", "confidence": 1.0}]}
+{"text": "implements RF-005", "expected": [{"rf_id": "RF-005", "relation": "implements", "confidence": 0.7}]}
+{"text": "tests RF-008", "expected": [{"rf_id": "RF-008", "relation": "tests", "confidence": 0.7}]}
+{"text": "references RF-009", "expected": [{"rf_id": "RF-009", "relation": "references", "confidence": 0.7}]}
+{"text": "covers RF-010", "expected": [{"rf_id": "RF-010", "relation": "implements", "confidence": 0.7}]}
+{"text": "this does not implement RF-011", "expected": []}
+{"text": "we never implement RF-012", "expected": []}
+{"text": "TODO implement RF-013", "expected": []}
+{"text": "FIXME tests RF-014", "expected": []}
+{"text": "doesn't implement RF-015", "expected": []}
+{"text": "without implementing RF-016", "expected": []}
+{"text": "We should think about RF-017 someday", "expected": []}
+{"text": "see also RF-018 in the design doc", "expected": []}
+{"text": "@rf:RF-001, RF-002", "expected": [{"rf_id": "RF-001", "relation": "implements", "confidence": 1.0}, {"rf_id": "RF-002", "relation": "implements", "confidence": 1.0}]}
+{"text": "@rf:RF-001,RF-002,RF-003", "expected": [{"rf_id": "RF-001", "relation": "implements", "confidence": 1.0}, {"rf_id": "RF-002", "relation": "implements", "confidence": 1.0}, {"rf_id": "RF-003", "relation": "implements", "confidence": 1.0}]}
+{"text": "@rf:RF-001:0.85", "expected": [{"rf_id": "RF-001", "relation": "implements", "confidence": 0.85}]}
+{"text": "@rf:RF-001, RF-002:0.5", "expected": [{"rf_id": "RF-001", "relation": "implements", "confidence": 0.5}, {"rf_id": "RF-002", "relation": "implements", "confidence": 0.5}]}
+{"text": "@implements:RF-042:0.95", "expected": [{"rf_id": "RF-042", "relation": "implements", "confidence": 0.95}]}
+{"text": "@not_rf:RF-100\nimplements RF-100", "expected": []}
+{"text": "@!rf:RF-200\n@rf:RF-200", "expected": []}
+{"text": "@rf:RF-001\n@not_rf:RF-002\nimplements RF-002", "expected": [{"rf_id": "RF-001", "relation": "implements", "confidence": 1.0}]}
+{"text": "@rf:RF-1", "expected": [{"rf_id": "RF-001", "relation": "implements", "confidence": 1.0}]}
+{"text": "@rf:rf-042", "expected": [{"rf_id": "RF-042", "relation": "implements", "confidence": 1.0}]}
+{"text": "@rf:RF_007", "expected": [{"rf_id": "RF-007", "relation": "implements", "confidence": 1.0}]}
+{"text": "# @rf:RF-001\n# Some comment", "expected": [{"rf_id": "RF-001", "relation": "implements", "confidence": 1.0}]}
+{"text": "* @implements:RF-099", "expected": [{"rf_id": "RF-099", "relation": "implements", "confidence": 1.0}]}
+{"text": "@rf:RF-001\n@rf:RF-001", "expected": [{"rf_id": "RF-001", "relation": "implements", "confidence": 1.0}]}
+{"text": "@rf:RF-050\nimplements RF-050", "expected": [{"rf_id": "RF-050", "relation": "implements", "confidence": 1.0}]}
+{"text": "", "expected": []}
+{"text": "no RF mentions here at all, just plain text about Login flow", "expected": []}
+{"text": "RF-001", "expected": []}
+{"text": "skip RF-099", "expected": []}
+{"text": "implements RF-001 and tests RF-002", "expected": [{"rf_id": "RF-001", "relation": "implements", "confidence": 0.7}, {"rf_id": "RF-002", "relation": "tests", "confidence": 0.7}]}
+{"text": "Login flow that implements RF-001 and references RF-002", "expected": [{"rf_id": "RF-001", "relation": "implements", "confidence": 0.7}, {"rf_id": "RF-002", "relation": "references", "confidence": 0.7}]}

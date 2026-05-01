@@ -19,15 +19,26 @@ import re
 import sqlite3
 from dataclasses import dataclass
 
-# Level 1: line starts with @rf, @implements, @tests, @see
-_PREFIX_RE = re.compile(
+# Level 1: line starts with @rf | @implements | @tests | @see  -OR-
+#          @not_rf | @!rf  (negation: cancels any hit on the listed RFs)
+# Captures the rest of the line so we can parse:
+#   - multiple comma-separated RFs:    @rf:RF-001, RF-002
+#   - confidence override at the end:  @rf:RF-001:0.85   (or  @rf:RF-001,RF-002:0.85)
+_PREFIX_HEAD_RE = re.compile(
     r"""^\s*[#*]?\s*                       # optional comment leader
-        @(?P<verb>rf|implements?|tests?|see|references?)
-        \s*[:= ]\s*
-        (?P<rf>RF[-_]?\d+)
-        \b""",
+        @(?P<verb>not_rf|!rf|rf|implements?|tests?|see|references?)
+        \s*[:= ]?\s*
+        (?P<rest>[^\n\r]+)""",
     re.IGNORECASE | re.MULTILINE | re.VERBOSE,
 )
+
+# Each RF-NNN inside the `rest` payload of a prefix annotation.
+_RF_TOKEN_RE = re.compile(r"RF[-_]?\d+", re.IGNORECASE)
+
+# Optional `:confidence` suffix at the end of a prefix payload. Accepts
+# `:0.85`, `:.85`, `:1.0`, `:1`. Anchored to end so it doesn't eat digits
+# from RF tokens.
+_CONF_SUFFIX_RE = re.compile(r"\s*:\s*(0?\.\d+|1\.0+|1)\s*$")
 
 # Level 2: `<verb> RF-NNN`. Negation guard: must NOT be preceded by "not", "no",
 # "never", "doesn't", "do not", "without", "skip", "TODO" within last 12 chars.
@@ -59,7 +70,7 @@ VERB_TO_RELATION = {
 class AnnotationHit:
     rf_id: str           # normalized like "RF-001"
     relation: str        # implements | tests | references
-    confidence: float    # 1.0 (level 1) | 0.7 (level 2)
+    confidence: float    # 1.0 (level 1) | 0.7 (level 2) | override (level 1 + suffix)
 
 
 def _normalize_rf(raw: str) -> str:
@@ -71,37 +82,73 @@ def _relation_for(verb: str) -> str:
     return VERB_TO_RELATION.get(verb.lower().rstrip("s"), VERB_TO_RELATION.get(verb.lower(), "implements"))
 
 
+def _parse_prefix_payload(rest: str) -> tuple[list[str], float | None]:
+    """Parse the payload after `@verb:`.
+
+    Returns (rf_ids, confidence_override). Confidence override is `None` when
+    no `:N.NN` suffix is present, in which case the caller should use the
+    default for the verb's level.
+    """
+    payload = rest
+    conf: float | None = None
+    m = _CONF_SUFFIX_RE.search(payload)
+    if m:
+        try:
+            conf = float(m.group(1))
+            if not (0.0 <= conf <= 1.0):
+                conf = None
+            else:
+                payload = payload[: m.start()]
+        except ValueError:
+            conf = None
+    rf_ids = [_normalize_rf(t) for t in _RF_TOKEN_RE.findall(payload)]
+    return rf_ids, conf
+
+
 def parse_annotations(text: str) -> list[AnnotationHit]:
     """Extract all RF annotations from a docstring/comment block.
 
-    Returns level-1 hits first (prefix-anchored, conf 1.0), then level-2
-    (verb-anchored, conf 0.7). Bare mentions and negated mentions are dropped.
+    Levels:
+    - L1 prefix `@rf:RF-001` / `@implements:RF-001` / `@tests:RF-001` -> 1.0
+      Multi-RF: `@rf:RF-001, RF-002` (each gets its own hit)
+      Confidence override: `@rf:RF-001:0.85` (applies to all RFs in the line)
+    - L1 negation `@not_rf:RF-001` (or `@!rf:RF-001`) cancels every hit
+      (L1 OR L2) for the listed RFs in this docstring.
+    - L2 verb-anchored `... implements RF-001` -> 0.7, with negation-window
+      guard ("not", "no", "never", "doesn't", "without", "skip", "TODO").
     """
     if not text:
         return []
     hits: list[AnnotationHit] = []
     seen: set[tuple[str, str]] = set()
+    negated_rfs: set[str] = set()
 
-    # Level 1: explicit prefix
-    for m in _PREFIX_RE.finditer(text):
-        rf_id = _normalize_rf(m.group("rf"))
-        relation = _relation_for(m.group("verb"))
-        key = (rf_id, relation)
-        if key in seen:
+    # First pass: L1 prefix annotations (positive + negative)
+    for m in _PREFIX_HEAD_RE.finditer(text):
+        verb = m.group("verb").lower()
+        rest = m.group("rest")
+        rf_ids, conf_override = _parse_prefix_payload(rest)
+        if not rf_ids:
             continue
-        seen.add(key)
-        hits.append(AnnotationHit(rf_id=rf_id, relation=relation, confidence=1.0))
+        if verb in ("not_rf", "!rf"):
+            negated_rfs.update(rf_ids)
+            continue
+        relation = _relation_for(verb)
+        for rf_id in rf_ids:
+            key = (rf_id, relation)
+            if key in seen:
+                continue
+            seen.add(key)
+            confidence = conf_override if conf_override is not None else 1.0
+            hits.append(AnnotationHit(rf_id=rf_id, relation=relation, confidence=confidence))
 
-    # Level 2: verb-anchored, with negation guard
+    # Second pass: L2 verb-anchored
     for m in _VERB_RE.finditer(text):
-        # Skip if a level-1 hit already captured this same (rf, relation) — avoid
-        # double counting when prefix + sentence both appear.
         rf_id = _normalize_rf(m.group("rf"))
         relation = _relation_for(m.group("verb"))
         key = (rf_id, relation)
         if key in seen:
             continue
-        # Negation window: 12 chars before the verb start
         window_start = max(0, m.start() - 12)
         window = text[window_start : m.start()]
         if _NEGATION_RE.search(window):
@@ -109,6 +156,8 @@ def parse_annotations(text: str) -> list[AnnotationHit]:
         seen.add(key)
         hits.append(AnnotationHit(rf_id=rf_id, relation=relation, confidence=0.7))
 
+    if negated_rfs:
+        hits = [h for h in hits if h.rf_id not in negated_rfs]
     return hits
 
 
