@@ -4,10 +4,48 @@ All notable changes to this project are documented here. Format loosely
 follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), versioning
 follows [SemVer](https://semver.org/).
 
-## [Unreleased]
+## [Unreleased] — v0.4 in progress
 
 ### Added
-- v0.4 plan tracking (release hygiene, multi-language scoped resolution, aggregator tools).
+- **Scoped resolution for TS/JS, Go, Ruby, PHP** (P1) — closes the multi-language
+  parity gap from P0.4 (Python-only). ES6 imports + CommonJS requires for
+  TS/JS, package imports + aliases for Go, `require_relative` for Ruby (+
+  Const.method receiver lookup), `use` namespaces for PHP (+ `Class::method`
+  scoped-call lookup). Cross-file/cross-package calls now emit `symbol_edge`
+  rows with `weight=1.0`.
+- **`find_dead_code()`** (P2) — symbols with zero callers and zero RF links;
+  filters entry-point paths (`tests/`, `scripts/`, `bin/`, `__main__.py`,
+  `manage.py`) and implicit entry points (dunders, FastMCP `register` outers,
+  DI helpers).
+- **`audit_coverage()`** (P2) — three RF coverage signals:
+  `modules_without_rf`, `rfs_without_implementation`, `rfs_low_confidence`
+  (avg confidence < 0.7).
+- **`find_orphan_tests()`** (P2) — test functions whose forward call cone
+  never reaches a non-test symbol.
+- **`did_you_mean` field** (P2) on every `Symbol '<x>' not found` error
+  across 5 tools (`get_symbol_info`, `get_call_graph`, `analyze_impact`,
+  `link_requirement_to_code`, `generate_docs`). Two-pass matcher: SQL
+  substring + difflib edit-distance.
+- **`stop_all_watchers()` + `atexit` hook** (P2) — server shutdown flushes
+  WAL files cleanly.
+
+### Changed
+- `_resolve_module_path()` for TS/JS converts relative paths and strips
+  `.ts/.tsx/.js/.jsx/.mjs/.cjs` plus trailing `/index`.
+- `call_target_and_leftmost()` now reads `receiver` (Ruby), `scope` (PHP),
+  `object` (JS member access) fields. Strips PHP `$` and namespace
+  backslashes when computing the leftmost identifier.
+
+### Tooling
+- Tool count: 26 → 29.
+- Tests: 53 → 71 (59 default + 2 embeddings + 10 new in this batch).
+- New language fixtures: TS / JS / Go / Ruby / PHP cross-module dirs.
+
+### Fixed (CI)
+- `.github/workflows/ci.yml` switched from `uv pip install --system`
+  (PEP 668: externally managed `/usr` Python on Ubuntu runners) to per-matrix
+  `uv venv --python X.Y` + `uv run pytest`. Matrix now actually runs each
+  Python version; embeddings job also fixed.
 
 ---
 
