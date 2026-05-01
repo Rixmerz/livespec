@@ -127,6 +127,25 @@ CREATE TABLE IF NOT EXISTS rf_symbol (
 CREATE INDEX IF NOT EXISTS idx_rfsym_rf ON rf_symbol(rf_id);
 CREATE INDEX IF NOT EXISTS idx_rfsym_sym ON rf_symbol(symbol_id);
 
+-- v0.5 P2: RF dependency graph. parent depends on child.
+--   requires:  parent needs child to be implemented first
+--   extends:   parent specializes / refines child
+--   conflicts: parent and child cannot both be active
+-- Self-edges are forbidden via CHECK; cycles are prevented at insert time
+-- (the link_requirements tool runs a BFS to reject would-be cycles).
+CREATE TABLE IF NOT EXISTS rf_dependency (
+    id INTEGER PRIMARY KEY,
+    parent_rf_id INTEGER NOT NULL REFERENCES rf(id) ON DELETE CASCADE,
+    child_rf_id  INTEGER NOT NULL REFERENCES rf(id) ON DELETE CASCADE,
+    kind TEXT NOT NULL DEFAULT 'requires',
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(parent_rf_id, child_rf_id, kind),
+    CHECK (parent_rf_id != child_rf_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_rfdep_parent ON rf_dependency(parent_rf_id);
+CREATE INDEX IF NOT EXISTS idx_rfdep_child ON rf_dependency(child_rf_id);
+
 -- ===== Docs =====
 CREATE TABLE IF NOT EXISTS doc (
     id INTEGER PRIMARY KEY,

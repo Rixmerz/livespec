@@ -437,22 +437,63 @@ def register(mcp: FastMCP) -> None:
             ).fetchone()
             if not rf:
                 return {"error": f"RF '{target}' not found", "isError": True}
-            sids = [
-                int(r["symbol_id"])
+
+            # v0.5 P2: include backward RFs in the dependency graph (RFs that
+            # require / extend this one). A change to RF-001 ripples to RF-042
+            # if RF-042 requires RF-001. Walk rf_dependency backward.
+            dependent_rf_ids: set[int] = set()
+            frontier = [int(rf["id"])]
+            while frontier:
+                cur_id = frontier.pop()
                 for r in st.conn.execute(
-                    "SELECT symbol_id FROM rf_symbol WHERE rf_id=?", (rf["id"],)
-                )
-            ]
+                    "SELECT parent_rf_id FROM rf_dependency WHERE child_rf_id=?",
+                    (cur_id,),
+                ):
+                    pid_dep = int(r["parent_rf_id"])
+                    if pid_dep in dependent_rf_ids:
+                        continue
+                    dependent_rf_ids.add(pid_dep)
+                    frontier.append(pid_dep)
+
+            # All RF ids whose impact contributes to this analysis: target +
+            # the set of RFs that transitively depend on it (cascade).
+            all_rf_ids = {int(rf["id"])} | dependent_rf_ids
+            placeholders = ",".join("?" * len(all_rf_ids))
+            sid_rows = st.conn.execute(
+                f"SELECT DISTINCT symbol_id FROM rf_symbol WHERE rf_id IN ({placeholders})",
+                list(all_rf_ids),
+            ).fetchall()
+            sids = [int(r["symbol_id"]) for r in sid_rows]
+
             if not sids:
-                return {"rf_id": rf["rf_id"], "warning": "RF has no linked symbols", "implementing_symbols": []}
+                return {
+                    "rf_id": rf["rf_id"],
+                    "warning": "RF (and its dependents) have no linked symbols",
+                    "implementing_symbols": [],
+                    "dependent_requirements": [],
+                }
             forward: set[int] = set()
             backward: set[int] = set()
             for sid in sids:
                 if sid in view.g:
                     forward |= descendants_within(view.g, sid, max_depth)
                     backward |= ancestors_within(view.g, sid, max_depth)
+
+            dep_rf_meta: list[dict[str, Any]] = []
+            if dependent_rf_ids:
+                dep_placeholders = ",".join("?" * len(dependent_rf_ids))
+                dep_rf_meta = [
+                    dict(r)
+                    for r in st.conn.execute(
+                        f"""SELECT rf_id, title, status, priority FROM rf
+                            WHERE id IN ({dep_placeholders})""",
+                        list(dependent_rf_ids),
+                    )
+                ]
+
             return {
                 "rf_id": rf["rf_id"],
+                "dependent_requirements": dep_rf_meta,
                 "implementing_symbols": [view.sym_meta[n] for n in sids if n in view.sym_meta],
                 "downstream": [view.sym_meta[n] for n in forward if n in view.sym_meta],
                 "upstream_callers": [view.sym_meta[n] for n in backward if n in view.sym_meta],
