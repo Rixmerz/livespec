@@ -10,6 +10,69 @@ _Nothing yet._
 
 ---
 
+## [0.7.0] — 2026-05-01
+
+The "brownfield" release. Closes the friction gap between "fresh project
+with livespec from day 1" and "existing 50K-symbol Rust monorepo,
+adopting livespec on Tuesday afternoon". Three new agent-facing tools
+(bulk_link_rf_symbols, scan_docstrings_for_rf_hints,
+propose_requirements_from_codebase) plus correctness fixes that the
+a large Rust monorepo stress test surfaced.
+
+### Added — brownfield onboarding flow
+- **`propose_requirements_from_codebase()`** (B2) — the headline feature.
+  Heuristic RF discovery: groups symbols by qname prefix at
+  `module_depth`, ranks each group by PageRank-weighted score, proposes
+  one RF candidate per actionable group with humanized title +
+  description from the top symbol's docstring + suggested_symbols list.
+  Pair with create_requirement + bulk_link_rf_symbols to convert from
+  "no RFs" to "fully traced" in N rounds instead of N×M.
+- **`bulk_link_rf_symbols(mappings)`** (B1) — batch-link N RF↔symbol
+  pairs in one transaction. Returns per-entry result so failures don't
+  abort the batch. Idempotent (re-link returns ok=True linked=False).
+- **`scan_docstrings_for_rf_hints()`** (B6) — surfaces RF candidates
+  from existing docstrings that aren't yet linked. First sentence +
+  leading verb extraction; verb_histogram_top output gives the agent
+  the input signal for B2.
+
+### Added — tool quality
+- **Pagination on aggregator tools** (B3) — `find_dead_code`,
+  `audit_coverage`, `find_orphan_tests`, `find_endpoints`,
+  `git_diff_impact` now accept `limit` (default 200) + `cursor` +
+  `summary_only`. Triggered by the a large Rust monorepo stress test where
+  `audit_coverage` produced 286K chars, `find_dead_code` 4.4M chars,
+  `git_diff_impact` 7.3M chars — all over the MCP 25K-token budget.
+- **`find_dead_code` skips Rust `pub` items** (B4) — symbols whose
+  visibility is `pub` / `exported` / `public` are excluded by default
+  (they have invisible callers from outside the indexed crate).
+  `pub(crate)` and `pub(super)` are NOT skipped (scope-bounded).
+  Override with `include_public=True`. The 23K dead-flagged symbols on
+  a large Rust monorepo dropped to a manageable list.
+- **Schema migration v7**: `symbol.visibility` column populated by the
+  extractor for Rust (`pub`/`pub(crate)`/`pub(super)`/`private`),
+  TS/JS (`exported`), Java/PHP (`public`/`private`/`protected`).
+- **`find_symbol` is separator-agnostic** (B5) — query
+  `SyncQueue::push` matches Rust qnames stored as
+  `app.src.server.sync_queue.SyncQueue::push`. Works in both
+  directions (`Type.method` query also reaches `Type::method` qnames)
+  and accepts `/` as a separator (path-style searches).
+
+### Tooling
+- Tools: 32 → 35 (+ 4 deprecated v0.6 aliases still present through
+  v0.7 → wire count 39).
+- Tests: 97 → 118 (+3 find_symbol normalization, +6 pagination,
+  +2 visibility, +3 bulk_link, +3 rf_hints, +4 propose_requirements).
+
+### Deferred to v0.8
+- Drop the v0.6 deprecated aliases (`link_requirement_to_code`,
+  `link_requirements`, `unlink_requirements`,
+  `get_requirement_dependencies`) — they were promised through v0.7.
+- `_resolve_refs` targeted re-walk (partial reindex on Django: 7s → ~1s).
+- LLM-assisted RF refinement: optional sampling layer on top of B2's
+  heuristic to refine titles + descriptions with the agent's reasoning.
+
+---
+
 ## [0.6.0] — 2026-05-01
 
 The "hardening" release. Stops the feature treadmill to pay down debt:
@@ -339,7 +402,8 @@ Bootstrap. Phases 0–6 of the original design.
   `project://files/{path*}`, `project://symbols/{qname*}`,
   `doc://symbol/{qname*}`, `doc://requirement/{rf_id}`.
 
-[Unreleased]: https://github.com/Rixmerz/livespec-mcp/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/Rixmerz/livespec-mcp/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/Rixmerz/livespec-mcp/releases/tag/v0.7.0
 [0.6.0]: https://github.com/Rixmerz/livespec-mcp/releases/tag/v0.6.0
 [0.5.0]: https://github.com/Rixmerz/livespec-mcp/releases/tag/v0.5.0
 [0.4.0]: https://github.com/Rixmerz/livespec-mcp/releases/tag/v0.4.0

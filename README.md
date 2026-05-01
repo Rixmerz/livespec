@@ -90,7 +90,7 @@ By default it picks the **current working directory** as workspace, or
 }
 ```
 
-## Tools (32 + 4 deprecated aliases through v0.7)
+## Tools (35 + 4 deprecated aliases through v0.7)
 
 Every tool accepts an optional `workspace: str` argument. When omitted, the
 server resolves to `LIVESPEC_WORKSPACE` env var or the current working
@@ -134,9 +134,14 @@ single MCP server instance can serve multiple repos in parallel.
 - `delete_requirement(rf_id)` — cascade-removes rf_symbol links
 - `list_requirements(status, module, priority, has_implementation)`
 - `link_rf_symbol(rf_id, symbol_qname, relation, confidence, source, unlink)` — link an RF to a code symbol.
+- `bulk_link_rf_symbols(mappings)` — batch-link N pairs in one transaction. Returns per-entry result; idempotent. v0.7.
 - `link_rf_dependency(parent_rf_id, child_rf_id, kind='requires')` — declare an RF→RF dependency. `kind` ∈ {requires, extends, conflicts}. Cycles rejected at insert time.
 - `unlink_rf_dependency(parent_rf_id, child_rf_id, kind=None)` — drop one specific edge or every edge between the pair.
 - `get_rf_dependency_graph(rf_id, direction='both', max_depth=5)` — walk the RF dependency graph forward / backward / both.
+
+### Brownfield onboarding (v0.7)
+- `propose_requirements_from_codebase(module_depth=2, min_symbols_per_group=3, max_proposals=30, skip_already_covered=True)` — heuristic RF discovery. Groups symbols by qname prefix, ranks by PageRank-weighted score, proposes RF candidates with humanized title + description + suggested_symbols. Pair with `create_requirement` + `bulk_link_rf_symbols` to land accepted proposals.
+- `scan_docstrings_for_rf_hints()` — surfaces RF candidates from existing docstrings (first sentence, leading verb). Returns `verb_histogram_top` for noticing dominant action verbs (e.g. 47 'Validates...').
 
 > v0.6 renames the four tools above for clarity (the old `link_requirement_to_code` / `link_requirements` / `unlink_requirements` / `get_requirement_dependencies` are kept as deprecated aliases through v0.7).
 - `get_requirement_implementation(rf_id)`
@@ -219,7 +224,8 @@ In-memory FastMCP `Client(mcp)` so tests run without subprocess or network.
 | 8 — v0.3 | ✅ | Auto-scan post-index, PageRank infra filter, scoped resolution by imports, `git_diff_impact`, embeddings smoke real, Ruby+PHP fixtures, hypothesis property tests, memory bench, GitHub Actions CI, `code://` resource, `delete_requirement`, markdown RF importer |
 | 9 — v0.4 | ✅ | Scoped resolution for TS/JS/Go/Ruby/PHP, `find_dead_code` / `audit_coverage` / `find_orphan_tests`, `did_you_mean` on Symbol-not-found errors, watcher `atexit` cleanup, CI venv fix |
 | 10 — v0.5 | ✅ | Bug fixes from real-repo demo, decorators as first-class field + `find_endpoints`, RF dependency graph (requires/extends/conflicts) with `analyze_impact` cascade, matcher multi-RF + confidence override + `@not_rf:` negation + golden dataset, Rust `use` scoped resolution |
-| 11 — v0.6 | 🚧 | Hardening: explicit migration framework, unified error shape, RF link tools renamed, deprecated `use_workspace` removed, Django stress test (40K symbols), graph cache, README pitch reframe |
+| 11 — v0.6 | ✅ | Hardening: explicit migration framework, unified error shape, RF link tools renamed, deprecated `use_workspace` removed, Django stress test (40K symbols), graph cache, README pitch reframe |
+| 12 — v0.7 | 🚧 | Brownfield onboarding: `propose_requirements_from_codebase`, `bulk_link_rf_symbols`, `scan_docstrings_for_rf_hints`. Pagination on aggregator tools. Rust `pub` visibility-aware dead-code filter. `find_symbol` separator-agnostic |
 
 ## Optional: Embeddings
 

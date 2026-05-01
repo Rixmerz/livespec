@@ -32,7 +32,37 @@ Todo el stack es local-first: 0 servicios externos, 0 API keys obligatorias, 0 D
 
 ---
 
-## 3. Estado actual: v0.6 listo, hardening release
+## 3. Estado actual: v0.7 listo — brownfield onboarding
+
+**v0.7.0** (2026-05-01): cierra el gap entre "proyecto fresco con livespec
+día 1" y "monorepo Rust de 50K símbolos al que adopto livespec un martes".
+- **B5**: `find_symbol` matchea separator-agnostic (`Type::method` ↔ `Type.method`).
+- **B3**: pagination + summary_only en aggregator tools (audit_coverage, find_dead_code, find_orphan_tests, find_endpoints, git_diff_impact). Causa: a large Rust monorepo generaba payloads de 286K-7.3M chars.
+- **B4**: schema migration v7 con `symbol.visibility`. find_dead_code skipea Rust `pub` por default (a large Rust monorepo pasaba 23K dead → manageable).
+- **B1**: `bulk_link_rf_symbols(mappings)` — batch-link N pairs en una sola transacción.
+- **B6**: `scan_docstrings_for_rf_hints` — extrae primera oración + verbo de docstrings sin RF link, returns verb_histogram_top.
+- **B2** (game changer): `propose_requirements_from_codebase` — heuristic RF discovery agrupando símbolos por módulo + ranking por PageRank, propone RFs con título humanizado + descripción + suggested_symbols.
+
+35 tools (+ 4 aliases v0.6 todavía retenidos), 118 tests, schema v7.
+
+**Flow brownfield end-to-end:**
+```
+proposals = propose_requirements_from_codebase()
+for p in proposals.proposals[:N]:
+    create_requirement(p.proposed_rf_id, p.title, p.description)
+    bulk_link_rf_symbols([{rf_id: p.proposed_rf_id,
+                           symbol_qname: s.qualified_name}
+                          for s in p.suggested_symbols])
+```
+
+**Diferido a v0.8:**
+- Drop aliases v0.6 (`link_requirement_to_code`, `link_requirements`, etc.)
+- `_resolve_refs` targeted re-walk (Django partial 7s → 1s)
+- LLM-assisted RF refinement opcional sobre B2
+
+---
+
+## 3a. Estado previo: v0.6 listo, hardening release
 
 **v0.6.0** (2026-05-01): hardening / debt-paydown release. No new features
 significativas; foco en sanear lo que se acumuló.
