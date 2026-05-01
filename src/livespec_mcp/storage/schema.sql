@@ -48,6 +48,7 @@ CREATE TABLE IF NOT EXISTS symbol (
     docstring TEXT,
     body_hash TEXT,
     decorators TEXT,               -- JSON array of decorator names (Python today; extensible)
+    visibility TEXT,               -- v0.7: pub/pub(crate)/private/exported/public/...
     start_line INTEGER NOT NULL,
     end_line INTEGER NOT NULL,
     UNIQUE(file_id, qualified_name, start_line)

@@ -123,6 +123,16 @@ def _m005_decorators(conn: sqlite3.Connection) -> None:
     _flag_reextract(conn)
 
 
+def _m007_visibility(conn: sqlite3.Connection) -> None:
+    """v0.7 B4: symbol.visibility for Rust pub-aware dead code detection.
+
+    Existing rows get NULL until next re-extract. Queue forced re-extract."""
+    if _has_column(conn, "symbol", "visibility"):
+        return
+    _try_add_column(conn, "symbol", "visibility", "TEXT")
+    _flag_reextract(conn)
+
+
 def _m006_legacy_v02_recover(conn: sqlite3.Connection) -> None:
     """P0.2: detect a v0.2-era DB whose symbol_ref is empty even though edges
     exist. That happens when the project was indexed before the persistent
@@ -143,6 +153,7 @@ MIGRATIONS: list[Migration] = [
     (4, "scope_module", _m004_scope_module),
     (5, "decorators", _m005_decorators),
     (6, "legacy_v02_recover", _m006_legacy_v02_recover),
+    (7, "visibility", _m007_visibility),
 ]
 
 

@@ -26,6 +26,7 @@ class ExtractedSymbol:
     end_line: int
     parent_qname: str | None = None
     decorators: list[str] = field(default_factory=list)  # v0.5 P1: ordered, dotted form
+    visibility: str | None = None  # v0.7 B4: pub / pub(crate) / private / exported / ...
 
 
 @dataclass
@@ -229,6 +230,57 @@ def _decorator_dotted(node: ast.AST) -> str | None:
 # ---------- Generic tree-sitter ----------
 
 
+def _extract_visibility(node, src_bytes: bytes, language: str) -> str | None:
+    """Best-effort visibility extraction for tree-sitter languages.
+
+    Returns one of:
+      - 'pub', 'pub(crate)', 'pub(super)' (Rust)
+      - 'public', 'private', 'protected' (Java/PHP)
+      - 'exported' (TS/JS, presence of `export` keyword)
+      - 'private' (Rust default for items WITHOUT a visibility_modifier)
+      - None (language doesn't have a known model — Go, etc.)
+
+    Rust convention: capitalized identifiers in Go are 'public'-equivalent
+    but Go's grammar doesn't tag them so we leave them unmarked.
+    """
+    if language == "rust":
+        for c in node.children:
+            if c.type == "visibility_modifier":
+                txt = src_bytes[c.start_byte : c.end_byte].decode("utf-8", errors="replace")
+                # Strip whitespace; preserve `pub`, `pub(crate)`, `pub(super)`, `pub(in path)`.
+                return txt.strip()
+        return "private"
+    if language in ("javascript", "typescript"):
+        # Walk siblings — `export` typically wraps the declaration in an
+        # export_statement node, so check the parent.
+        parent = node.parent if hasattr(node, "parent") else None
+        if parent is not None and parent.type in (
+            "export_statement", "export_default_declaration"
+        ):
+            return "exported"
+        return None
+    if language == "java":
+        for c in node.children:
+            if c.type == "modifiers":
+                txt = src_bytes[c.start_byte : c.end_byte].decode("utf-8", errors="replace")
+                if "public" in txt:
+                    return "public"
+                if "protected" in txt:
+                    return "protected"
+                if "private" in txt:
+                    return "private"
+        return None
+    if language == "php":
+        for c in node.children:
+            if c.type in ("visibility_modifier", "modifiers"):
+                txt = src_bytes[c.start_byte : c.end_byte].decode("utf-8", errors="replace").lower()
+                for vis in ("public", "private", "protected"):
+                    if vis in txt:
+                        return vis
+        return None
+    return None
+
+
 def _normalize_ts_body(node, src_bytes: bytes) -> str:
     """Reformat-stable body seed for tree-sitter languages.
 
@@ -363,6 +415,7 @@ def _ts_extract(
                 start_line=start_line,
                 end_line=end_line,
                 parent_qname=parent_qname,
+                visibility=_extract_visibility(node, src_bytes, language),
             )
         )
         return qname

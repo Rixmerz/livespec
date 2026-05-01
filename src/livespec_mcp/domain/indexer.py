@@ -240,12 +240,12 @@ def _replace_symbols(conn: sqlite3.Connection, *, file_id: int, result: ExtractR
         cur = conn.execute(
             """INSERT INTO symbol(file_id, parent_symbol_id, name, qualified_name, kind,
                 signature, signature_hash, docstring, body_hash, decorators,
-                start_line, end_line)
-               VALUES(?,?,?,?,?,?,?,?,?,?,?,?)""",
+                visibility, start_line, end_line)
+               VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (
                 file_id, None, s.name, s.qualified_name, s.kind,
                 s.signature, sig_hash, s.docstring, body_hash, decorators_json,
-                s.start_line, s.end_line,
+                s.visibility, s.start_line, s.end_line,
             ),
         )
         qname_to_id[s.qualified_name] = int(cur.lastrowid)

@@ -577,6 +577,7 @@ def register(mcp: FastMCP) -> None:
     @mcp.tool(annotations={"readOnlyHint": True, "idempotentHint": True})
     def find_dead_code(
         include_infrastructure: bool = False,
+        include_public: bool = False,
         limit: int = 200,
         cursor: int = 0,
         summary_only: bool = False,
@@ -588,21 +589,29 @@ def register(mcp: FastMCP) -> None:
         - Files under `tests/`, `scripts/`, `bin/`; `__main__.py`; `manage.py`
         - Infrastructure (DI helpers, dunders, FastMCP `register` fns, ≤4-line
           wrappers). Pass `include_infrastructure=True` to keep them.
+        - **Public symbols** (Rust `pub`/`pub(crate)`, TS/JS `exported`,
+          Java/PHP `public`). They have potential callers from outside the
+          indexed crate/package. Pass `include_public=True` to surface them.
 
         v0.7 (B3): paginated. `limit` (default 200) caps `dead_symbols` per
         call; `cursor` resumes from a previous call's `next_cursor`;
         `summary_only=True` returns just the count + breakdown without the
         list. The total count is always exact, regardless of pagination.
 
+        v0.7 (B4): visibility-aware. The 23K dead-flagged symbols on the
+        a large Rust monorepo Rust monorepo dropped to a manageable list once `pub` items
+        were skipped — they have callers across crate boundaries that the
+        in-project graph can't see.
+
         Useful sanity check before a refactor: anything in the result is
         unreachable from in-project callers AND not traceably implementing
-        any RF.
+        any RF AND not exposed publicly.
         """
         st = get_state(workspace)
         pid = st.project_id
         rows = st.conn.execute(
             """SELECT s.id, s.qualified_name, s.name, s.kind, s.decorators,
-                      s.start_line, s.end_line, f.path AS file_path
+                      s.visibility, s.start_line, s.end_line, f.path AS file_path
                FROM symbol s JOIN file f ON f.id=s.file_id
                WHERE f.project_id=?
                  AND NOT EXISTS (
@@ -627,6 +636,12 @@ def register(mcp: FastMCP) -> None:
                 or p == "manage.py"
             )
 
+        # v0.7 B4: visibility values that imply external callers
+        _PUBLIC_VIS = {"pub", "exported", "public"}
+        # `pub(crate)` / `pub(super)` are NOT skipped — those symbols are
+        # only callable within this indexed scope, so absence of in-project
+        # callers IS a real dead-code signal.
+
         filtered: list[dict[str, Any]] = []
         for r in rows:
             meta = dict(r)
@@ -637,6 +652,8 @@ def register(mcp: FastMCP) -> None:
             if not include_infrastructure and _has_entry_point_decorator(
                 meta.get("decorators")
             ):
+                continue
+            if not include_public and (meta.get("visibility") in _PUBLIC_VIS):
                 continue
             filtered.append(meta)
 
