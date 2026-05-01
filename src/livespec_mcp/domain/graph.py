@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sqlite3
+import threading
 from dataclasses import dataclass
 from typing import Iterable
 
@@ -15,7 +16,50 @@ class GraphView:
     sym_meta: dict[int, dict]  # symbol_id -> {name, qname, kind, file_path, lines}
 
 
+# v0.6 P3: graph cache. Building the NetworkX object from SQL costs ~4s on a
+# 40K-symbol repo and is repeated on every analysis tool call. Cache by
+# (db_path, project_id, last_index_run_id) — invalidated automatically when
+# a new index run completes (since the latest id changes). DB path is part
+# of the key so isolated test workspaces with the same project_id don't
+# collide. Module-level so a single MCP server instance shares the cache
+# across workspaces.
+_GRAPH_CACHE: dict[tuple[str, int, int], GraphView] = {}
+_GRAPH_CACHE_LOCK = threading.Lock()
+_GRAPH_CACHE_MAX = 8  # one per active workspace; LRU-ish via insertion order
+
+
+def _latest_run_id(conn: sqlite3.Connection, project_id: int) -> int:
+    row = conn.execute(
+        "SELECT id FROM index_run WHERE project_id=? ORDER BY id DESC LIMIT 1",
+        (project_id,),
+    ).fetchone()
+    return int(row["id"]) if row else 0
+
+
+def _db_path(conn: sqlite3.Connection) -> str:
+    """Best-effort identifier for the SQLite DB this conn points to."""
+    try:
+        for r in conn.execute("PRAGMA database_list"):
+            if r[1] == "main":
+                return r[2] or f"conn:{id(conn)}"
+    except sqlite3.Error:
+        pass
+    return f"conn:{id(conn)}"
+
+
 def load_graph(conn: sqlite3.Connection, project_id: int) -> GraphView:
+    """Load (or fetch from cache) the call graph for a project.
+
+    Cache key: (db_path, project_id, latest_index_run_id). A new index run
+    bumps the id and invalidates automatically. Misses fall through to the
+    SQL rebuild path."""
+    run_id = _latest_run_id(conn, project_id)
+    key = (_db_path(conn), project_id, run_id)
+    with _GRAPH_CACHE_LOCK:
+        cached = _GRAPH_CACHE.get(key)
+        if cached is not None:
+            return cached
+
     g = nx.DiGraph()
     sym_meta: dict[int, dict] = {}
     for r in conn.execute(
@@ -45,7 +89,37 @@ def load_graph(conn: sqlite3.Connection, project_id: int) -> GraphView:
     ):
         g.add_edge(int(r["src_symbol_id"]), int(r["dst_symbol_id"]),
                    edge_type=r["edge_type"], weight=float(r["weight"]))
-    return GraphView(g=g, sym_meta=sym_meta)
+
+    view = GraphView(g=g, sym_meta=sym_meta)
+    with _GRAPH_CACHE_LOCK:
+        # Drop stale entries for THIS (db, project) at older run_ids; apply
+        # a coarse size cap.
+        for k in list(_GRAPH_CACHE.keys()):
+            if k[0] == key[0] and k[1] == project_id and k != key:
+                _GRAPH_CACHE.pop(k, None)
+        if len(_GRAPH_CACHE) >= _GRAPH_CACHE_MAX:
+            _GRAPH_CACHE.pop(next(iter(_GRAPH_CACHE)), None)
+        _GRAPH_CACHE[key] = view
+    return view
+
+
+def invalidate_graph_cache(project_id: int | None = None) -> int:
+    """Drop cached graphs for one project (or all). Returns dropped count.
+
+    project_id None drops the entire cache (across all workspaces). A
+    specific id drops every entry matching that id regardless of db_path —
+    use this when you know the project changed; tests that need full
+    isolation should pass None.
+    """
+    with _GRAPH_CACHE_LOCK:
+        if project_id is None:
+            n = len(_GRAPH_CACHE)
+            _GRAPH_CACHE.clear()
+            return n
+        keys = [k for k in _GRAPH_CACHE if k[1] == project_id]
+        for k in keys:
+            _GRAPH_CACHE.pop(k, None)
+        return len(keys)
 
 
 def descendants_within(g: nx.DiGraph, source: int, max_depth: int) -> set[int]:

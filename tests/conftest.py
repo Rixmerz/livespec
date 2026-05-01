@@ -8,14 +8,17 @@ from pathlib import Path
 import pytest
 
 from livespec_mcp import state as state_module
+from livespec_mcp.domain.graph import invalidate_graph_cache
 
 
 @pytest.fixture
 def workspace(tmp_path: Path, monkeypatch) -> Path:
     monkeypatch.setenv("LIVESPEC_WORKSPACE", str(tmp_path))
     state_module.reset_state()
+    invalidate_graph_cache()
     yield tmp_path
     state_module.reset_state()
+    invalidate_graph_cache()
 
 
 @pytest.fixture

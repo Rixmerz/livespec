@@ -31,9 +31,14 @@ REPOS = {
     "fastapi": ("https://github.com/fastapi/fastapi.git", "0.118.0"),
     "requests": ("https://github.com/psf/requests.git", "v2.32.3"),
     "rich": ("https://github.com/Textualize/rich.git", "v13.9.4"),
+    # v0.6 P3: large-repo stress test. Django is ~2.5K Python files, ~25K
+    # symbols once indexed — exercises NetworkX load and PageRank at a scale
+    # where Python overhead becomes visible.
+    "django": ("https://github.com/django/django.git", "5.1.4"),
 }
 
 QUICK_REPOS = ["requests"]
+LARGE_REPOS = ["django"]
 
 
 def _clone(repo: str, ref: str, dest: Path) -> None:
@@ -150,11 +155,21 @@ def _bench_repo(workspace: Path) -> dict[str, Any]:
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--quick", action="store_true", help="Subset of repos for fast iteration")
+    parser.add_argument(
+        "--large",
+        action="store_true",
+        help="Stress-test on Django (~25K symbols). Slower; requires more RAM.",
+    )
     parser.add_argument("--json", type=Path, default=None, help="Write the report to this file")
     parser.add_argument("--cache", type=Path, default=Path.home() / ".cache" / "livespec-bench")
     args = parser.parse_args()
 
-    targets = QUICK_REPOS if args.quick else list(REPOS.keys())
+    if args.quick:
+        targets = QUICK_REPOS
+    elif args.large:
+        targets = LARGE_REPOS
+    else:
+        targets = list(REPOS.keys())
 
     report: dict[str, Any] = {"results": {}}
     args.cache.mkdir(parents=True, exist_ok=True)

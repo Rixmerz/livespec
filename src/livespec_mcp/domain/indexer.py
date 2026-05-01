@@ -212,10 +212,25 @@ def _upsert_file(
 
 
 def _replace_symbols(conn: sqlite3.Connection, *, file_id: int, result: ExtractResult) -> None:
-    """Insert symbols for a file and persist their refs to symbol_ref."""
+    """Insert symbols for a file and persist their refs to symbol_ref.
+
+    Deduplicates extractor output by (qualified_name, start_line) before
+    insert. Real-world Python code can produce duplicates: a function
+    redefined under `if/else` or `try/except` (e.g. Django's compatibility
+    shims `def cached_property(...)` defined twice in the same module under
+    a Python-version guard). Both ASTNodes have identical qname and
+    start_line, so the v0.6 schema's UNIQUE(file_id, qname, start_line)
+    constraint would fire. We keep the first occurrence — that's the
+    branch-active definition in source order.
+    """
     import json as _json
     qname_to_id: dict[str, int] = {}
+    seen_keys: set[tuple[str, int]] = set()
     for s in result.symbols:
+        key = (s.qualified_name, s.start_line)
+        if key in seen_keys:
+            continue
+        seen_keys.add(key)
         body_hash = xxhash.xxh3_128_hexdigest(s.body_hash_seed.encode("utf-8", errors="replace"))
         sig_hash = (
             xxhash.xxh3_128_hexdigest(s.signature.encode("utf-8", errors="replace"))
