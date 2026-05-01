@@ -5,7 +5,7 @@ from __future__ import annotations
 from fastmcp import FastMCP
 
 from livespec_mcp import prompts, resources
-from livespec_mcp.tools import analysis, docs, indexing, requirements, search
+from livespec_mcp.tools import analysis, docs, indexing, requirements, search, watcher
 
 mcp = FastMCP(
     name="livespec-mcp",
@@ -22,6 +22,7 @@ analysis.register(mcp)
 requirements.register(mcp)
 search.register(mcp)
 docs.register(mcp)
+watcher.register(mcp)
 resources.register(mcp)
 prompts.register(mcp)
 

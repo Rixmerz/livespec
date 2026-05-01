@@ -70,7 +70,7 @@ By default it picks the **current working directory** as workspace, or
 }
 ```
 
-## Tools (20)
+## Tools (23)
 
 Every tool accepts an optional `workspace: str` argument. When omitted, the
 server resolves to `LIVESPEC_WORKSPACE` env var or the current working
@@ -112,6 +112,12 @@ single MCP server instance can serve multiple repos in parallel.
 - `list_docs(target_type, only_stale=False)` — list or surface drifted docs
   (drift triggers on body_hash OR signature_hash mismatch).
 - `export_documentation(format, out_subdir)` — markdown or JSON
+
+### Watcher (P2.3 — "living" docs)
+- `start_watcher(debounce_seconds=2.0)` — listen for filesystem changes and
+  auto-run `index_project` after a quiet window. One watcher per workspace.
+- `stop_watcher()`
+- `watcher_status()` — events received, reindex runs, last run time
 
 ### Migrating from v0.1
 | Removed | Use instead |
@@ -161,9 +167,9 @@ In-memory FastMCP `Client(mcp)` so tests run without subprocess or network.
 | 2 — Analysis | ✅ | NetworkX, impact, PageRank |
 | 3 — Requirements | ✅ | CRUD + linking + annotation matcher |
 | 4 — RAG/Embeddings | ✅ | AST chunking, FTS5, fastembed + sqlite-vec optional, RRF |
-| 5 — Doc generation | ✅ | `generate_docs_for_symbol/requirement` via MCP sampling, drift detect, export |
-| 6 — Polish | ✅ | `suggest_rf_links`, 7 prompts, doc:// resources |
-| 7 — Future | — | LanceDB scaling, more languages, watchdog filesystem watcher |
+| 5 — Doc generation | ✅ | `generate_docs` (dual-mode), drift detect (body+signature), export |
+| 6 — Polish | ✅ | 7 prompts, doc:// resources, two-level @rf: matcher with negation guard |
+| 7 — v0.2 | ✅ | Multi-tenant state, tool consolidation 25→23, persistent refs, watcher, bench suite |
 
 ## Optional: Embeddings
 

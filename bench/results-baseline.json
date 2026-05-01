@@ -1,0 +1,21 @@
+{
+  "results": {
+    "requests": {
+      "cold_ms": 317.6,
+      "db_mb": 0.85,
+      "edges": 2095,
+      "files": 36,
+      "languages": {
+        "python": 36
+      },
+      "loc_per_sec": 2346.0,
+      "partial": {
+        "edges_total": 2095,
+        "files_changed": 1,
+        "ms": 21.1
+      },
+      "symbols": 745,
+      "warm_ms": 4.9
+    }
+  }
+}

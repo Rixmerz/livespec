@@ -63,6 +63,22 @@ CREATE TABLE IF NOT EXISTS symbol_edge (
 CREATE INDEX IF NOT EXISTS idx_edge_src ON symbol_edge(src_symbol_id, edge_type);
 CREATE INDEX IF NOT EXISTS idx_edge_dst ON symbol_edge(dst_symbol_id, edge_type);
 
+-- Persistent refs: every call/reference site captured during extraction.
+-- We keep them on disk (rather than in-memory only) so a partial re-index
+-- can re-resolve refs from UNCHANGED files when the file they target
+-- changes. Without this, edges where dst is in the changed file would
+-- vanish permanently. Cascade on symbol delete keeps this table consistent.
+CREATE TABLE IF NOT EXISTS symbol_ref (
+    id INTEGER PRIMARY KEY,
+    src_symbol_id INTEGER NOT NULL REFERENCES symbol(id) ON DELETE CASCADE,
+    target_name TEXT NOT NULL,
+    ref_type TEXT NOT NULL DEFAULT 'call',
+    line INTEGER
+);
+
+CREATE INDEX IF NOT EXISTS idx_symref_target ON symbol_ref(target_name);
+CREATE INDEX IF NOT EXISTS idx_symref_src ON symbol_ref(src_symbol_id);
+
 -- ===== Requirements =====
 CREATE TABLE IF NOT EXISTS module (
     id INTEGER PRIMARY KEY,

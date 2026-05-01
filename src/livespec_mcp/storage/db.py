@@ -35,7 +35,8 @@ def _migrate_v1_to_v2(conn: sqlite3.Connection) -> None:
     """Drop dead tables/columns from v1 schemas. Idempotent."""
     # commit_snapshot was never written; simply drop if present.
     conn.execute("DROP TABLE IF EXISTS commit_snapshot")
-    # unresolved_ref is now resolved in-memory per run (P1.3); drop the persisted table.
+    # The v1 unresolved_ref table is replaced by symbol_ref (persistent refs);
+    # if the legacy table survives in old DBs, drop it.
     conn.execute("DROP TABLE IF EXISTS unresolved_ref")
 
     # file.size_bytes — drop column if present (SQLite supports DROP COLUMN since 3.35).

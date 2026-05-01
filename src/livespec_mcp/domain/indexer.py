@@ -1,10 +1,13 @@
 """Project indexer: walks workspace, extracts symbols+refs, persists to SQLite,
 and resolves call edges by name matching.
 
-Design note: refs are kept in a per-run in-memory dict keyed by `src_symbol_id`,
-so resolution happens once after every changed file has been re-extracted.
-There is no on-disk `unresolved_ref` table — that was a v1 leak of an
-implementation detail into the schema and the source of two regression bugs."""
+Design (post-P1.3 v2): refs are persisted in `symbol_ref` because partial
+re-index needs to re-resolve refs from UNCHANGED files when their target is
+in a file that did change — without persistence, those edges would vanish
+permanently. Cascade on symbol delete keeps the ref table consistent.
+
+Resolve is INSERT OR IGNORE only (never DELETE) so existing edges from
+unchanged files are always preserved."""
 
 from __future__ import annotations
 
@@ -94,10 +97,6 @@ def index_project(
     }
     seen: set[str] = set()
 
-    # In-memory ref pool collected during this run. Maps src_symbol_id -> list of
-    # (target_name, ref_type). Resolved into edges after all files are processed.
-    pending_refs: list[tuple[int, str, str]] = []
-
     with transaction(conn):
         for p in files:
             stats.files_total += 1
@@ -132,18 +131,18 @@ def index_project(
                 line_count=line_count,
                 mtime=mtime,
             )
-            new_refs = _replace_symbols(conn, file_id=file_id, result=result)
-            pending_refs.extend(new_refs)
+            _replace_symbols(conn, file_id=file_id, result=result)
 
         # Remove deleted files
         for rel, row in existing.items():
             if rel not in seen:
                 conn.execute("DELETE FROM file WHERE id = ?", (row["id"],))
 
-    # Resolve only the refs we just collected; edges from untouched files survive
-    # because we never touched their src symbols (no cascade).
-    if pending_refs:
-        _resolve_refs(conn, project_id=project_id, pending=pending_refs)
+    # Re-resolve all refs in the project. Cheap: indexed by target_name, and
+    # we only INSERT OR IGNORE so existing edges survive unchanged. Refs whose
+    # src symbol was deleted in a re-extract were cascaded out automatically.
+    if stats.files_changed > 0 or force:
+        _resolve_refs(conn, project_id=project_id)
 
     stats.edges_total = int(
         conn.execute(
@@ -201,12 +200,8 @@ def _upsert_file(
     return int(cur.lastrowid)
 
 
-def _replace_symbols(
-    conn: sqlite3.Connection, *, file_id: int, result: ExtractResult
-) -> list[tuple[int, str, str]]:
-    """Insert symbols for a file and return the refs collected, with src ids
-    resolved to symbol.id values (so the caller can append them to the in-memory
-    pending_refs pool without another DB round-trip)."""
+def _replace_symbols(conn: sqlite3.Connection, *, file_id: int, result: ExtractResult) -> None:
+    """Insert symbols for a file and persist their refs to symbol_ref."""
     qname_to_id: dict[str, int] = {}
     for s in result.symbols:
         body_hash = xxhash.xxh3_128_hexdigest(s.body_hash_seed.encode("utf-8", errors="replace"))
@@ -230,48 +225,49 @@ def _replace_symbols(
                 "UPDATE symbol SET parent_symbol_id=? WHERE id=?",
                 (qname_to_id[s.parent_qname], qname_to_id[s.qualified_name]),
             )
-    refs: list[tuple[int, str, str]] = []
     for r in result.refs:
         src_id = qname_to_id.get(r.src_qname)
         if src_id is None:
             continue
-        refs.append((src_id, r.target_name, r.ref_type))
-    return refs
+        conn.execute(
+            "INSERT INTO symbol_ref(src_symbol_id, target_name, ref_type, line) VALUES(?,?,?,?)",
+            (src_id, r.target_name, r.ref_type, r.line),
+        )
 
 
-def _resolve_refs(
-    conn: sqlite3.Connection,
-    *,
-    project_id: int,
-    pending: list[tuple[int, str, str]],
-) -> int:
-    """Resolve in-memory refs by short-name matching against all symbols in the
-    project. One match -> high-confidence edge (weight 1.0). Multiple matches ->
-    connect to all (weight 0.5). Zero matches -> drop.
+def _resolve_refs(conn: sqlite3.Connection, *, project_id: int) -> int:
+    """Resolve every symbol_ref in the project into symbol_edge rows.
 
-    The src symbols are necessarily in files that were just re-extracted, so
-    their existing edges were already cascaded by the symbol DELETE in
-    `_upsert_file`. We only INSERT here — no DELETE on the project-wide edge
-    table — which preserves edges from unchanged files.
+    INSERT OR IGNORE only — never DELETE. The unique constraint on
+    (src, dst, edge_type) makes this idempotent. Refs whose src symbol was
+    deleted in a re-extract were cascaded out automatically; refs from
+    unchanged files survive and re-resolve against the new symbol IDs of
+    re-extracted files.
     """
-    if not pending:
-        return 0
+    rows = conn.execute(
+        """SELECT u.src_symbol_id, u.target_name FROM symbol_ref u
+           JOIN symbol s ON s.id = u.src_symbol_id
+           JOIN file f ON f.id = s.file_id
+           WHERE f.project_id = ?""",
+        (project_id,),
+    ).fetchall()
 
     name_index: dict[str, list[int]] = {}
     for r in conn.execute(
-        """SELECT s.id, s.name FROM symbol s JOIN file f ON f.id=s.file_id WHERE f.project_id=?""",
+        "SELECT s.id, s.name FROM symbol s JOIN file f ON f.id=s.file_id WHERE f.project_id=?",
         (project_id,),
     ):
         name_index.setdefault(r["name"], []).append(int(r["id"]))
 
     edge_count = 0
     seen_pairs: set[tuple[int, int]] = set()
-    for src_id, target_name, _ref_type in pending:
-        targets = name_index.get(target_name, [])
+    for u in rows:
+        targets = name_index.get(u["target_name"], [])
         if not targets:
             continue
         weight = 1.0 if len(targets) == 1 else 0.5
         for tid in targets:
+            src_id = int(u["src_symbol_id"])
             if tid == src_id:
                 continue
             key = (src_id, tid)
