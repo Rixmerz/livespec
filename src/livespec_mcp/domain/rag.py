@@ -195,7 +195,13 @@ def _text_embedder():
     if _TEXT_EMBEDDER is None:
         from fastembed import TextEmbedding
 
-        _TEXT_EMBEDDER = TextEmbedding(model_name="intfloat/multilingual-e5-base")
+        # 768-dim multilingual model that matches the chunk_vec_text vec0 table.
+        # (intfloat/multilingual-e5-base is not in fastembed's catalog as of
+        # late 2025 — only the -large 1024-dim variant is, which would require
+        # a wider vec0 table.)
+        _TEXT_EMBEDDER = TextEmbedding(
+            model_name="sentence-transformers/paraphrase-multilingual-mpnet-base-v2"
+        )
     return _TEXT_EMBEDDER
 
 

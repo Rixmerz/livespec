@@ -32,16 +32,22 @@ def register(mcp: FastMCP) -> None:
         }
 
     @mcp.tool(annotations={"readOnlyHint": False, "idempotentHint": True, "destructiveHint": False})
-    def index_project(force: bool = False, workspace: str | None = None) -> dict[str, Any]:
+    def index_project(
+        force: bool = False,
+        watch: bool = False,
+        workspace: str | None = None,
+    ) -> dict[str, Any]:
         """Walk the workspace, parse code, persist symbols + call edges.
 
         File-incremental via xxh3 content hash; pass force=True to re-extract.
+        Pass watch=True to also start a filesystem watcher after indexing so
+        subsequent edits trigger automatic re-index (debounce 2s).
         Use after pulling new commits or when documentation feels stale.
         """
         st = get_state(workspace)
         with st.lock():
             stats = run_index(st.settings, st.conn, force=force)
-        return {
+        result: dict[str, Any] = {
             "files_total": stats.files_total,
             "files_changed": stats.files_changed,
             "files_skipped": stats.files_skipped,
@@ -50,7 +56,21 @@ def register(mcp: FastMCP) -> None:
             "rf_links_created": stats.rf_links_created,
             "languages": stats.languages,
             "workspace": str(st.settings.workspace),
+            "watcher_started": False,
         }
+        if watch:
+            from livespec_mcp.domain.watcher import Watcher, register_watcher
+
+            def _do_reindex() -> None:
+                with st.lock():
+                    run_index(st.settings, st.conn)
+
+            ws_path = st.settings.workspace
+            w = Watcher(workspace=ws_path, on_reindex=_do_reindex, debounce_seconds=2.0)
+            register_watcher(ws_path, w)
+            w.start()
+            result["watcher_started"] = True
+        return result
 
     @mcp.tool(annotations={"readOnlyHint": True, "idempotentHint": True})
     def get_index_status(workspace: str | None = None) -> dict[str, Any]:

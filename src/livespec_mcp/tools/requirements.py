@@ -218,6 +218,19 @@ def register(mcp: FastMCP) -> None:
             "coverage": {"symbol_count": len(rows), "file_count": len(files)},
         }
 
+    @mcp.tool(annotations={"readOnlyHint": False, "idempotentHint": True, "destructiveHint": True})
+    def delete_requirement(rf_id: str, workspace: str | None = None) -> dict[str, Any]:
+        """Permanently delete an RF and its rf_symbol links (cascade).
+
+        Idempotent: deleting an unknown rf_id returns deleted=False without error.
+        """
+        st = get_state(workspace)
+        pid = st.project_id
+        cur = st.conn.execute(
+            "DELETE FROM rf WHERE project_id=? AND rf_id=?", (pid, rf_id)
+        )
+        return {"rf_id": rf_id, "deleted": cur.rowcount > 0}
+
     @mcp.tool(annotations={"readOnlyHint": False, "idempotentHint": True})
     def scan_rf_annotations(workspace: str | None = None) -> dict[str, Any]:
         """Re-scan all symbol docstrings for RF annotations and (re)link them.

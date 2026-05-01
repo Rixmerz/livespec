@@ -41,6 +41,9 @@ packages = ["src/livespec_mcp"]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+markers = [
+    "embeddings: tests that require the [embeddings] extras (fastembed + sqlite-vec); skipped otherwise",
+]
 
 [tool.ruff]
 line-length = 100

@@ -3,10 +3,12 @@
 P1.2 consolidation: `find_references` removed — use
 `analyze_impact(target_type='symbol', target=qname, max_depth=1)` and read
 the `impacted_callers` list (matches the old shape).
+v0.3 P1.1 adds `git_diff_impact` for CI/PR-review use cases.
 """
 
 from __future__ import annotations
 
+import subprocess
 from typing import Any, Literal
 
 from fastmcp import FastMCP
@@ -348,4 +350,144 @@ def register(mcp: FastMCP) -> None:
             "top_symbols": top_syms,
             "requirements_total": int(rf_total),
             "requirements_linked": int(rf_linked),
+        }
+
+    @mcp.tool(annotations={"readOnlyHint": True, "idempotentHint": True})
+    def git_diff_impact(
+        base_ref: str = "HEAD~1",
+        head_ref: str = "HEAD",
+        max_depth: int = 5,
+        workspace: str | None = None,
+    ) -> dict[str, Any]:
+        """Topological impact of a git diff: changed files -> RFs + callers + suggested tests.
+
+        The CI/PR-review entry point. Given a base..head git range, this tool:
+        1. lists changed files via `git diff --name-only`
+        2. resolves each one against the indexed symbols
+        3. unions the backward cone of callers across them
+        4. unions the affected RFs
+        5. suggests test files: any file under `tests/` (or `*_test.*`) whose
+           symbols call any impacted symbol — those are likely to break.
+
+        Returns an empty result with `error` if either ref is unknown to git.
+        Run `index_project` first if results look stale.
+        """
+        st = get_state(workspace)
+        pid = st.project_id
+        ws_root = str(st.settings.workspace)
+
+        try:
+            proc = subprocess.run(
+                ["git", "-C", ws_root, "diff", "--name-only", f"{base_ref}..{head_ref}"],
+                capture_output=True,
+                text=True,
+                check=True,
+                timeout=10,
+            )
+        except FileNotFoundError:
+            return {"error": "git not found on PATH", "isError": True}
+        except subprocess.CalledProcessError as e:
+            return {
+                "error": f"git diff failed: {e.stderr.strip() or e.stdout.strip()}",
+                "isError": True,
+            }
+        except subprocess.TimeoutExpired:
+            return {"error": "git diff timed out", "isError": True}
+
+        changed_paths = [p for p in proc.stdout.splitlines() if p.strip()]
+        if not changed_paths:
+            return {
+                "base_ref": base_ref,
+                "head_ref": head_ref,
+                "changed_files": [],
+                "changed_files_indexed": [],
+                "changed_files_unindexed": [],
+                "changed_symbols": [],
+                "impacted_callers": [],
+                "affected_requirements": [],
+                "suggested_tests": [],
+            }
+
+        view = load_graph(st.conn, pid)
+
+        # Resolve changed files to indexed symbol ids
+        changed_sym_ids: set[int] = set()
+        changed_symbol_meta: list[dict[str, Any]] = []
+        indexed_paths: set[str] = set()
+        for path in changed_paths:
+            rows = st.conn.execute(
+                """SELECT s.id, s.qualified_name, s.kind, s.start_line, s.end_line
+                   FROM symbol s JOIN file f ON f.id = s.file_id
+                   WHERE f.project_id=? AND f.path=?""",
+                (pid, path),
+            ).fetchall()
+            if rows:
+                indexed_paths.add(path)
+            for r in rows:
+                sid = int(r["id"])
+                changed_sym_ids.add(sid)
+                changed_symbol_meta.append({
+                    "id": sid,
+                    "qualified_name": r["qualified_name"],
+                    "kind": r["kind"],
+                    "file_path": path,
+                    "start_line": r["start_line"],
+                    "end_line": r["end_line"],
+                })
+
+        # Backward cone: every symbol that transitively calls a changed symbol
+        impacted: set[int] = set()
+        for sid in changed_sym_ids:
+            if sid in view.g:
+                impacted |= ancestors_within(view.g, sid, max_depth)
+        impacted -= changed_sym_ids
+
+        # Affected RFs: any rf_symbol whose symbol_id is in changed | impacted
+        all_touched = changed_sym_ids | impacted
+        affected_rfs: list[dict[str, Any]] = []
+        if all_touched:
+            placeholders = ",".join("?" * len(all_touched))
+            for r in st.conn.execute(
+                f"""SELECT DISTINCT r.rf_id, r.title, r.status, r.priority
+                    FROM rf_symbol rs JOIN rf r ON r.id = rs.rf_id
+                    WHERE rs.symbol_id IN ({placeholders})""",
+                list(all_touched),
+            ):
+                affected_rfs.append(dict(r))
+
+        # Suggested tests: files under a tests/ folder OR matching *_test.* /
+        # test_*.* whose symbols are in `impacted` (i.e. test functions that call
+        # something we touched).
+        suggested_tests_set: set[str] = set()
+        if all_touched:
+            placeholders = ",".join("?" * len(all_touched))
+            for r in st.conn.execute(
+                f"""SELECT DISTINCT f.path FROM symbol_edge e
+                    JOIN symbol s ON s.id = e.src_symbol_id
+                    JOIN file f ON f.id = s.file_id
+                    WHERE f.project_id=? AND e.dst_symbol_id IN ({placeholders})""",
+                [pid, *list(all_touched)],
+            ):
+                p = r["path"]
+                if (
+                    p.startswith("tests/")
+                    or "/tests/" in p
+                    or "test_" in p.rsplit("/", 1)[-1]
+                    or "_test." in p
+                ):
+                    suggested_tests_set.add(p)
+        suggested_tests = sorted(suggested_tests_set)
+
+        return {
+            "base_ref": base_ref,
+            "head_ref": head_ref,
+            "changed_files": changed_paths,
+            "changed_files_indexed": sorted(indexed_paths),
+            "changed_files_unindexed": sorted(set(changed_paths) - indexed_paths),
+            "changed_symbols": changed_symbol_meta,
+            "impacted_callers": [
+                view.sym_meta[n] for n in impacted if n in view.sym_meta
+            ],
+            "affected_requirements": affected_rfs,
+            "suggested_tests": suggested_tests,
         }
