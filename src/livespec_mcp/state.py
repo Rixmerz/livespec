@@ -10,8 +10,10 @@ Backward compatibility:
 - `get_state()` (no args) resolves to the workspace from the env var
   `LIVESPEC_WORKSPACE` or the current working directory, matching v0.1.
 - `get_state(workspace=path)` returns the state for a specific workspace.
-- `use_workspace(path)` is kept as a deprecated alias that simply preheats
-  the cache; tools should pass `workspace` directly instead.
+
+v0.6: the `use_workspace` MCP tool was removed (deprecated since v0.2). The
+internal `use_workspace()` helper is also gone — set LIVESPEC_WORKSPACE in
+the environment if you need a default, or pass `workspace=` to every tool.
 """
 
 from __future__ import annotations
@@ -100,11 +102,3 @@ def reset_state() -> None:
         _cache.clear()
 
 
-def use_workspace(path: str) -> AppState:
-    """Deprecated: prefer passing `workspace=` to each tool call.
-
-    Kept for v0.1 callers. Sets the env var so subsequent get_state(None)
-    calls resolve here, and warms the cache for `path`.
-    """
-    os.environ["LIVESPEC_WORKSPACE"] = str(_resolve_workspace(path))
-    return get_state(path)

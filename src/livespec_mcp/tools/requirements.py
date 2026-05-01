@@ -1,9 +1,19 @@
-"""RF tools: CRUD + linking + implementation lookup.
+"""RF tools: CRUD + linking + implementation lookup + RF dependency graph.
 
 P1.2 consolidation: `suggest_rf_links` removed. To get implementation
 candidates for an RF, call `search(query=<rf.title + rf.description>,
 scope='code')` directly — the agent can then post-filter and call
-`link_requirement_to_code` for each accepted candidate.
+`link_rf_symbol` for each accepted candidate.
+
+v0.6 renames (old names kept as deprecated aliases until v0.7):
+  link_requirement_to_code     -> link_rf_symbol
+  link_requirements            -> link_rf_dependency
+  unlink_requirements          -> unlink_rf_dependency
+  get_requirement_dependencies -> get_rf_dependency_graph
+
+The new names disambiguate the two link concepts:
+  RF -> code symbol            link_rf_symbol
+  RF -> another RF             link_rf_dependency
 """
 
 from __future__ import annotations
@@ -144,17 +154,15 @@ def register(mcp: FastMCP) -> None:
             rows = [r for r in rows if (r["link_count"] > 0) == has_implementation]
         return {"requirements": rows}
 
-    @mcp.tool(annotations={"readOnlyHint": False, "idempotentHint": True})
-    def link_requirement_to_code(
+    def _do_link_rf_symbol(
         rf_id: str,
         symbol_qname: str,
-        relation: Literal["implements", "tests", "references"] = "implements",
-        confidence: float = 1.0,
-        source: Literal["manual", "annotation", "embedding", "llm"] = "manual",
-        unlink: bool = False,
-        workspace: str | None = None,
+        relation: str,
+        confidence: float,
+        source: str,
+        unlink: bool,
+        workspace: str | None,
     ) -> dict[str, Any]:
-        """Link (or unlink) a symbol to an RF. unlink=True removes the link."""
         st = get_state(workspace)
         pid = st.project_id
         rf = st.conn.execute(
@@ -181,6 +189,39 @@ def register(mcp: FastMCP) -> None:
             (rf["id"], sym["id"], relation, confidence, source),
         )
         return {"linked": True, "rf_id": rf_id, "symbol": symbol_qname, "relation": relation}
+
+    @mcp.tool(annotations={"readOnlyHint": False, "idempotentHint": True})
+    def link_rf_symbol(
+        rf_id: str,
+        symbol_qname: str,
+        relation: Literal["implements", "tests", "references"] = "implements",
+        confidence: float = 1.0,
+        source: Literal["manual", "annotation", "embedding", "llm"] = "manual",
+        unlink: bool = False,
+        workspace: str | None = None,
+    ) -> dict[str, Any]:
+        """Link (or unlink) an RF to a code symbol. unlink=True removes the link.
+
+        v0.6 rename of link_requirement_to_code (kept as deprecated alias).
+        """
+        return _do_link_rf_symbol(
+            rf_id, symbol_qname, relation, confidence, source, unlink, workspace
+        )
+
+    @mcp.tool(annotations={"readOnlyHint": False, "idempotentHint": True})
+    def link_requirement_to_code(
+        rf_id: str,
+        symbol_qname: str,
+        relation: Literal["implements", "tests", "references"] = "implements",
+        confidence: float = 1.0,
+        source: Literal["manual", "annotation", "embedding", "llm"] = "manual",
+        unlink: bool = False,
+        workspace: str | None = None,
+    ) -> dict[str, Any]:
+        """DEPRECATED v0.6: use `link_rf_symbol`. This alias will be removed in v0.7."""
+        return _do_link_rf_symbol(
+            rf_id, symbol_qname, relation, confidence, source, unlink, workspace
+        )
 
     @mcp.tool(annotations={"readOnlyHint": True, "idempotentHint": True})
     def get_requirement_implementation(
@@ -310,31 +351,14 @@ def register(mcp: FastMCP) -> None:
         n = scan_annotations(st.conn, pid)
         return {"links_created": n}
 
-    # ---------- v0.5 P2: RF dependency graph ----------
+    # ---------- v0.5 P2 / v0.6 P1: RF dependency graph ----------
 
-    @mcp.tool(annotations={"readOnlyHint": False, "idempotentHint": True})
-    def link_requirements(
+    def _do_link_rf_dependency(
         parent_rf_id: str,
         child_rf_id: str,
-        kind: Literal["requires", "extends", "conflicts"] = "requires",
-        workspace: str | None = None,
+        kind: str,
+        workspace: str | None,
     ) -> dict[str, Any]:
-        """Declare that one RF depends on another.
-
-        Semantics:
-        - `requires`  : parent needs child to be implemented first (the
-                        common case — RF-API needs RF-AUTH).
-        - `extends`   : parent specializes child's behavior (RF-EXPORT-PDF
-                        extends RF-EXPORT).
-        - `conflicts` : the two cannot both be active (mutually exclusive
-                        rollouts).
-
-        Idempotent on (parent, child, kind). Cycles are rejected at insert
-        time: if adding the edge would create parent → … → parent in the
-        forward closure, the call returns isError=True without writing.
-
-        Self-loops are rejected by the schema CHECK constraint.
-        """
         st = get_state(workspace)
         pid = st.project_id
         if parent_rf_id == child_rf_id:
@@ -351,9 +375,6 @@ def register(mcp: FastMCP) -> None:
             return {"error": f"RF '{parent_rf_id}' not found", "isError": True}
         if not child:
             return {"error": f"RF '{child_rf_id}' not found", "isError": True}
-
-        # Cycle check: would adding parent->child create a path child->parent?
-        # That happens if the descendant set of `child` already contains `parent`.
         descendants: set[int] = set()
         frontier = [int(child["id"])]
         while frontier:
@@ -375,7 +396,6 @@ def register(mcp: FastMCP) -> None:
                         "isError": True,
                     }
                 frontier.append(cid)
-
         cur = st.conn.execute(
             """INSERT OR IGNORE INTO rf_dependency(parent_rf_id, child_rf_id, kind)
                VALUES(?,?,?)""",
@@ -388,15 +408,49 @@ def register(mcp: FastMCP) -> None:
             "kind": kind,
         }
 
-    @mcp.tool(annotations={"readOnlyHint": False, "idempotentHint": True, "destructiveHint": True})
-    def unlink_requirements(
+    @mcp.tool(annotations={"readOnlyHint": False, "idempotentHint": True})
+    def link_rf_dependency(
         parent_rf_id: str,
         child_rf_id: str,
-        kind: Literal["requires", "extends", "conflicts"] | None = None,
+        kind: Literal["requires", "extends", "conflicts"] = "requires",
         workspace: str | None = None,
     ) -> dict[str, Any]:
-        """Remove an RF dependency edge. If `kind` is None, drops every edge
-        between the pair regardless of kind. Idempotent."""
+        """Declare that one RF depends on another (RF-RF edge).
+
+        Semantics:
+        - `requires`  : parent needs child to be implemented first (the
+                        common case — RF-API needs RF-AUTH).
+        - `extends`   : parent specializes child's behavior (RF-EXPORT-PDF
+                        extends RF-EXPORT).
+        - `conflicts` : the two cannot both be active (mutually exclusive
+                        rollouts).
+
+        Idempotent on (parent, child, kind). Cycles are rejected at insert
+        time: if adding the edge would create parent → … → parent in the
+        forward closure, the call returns isError=True without writing.
+
+        Self-loops are rejected by the schema CHECK constraint.
+
+        v0.6 rename of `link_requirements` (kept as deprecated alias).
+        """
+        return _do_link_rf_dependency(parent_rf_id, child_rf_id, kind, workspace)
+
+    @mcp.tool(annotations={"readOnlyHint": False, "idempotentHint": True})
+    def link_requirements(
+        parent_rf_id: str,
+        child_rf_id: str,
+        kind: Literal["requires", "extends", "conflicts"] = "requires",
+        workspace: str | None = None,
+    ) -> dict[str, Any]:
+        """DEPRECATED v0.6: use `link_rf_dependency`. Removed in v0.7."""
+        return _do_link_rf_dependency(parent_rf_id, child_rf_id, kind, workspace)
+
+    def _do_unlink_rf_dependency(
+        parent_rf_id: str,
+        child_rf_id: str,
+        kind: str | None,
+        workspace: str | None,
+    ) -> dict[str, Any]:
         st = get_state(workspace)
         pid = st.project_id
         parent = st.conn.execute(
@@ -427,20 +481,36 @@ def register(mcp: FastMCP) -> None:
             "kind": kind,
         }
 
-    @mcp.tool(annotations={"readOnlyHint": True, "idempotentHint": True})
-    def get_requirement_dependencies(
-        rf_id: str,
-        direction: Literal["forward", "backward", "both"] = "both",
-        max_depth: int = 5,
+    @mcp.tool(annotations={"readOnlyHint": False, "idempotentHint": True, "destructiveHint": True})
+    def unlink_rf_dependency(
+        parent_rf_id: str,
+        child_rf_id: str,
+        kind: Literal["requires", "extends", "conflicts"] | None = None,
         workspace: str | None = None,
     ) -> dict[str, Any]:
-        """Walk the RF dependency graph from a given RF.
+        """Remove an RF dependency edge. If `kind` is None, drops every edge
+        between the pair regardless of kind. Idempotent.
 
-        - forward:  what does this RF depend on (children, transitively)?
-        - backward: what depends on this RF (parents, transitively)?
-        - both:     union of both.
+        v0.6 rename of `unlink_requirements` (kept as deprecated alias).
+        """
+        return _do_unlink_rf_dependency(parent_rf_id, child_rf_id, kind, workspace)
 
-        Returns the visited RF metadata + the edges traversed."""
+    @mcp.tool(annotations={"readOnlyHint": False, "idempotentHint": True, "destructiveHint": True})
+    def unlink_requirements(
+        parent_rf_id: str,
+        child_rf_id: str,
+        kind: Literal["requires", "extends", "conflicts"] | None = None,
+        workspace: str | None = None,
+    ) -> dict[str, Any]:
+        """DEPRECATED v0.6: use `unlink_rf_dependency`. Removed in v0.7."""
+        return _do_unlink_rf_dependency(parent_rf_id, child_rf_id, kind, workspace)
+
+    def _do_get_rf_dependency_graph(
+        rf_id: str,
+        direction: str,
+        max_depth: int,
+        workspace: str | None,
+    ) -> dict[str, Any]:
         st = get_state(workspace)
         pid = st.project_id
         root = st.conn.execute(
@@ -522,3 +592,32 @@ def register(mcp: FastMCP) -> None:
             "nodes": list(rf_meta.values()),
             "edges": edge_payload,
         }
+
+    @mcp.tool(annotations={"readOnlyHint": True, "idempotentHint": True})
+    def get_rf_dependency_graph(
+        rf_id: str,
+        direction: Literal["forward", "backward", "both"] = "both",
+        max_depth: int = 5,
+        workspace: str | None = None,
+    ) -> dict[str, Any]:
+        """Walk the RF dependency graph from a given RF.
+
+        - forward:  what does this RF depend on (children, transitively)?
+        - backward: what depends on this RF (parents, transitively)?
+        - both:     union of both.
+
+        Returns the visited RF metadata + the edges traversed.
+
+        v0.6 rename of `get_requirement_dependencies` (kept as deprecated alias).
+        """
+        return _do_get_rf_dependency_graph(rf_id, direction, max_depth, workspace)
+
+    @mcp.tool(annotations={"readOnlyHint": True, "idempotentHint": True})
+    def get_requirement_dependencies(
+        rf_id: str,
+        direction: Literal["forward", "backward", "both"] = "both",
+        max_depth: int = 5,
+        workspace: str | None = None,
+    ) -> dict[str, Any]:
+        """DEPRECATED v0.6: use `get_rf_dependency_graph`. Removed in v0.7."""
+        return _do_get_rf_dependency_graph(rf_id, direction, max_depth, workspace)

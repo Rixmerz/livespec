@@ -23,7 +23,7 @@ async def test_link_and_walk_dependencies(workspace):
         # RF-002 requires RF-001; RF-003 extends RF-002
         out = (
             await c.call_tool(
-                "link_requirements",
+                "link_rf_dependency",
                 {"parent_rf_id": "RF-002", "child_rf_id": "RF-001"},
             )
         ).data
@@ -31,7 +31,7 @@ async def test_link_and_walk_dependencies(workspace):
         assert out["kind"] == "requires"
         out = (
             await c.call_tool(
-                "link_requirements",
+                "link_rf_dependency",
                 {"parent_rf_id": "RF-003", "child_rf_id": "RF-002", "kind": "extends"},
             )
         ).data
@@ -40,7 +40,7 @@ async def test_link_and_walk_dependencies(workspace):
         # Forward from RF-003: should reach RF-002 and RF-001
         fwd = (
             await c.call_tool(
-                "get_requirement_dependencies",
+                "get_rf_dependency_graph",
                 {"rf_id": "RF-003", "direction": "forward"},
             )
         ).data
@@ -53,7 +53,7 @@ async def test_link_and_walk_dependencies(workspace):
         # Backward from RF-001: who depends on me?
         back = (
             await c.call_tool(
-                "get_requirement_dependencies",
+                "get_rf_dependency_graph",
                 {"rf_id": "RF-001", "direction": "backward"},
             )
         ).data
@@ -66,12 +66,12 @@ async def test_cycle_is_rejected(workspace):
     async with Client(mcp) as c:
         await c.call_tool("index_project", {})
         await _create_rfs(c, "RF-A", "RF-B", "RF-C")
-        await c.call_tool("link_requirements", {"parent_rf_id": "RF-A", "child_rf_id": "RF-B"})
-        await c.call_tool("link_requirements", {"parent_rf_id": "RF-B", "child_rf_id": "RF-C"})
+        await c.call_tool("link_rf_dependency", {"parent_rf_id": "RF-A", "child_rf_id": "RF-B"})
+        await c.call_tool("link_rf_dependency", {"parent_rf_id": "RF-B", "child_rf_id": "RF-C"})
         # Now RF-A -> RF-B -> RF-C; adding RF-C -> RF-A would create a cycle
         out = (
             await c.call_tool(
-                "link_requirements",
+                "link_rf_dependency",
                 {"parent_rf_id": "RF-C", "child_rf_id": "RF-A"},
             )
         ).data
@@ -86,7 +86,7 @@ async def test_self_link_rejected(workspace):
         await _create_rfs(c, "RF-X")
         out = (
             await c.call_tool(
-                "link_requirements",
+                "link_rf_dependency",
                 {"parent_rf_id": "RF-X", "child_rf_id": "RF-X"},
             )
         ).data
@@ -99,12 +99,12 @@ async def test_unlink(workspace):
         await c.call_tool("index_project", {})
         await _create_rfs(c, "RF-P", "RF-Q")
         await c.call_tool(
-            "link_requirements",
+            "link_rf_dependency",
             {"parent_rf_id": "RF-P", "child_rf_id": "RF-Q"},
         )
         out = (
             await c.call_tool(
-                "unlink_requirements",
+                "unlink_rf_dependency",
                 {"parent_rf_id": "RF-P", "child_rf_id": "RF-Q"},
             )
         ).data
@@ -112,11 +112,45 @@ async def test_unlink(workspace):
         # Idempotent: re-running drops 0
         out2 = (
             await c.call_tool(
-                "unlink_requirements",
+                "unlink_rf_dependency",
                 {"parent_rf_id": "RF-P", "child_rf_id": "RF-Q"},
             )
         ).data
         assert out2["unlinked"] == 0
+
+
+@pytest.mark.asyncio
+async def test_v0_5_aliases_still_work(workspace):
+    """v0.6 P1: link_requirements / unlink_requirements / get_requirement_dependencies
+    were renamed to link_rf_dependency / unlink_rf_dependency / get_rf_dependency_graph
+    but the old names remain as deprecated aliases until v0.7."""
+    async with Client(mcp) as c:
+        await c.call_tool("index_project", {})
+        await _create_rfs(c, "RF-OLD", "RF-NEW")
+        # Old name still creates the link
+        out = (
+            await c.call_tool(
+                "link_requirements",
+                {"parent_rf_id": "RF-OLD", "child_rf_id": "RF-NEW"},
+            )
+        ).data
+        assert out["linked"] is True
+        # Old getter still walks
+        out = (
+            await c.call_tool(
+                "get_requirement_dependencies",
+                {"rf_id": "RF-OLD", "direction": "forward"},
+            )
+        ).data
+        assert any(n["rf_id"] == "RF-NEW" for n in out["nodes"])
+        # Old unlinker still drops
+        out = (
+            await c.call_tool(
+                "unlink_requirements",
+                {"parent_rf_id": "RF-OLD", "child_rf_id": "RF-NEW"},
+            )
+        ).data
+        assert out["unlinked"] == 1
 
 
 @pytest.mark.asyncio
@@ -145,7 +179,7 @@ async def test_analyze_impact_cascades_through_dependents(workspace):
         await c.call_tool("scan_rf_annotations", {})
         # RF-002 (api) requires RF-001 (auth)
         await c.call_tool(
-            "link_requirements",
+            "link_rf_dependency",
             {"parent_rf_id": "RF-002", "child_rf_id": "RF-001"},
         )
 

@@ -2,7 +2,10 @@
 
 Every tool accepts an optional `workspace` argument. When omitted, the server
 falls back to the LIVESPEC_WORKSPACE env var or the current working directory
-(P1.1 multi-tenant). `use_workspace` is retained as a deprecated alias.
+(P1.1 multi-tenant).
+
+v0.6: `use_workspace` was removed (deprecated since v0.2). Pass `workspace=`
+to every tool, or set LIVESPEC_WORKSPACE in the environment.
 """
 
 from __future__ import annotations
@@ -12,25 +15,10 @@ from typing import Any
 from fastmcp import FastMCP
 
 from livespec_mcp.domain.indexer import index_project as run_index
-from livespec_mcp.state import get_state, use_workspace as _use_ws
+from livespec_mcp.state import get_state
 
 
 def register(mcp: FastMCP) -> None:
-    @mcp.tool(annotations={"readOnlyHint": False, "idempotentHint": True})
-    def use_workspace(path: str) -> dict[str, Any]:
-        """Set the default workspace for subsequent tool calls.
-
-        Deprecated in favor of passing `workspace=...` to each tool, but kept
-        for v0.1 callers and convenience. Sets LIVESPEC_WORKSPACE in the env
-        and pre-warms the LRU cache for the path.
-        """
-        st = _use_ws(path)
-        return {
-            "workspace": str(st.settings.workspace),
-            "db_path": str(st.settings.db_path),
-            "state_dir": str(st.settings.state_dir),
-        }
-
     @mcp.tool(annotations={"readOnlyHint": False, "idempotentHint": True, "destructiveHint": False})
     def index_project(
         force: bool = False,

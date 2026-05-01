@@ -80,7 +80,6 @@ directory. The runtime caches one DB connection per workspace (LRU=8), so a
 single MCP server instance can serve multiple repos in parallel.
 
 ### Indexing
-- `use_workspace(path)` — set the default workspace (deprecated; prefer per-call `workspace=...`)
 - `index_project(force=False, watch=False, workspace=None)` — walk, parse, persist; `watch=True` also starts the file watcher
 - `get_index_status(workspace=None)`
 - `list_files(path_glob, language, limit, cursor, workspace=None)`
@@ -116,10 +115,12 @@ single MCP server instance can serve multiple repos in parallel.
 - `update_requirement(rf_id, ...)`
 - `delete_requirement(rf_id)` — cascade-removes rf_symbol links
 - `list_requirements(status, module, priority, has_implementation)`
-- `link_requirement_to_code(rf_id, symbol_qname, relation, confidence, source, unlink)`
-- `link_requirements(parent_rf_id, child_rf_id, kind='requires')` — declare an RF→RF dependency. `kind` ∈ {requires, extends, conflicts}. Cycles rejected at insert time.
-- `unlink_requirements(parent_rf_id, child_rf_id, kind=None)` — drop one specific edge or every edge between the pair.
-- `get_requirement_dependencies(rf_id, direction='both', max_depth=5)` — walk the RF dependency graph forward / backward / both.
+- `link_rf_symbol(rf_id, symbol_qname, relation, confidence, source, unlink)` — link an RF to a code symbol.
+- `link_rf_dependency(parent_rf_id, child_rf_id, kind='requires')` — declare an RF→RF dependency. `kind` ∈ {requires, extends, conflicts}. Cycles rejected at insert time.
+- `unlink_rf_dependency(parent_rf_id, child_rf_id, kind=None)` — drop one specific edge or every edge between the pair.
+- `get_rf_dependency_graph(rf_id, direction='both', max_depth=5)` — walk the RF dependency graph forward / backward / both.
+
+> v0.6 renames the four tools above for clarity (the old `link_requirement_to_code` / `link_requirements` / `unlink_requirements` / `get_requirement_dependencies` are kept as deprecated aliases through v0.7).
 - `get_requirement_implementation(rf_id)`
 - `scan_rf_annotations()` — two-level matcher: `@rf:RF-NNN` (1.0) vs verb-anchored (0.7),
   with negation guard. See `domain/matcher.py`. **Auto-runs at the end of every
