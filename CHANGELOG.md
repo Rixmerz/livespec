@@ -10,6 +10,88 @@ _Nothing yet._
 
 ---
 
+## [0.5.0] — 2026-05-01
+
+The "self-improvement from real-world usage" release. Bug fixes from a
+demo-project run, two new agent-modeling features (decorators + RF
+dependency graph), and a hardened matcher with a regression-locked golden
+dataset. Closes the last multi-language scoped-resolution gap (Rust).
+
+### Added
+- **`find_endpoints(framework=None)`** — list symbols decorated with
+  framework entry-point markers (route, command, fixture, tool, task, etc).
+  Per-framework presets: flask, fastapi, click, pytest, fastmcp, celery,
+  django.
+- **RF dependency graph** (P2):
+  - `link_requirements(parent_rf_id, child_rf_id, kind)` with cycle
+    detection on insert. `kind` ∈ {requires, extends, conflicts}.
+  - `unlink_requirements(parent, child, kind=None)` — drops one specific
+    edge or every edge between the pair.
+  - `get_requirement_dependencies(rf_id, direction='both', max_depth=5)` —
+    walk the RF graph forward / backward / both.
+  - `analyze_impact(target_type='requirement')` now cascades through
+    dependents — changing RF-001 surfaces every RF that transitively
+    depends on it as `dependent_requirements`.
+- **Multi-RF, confidence override, and explicit negation in the matcher**:
+  - `@rf:RF-001, RF-002` — multi
+  - `@rf:RF-001:0.85` — per-line confidence override (range [0.0, 1.0])
+  - `@not_rf:RF-001` / `@!rf:RF-001` — cancel any L1+L2 hit on the listed
+    RF in this docstring (overrides verb-anchored false positives that
+    the negation-window heuristic missed).
+- **Golden-dataset regression test** (`tests/data/matcher_golden.jsonl`,
+  35 cases) — locks every supported annotation form against silent
+  regression.
+- **Rust scoped resolution** via `use` declarations (P4.A3) — closes the
+  last common-language gap from P0.4. `use crate::module::Item`,
+  `Item as alias`, brace groups, and recursive paths all populate the
+  imports map. Cross-module Rust calls now resolve to weight=1.0 edges.
+- **`audit_coverage`: `modules_implicitly_covered` + `modules_truly_orphan`**
+  (P0.A1) — splits `modules_without_rf` into "reached transitively by
+  rf-linked symbols" vs "actually orphan". The truly_orphan list is the
+  actionable subset. Real bug surfaced on the demo-app run.
+- **`symbol.decorators` (JSON)** — schema migration v3 adds the column
+  and queues a forced re-extract via `_migration_state.needs_reextract`.
+  Python `_py_extract` populates from `decorator_list`. Tree-sitter langs
+  ship with `[]` until per-language extractors land.
+
+### Changed
+- **`find_dead_code` skips framework-decorated symbols by default**
+  (P1.B1). A `@app.route` handler, `@click.command`, `@pytest.fixture`,
+  `@mcp.tool`, etc. is no longer flagged as dead even with zero
+  in-project callers — they have hidden callers (HTTP routers, CLI
+  dispatchers, pytest collection, MCP). Pass `include_infrastructure=True`
+  to bypass.
+- **`git_diff_impact` clean error messages** (P0.A2) — previously dumped
+  the full `git diff --help` output (~80 lines) into the error field
+  when the workspace wasn't a git repo or the ref was unknown. Now
+  classifies common stderr signatures and returns a single line.
+- **body_hash invariant under reformat** (P0.D2) — Python is unchanged
+  (already stable through ast.dump). Tree-sitter languages now seed the
+  body hash from a leaf-token walk that ignores whitespace, blank lines,
+  and comment nodes. Reformat (autoformat run, indent change, blank-line
+  shuffle, comment add/remove) no longer drifts the doc; real semantic
+  change still does.
+- **`call_target_and_leftmost`** treats `::` as a path separator alongside
+  `.`, enabling Rust `Item::method()` and PHP `Class::method()` to extract
+  rightmost target + leftmost identifier correctly.
+
+### Tooling
+- Tool count: 30 → 33 (+ link_requirements, unlink_requirements,
+  get_requirement_dependencies; find_endpoints replaced an internal helper).
+- Tests: 76 → 83 (+1 audit transitive split, +1 git_diff not-a-repo,
+  +3 body_hash stability, +2 decorators in dead/endpoints, +1 Rust
+  scoped, +5 RF deps, +1 golden dataset runner, +misc).
+- Schema migration v3: `symbol.decorators` + `rf_dependency` table.
+
+### Deferred to v0.6
+- mkdocs site (C5) — nontrivial setup, not blocking.
+- Auto-doc on drift mode in the watcher — needs careful UX around LLM
+  cost.
+- Streaming graph queries via SQLite recursive CTE — only matters above
+  ~50K symbols.
+
+---
+
 ## [0.4.0] — 2026-05-01
 
 The "multi-language parity + agent UX" release. Closes the scoped-resolution
@@ -175,6 +257,7 @@ Bootstrap. Phases 0–6 of the original design.
   `project://files/{path*}`, `project://symbols/{qname*}`,
   `doc://symbol/{qname*}`, `doc://requirement/{rf_id}`.
 
-[Unreleased]: https://github.com/Rixmerz/livespec-mcp/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/Rixmerz/livespec-mcp/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/Rixmerz/livespec-mcp/releases/tag/v0.5.0
 [0.4.0]: https://github.com/Rixmerz/livespec-mcp/releases/tag/v0.4.0
 [0.3.0]: https://github.com/Rixmerz/livespec-mcp/releases/tag/v0.3.0

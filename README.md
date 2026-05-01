@@ -32,7 +32,7 @@ Honest table — only languages with a passing test suite are claimed.
 | **Java** | ✅ Tested | Classes, methods, calls (`method_invocation`) |
 | **JavaScript** | ✅ Tested | Function declarations, **arrow functions** assigned to const/let, classes, methods. **Scoped resolution** via ES6 `import` and CommonJS `require` (P1.A1 v0.4). |
 | **TypeScript** | ✅ Tested | Same as JS plus typed signatures (`.ts` and `.tsx`). **Scoped resolution** via ES6 `import` (P1.A1 v0.4). |
-| **Rust** | ✅ Tested | Free functions, struct/enum types, **`impl` block methods** as `Type::method`, traits |
+| **Rust** | ✅ Tested | Free functions, struct/enum types, **`impl` block methods** as `Type::method`, traits. **Scoped resolution** via `use` declarations (P4.A3 v0.5). |
 | **Ruby** | ✅ Tested | `def`, `class`, `module`, `singleton_method`, calls. Best-effort scoped resolution via `require_relative` + receiver field (P1.A4 v0.4). |
 | **PHP** | ✅ Tested | Classes, methods, function/method/scoped call expressions. Best-effort scoped resolution via `use Namespace\X` for `Class::method()` (P1.A4 v0.4); instance-method calls are not scoped. |
 | C, C++, C#, Kotlin, Swift, Scala | ⚠️ Untested | The generic tree-sitter extractor will *attempt* to parse these (they're listed in `EXT_LANGUAGE`) but no test suite covers them. Symbol coverage may be partial — open an issue with a fixture if you need a specific language hardened. |
@@ -72,7 +72,7 @@ By default it picks the **current working directory** as workspace, or
 }
 ```
 
-## Tools (29)
+## Tools (33)
 
 Every tool accepts an optional `workspace: str` argument. When omitted, the
 server resolves to `LIVESPEC_WORKSPACE` env var or the current working
@@ -99,12 +99,17 @@ single MCP server instance can serve multiple repos in parallel.
   entry point.
 - `find_dead_code(include_infrastructure=False, workspace=None)` — symbols with
   zero callers and zero RF links. Skips entry-point paths (`tests/`, `bin/`,
-  `scripts/`, `__main__.py`, `manage.py`) and implicit entry points (dunders,
-  FastMCP `register`, DI helpers) by default.
+  `scripts/`, `__main__.py`, `manage.py`), implicit entry points (dunders,
+  FastMCP `register`, DI helpers), and **framework-decorated handlers**
+  (`@route`, `@command`, `@fixture`, `@task`, `@tool`, etc.) by default.
 - `audit_coverage(workspace=None)` — RF coverage report: modules without
-  any RF, RFs without implementation, RFs with avg confidence < 0.7.
+  direct RF, modules implicitly covered (transitively reached), modules
+  truly orphan, RFs without implementation, RFs with avg confidence < 0.7.
 - `find_orphan_tests(max_depth=10, workspace=None)` — test functions whose
   forward call cone never reaches a non-test symbol.
+- `find_endpoints(framework=None, workspace=None)` — symbols decorated with
+  framework entry-point markers. `framework` ∈ {flask, fastapi, click,
+  pytest, fastmcp, celery, django, None}.
 
 ### Requirements
 - `create_requirement(title, ...)`
@@ -112,6 +117,9 @@ single MCP server instance can serve multiple repos in parallel.
 - `delete_requirement(rf_id)` — cascade-removes rf_symbol links
 - `list_requirements(status, module, priority, has_implementation)`
 - `link_requirement_to_code(rf_id, symbol_qname, relation, confidence, source, unlink)`
+- `link_requirements(parent_rf_id, child_rf_id, kind='requires')` — declare an RF→RF dependency. `kind` ∈ {requires, extends, conflicts}. Cycles rejected at insert time.
+- `unlink_requirements(parent_rf_id, child_rf_id, kind=None)` — drop one specific edge or every edge between the pair.
+- `get_requirement_dependencies(rf_id, direction='both', max_depth=5)` — walk the RF dependency graph forward / backward / both.
 - `get_requirement_implementation(rf_id)`
 - `scan_rf_annotations()` — two-level matcher: `@rf:RF-NNN` (1.0) vs verb-anchored (0.7),
   with negation guard. See `domain/matcher.py`. **Auto-runs at the end of every
@@ -190,7 +198,8 @@ In-memory FastMCP `Client(mcp)` so tests run without subprocess or network.
 | 6 — Polish | ✅ | 7 prompts, doc:// resources, two-level @rf: matcher with negation guard |
 | 7 — v0.2 | ✅ | Multi-tenant state, tool consolidation 25→23, persistent refs, watcher, bench suite |
 | 8 — v0.3 | ✅ | Auto-scan post-index, PageRank infra filter, scoped resolution by imports, `git_diff_impact`, embeddings smoke real, Ruby+PHP fixtures, hypothesis property tests, memory bench, GitHub Actions CI, `code://` resource, `delete_requirement`, markdown RF importer |
-| 9 — v0.4 | 🚧 | Scoped resolution for TS/JS/Go/Ruby/PHP, `find_dead_code` / `audit_coverage` / `find_orphan_tests`, `did_you_mean` on Symbol-not-found errors, watcher `atexit` cleanup, CI venv fix |
+| 9 — v0.4 | ✅ | Scoped resolution for TS/JS/Go/Ruby/PHP, `find_dead_code` / `audit_coverage` / `find_orphan_tests`, `did_you_mean` on Symbol-not-found errors, watcher `atexit` cleanup, CI venv fix |
+| 10 — v0.5 | 🚧 | Bug fixes from real-repo demo, decorators as first-class field + `find_endpoints`, RF dependency graph (requires/extends/conflicts) with `analyze_impact` cascade, matcher multi-RF + confidence override + `@not_rf:` negation + golden dataset, Rust `use` scoped resolution |
 
 ## Optional: Embeddings
 

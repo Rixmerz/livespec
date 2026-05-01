@@ -32,7 +32,22 @@ Todo el stack es local-first: 0 servicios externos, 0 API keys obligatorias, 0 D
 
 ---
 
-## 3. Estado actual: v0.4 en PR (#1), v0.3 tagueado
+## 3. Estado actual: v0.5 listo, mergeado a main, taggeado
+
+**v0.5.0 release** (2026-05-01): self-improvement desde feedback real.
+- **P0 (bugs reales en demo):** audit_coverage direct/transitive, git_diff_impact error limpio, body_hash AST normalize.
+- **P1 (decorators first-class):** schema migration v3 con `symbol.decorators`, `find_endpoints` tool, `find_dead_code` skip framework handlers.
+- **P2 (RF deps):** `rf_dependency` table, link_requirements / unlink_requirements / get_requirement_dependencies, analyze_impact cascade.
+- **P3 (matcher harden):** multi-RF, confidence override `@rf:RF-001:0.85`, negación `@not_rf:RF-001`, golden dataset 35 cases.
+- **P4-A3 (Rust):** `use crate::module::Item` scoped resolution. Cierra el último gap de scoping multilang.
+
+33 tools, 83 tests, 9 langs con extractors testeados (8 con scoped resolution; PHP partial).
+
+**Workflow desde v0.5:** commits directos a `main` (memoria saved). NO PRs.
+
+---
+
+## 3a. Estado previo: v0.4 mergeado, v0.3 taggeado
 
 **Tag + Release v0.3.0** — pushed, GitHub Release publicado en
 https://github.com/Rixmerz/livespec-mcp/releases/tag/v0.3.0 (apunta al
