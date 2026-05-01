@@ -21,7 +21,7 @@ import xxhash
 from livespec_mcp.config import Settings
 from livespec_mcp.domain.extractors import ExtractResult, extract
 from livespec_mcp.domain.languages import detect_language
-from livespec_mcp.storage.db import get_or_create_project, transaction
+from livespec_mcp.storage.db import consume_reextract_flag, get_or_create_project, transaction
 
 DEFAULT_IGNORES = {
     ".git", ".hg", ".svn", "node_modules", "__pycache__", ".venv", "venv",
@@ -38,6 +38,7 @@ class IndexStats:
     files_skipped: int = 0
     symbols_total: int = 0
     edges_total: int = 0
+    rf_links_created: int = 0
     languages: dict[str, int] = None  # type: ignore
 
     def __post_init__(self) -> None:
@@ -79,6 +80,11 @@ def index_project(
     settings.ensure_dirs()
     name = project_name or settings.workspace.name
     project_id = get_or_create_project(conn, name=name, root=str(settings.workspace))
+
+    # P0.2: a recent migration may have flagged that this DB needs a one-time
+    # full re-extract (e.g. upgrading from v0.2 where symbol_ref didn't exist).
+    if consume_reextract_flag(conn):
+        force = True
 
     run_id = conn.execute(
         "INSERT INTO index_run(project_id) VALUES(?)", (project_id,)
@@ -143,6 +149,11 @@ def index_project(
     # src symbol was deleted in a re-extract were cascaded out automatically.
     if stats.files_changed > 0 or force:
         _resolve_refs(conn, project_id=project_id)
+        # P0.1: also re-link RF annotations from docstrings. Cheap, idempotent
+        # (INSERT OR IGNORE), and prevents traceability from going silently
+        # stale when an edited symbol's old rf_symbol row is cascaded away.
+        from livespec_mcp.domain.matcher import scan_annotations
+        stats.rf_links_created = scan_annotations(conn, project_id=project_id)
 
     stats.edges_total = int(
         conn.execute(
@@ -230,8 +241,9 @@ def _replace_symbols(conn: sqlite3.Connection, *, file_id: int, result: ExtractR
         if src_id is None:
             continue
         conn.execute(
-            "INSERT INTO symbol_ref(src_symbol_id, target_name, ref_type, line) VALUES(?,?,?,?)",
-            (src_id, r.target_name, r.ref_type, r.line),
+            """INSERT INTO symbol_ref(src_symbol_id, target_name, ref_type, line, scope_module)
+               VALUES(?,?,?,?,?)""",
+            (src_id, r.target_name, r.ref_type, r.line, r.scope_module),
         )
 
 
@@ -245,28 +257,46 @@ def _resolve_refs(conn: sqlite3.Connection, *, project_id: int) -> int:
     re-extracted files.
     """
     rows = conn.execute(
-        """SELECT u.src_symbol_id, u.target_name FROM symbol_ref u
+        """SELECT u.src_symbol_id, u.target_name, u.scope_module FROM symbol_ref u
            JOIN symbol s ON s.id = u.src_symbol_id
            JOIN file f ON f.id = s.file_id
            WHERE f.project_id = ?""",
         (project_id,),
     ).fetchall()
 
-    name_index: dict[str, list[int]] = {}
+    # name_index: short name -> [(symbol_id, qualified_name)]
+    name_index: dict[str, list[tuple[int, str]]] = {}
     for r in conn.execute(
-        "SELECT s.id, s.name FROM symbol s JOIN file f ON f.id=s.file_id WHERE f.project_id=?",
+        """SELECT s.id, s.name, s.qualified_name FROM symbol s
+           JOIN file f ON f.id=s.file_id WHERE f.project_id=?""",
         (project_id,),
     ):
-        name_index.setdefault(r["name"], []).append(int(r["id"]))
+        name_index.setdefault(r["name"], []).append((int(r["id"]), r["qualified_name"]))
 
     edge_count = 0
     seen_pairs: set[tuple[int, int]] = set()
     for u in rows:
-        targets = name_index.get(u["target_name"], [])
-        if not targets:
+        candidates = name_index.get(u["target_name"], [])
+        if not candidates:
             continue
-        weight = 1.0 if len(targets) == 1 else 0.5
-        for tid in targets:
+
+        # P0.4: if the ref carries a scope_module (Python imports), prefer
+        # candidates whose qualified_name lives under that module. If at least
+        # one matches, drop the rest — that's a confident, scoped resolution.
+        scope = u["scope_module"]
+        scoped: list[tuple[int, str]] = []
+        if scope:
+            for sid, qname in candidates:
+                # Match either the exact module prefix or its tail (because the
+                # extractor may emit module names without the package prefix that
+                # the indexer assigns to qualified_name).
+                if scope and (f".{scope}." in f".{qname}" or qname.startswith(f"{scope}.")):
+                    scoped.append((sid, qname))
+            if scoped:
+                candidates = scoped
+
+        weight = 1.0 if len(candidates) == 1 else (0.9 if scoped else 0.5)
+        for tid, _qname in candidates:
             src_id = int(u["src_symbol_id"])
             if tid == src_id:
                 continue

@@ -13,6 +13,13 @@ CREATE TABLE IF NOT EXISTS project (
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+-- Migration state: persistent flags so a one-time re-extract can be queued
+-- by a schema migration and consumed by the next index_project run.
+CREATE TABLE IF NOT EXISTS _migration_state (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
+
 -- ===== Code =====
 CREATE TABLE IF NOT EXISTS file (
     id INTEGER PRIMARY KEY,

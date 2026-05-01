@@ -21,6 +21,37 @@ from livespec_mcp.domain.graph import (
 from livespec_mcp.state import get_state
 
 
+_INFRA_NAME_SUFFIXES = ("_state", "_settings", "_config", "_session")
+
+
+def _is_infrastructure(meta: dict) -> bool:
+    """Heuristic for symbols that rank high by PageRank but carry little
+    semantic weight: DI helpers, FastMCP `register` outers, dunders, tiny
+    wrappers. P0.3."""
+    qname = meta.get("qualified_name") or ""
+    name = meta.get("name") or ""
+    kind = meta.get("kind") or ""
+    start = meta.get("start_line") or 0
+    end = meta.get("end_line") or 0
+    line_count = max(0, end - start)
+
+    # Dunders (anywhere in the name path, e.g. Foo.__init__)
+    if name.startswith("__") and name.endswith("__"):
+        return True
+    if any(seg.startswith("__") and seg.endswith("__") for seg in qname.split(".")):
+        return True
+    # FastMCP `register` outer functions live at module scope and contain inner tools.
+    if name == "register" and kind == "function":
+        return True
+    # Common DI / config helpers
+    if kind in ("function", "method") and any(name.endswith(suf) for suf in _INFRA_NAME_SUFFIXES):
+        return True
+    # One-line wrappers: function/method whose body is shorter than 5 lines
+    if kind in ("function", "method") and 0 < line_count < 5:
+        return True
+    return False
+
+
 def _resolve_symbol(conn, project_id: int, identifier: str) -> dict | None:
     """Resolve a symbol by qualified_name (exact) or short name (best match)."""
     row = conn.execute(
@@ -271,8 +302,16 @@ def register(mcp: FastMCP) -> None:
         return {"error": f"Unknown target_type '{target_type}'", "isError": True}
 
     @mcp.tool(annotations={"readOnlyHint": True, "idempotentHint": True})
-    def get_project_overview(workspace: str | None = None) -> dict[str, Any]:
-        """High-level snapshot: languages, modules, top symbols by PageRank, RF coverage."""
+    def get_project_overview(
+        include_infrastructure: bool = False,
+        workspace: str | None = None,
+    ) -> dict[str, Any]:
+        """High-level snapshot: languages, modules, top symbols by PageRank, RF coverage.
+
+        By default the top-symbols list filters out infrastructure noise (DI
+        helpers, FastMCP `register` outer fns, dunders, one-line wrappers).
+        Pass `include_infrastructure=True` to see the unfiltered ranking.
+        """
         st = get_state(workspace)
         pid = st.project_id
         langs = [
@@ -284,12 +323,17 @@ def register(mcp: FastMCP) -> None:
         ]
         view = load_graph(st.conn, pid)
         ranks = page_rank(view.g)
-        top = sorted(ranks.items(), key=lambda x: x[1], reverse=True)[:20]
-        top_syms = [
-            {**view.sym_meta[sid], "pagerank": round(score, 6)}
-            for sid, score in top
-            if sid in view.sym_meta
-        ]
+        ordered = sorted(ranks.items(), key=lambda x: x[1], reverse=True)
+        top_syms: list[dict[str, Any]] = []
+        for sid, score in ordered:
+            meta = view.sym_meta.get(sid)
+            if meta is None:
+                continue
+            if not include_infrastructure and _is_infrastructure(meta):
+                continue
+            top_syms.append({**meta, "pagerank": round(score, 6)})
+            if len(top_syms) >= 20:
+                break
         rf_total = st.conn.execute(
             "SELECT COUNT(*) c FROM rf WHERE project_id=?", (pid,)
         ).fetchone()["c"]

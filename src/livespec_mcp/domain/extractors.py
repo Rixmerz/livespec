@@ -33,12 +33,16 @@ class ExtractedRef:
     target_name: str  # last name of the call (e.g. "foo" or "Cls.method")
     line: int
     ref_type: str = "call"
+    scope_module: str | None = None  # P0.4: module name imported as the source of `target_name`
 
 
 @dataclass
 class ExtractResult:
     symbols: list[ExtractedSymbol] = field(default_factory=list)
     refs: list[ExtractedRef] = field(default_factory=list)
+    # P0.4: per-file imports map. local_name -> source_module (qualified name of
+    # the module providing it). Used by the resolver to scope short-name lookups.
+    imports: dict[str, str] = field(default_factory=dict)
 
 
 # ---------- Python via ast ----------
@@ -67,6 +71,19 @@ def _py_extract(source: str, module_name: str) -> ExtractResult:
         tree = ast.parse(source)
     except SyntaxError:
         return out
+
+    # P0.4: collect imports for resolver scoping. Maps `local_name` -> source module.
+    for node in tree.body:
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                out.imports[alias.asname or alias.name.split(".")[0]] = alias.name
+        elif isinstance(node, ast.ImportFrom):
+            mod = node.module or ""
+            for alias in node.names:
+                local = alias.asname or alias.name
+                if alias.name == "*":
+                    continue
+                out.imports[local] = mod
 
     def add_func(node: ast.FunctionDef | ast.AsyncFunctionDef, parent_qname: str | None, kind: str) -> str:
         qname = f"{parent_qname}.{node.name}" if parent_qname else f"{module_name}.{node.name}"
@@ -133,13 +150,33 @@ def _collect_calls(func_node: ast.AST, src_qname: str, out: ExtractResult) -> No
         if isinstance(node, ast.Call):
             target = _call_target_name(node.func)
             if target:
+                # P0.4: if the target name was imported in this file, tag the
+                # ref with the originating module so the resolver can scope.
+                scope = out.imports.get(target)
+                # For attribute access `mod.func()`, also try the leftmost name
+                # against imports (e.g. `from pkg import mod; mod.func()`).
+                if scope is None and isinstance(node.func, ast.Attribute):
+                    leftmost = _leftmost_name(node.func)
+                    if leftmost is not None and leftmost in out.imports:
+                        # The function lives inside the imported module
+                        scope = out.imports[leftmost]
                 out.refs.append(
                     ExtractedRef(
                         src_qname=src_qname,
                         target_name=target,
                         line=getattr(node, "lineno", 0),
+                        scope_module=scope,
                     )
                 )
+
+
+def _leftmost_name(node: ast.AST) -> str | None:
+    """For `a.b.c`, return `a`."""
+    while isinstance(node, ast.Attribute):
+        node = node.value
+    if isinstance(node, ast.Name):
+        return node.id
+    return None
 
 
 def _call_target_name(node: ast.AST) -> str | None:

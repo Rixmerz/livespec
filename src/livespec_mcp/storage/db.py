@@ -77,6 +77,37 @@ def _migrate_v1_to_v2(conn: sqlite3.Connection) -> None:
         except sqlite3.OperationalError:
             pass
 
+    # P0.4: scope_module column on symbol_ref (Python imports lookup).
+    sref_cols = {r["name"] for r in conn.execute("PRAGMA table_info(symbol_ref)")}
+    if "scope_module" not in sref_cols:
+        try:
+            conn.execute("ALTER TABLE symbol_ref ADD COLUMN scope_module TEXT")
+        except sqlite3.OperationalError:
+            pass
+
+    # P0.2: detect a v0.2-era DB whose symbol_ref is empty even though edges
+    # exist. That happens when the project was indexed before the persistent
+    # ref table was introduced — partial reindex from such a state silently
+    # loses edges. Queue a one-time forced reextract.
+    has_edges = conn.execute("SELECT COUNT(*) c FROM symbol_edge").fetchone()["c"]
+    has_refs = conn.execute("SELECT COUNT(*) c FROM symbol_ref").fetchone()["c"]
+    has_symbols = conn.execute("SELECT COUNT(*) c FROM symbol").fetchone()["c"]
+    if has_edges and has_symbols and not has_refs:
+        conn.execute(
+            "INSERT OR REPLACE INTO _migration_state(key, value) VALUES('needs_reextract', '1')"
+        )
+
+
+def consume_reextract_flag(conn: sqlite3.Connection) -> bool:
+    """Return True (and clear) if a migration queued a forced re-extract."""
+    row = conn.execute(
+        "SELECT value FROM _migration_state WHERE key='needs_reextract'"
+    ).fetchone()
+    if row and row["value"] == "1":
+        conn.execute("DELETE FROM _migration_state WHERE key='needs_reextract'")
+        return True
+    return False
+
 
 @contextmanager
 def transaction(conn: sqlite3.Connection) -> Iterator[sqlite3.Connection]:

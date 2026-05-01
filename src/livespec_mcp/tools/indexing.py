@@ -47,6 +47,7 @@ def register(mcp: FastMCP) -> None:
             "files_skipped": stats.files_skipped,
             "symbols_total": stats.symbols_total,
             "edges_total": stats.edges_total,
+            "rf_links_created": stats.rf_links_created,
             "languages": stats.languages,
             "workspace": str(st.settings.workspace),
         }

@@ -129,10 +129,11 @@ async def test_large_repo_search_returns_relevant_results(large_repo):
 @pytest.mark.asyncio
 async def test_large_repo_pagerank_consistent(large_repo):
     """PageRank must rank chain-callee functions higher than chain-caller fns,
-    because the callee is reached from many sources."""
+    because the callee is reached from many sources.
+    include_infrastructure=True so 1-line chain helpers aren't filtered (P0.3)."""
     async with Client(mcp) as c:
         await c.call_tool("index_project", {})
-        ov = (await c.call_tool("get_project_overview", {})).data
+        ov = (await c.call_tool("get_project_overview", {"include_infrastructure": True})).data
         ranks = {s["qualified_name"]: s["pagerank"] for s in ov["top_symbols"]}
         # fn_0 is at the bottom of every chain so it should outrank fn_9
         # (across all 5 pkgs, fn_0 is a sink for many callers).
