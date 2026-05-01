@@ -100,7 +100,7 @@ async def test_requirement_crud_and_link(sample_repo):
         # Manual link
         linked = (
             await c.call_tool(
-                "link_requirement_to_code",
+                "link_rf_symbol",
                 {"rf_id": "RF-002", "symbol_qname": "pkg.api.API.handle"},
             )
         ).data

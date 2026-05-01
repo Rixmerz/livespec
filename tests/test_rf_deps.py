@@ -120,40 +120,6 @@ async def test_unlink(workspace):
 
 
 @pytest.mark.asyncio
-async def test_v0_5_aliases_still_work(workspace):
-    """v0.6 P1: link_requirements / unlink_requirements / get_requirement_dependencies
-    were renamed to link_rf_dependency / unlink_rf_dependency / get_rf_dependency_graph
-    but the old names remain as deprecated aliases until v0.7."""
-    async with Client(mcp) as c:
-        await c.call_tool("index_project", {})
-        await _create_rfs(c, "RF-OLD", "RF-NEW")
-        # Old name still creates the link
-        out = (
-            await c.call_tool(
-                "link_requirements",
-                {"parent_rf_id": "RF-OLD", "child_rf_id": "RF-NEW"},
-            )
-        ).data
-        assert out["linked"] is True
-        # Old getter still walks
-        out = (
-            await c.call_tool(
-                "get_requirement_dependencies",
-                {"rf_id": "RF-OLD", "direction": "forward"},
-            )
-        ).data
-        assert any(n["rf_id"] == "RF-NEW" for n in out["nodes"])
-        # Old unlinker still drops
-        out = (
-            await c.call_tool(
-                "unlink_requirements",
-                {"parent_rf_id": "RF-OLD", "child_rf_id": "RF-NEW"},
-            )
-        ).data
-        assert out["unlinked"] == 1
-
-
-@pytest.mark.asyncio
 async def test_analyze_impact_cascades_through_dependents(workspace):
     """analyze_impact(target_type='requirement') must include symbols from
     every RF that transitively depends on the target."""

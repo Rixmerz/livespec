@@ -61,7 +61,7 @@ async def test_search_replaces_suggest_rf_links(sample_repo):
         assert "results" in results
         assert len(results["results"]) > 0
         # Results expose source_id (symbol id) — the agent maps them with get_symbol_info
-        # before calling link_requirement_to_code.
+        # before calling link_rf_symbol.
 
 
 @pytest.mark.asyncio

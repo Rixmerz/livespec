@@ -6,6 +6,16 @@ follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Removed (breaking) — v0.8 P3a
+- **Deprecated v0.6 RF tool aliases** are gone. Call sites must use
+  the canonical names introduced in v0.6:
+  - `link_requirement_to_code`     → use `link_rf_symbol`
+  - `link_requirements`            → use `link_rf_dependency`
+  - `unlink_requirements`          → use `unlink_rf_dependency`
+  - `get_requirement_dependencies` → use `get_rf_dependency_graph`
+  These were promised through v0.7; v0.8 delivers on that. Wire-count
+  drops by 4 with no loss of functionality.
+
 ### Added — v0.8 P0 quick wins
 - **`get_symbol_source(qname)`** — body slice extraction. Lighter than
   `get_symbol_info(detail='full')` when only the source text is needed.
@@ -49,9 +59,10 @@ follows [SemVer](https://semver.org/).
   sessions) and feeds the v0.8 P3 data-driven curation pass.
 
 ### Tooling
-- Tools: 35 → 39 (+ 4 deprecated v0.6 aliases still present → wire
-  count 43).
-- Tests: 118 → 140 (+9 quick wins, +5 instrumentation, +8 analyzer).
+- Tools: 35 → 39. Wire count was 43 in v0.7 (39 + 4 deprecated
+  aliases). After P3a: wire count 39, no deprecated surface.
+- Tests: 118 → 139 (+9 quick wins, +5 instrumentation, +8 analyzer,
+  −1 dropped alias-compat test).
 
 ---
 

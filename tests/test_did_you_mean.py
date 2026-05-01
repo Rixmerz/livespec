@@ -62,7 +62,7 @@ async def test_did_you_mean_in_link_requirement(sample_repo):
         )
         out = (
             await c.call_tool(
-                "link_requirement_to_code",
+                "link_rf_symbol",
                 {"rf_id": "RF-001", "symbol_qname": "pkg.auth.lgn"},
             )
         ).data

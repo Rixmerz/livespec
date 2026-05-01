@@ -90,7 +90,7 @@ By default it picks the **current working directory** as workspace, or
 }
 ```
 
-## Tools (39 + 4 deprecated aliases through v0.7)
+## Tools (39)
 
 Every tool accepts an optional `workspace: str` argument. When omitted, the
 server resolves to `LIVESPEC_WORKSPACE` env var or the current working
@@ -147,7 +147,7 @@ single MCP server instance can serve multiple repos in parallel.
 - `propose_requirements_from_codebase(module_depth=2, min_symbols_per_group=3, max_proposals=30, skip_already_covered=True)` — heuristic RF discovery. Groups symbols by qname prefix, ranks by PageRank-weighted score, proposes RF candidates with humanized title + description + suggested_symbols. Pair with `create_requirement` + `bulk_link_rf_symbols` to land accepted proposals.
 - `scan_docstrings_for_rf_hints()` — surfaces RF candidates from existing docstrings (first sentence, leading verb). Returns `verb_histogram_top` for noticing dominant action verbs (e.g. 47 'Validates...').
 
-> v0.6 renames the four tools above for clarity (the old `link_requirement_to_code` / `link_requirements` / `unlink_requirements` / `get_requirement_dependencies` are kept as deprecated aliases through v0.7).
+> v0.6 renamed the four tools above for clarity. v0.8 removed the deprecated v0.6 aliases (`link_requirement_to_code`, `link_requirements`, `unlink_requirements`, `get_requirement_dependencies`) — call sites must use the canonical names.
 - `get_requirement_implementation(rf_id)`
 - `scan_rf_annotations()` — two-level matcher: `@rf:RF-NNN` (1.0) vs verb-anchored (0.7),
   with negation guard. See `domain/matcher.py`. **Auto-runs at the end of every

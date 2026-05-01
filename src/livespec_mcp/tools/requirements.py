@@ -5,13 +5,8 @@ candidates for an RF, call `search(query=<rf.title + rf.description>,
 scope='code')` directly — the agent can then post-filter and call
 `link_rf_symbol` for each accepted candidate.
 
-v0.6 renames (old names kept as deprecated aliases until v0.7):
-  link_requirement_to_code     -> link_rf_symbol
-  link_requirements            -> link_rf_dependency
-  unlink_requirements          -> unlink_rf_dependency
-  get_requirement_dependencies -> get_rf_dependency_graph
-
-The new names disambiguate the two link concepts:
+RF-link naming (current; v0.6 renamed for clarity, v0.8 removed the
+deprecated aliases):
   RF -> code symbol            link_rf_symbol
   RF -> another RF             link_rf_dependency
 """
@@ -338,21 +333,6 @@ def register(mcp: FastMCP) -> None:
             "total": len(mappings),
             "results": results,
         }
-
-    @mcp.tool(annotations={"readOnlyHint": False, "idempotentHint": True})
-    def link_requirement_to_code(
-        rf_id: str,
-        symbol_qname: str,
-        relation: Literal["implements", "tests", "references"] = "implements",
-        confidence: float = 1.0,
-        source: Literal["manual", "annotation", "embedding", "llm"] = "manual",
-        unlink: bool = False,
-        workspace: str | None = None,
-    ) -> dict[str, Any]:
-        """DEPRECATED v0.6: use `link_rf_symbol`. This alias will be removed in v0.7."""
-        return _do_link_rf_symbol(
-            rf_id, symbol_qname, relation, confidence, source, unlink, workspace
-        )
 
     @mcp.tool(annotations={"readOnlyHint": True, "idempotentHint": True})
     def get_requirement_implementation(
@@ -839,19 +819,7 @@ def register(mcp: FastMCP) -> None:
         forward closure, the call returns isError=True without writing.
 
         Self-loops are rejected by the schema CHECK constraint.
-
-        v0.6 rename of `link_requirements` (kept as deprecated alias).
         """
-        return _do_link_rf_dependency(parent_rf_id, child_rf_id, kind, workspace)
-
-    @mcp.tool(annotations={"readOnlyHint": False, "idempotentHint": True})
-    def link_requirements(
-        parent_rf_id: str,
-        child_rf_id: str,
-        kind: Literal["requires", "extends", "conflicts"] = "requires",
-        workspace: str | None = None,
-    ) -> dict[str, Any]:
-        """DEPRECATED v0.6: use `link_rf_dependency`. Removed in v0.7."""
         return _do_link_rf_dependency(parent_rf_id, child_rf_id, kind, workspace)
 
     def _do_unlink_rf_dependency(
@@ -899,19 +867,7 @@ def register(mcp: FastMCP) -> None:
     ) -> dict[str, Any]:
         """Remove an RF dependency edge. If `kind` is None, drops every edge
         between the pair regardless of kind. Idempotent.
-
-        v0.6 rename of `unlink_requirements` (kept as deprecated alias).
         """
-        return _do_unlink_rf_dependency(parent_rf_id, child_rf_id, kind, workspace)
-
-    @mcp.tool(annotations={"readOnlyHint": False, "idempotentHint": True, "destructiveHint": True})
-    def unlink_requirements(
-        parent_rf_id: str,
-        child_rf_id: str,
-        kind: Literal["requires", "extends", "conflicts"] | None = None,
-        workspace: str | None = None,
-    ) -> dict[str, Any]:
-        """DEPRECATED v0.6: use `unlink_rf_dependency`. Removed in v0.7."""
         return _do_unlink_rf_dependency(parent_rf_id, child_rf_id, kind, workspace)
 
     def _do_get_rf_dependency_graph(
@@ -1019,17 +975,5 @@ def register(mcp: FastMCP) -> None:
         - both:     union of both.
 
         Returns the visited RF metadata + the edges traversed.
-
-        v0.6 rename of `get_requirement_dependencies` (kept as deprecated alias).
         """
-        return _do_get_rf_dependency_graph(rf_id, direction, max_depth, workspace)
-
-    @mcp.tool(annotations={"readOnlyHint": True, "idempotentHint": True})
-    def get_requirement_dependencies(
-        rf_id: str,
-        direction: Literal["forward", "backward", "both"] = "both",
-        max_depth: int = 5,
-        workspace: str | None = None,
-    ) -> dict[str, Any]:
-        """DEPRECATED v0.6: use `get_rf_dependency_graph`. Removed in v0.7."""
         return _do_get_rf_dependency_graph(rf_id, direction, max_depth, workspace)
