@@ -329,6 +329,8 @@ def _ts_extract(
         out.imports.update(_rb_collect_imports(tree.root_node, src_bytes, current_dir))
     elif language == "php":
         out.imports.update(_php_collect_imports(tree.root_node, src_bytes))
+    elif language == "rust":
+        out.imports.update(_rs_collect_imports(tree.root_node, src_bytes))
 
     def text(n) -> str:
         return src_bytes[n.start_byte : n.end_byte].decode("utf-8", errors="replace")
@@ -451,6 +453,9 @@ def _ts_collect_calls(def_node, src_qname: str, src_bytes: bytes, out: ExtractRe
     def text(n) -> str:
         return src_bytes[n.start_byte : n.end_byte].decode("utf-8", errors="replace")
 
+    import re as _re_local
+    _SEP = _re_local.compile(r"\.|::")
+
     def call_target_and_leftmost(call_node) -> tuple[str | None, str | None]:
         # Ruby/PHP receiver-bearing calls: method/name field is the bare target,
         # and the leftmost (for scope lookup) lives in `receiver` (Ruby) or
@@ -462,14 +467,16 @@ def _ts_collect_calls(def_node, src_qname: str, src_bytes: bytes, out: ExtractRe
                 if rn is not None:
                     rt = text(rn).strip().lstrip("$").lstrip("\\")
                     if rt:
-                        receiver_text = rt.split(".")[0].split("\\")[-1]
+                        # Take the leftmost segment, treating both `.` and `::`
+                        # as path separators (Rust uses ::, JS/Py use .).
+                        receiver_text = _SEP.split(rt)[0].split("\\")[-1] or None
                         break
         for field_name in ("function", "name", "method"):
             child = call_node.child_by_field_name(field_name) if hasattr(call_node, "child_by_field_name") else None
             if child is not None:
                 t = text(child).split("(")[0].strip()
-                if "." in t:
-                    parts = [p for p in t.split(".") if p]
+                if "." in t or "::" in t:
+                    parts = [p for p in _SEP.split(t) if p]
                     if not parts:
                         return None, None
                     return parts[-1], parts[0]
@@ -860,6 +867,102 @@ def _php_collect_imports(root_node, src_bytes: bytes) -> dict[str, str]:
 
     visit(root_node)
     return imports
+
+
+# ---------- Rust use-declaration scanner (P4.A3 v0.5) ----------
+
+
+import re as _re_rs
+
+
+def _rs_collect_imports(root_node, src_bytes: bytes) -> dict[str, str]:
+    """Scan top-level `use` declarations in a Rust file.
+
+    Returns local_name -> scope_module mapping where scope is the parent
+    module of the imported item (the segment before it in the use path),
+    matching the qname format the indexer assigns. Examples:
+        use crate::util::Greeter        -> {Greeter: util}
+        use crate::util::Greeter as G   -> {G: util}
+        use crate::util::{a, b}         -> {a: util, b: util}
+        use crate::a::b::Item           -> {Item: b}
+        use crate::Item                 -> {Item: Item}   (root-level fallback)
+    `use foo::*` (wildcard) is skipped — would need module-content knowledge.
+    """
+    imports: dict[str, str] = {}
+
+    def text(n) -> str:
+        return src_bytes[n.start_byte : n.end_byte].decode("utf-8", errors="replace")
+
+    for child in root_node.children:
+        if child.type != "use_declaration":
+            continue
+        full = text(child)
+        m = _re_rs.match(r"^\s*use\s+(.+?)\s*;?\s*$", full, _re_rs.DOTALL)
+        if not m:
+            continue
+        _rs_parse_use_string(m.group(1).strip(), imports)
+    return imports
+
+
+def _rs_parse_use_string(payload: str, imports: dict[str, str]) -> None:
+    payload = payload.strip().lstrip(":")
+    if not payload:
+        return
+    # Wildcard import — can't enumerate
+    if payload.endswith("::*") or payload == "*":
+        return
+    # Brace group: prefix::{a, b as c, sub::nested}
+    brace_open = payload.find("{")
+    if brace_open != -1:
+        prefix = payload[:brace_open].strip().rstrip(":")
+        brace_close = payload.rfind("}")
+        if brace_close <= brace_open:
+            return
+        inner = payload[brace_open + 1 : brace_close]
+        for item in _rs_split_top_level(inner, ","):
+            item = item.strip()
+            if not item:
+                continue
+            joined = f"{prefix}::{item}" if prefix else item
+            _rs_parse_use_string(joined, imports)
+        return
+    # Plain path, optional `as` alias
+    if " as " in payload:
+        path, _, alias = payload.partition(" as ")
+        path = path.strip()
+        local = alias.strip()
+    else:
+        path = payload.strip()
+        local = path.rsplit("::", 1)[-1].strip()
+    if local == "*":
+        return
+    segs = [s for s in path.split("::") if s and s != "crate"]
+    if len(segs) >= 2:
+        scope = segs[-2]
+    elif segs:
+        scope = segs[0]
+    else:
+        scope = local
+    imports[local] = scope
+
+
+def _rs_split_top_level(s: str, sep: str) -> list[str]:
+    parts: list[str] = []
+    depth = 0
+    cur: list[str] = []
+    for ch in s:
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+        if ch == sep and depth == 0:
+            parts.append("".join(cur))
+            cur = []
+        else:
+            cur.append(ch)
+    if cur:
+        parts.append("".join(cur))
+    return parts
 
 
 # ---------- Dispatcher ----------

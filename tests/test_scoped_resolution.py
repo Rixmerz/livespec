@@ -150,6 +150,40 @@ def test_php_use_namespace_edge_weight_1(tmp_path: Path):
     conn.close()
 
 
+def test_rust_use_declaration_edges_weight_1(tmp_path: Path):
+    """P4.A3 v0.5: Rust `use crate::module::Item` enables cross-module
+    weight=1.0 edges. Both `Item::method()` (scoped_call) and a bare
+    imported function call resolve through the use payload."""
+    src = FIXTURES / "rust" / "cross_module"
+    dst = tmp_path / "proj"
+    shutil.copytree(src, dst)
+
+    settings, conn = _bootstrap(tmp_path)
+    stats = index_project(settings, conn)
+    assert stats.symbols_total >= 4
+
+    # `Greeter::make_default()` -> proj.src.util.Greeter::make_default
+    w_method = _edge_weight(
+        conn,
+        "proj.src.main.run",
+        "proj.src.util.Greeter::make_default",
+    )
+    assert w_method == 1.0, (
+        f"Rust scoped-call edge should be weight=1.0, got {w_method}"
+    )
+
+    # `helper(...)` -> proj.src.util.helper
+    w_helper = _edge_weight(
+        conn,
+        "proj.src.main.run",
+        "proj.src.util.helper",
+    )
+    assert w_helper == 1.0, (
+        f"Rust use+call edge should be weight=1.0, got {w_helper}"
+    )
+    conn.close()
+
+
 def test_python_cross_module_edges_weight_1(tmp_path: Path):
     """P0.4 regression lock-in: Python scoped resolution still emits
     weight=1.0 for `from pkg.x import foo; foo()` patterns."""
