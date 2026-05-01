@@ -24,6 +24,18 @@ follows [SemVer](https://semver.org/).
   → `analyze_impact` → `get_requirement_implementation` chain with a
   single call.
 
+### Added — v0.8 P2 prep (battle-test harness)
+- **`bench/agent_log_analyze.py`** — aggregator over one or more
+  `agent_log.jsonl` streams. Per-tool call count, errors, latency
+  p50/p95, result_chars p50/max; top follow-up pairs (`A → B` within
+  a session — surfaces 3-tool chains that a composite tool could
+  collapse); silent-tool list (registered but never called — drop
+  candidates). Markdown by default, `--json` for diffing across runs.
+  Pre-fills the input feed for the v0.8 P3 curation pass.
+- **`docs/AGENT_USAGE_DATA.md`** — skeleton for the field log. Lists
+  target codebases, methodology notes, and the Findings template
+  to fill once P2 sessions complete.
+
 ### Added — v0.8 P1 instrumentation
 - **Agent dispatch logging middleware**
   (`src/livespec_mcp/instrumentation.py`). Writes one JSONL line per
@@ -39,7 +51,7 @@ follows [SemVer](https://semver.org/).
 ### Tooling
 - Tools: 35 → 39 (+ 4 deprecated v0.6 aliases still present → wire
   count 43).
-- Tests: 118 → 132 (+9 quick wins, +5 instrumentation).
+- Tests: 118 → 140 (+9 quick wins, +5 instrumentation, +8 analyzer).
 
 ---
 
