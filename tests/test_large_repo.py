@@ -130,10 +130,18 @@ async def test_large_repo_search_returns_relevant_results(large_repo):
 async def test_large_repo_pagerank_consistent(large_repo):
     """PageRank must rank chain-callee functions higher than chain-caller fns,
     because the callee is reached from many sources.
-    include_infrastructure=True so 1-line chain helpers aren't filtered (P0.3)."""
+    include_infrastructure=True so 1-line chain helpers aren't filtered (P0.3).
+    include_structural_patterns=True because the fixture replicates fn_0..fn_9
+    across 5 packages — that triggers the v0.8 structural-pattern filter,
+    which is orthogonal to the PageRank-ordering concern this test exercises."""
     async with Client(mcp) as c:
         await c.call_tool("index_project", {})
-        ov = (await c.call_tool("get_project_overview", {"include_infrastructure": True})).data
+        ov = (
+            await c.call_tool(
+                "get_project_overview",
+                {"include_infrastructure": True, "include_structural_patterns": True},
+            )
+        ).data
         ranks = {s["qualified_name"]: s["pagerank"] for s in ov["top_symbols"]}
         # fn_0 is at the bottom of every chain so it should outrank fn_9
         # (across all 5 pkgs, fn_0 is a sink for many callers).

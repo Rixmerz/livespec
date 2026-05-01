@@ -140,3 +140,48 @@ async def test_quick_orient_unknown_qname(sample_repo):
             await c.call_tool("quick_orient", {"qname": "totally.not.real"})
         ).data
         assert out["isError"] is True
+
+
+@pytest.mark.asyncio
+async def test_quick_orient_flags_entry_points(workspace):
+    """v0.8 P2 session-01 fix: a function with 0 callers but a framework
+    decorator (`@app.route`, `@mcp.tool`, etc.) must be flagged
+    `is_entry_point: True` and surface its decorators, so the agent does
+    not misread it as dead code."""
+    (workspace / "app.py").write_text(
+        '"""HTTP entry points."""\n'
+        "from flask import Flask\n"
+        "app = Flask(__name__)\n"
+        "\n"
+        "@app.route('/health')\n"
+        "def health():\n"
+        '    """Health check endpoint."""\n'
+        "    return 'ok'\n"
+        "\n"
+        "def plain_helper():\n"
+        '    """Just a helper."""\n'
+        "    return 1\n"
+    )
+    async with Client(mcp) as c:
+        await c.call_tool("index_project", {})
+
+        # Decorated entry point — 0 callers but is_entry_point=True
+        out = (
+            await c.call_tool("quick_orient", {"qname": "app.health"})
+        ).data
+        assert out["callers_count"] == 0
+        assert out["is_entry_point"] is True
+        assert out["framework_decorators"], (
+            f"expected framework_decorators populated, got {out['framework_decorators']}"
+        )
+        # Last segment of the decorator (`route`) is what _ENTRY_POINT_DECORATOR_LASTSEG checks
+        assert any(
+            d.endswith("route") or d == "route" for d in out["framework_decorators"]
+        ), f"expected route in {out['framework_decorators']}"
+
+        # Plain function — neither callers nor decorator → not an entry point
+        out_plain = (
+            await c.call_tool("quick_orient", {"qname": "app.plain_helper"})
+        ).data
+        assert out_plain["is_entry_point"] is False
+        assert out_plain["framework_decorators"] == []

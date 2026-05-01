@@ -114,10 +114,41 @@ def _is_implicit_entry_point(meta: dict) -> bool:
     return False
 
 
+_STRUCTURAL_NAME_FILE_THRESHOLD = 3
+
+
+def _structural_pattern_names(conn, project_id: int, threshold: int) -> set[str]:
+    """Names appearing as a symbol in ≥`threshold` distinct files in the project.
+
+    Captures repeated structural patterns (`.get`, `add_parser`, `run`,
+    `__init__`, `from_dict`) that PageRank correctly identifies as
+    high-centrality but carry near-zero "what is this codebase about"
+    signal. v0.8 P2 session-01 fix.
+    """
+    rows = conn.execute(
+        """SELECT s.name, COUNT(DISTINCT s.file_id) AS file_count
+           FROM symbol s JOIN file f ON f.id = s.file_id
+           WHERE f.project_id = ?
+           GROUP BY s.name
+           HAVING file_count >= ?""",
+        (project_id, threshold),
+    ).fetchall()
+    return {r["name"] for r in rows if r["name"]}
+
+
 def compute_project_overview(
-    st: AppState, include_infrastructure: bool = False
+    st: AppState,
+    include_infrastructure: bool = False,
+    include_structural_patterns: bool = False,
 ) -> dict[str, Any]:
-    """Module-level shared computation. Resources and the tool wrapper use this."""
+    """Module-level shared computation. Resources and the tool wrapper use this.
+
+    `include_structural_patterns=False` (default) hides symbols whose short
+    name appears in ≥3 distinct files — `.get`, `add_parser`, `run` etc.
+    PageRank correctly ranks them as high-centrality but they're structural
+    patterns, not semantically distinctive symbols. Set True to see the
+    raw PageRank top.
+    """
     pid = st.project_id
     langs = [
         dict(r)
@@ -126,6 +157,11 @@ def compute_project_overview(
             (pid,),
         )
     ]
+    structural_names: set[str] = (
+        set()
+        if include_structural_patterns
+        else _structural_pattern_names(st.conn, pid, _STRUCTURAL_NAME_FILE_THRESHOLD)
+    )
     view = load_graph(st.conn, pid)
     ranks = page_rank(view.g)
     ordered = sorted(ranks.items(), key=lambda x: x[1], reverse=True)
@@ -135,6 +171,8 @@ def compute_project_overview(
         if meta is None:
             continue
         if not include_infrastructure and _is_infrastructure(meta):
+            continue
+        if structural_names and meta.get("name") in structural_names:
             continue
         top_syms.append({**meta, "pagerank": round(score, 6)})
         if len(top_syms) >= 20:
@@ -151,6 +189,7 @@ def compute_project_overview(
         "workspace": str(st.settings.workspace),
         "languages": langs,
         "top_symbols": top_syms,
+        "structural_patterns_filtered": sorted(structural_names),
         "requirements_total": int(rf_total),
         "requirements_linked": int(rf_linked),
     }
@@ -490,7 +529,10 @@ def register(mcp: FastMCP) -> None:
 
         Returns the symbol's metadata (kind, signature, file, line range),
         the first non-empty line of its docstring, the top-5 direct callers
-        and top-5 direct callees ranked by PageRank, and any linked RFs.
+        and top-5 direct callees ranked by PageRank, any linked RFs, and an
+        `is_entry_point` flag (true when the symbol is decorated with a
+        framework decorator like `@mcp.tool`, `@app.route`, `@task`, etc.) —
+        so a `callers_count: 0` result is not misread as dead code.
         Designed for an agent's first contact with an unfamiliar symbol:
         instead of `find_symbol` -> `get_symbol_info` -> `analyze_impact`
         -> `get_requirement_implementation`, run this once.
@@ -537,6 +579,24 @@ def register(mcp: FastMCP) -> None:
                     docstring_lead = stripped
                     break
 
+        # v0.8 P2 session-01 fix: an `@mcp.tool`/`@app.route`/etc. with 0
+        # callers in the indexed graph is an *entry point*, not dead code.
+        # The matcher already detects this set (`_ENTRY_POINT_DECORATOR_LASTSEG`)
+        # for `find_endpoints` / infrastructure filtering. Surface it here so
+        # the agent doesn't misread the cone.
+        decorators_json = sym["decorators"] if "decorators" in sym.keys() else None
+        is_entry_point = _has_entry_point_decorator(decorators_json)
+        framework_decorators: list[str] = []
+        if decorators_json:
+            try:
+                all_decs = json.loads(decorators_json)
+                framework_decorators = [
+                    d for d in all_decs
+                    if _decorator_lastseg(d) in _ENTRY_POINT_DECORATOR_LASTSEG
+                ]
+            except (json.JSONDecodeError, TypeError):
+                pass
+
         return {
             "qualified_name": sym["qualified_name"],
             "kind": sym["kind"],
@@ -545,6 +605,8 @@ def register(mcp: FastMCP) -> None:
             "start_line": sym["start_line"],
             "end_line": sym["end_line"],
             "docstring_lead": docstring_lead,
+            "is_entry_point": is_entry_point,
+            "framework_decorators": framework_decorators,
             "callers_count": len(callers_all),
             "callees_count": len(callees_all),
             "top_callers": _topn(callers_all),
@@ -731,15 +793,27 @@ def register(mcp: FastMCP) -> None:
     @mcp.tool(annotations={"readOnlyHint": True, "idempotentHint": True})
     def get_project_overview(
         include_infrastructure: bool = False,
+        include_structural_patterns: bool = False,
         workspace: str | None = None,
     ) -> dict[str, Any]:
         """High-level snapshot: languages, modules, top symbols by PageRank, RF coverage.
 
-        By default the top-symbols list filters out infrastructure noise (DI
-        helpers, FastMCP `register` outer fns, dunders, one-line wrappers).
-        Pass `include_infrastructure=True` to see the unfiltered ranking.
+        By default the top-symbols list filters out:
+        - infrastructure noise (DI helpers, FastMCP `register` outer fns,
+          dunders, one-line wrappers). Pass `include_infrastructure=True`
+          to see the unfiltered ranking.
+        - structural-pattern names (short name appearing in ≥3 distinct
+          files: `.get`, `add_parser`, `run`, `__init__`, `from_dict`,
+          etc.). PageRank correctly identifies them as central but they
+          carry near-zero "what is this codebase about" signal. Pass
+          `include_structural_patterns=True` to keep them. The names
+          actually filtered come back in `structural_patterns_filtered`.
         """
-        return compute_project_overview(get_state(workspace), include_infrastructure)
+        return compute_project_overview(
+            get_state(workspace),
+            include_infrastructure,
+            include_structural_patterns,
+        )
 
     @mcp.tool(annotations={"readOnlyHint": True, "idempotentHint": True})
     def find_dead_code(

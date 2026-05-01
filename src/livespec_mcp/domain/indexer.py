@@ -274,23 +274,36 @@ def _resolve_refs(conn: sqlite3.Connection, *, project_id: int) -> int:
     deleted in a re-extract were cascaded out automatically; refs from
     unchanged files survive and re-resolve against the new symbol IDs of
     re-extracted files.
+
+    Disambiguation precedence when target_name has multiple candidates:
+    1. scope_module match (Python imports captured by extractor) → weight 0.9.
+    2. same source file as the call site → weight 0.7. Closes the v0.8 P2
+       session-01 bug where short names like ``list_tools`` (defined in
+       3 different modules) created edges to all 3 from a single in-module
+       call site.
+    3. otherwise: keep all candidates at weight 0.5 (legacy behavior). True
+       cross-file ambiguous call where the extractor missed the import.
+    Single-candidate matches are always weight 1.0.
     """
     rows = conn.execute(
-        """SELECT u.src_symbol_id, u.target_name, u.scope_module FROM symbol_ref u
+        """SELECT u.src_symbol_id, u.target_name, u.scope_module, s.file_id AS src_file_id
+           FROM symbol_ref u
            JOIN symbol s ON s.id = u.src_symbol_id
            JOIN file f ON f.id = s.file_id
            WHERE f.project_id = ?""",
         (project_id,),
     ).fetchall()
 
-    # name_index: short name -> [(symbol_id, qualified_name)]
-    name_index: dict[str, list[tuple[int, str]]] = {}
+    # name_index: short name -> [(symbol_id, qualified_name, file_id)]
+    name_index: dict[str, list[tuple[int, str, int]]] = {}
     for r in conn.execute(
-        """SELECT s.id, s.name, s.qualified_name FROM symbol s
+        """SELECT s.id, s.name, s.qualified_name, s.file_id FROM symbol s
            JOIN file f ON f.id=s.file_id WHERE f.project_id=?""",
         (project_id,),
     ):
-        name_index.setdefault(r["name"], []).append((int(r["id"]), r["qualified_name"]))
+        name_index.setdefault(r["name"], []).append(
+            (int(r["id"]), r["qualified_name"], int(r["file_id"]))
+        )
 
     edge_count = 0
     seen_pairs: set[tuple[int, int]] = set()
@@ -303,19 +316,38 @@ def _resolve_refs(conn: sqlite3.Connection, *, project_id: int) -> int:
         # candidates whose qualified_name lives under that module. If at least
         # one matches, drop the rest — that's a confident, scoped resolution.
         scope = u["scope_module"]
-        scoped: list[tuple[int, str]] = []
+        scoped: list[tuple[int, str, int]] = []
         if scope:
-            for sid, qname in candidates:
+            for sid, qname, fid in candidates:
                 # Match either the exact module prefix or its tail (because the
                 # extractor may emit module names without the package prefix that
                 # the indexer assigns to qualified_name).
-                if scope and (f".{scope}." in f".{qname}" or qname.startswith(f"{scope}.")):
-                    scoped.append((sid, qname))
+                if f".{scope}." in f".{qname}" or qname.startswith(f"{scope}."):
+                    scoped.append((sid, qname, fid))
             if scoped:
                 candidates = scoped
 
-        weight = 1.0 if len(candidates) == 1 else (0.9 if scoped else 0.5)
-        for tid, _qname in candidates:
+        # v0.8 P2 fix: when scope didn't disambiguate AND there are still
+        # multiple candidates, prefer same-file candidates. An in-module
+        # call to a short name almost always resolves locally; without this
+        # the resolver fans out to every same-named symbol across the repo
+        # (the workflow runner session 01: list_tools x3, _cosine x2).
+        same_file: list[tuple[int, str, int]] = []
+        if not scoped and len(candidates) > 1:
+            src_file_id = int(u["src_file_id"])
+            same_file = [c for c in candidates if c[2] == src_file_id]
+            if same_file:
+                candidates = same_file
+
+        if len(candidates) == 1:
+            weight = 1.0
+        elif scoped:
+            weight = 0.9
+        elif same_file:
+            weight = 0.7
+        else:
+            weight = 0.5
+        for tid, _qname, _fid in candidates:
             src_id = int(u["src_symbol_id"])
             if tid == src_id:
                 continue

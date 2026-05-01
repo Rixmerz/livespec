@@ -204,3 +204,71 @@ def test_python_cross_module_edges_weight_1(tmp_path: Path):
     w = _edge_weight(conn, "pkg.main.main", "pkg.helpers.helper")
     assert w == 1.0, f"Python from-import edge should be weight=1.0, got {w}"
     conn.close()
+
+
+def test_same_name_fanout_prefers_same_file(tmp_path: Path):
+    """v0.8 P2 session-01 fix: when a short name matches multiple symbols
+    across the project AND no scope_module is captured, the resolver should
+    prefer the same-file candidate over fanning out to all of them.
+
+    Fixture mirrors the the workflow runner pattern that surfaced the bug:
+      - embed_cache.py defines list_tools, _cosine, AND a search() that
+        calls both in-module.
+      - internal_proxy.py also defines list_tools.
+      - proxy_pool.py also defines _cosine.
+    Before the fix, search() got edges to all 3 list_tools candidates and
+    both _cosine candidates with weight 0.5. After the fix, only the
+    same-file targets get edges (weight 0.7 — confident in-file resolution).
+    """
+    src = FIXTURES / "python" / "same_name_fanout"
+    dst = tmp_path / "pkg"
+    shutil.copytree(src, dst)
+
+    settings, conn = _bootstrap(tmp_path)
+    index_project(settings, conn)
+
+    # Correct same-file resolution must produce an edge.
+    # Weight may be 1.0 (Python AST extractor sets scope to current module,
+    # narrowing candidates to 1) OR 0.7 (same-file fallback when scope is
+    # absent). Either path closes the bug; what matters is no fan-out.
+    w_correct = _edge_weight(
+        conn, "pkg.embed_cache.search", "pkg.embed_cache.list_tools"
+    )
+    assert w_correct is not None and w_correct >= 0.7, (
+        f"same-file resolution must produce an edge with weight ≥ 0.7, got {w_correct}"
+    )
+    w_correct_cos = _edge_weight(
+        conn, "pkg.embed_cache.search", "pkg.embed_cache._cosine"
+    )
+    assert w_correct_cos is not None and w_correct_cos >= 0.7, (
+        f"same-file _cosine resolution must produce an edge with weight ≥ 0.7, got {w_correct_cos}"
+    )
+
+    # The actual bug fix: fan-out targets must NOT have an edge from search().
+    w_wrong_lt = _edge_weight(
+        conn, "pkg.embed_cache.search", "pkg.internal_proxy.list_tools"
+    )
+    assert w_wrong_lt is None, (
+        f"resolver fanned out to internal_proxy.list_tools (got weight={w_wrong_lt}) — "
+        "should be filtered by same-file preference"
+    )
+    w_wrong_cos = _edge_weight(
+        conn, "pkg.embed_cache.search", "pkg.proxy_pool._cosine"
+    )
+    assert w_wrong_cos is None, (
+        f"resolver fanned out to proxy_pool._cosine (got weight={w_wrong_cos}) — "
+        "should be filtered by same-file preference"
+    )
+
+    # Method-on-class same-name candidate (proxy_pool.McpConnection.list_tools)
+    # must also be filtered.
+    w_wrong_method = _edge_weight(
+        conn,
+        "pkg.embed_cache.search",
+        "pkg.proxy_pool.McpConnection.list_tools",
+    )
+    assert w_wrong_method is None, (
+        f"resolver fanned out to McpConnection.list_tools (got weight={w_wrong_method})"
+    )
+
+    conn.close()
