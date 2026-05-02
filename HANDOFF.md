@@ -102,6 +102,21 @@ bugs de session 05. **Para v1.0 quedan items menores + polish**:
 
 ### Opciones para v0.12 (elegir 1-2 según tiempo)
 
+0. **v0.12 P0 quick win — dual-decorator alias detection** (½ día,
+   bug surfaced post-v0.11 force-reindex). El patrón
+   `agentic_tool = mcp.tool if X else _noop_decorator` introducido
+   en v0.8 P3.4 (plugin framework) rompe `_has_entry_point_decorator`
+   porque el last-seg de `@mutation_tool(...)` no está en
+   `_ENTRY_POINT_DECORATORS`. Resultado: 22 false-positives en
+   `find_dead_code` sobre el propio livespec-mcp (mostly
+   `tools/requirements.py register.*` fns + watcher helpers + rag
+   helpers). **Fix**: extender el matcher para reconocer aliases
+   asignados a `mcp.tool` (AST scan a nivel de función `register()`
+   collecting `name = mcp.tool` o `name = mcp.tool if ... else _noop`
+   patterns, agregar al set de entry-point decorators per-file).
+   No es regresión de v0.11 — es deuda pre-existente que se
+   surfaceó al hacer force re-index. Cierra a 0.
+
 1. **v0.12 wire-validation re-run sobre Django** (½ día, alto valor
    de proof-point). v0.10 reportó 348 candidates Django. v0.11 P3
    debería bajarlo más (Field.register_lookup + signal.connect +
