@@ -5,6 +5,13 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+# v0.8 P3.4/P3.5: force every plugin to register so tests see the full
+# mutation surface (RF CRUD, doc generation). Plugins normally auto-load
+# only when their backing tables have rows; tests on fresh workspaces
+# would otherwise miss those tools. Set BEFORE any livespec import so
+# the value is in os.environ when server.py runs its plugin auto-detect.
+os.environ.setdefault("LIVESPEC_PLUGINS", "all")
+
 import pytest
 
 from livespec_mcp import state as state_module

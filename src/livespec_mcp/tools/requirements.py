@@ -66,8 +66,44 @@ def _next_rf_id(conn, project_id: int) -> str:
     return f"RF-{n:03d}"
 
 
-def register(mcp: FastMCP) -> None:
-    @mcp.tool(annotations={"readOnlyHint": False, "idempotentHint": False})
+def _noop_decorator(**_kwargs: Any):
+    """Identity decorator: returns the wrapped function unchanged.
+
+    Used to suppress @mcp.tool registration on a per-tool basis when
+    splitting `register` between the default surface (agentic tools) and
+    the optional `livespec-rf` plugin surface (mutation tools).
+    """
+
+    def _wrap(fn):
+        return fn
+
+    return _wrap
+
+
+def register(
+    mcp: FastMCP,
+    agentic: bool = True,
+    mutation: bool = False,
+) -> None:
+    """Register RF tools.
+
+    v0.8 P3.4 split:
+      - ``agentic=True, mutation=False`` (default, called by ``server.py``):
+        registers the 3 RF tools an agent ASKS — ``list_requirements``,
+        ``get_requirement_implementation``, ``propose_requirements_from_codebase``
+        — plus the brownfield-discovery helpers.
+      - ``agentic=False, mutation=True`` (called by ``tools.plugins.rf``):
+        registers the 11 mutation/linking tools a HUMAN runs to mutate RF
+        state. Auto-loads when the workspace DB has rf rows or
+        ``LIVESPEC_PLUGINS`` includes ``rf``.
+
+    The dual-decorator pattern below keeps every tool definition in a
+    single file while letting registration flip on/off per surface.
+    """
+    agentic_tool = mcp.tool if agentic else _noop_decorator
+    mutation_tool = mcp.tool if mutation else _noop_decorator
+
+    @mutation_tool(annotations={"readOnlyHint": False, "idempotentHint": False})
     def create_requirement(
         title: str,
         description: str | None = None,
@@ -104,7 +140,7 @@ def register(mcp: FastMCP) -> None:
         )
         return {"id": int(cur.lastrowid), "rf_id": rid, "title": title}
 
-    @mcp.tool(annotations={"readOnlyHint": False, "idempotentHint": True})
+    @mutation_tool(annotations={"readOnlyHint": False, "idempotentHint": True})
     def update_requirement(
         rf_id: str,
         title: str | None = None,
@@ -148,7 +184,7 @@ def register(mcp: FastMCP) -> None:
         st.conn.execute(f"UPDATE rf SET {', '.join(sets)} WHERE id=?", args)
         return {"rf_id": rf_id, "updated": True}
 
-    @mcp.tool(annotations={"readOnlyHint": True, "idempotentHint": True})
+    @agentic_tool(annotations={"readOnlyHint": True, "idempotentHint": True})
     def list_requirements(
         status: str | None = None,
         module: str | None = None,
@@ -219,7 +255,7 @@ def register(mcp: FastMCP) -> None:
         )
         return {"linked": True, "rf_id": rf_id, "symbol": symbol_qname, "relation": relation}
 
-    @mcp.tool(annotations={"readOnlyHint": False, "idempotentHint": True})
+    @mutation_tool(annotations={"readOnlyHint": False, "idempotentHint": True})
     def link_rf_symbol(
         rf_id: str,
         symbol_qname: str,
@@ -237,7 +273,7 @@ def register(mcp: FastMCP) -> None:
             rf_id, symbol_qname, relation, confidence, source, unlink, workspace
         )
 
-    @mcp.tool(annotations={"readOnlyHint": False, "idempotentHint": True})
+    @mutation_tool(annotations={"readOnlyHint": False, "idempotentHint": True})
     def bulk_link_rf_symbols(
         mappings: list[dict[str, Any]],
         workspace: str | None = None,
@@ -334,7 +370,7 @@ def register(mcp: FastMCP) -> None:
             "results": results,
         }
 
-    @mcp.tool(annotations={"readOnlyHint": True, "idempotentHint": True})
+    @agentic_tool(annotations={"readOnlyHint": True, "idempotentHint": True})
     def get_requirement_implementation(
         rf_id: str,
         workspace: str | None = None,
@@ -377,7 +413,7 @@ def register(mcp: FastMCP) -> None:
             "coverage": {"symbol_count": len(rows), "file_count": len(files)},
         }
 
-    @mcp.tool(annotations={"readOnlyHint": False, "idempotentHint": True})
+    @mutation_tool(annotations={"readOnlyHint": False, "idempotentHint": True})
     def import_requirements_from_markdown(
         path: str,
         workspace: str | None = None,
@@ -441,7 +477,7 @@ def register(mcp: FastMCP) -> None:
             "updated": updated,
         }
 
-    @mcp.tool(annotations={"readOnlyHint": False, "idempotentHint": True, "destructiveHint": True})
+    @mutation_tool(annotations={"readOnlyHint": False, "idempotentHint": True, "destructiveHint": True})
     def delete_requirement(rf_id: str, workspace: str | None = None) -> dict[str, Any]:
         """Permanently delete an RF and its rf_symbol links (cascade).
 
@@ -454,7 +490,7 @@ def register(mcp: FastMCP) -> None:
         )
         return {"rf_id": rf_id, "deleted": cur.rowcount > 0}
 
-    @mcp.tool(annotations={"readOnlyHint": True, "idempotentHint": True})
+    @agentic_tool(annotations={"readOnlyHint": True, "idempotentHint": True})
     def propose_requirements_from_codebase(
         module_depth: int = 2,
         min_symbols_per_group: int = 3,
@@ -634,7 +670,7 @@ def register(mcp: FastMCP) -> None:
             "module_depth": module_depth,
         }
 
-    @mcp.tool(annotations={"readOnlyHint": True, "idempotentHint": True})
+    @mutation_tool(annotations={"readOnlyHint": True, "idempotentHint": True})
     def scan_docstrings_for_rf_hints(
         limit: int = 200,
         cursor: int = 0,
@@ -737,7 +773,7 @@ def register(mcp: FastMCP) -> None:
             "next_cursor": next_cursor,
         }
 
-    @mcp.tool(annotations={"readOnlyHint": False, "idempotentHint": True})
+    @mutation_tool(annotations={"readOnlyHint": False, "idempotentHint": True})
     def scan_rf_annotations(workspace: str | None = None) -> dict[str, Any]:
         """Re-scan all symbol docstrings for RF annotations and (re)link them.
 
@@ -812,7 +848,7 @@ def register(mcp: FastMCP) -> None:
             "kind": kind,
         }
 
-    @mcp.tool(annotations={"readOnlyHint": False, "idempotentHint": True})
+    @mutation_tool(annotations={"readOnlyHint": False, "idempotentHint": True})
     def link_rf_dependency(
         parent_rf_id: str,
         child_rf_id: str,
@@ -873,7 +909,7 @@ def register(mcp: FastMCP) -> None:
             "kind": kind,
         }
 
-    @mcp.tool(annotations={"readOnlyHint": False, "idempotentHint": True, "destructiveHint": True})
+    @mutation_tool(annotations={"readOnlyHint": False, "idempotentHint": True, "destructiveHint": True})
     def unlink_rf_dependency(
         parent_rf_id: str,
         child_rf_id: str,
@@ -976,7 +1012,7 @@ def register(mcp: FastMCP) -> None:
             "edges": edge_payload,
         }
 
-    @mcp.tool(annotations={"readOnlyHint": True, "idempotentHint": True})
+    @mutation_tool(annotations={"readOnlyHint": True, "idempotentHint": True})
     def get_rf_dependency_graph(
         rf_id: str,
         direction: Literal["forward", "backward", "both"] = "both",

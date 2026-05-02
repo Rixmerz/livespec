@@ -108,6 +108,39 @@ def test_register_active_returns_active_set_and_is_idempotent(
     assert again == {"rf"}
 
 
+@pytest.mark.asyncio
+async def test_rf_plugin_registers_mutation_tools(workspace, monkeypatch):
+    """v0.8 P3.4: when the rf plugin loads, mutation tools become callable.
+
+    Verifies the plugin registration plumbing actually wires
+    `requirements.register(mutation=True)` into the mcp instance.
+    """
+    from fastmcp import Client
+
+    state = get_state()
+    monkeypatch.setenv("LIVESPEC_PLUGINS", "rf")
+    test_mcp = FastMCP(name="rf-plugin-test")
+    register_active(test_mcp, state)
+
+    async with Client(test_mcp) as c:
+        tools = await c.list_tools()
+        names = {t.name for t in tools}
+    # The 11 mutation tools must all be present
+    expected_mutation = {
+        "create_requirement", "update_requirement", "delete_requirement",
+        "link_rf_symbol", "bulk_link_rf_symbols",
+        "link_rf_dependency", "unlink_rf_dependency",
+        "get_rf_dependency_graph",
+        "scan_rf_annotations", "scan_docstrings_for_rf_hints",
+        "import_requirements_from_markdown",
+    }
+    missing = expected_mutation - names
+    assert not missing, f"plugin failed to register: {missing}"
+    # Agentic tools must NOT be re-registered by the plugin
+    assert "list_requirements" not in names
+    assert "get_requirement_implementation" not in names
+
+
 def test_detect_survives_missing_table(workspace, monkeypatch):
     """If a plugin's table doesn't exist (older schema), probe returns False."""
     state = get_state()
