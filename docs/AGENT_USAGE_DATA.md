@@ -466,7 +466,145 @@ proposal noise). Queue for v0.8 P3 or v0.9.
   tools were silent, not erroring. Confirms RF is a differentiator,
   not a precondition.
 
-### Updated tier signal (n=3 sessions, 3 profiles, 40 calls)
+---
+
+## Session 04 — Django bugfix profile (2026-05-01)
+
+Workspace: `~/.cache/livespec-bench/django` (Django 5.1.4, 2898 files /
+**39,789 symbols** / 465,179 edges). Session id
+`1661cf99-d8f8-433d-a3b2-2e1dc8fa9f1e`. Task: trace
+`AuthenticationMiddleware.process_request` blast radius for a
+hypothetical "slow login on custom auth backends" bugfix.
+
+### Aggregate (sessions 01 + 02 + 03 + 04 combined)
+
+65 calls across 4 sessions / 4 workspaces / 4 profiles. **16 distinct
+tools used** out of 17 default. The single silent tool is
+`find_orphan_tests` — flagging it for closer evaluation in a future
+profile that exercises test coverage explicitly.
+
+| tool | calls | sessions | category |
+|---|---:|---:|---|
+| `index_project` | 10 | 4 | code intel |
+| `quick_orient` | 8 | 3 | code intel (P0) |
+| `who_calls` | 7 | 2 | code intel (P0) |
+| `find_dead_code` | 6 | 2 | code intel |
+| `get_project_overview` | 5 | 4 | code intel |
+| `find_symbol` | 4 | 3 | code intel |
+| `who_does_this_call` | 4 | 3 | code intel (P0) |
+| `audit_coverage` | 4 | 3 | RF agentic |
+| `get_symbol_source` | 4 | 3 | code intel (P0) |
+| `analyze_impact` | 3 | 2 | code intel |
+| `find_endpoints` | 2 | 1 | code intel |
+| `get_index_status` | 2 | 2 | code intel (deprecated v0.8) |
+| `git_diff_impact` | 2 | 1 | code intel |
+| `get_requirement_implementation` | 2 | 1 | RF agentic |
+| `list_requirements` | 1 | 1 | RF agentic |
+| `propose_requirements_from_codebase` | 1 | 1 | RF agentic |
+| `find_orphan_tests` | 0 | 0 | code intel — silent |
+
+### Performance at scale (Django, 40K symbols)
+
+- `index_project` cold: ~96.9s (first run, full extract). Within the
+  expected ~25-100s range for a 2898-file Python repo per the README
+  perf table.
+- `quick_orient`: 47ms p50, ~2.8s p95. The p95 is the FIRST call after
+  index — graph cache cold. Subsequent calls drop to <50ms.
+- `find_dead_code(summary_only=True)`: 61ms p50. Reasonable.
+- `who_calls(max_depth=1)`: 1-8ms. Fast even on Django.
+- `get_project_overview`: 74ms p50, 3.9s p95. The p95 is again the
+  cold-cache call — drops back to <100ms warm.
+
+### NEW bugs surfaced in session 04
+
+12. **`who_calls` / `who_does_this_call` overflow at scale**.
+    `who_calls('BaseBackend.authenticate', max_depth=2)` returned 102KB
+    (400 callers across 71 files). The aggregator-tool pagination
+    contract from v0.7 B3 (`limit`/`cursor`/`summary_only`) does NOT
+    extend to these slim agentic tools. On Django the agent had to
+    drop to `max_depth=1` to get a usable response. Fix: extend
+    pagination to `who_calls`, `who_does_this_call`, and
+    `analyze_impact`.
+
+13. **`analyze_impact` overflow at depth>1**.
+    `analyze_impact('ModelBackend.authenticate', max_depth=3)`
+    returned 332KB / 664 callers / 848 calls_into / 134 distinct
+    files. Same root cause as #12. Pagination must include both
+    `impacted_callers` and `calls_into` arrays.
+
+14. **`analyze_impact.calls_into` inflation from short-name fan-out**.
+    At `max_depth=1` on `ModelBackend.authenticate`, `calls_into`
+    returned ~70 symbols. The actual body calls only ~10 things. The
+    rest are short-name fan-outs: `obj.get(...)` resolves to every
+    `get` method in the codebase (cache backends, view classes,
+    QuerySet, etc.); same for `.get_by_natural_key`,
+    `.check_password`, `.set_password`. Without type inference the
+    static analyzer cannot disambiguate `obj.x()` to a single class.
+    Mitigation: filter weight<0.6 edges out of forward-cone traversals
+    by default (drop the ambiguous fan-out from the response, keep
+    them in the DB).
+
+15. **`find_endpoints(framework='django')` misses class-based views
+    with mixins**. Returned 20 endpoints, all decorator-based
+    (`@login_required`, `@permission_required`, `@staff_member_required`).
+    Django's class-based views protected by `LoginRequiredMixin` /
+    `PermissionRequiredMixin` are NOT detected. Fix:
+    `_ENTRY_POINT_DECORATOR_LASTSEG` is decorator-only; for Django,
+    add a parallel detection of classes inheriting from named mixins.
+
+16. **`find_dead_code` over-reports on Django** — 824 dead candidates
+    (801 in `django/`). Many are class-based views referenced only
+    via `path(..., view=MyView.as_view())` in `urls.py`. The static
+    analyzer doesn't recognize URL routing as a call site. Fix: scan
+    `urls.py` files for `path(...)` / `re_path(...)` / `include(...)`
+    and treat their callable arguments as entry-point references.
+    Also: classes inheriting from framework mixins
+    (`LoginRequiredMixin`, `PermissionRequiredMixin`,
+    `MiddlewareMixin`, etc.) have implicit lifecycle hooks called by
+    the framework.
+
+17. **`quick_orient.top_callers` polluted by short-name fan-out
+    across cross-file methods**.
+    `quick_orient('AuthenticationMiddleware.process_request')` and
+    `quick_orient('RemoteUserMiddleware.process_request')` returned
+    the same 5 top callers (`make_middleware_decorator`,
+    `_check_bad_or_missing_cookie`, etc.). The resolver matches every
+    `process_request` short-name across the codebase. Same root cause
+    as #14. Mitigation: filter weight<0.6 edges in the displayed
+    `top_callers`/`top_callees`, keep total count honest.
+
+These five bugs (#12-16) are all v0.9 candidates. #17 overlaps with
+#14. None block continued sessions; they shape the priority list for
+the next release.
+
+### Decisions taken from session 04
+
+- ✅ **Default surface holds at scale.** `quick_orient`,
+  `who_calls(max_depth=1)`, `find_dead_code(summary_only=True)`,
+  `get_project_overview`, `audit_coverage(summary_only=True)`,
+  `find_symbol`, `get_symbol_source` all returned usable signal on
+  39K symbols.
+- ⚠️  **Pagination contract must extend** to `who_calls`,
+  `who_does_this_call`, `analyze_impact`. Three overflow cases in one
+  session, all on the slim agentic tools.
+- ⚠️  **Resolver fan-out at depth>1** is the same bug as v0.8 P2 #1,
+  but in the *graph traversal* layer instead of the resolver layer.
+  Same-file disambiguation closed the producer side; the consumer side
+  (forward/backward cones) still surfaces ambiguous edges. Filter by
+  weight in the traversal default.
+- ⚠️  **Django/framework-aware entry-point detection** needs URL
+  routing + mixin class detection. Without it, `find_dead_code` and
+  `find_endpoints` are inaccurate on the most common Python web
+  framework on the planet.
+- 📌 **Targeted resolver walk** (v0.9 P0) was active during the cold
+  index — partial-reindex behavior on Django still TBD because we
+  haven't touched files yet. A follow-up bench would close the loop
+  on the 7s → 1s claim.
+- 📌 **Sessions 01-03 caveat is largely cleared.** n=4 sessions /
+  4 profiles is enough to lock the v0.8 tier list. Session 05 (TS/JS
+  feature) remains valuable for language coverage.
+
+### Updated tier signal (n=4 sessions, 4 profiles, 65 calls)
 
 **Tier-1 (data-validated, ≥1 use across sessions of relevant profile)**:
 1. `index_project` — every session
