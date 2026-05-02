@@ -295,6 +295,74 @@ def _used_nested_def_names(file_path_abs: str) -> frozenset[str]:
 
 
 @lru_cache(maxsize=128)
+def _publicly_exported_names(file_path_abs: str) -> frozenset[str]:
+    """Names a Python file exposes as part of its public surface.
+
+    v0.10: handles two patterns the static caller graph doesn't see:
+
+    1. ``from .x import Foo, Bar`` (any module-level ``ImportFrom``).
+       Re-export from a package — the imported names are part of this
+       package's public API. Critical for `__init__.py` files in
+       library codebases: `django/contrib/auth/__init__.py` imports
+       `Argon2PasswordHasher` etc. so it can be referenced as
+       ``django.contrib.auth.Argon2PasswordHasher`` from user code.
+       Both the original name and the ``as`` alias are recorded.
+    2. ``__all__ = ['Foo', 'Bar']`` (module-level list/tuple of string
+       constants assigned to ``__all__``). Each string is a public
+       export; record the trailing identifier.
+
+    Different from `_module_level_referenced_names`, which captures
+    *all* top-level identifier references (Names/Attributes/Constants
+    walked recursively). This function is narrower: only the two
+    explicit "this is the public surface" patterns. The two sets are
+    UNIONed in `find_dead_code` — both protect a candidate from being
+    flagged dead.
+
+    Cached. Non-Python files / parse failures return empty.
+    """
+    try:
+        source = Path(file_path_abs).read_text(encoding="utf-8", errors="replace")
+        tree = ast.parse(source)
+    except (OSError, SyntaxError, ValueError):
+        return frozenset()
+    out: set[str] = set()
+    for node in tree.body:
+        if isinstance(node, ast.ImportFrom):
+            for a in node.names:
+                if a.name == "*":
+                    continue
+                out.add(a.name)
+                if a.asname:
+                    out.add(a.asname)
+            continue
+        if isinstance(node, ast.Import):
+            for a in node.names:
+                if a.asname:
+                    out.add(a.asname)
+                else:
+                    # `import x.y.z` exposes `x` (the bound name); take head
+                    out.add(a.name.split(".", 1)[0])
+            continue
+        if isinstance(node, ast.Assign):
+            # __all__ = ['Foo', 'Bar', ...]
+            targets = node.targets
+            if (
+                len(targets) == 1
+                and isinstance(targets[0], ast.Name)
+                and targets[0].id == "__all__"
+                and isinstance(node.value, (ast.List, ast.Tuple))
+            ):
+                for elt in node.value.elts:
+                    if isinstance(elt, ast.Constant) and isinstance(elt.value, str):
+                        s = elt.value
+                        tail = s.rsplit(".", 1)[-1]
+                        if tail.isidentifier():
+                            out.add(tail)
+            continue
+    return frozenset(out)
+
+
+@lru_cache(maxsize=128)
 def _module_level_referenced_names(file_path_abs: str) -> frozenset[str]:
     """Names referenced at Python module top-level (outside any function /
     class body). Captures three patterns that fool the "zero callers ⇒
@@ -1201,6 +1269,10 @@ def register(mcp: FastMCP) -> None:
             try:
                 abs_path = str(workspace_path / path_row["path"])
                 global_module_refs |= _module_level_referenced_names(abs_path)
+                # v0.10: explicit public-surface markers (re-exports +
+                # __all__) protect library-side classes that have no
+                # in-tree caller because their callers are user code.
+                global_module_refs |= _publicly_exported_names(abs_path)
                 nested_uses = _used_nested_def_names(abs_path)
                 if nested_uses:
                     nested_uses_by_file[path_row["path"]] = nested_uses
