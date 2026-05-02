@@ -6,7 +6,9 @@ from fastmcp import FastMCP
 
 from livespec_mcp import prompts, resources
 from livespec_mcp.instrumentation import AgentLogMiddleware
+from livespec_mcp.state import get_state
 from livespec_mcp.tools import analysis, docs, indexing, requirements, search, watcher
+from livespec_mcp.tools.plugins import register_active as register_active_plugins
 
 mcp = FastMCP(
     name="livespec-mcp",
@@ -28,6 +30,17 @@ docs.register(mcp)
 watcher.register(mcp)
 resources.register(mcp)
 prompts.register(mcp)
+
+# v0.8 P3.1: plugin auto-detect. Probes the resolved workspace's DB and
+# loads optional plugin tool sets when their tables show signal. Safe in
+# v0.8 because plugin register hooks are no-ops; future phases migrate
+# tools into them.
+try:
+    register_active_plugins(mcp, get_state())
+except Exception:
+    # Workspace may be unresolvable at import time (env var pointing at a
+    # path the user hasn't created yet, etc.) — never fail server boot.
+    pass
 
 
 def main() -> None:
