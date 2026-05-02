@@ -542,6 +542,64 @@ def _ts_collect_calls(def_node, src_qname: str, src_bytes: bytes, out: ExtractRe
                 return t, receiver_text or t
         return None, None
 
+    # JSX node types that carry a component name (v0.11 P2, bug #20)
+    _JSX_OPEN_TYPES = {"jsx_opening_element", "jsx_self_closing_element"}
+
+    def _jsx_component_ref(jsx_node) -> None:
+        """Emit a ref for a JSX element whose name is a React component (uppercase).
+
+        Handles:
+          <Counter />           -> identifier "Counter"  -> ref to "Counter"
+          <Form.Field />        -> member_expression     -> ref to "Form" (leftmost)
+          <div />, <span />     -> lowercase identifier  -> SKIP (HTML element)
+        """
+        # The element name is the first non-punctuation child of jsx_opening_element
+        # or jsx_self_closing_element; tree-sitter puts it directly as a child.
+        name_node = None
+        for c in jsx_node.children:
+            if c.type in ("identifier", "member_expression", "jsx_namespace_name"):
+                name_node = c
+                break
+        if name_node is None:
+            return
+
+        if name_node.type == "identifier":
+            raw = text(name_node)
+            if not raw or not raw[0].isupper():
+                return  # HTML element — skip
+            tgt = raw
+            leftmost = raw
+        elif name_node.type == "member_expression":
+            # e.g. Form.Field — leftmost object is the component namespace
+            # member_expression children: object . property_identifier
+            obj = name_node.child_by_field_name("object") if hasattr(name_node, "child_by_field_name") else None
+            if obj is None:
+                for c in name_node.children:
+                    if c.type == "identifier":
+                        obj = c
+                        break
+            if obj is None:
+                return
+            leftmost = text(obj)
+            if not leftmost or not leftmost[0].isupper():
+                return
+            tgt = leftmost
+        else:
+            return  # jsx_namespace_name (e.g. <Foo:Bar>) — ignore for now
+
+        scope = out.imports.get(tgt)
+        if scope is None and leftmost != tgt:
+            scope = out.imports.get(leftmost)
+        out.refs.append(
+            ExtractedRef(
+                src_qname=src_qname,
+                target_name=tgt,
+                line=jsx_node.start_point[0] + 1,
+                ref_type="jsx",
+                scope_module=scope,
+            )
+        )
+
     def walk(node):
         if node.type in _CALL_NODE_TYPES:
             tgt, leftmost = call_target_and_leftmost(node)
@@ -560,6 +618,11 @@ def _ts_collect_calls(def_node, src_qname: str, src_bytes: bytes, out: ExtractRe
                         scope_module=scope,
                     )
                 )
+        # v0.11 P2: JSX element references as call-graph edges (bug #20).
+        # Only jsx_opening_element (paired tags) and jsx_self_closing_element
+        # are walked; jsx_closing_element is skipped (duplicate of opening tag).
+        elif node.type in _JSX_OPEN_TYPES:
+            _jsx_component_ref(node)
         for c in node.children:
             walk(c)
 

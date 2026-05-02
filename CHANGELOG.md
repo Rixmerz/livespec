@@ -6,6 +6,23 @@ follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Added — v0.11 P2 JSX element refs as call-graph edges
+- `_ts_collect_calls` in `domain/extractors.py` now walks
+  `jsx_opening_element` and `jsx_self_closing_element` nodes inside TSX
+  function/component bodies and emits an `ExtractedRef` (kind `"jsx"`) for
+  each component-typed JSX usage. Uppercase identifiers (`<Counter />`) and
+  member-expression leftmost segments (`<Form.Field />` → `Form`) become
+  ref targets; lowercase HTML elements (`<div>`, `<span>`) are skipped.
+- The resolver's existing `_resolve_refs` path handles JSX refs identically
+  to call refs — no schema change required.
+- `find_dead_code` no longer over-reports React/Preact components that are
+  only used as JSX elements (edge exists → not flagged as dead). Closes
+  bug #20 surfaced by session 05 (Deno Fresh / TSX).
+- Tests: `tests/test_tsx_jsx_refs.py` — 10 cases covering extractor-level
+  ref emission (self-closing, paired, member-expression, HTML skip,
+  multiple components) and integration-level call-graph edges + dead-code
+  integration win.
+
 ### Added — v0.11 P0 bundler/build output dir filter
 - New module-level helper `_is_bundler_output_path(path)` recognises
   generated artefact dirs (`_fresh/`, `dist/`, `build/`, `.next/`,
