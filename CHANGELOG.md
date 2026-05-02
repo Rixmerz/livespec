@@ -6,6 +6,34 @@ follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Added — JS/TS JSDoc support + agentic bulk-link + extractor-aware audit
+- **JSDoc annotations now extracted on JS/TS.** `_ts_extract` reads the
+  comment(s) immediately preceding a declaration (walking through wrapping
+  `export` / `export default` statements) and stores the cleaned text as
+  the symbol's `docstring`. Both `/** ... */` block comments and runs of
+  `//` line comments are accepted, so any `@rf:RF-NNN` sitting above a
+  TS/JS function/class/method now wires up automatically through the
+  existing `scan_annotations` matcher — Python parity for the
+  Deno/Node/React/Vue/Svelte stacks. Each comment is stripped
+  individually before joining (so a `/** @rf:... */` adjacent to `//`
+  line comments still has its tag at line-start where the matcher
+  anchors), and pure ASCII separator lines (`// ---`, `// ===`) are
+  dropped so they don't crowd out the meaningful JSDoc as
+  `docstring_lead`. Locked in by `test_ts_jsdoc_docstring_populated`
+  and `test_ts_jsdoc_wins_over_adjacent_separator_line_comment`.
+- **`bulk_link_rf_symbols` promoted to the agentic surface.** Previously
+  only registered by the `livespec-rf` plugin (which loads on DB-state
+  signal), it is now part of the default tool tier so agents always
+  have an escape hatch for languages or file types where the in-source
+  annotation extractor can't reach (configs, SQL, YAML, languages
+  without docstring extraction yet). Plugin no longer re-registers it.
+- **`audit_coverage` distinguishes extractor gaps from real orphans.**
+  New `modules_unsupported_language` bucket lists files whose language
+  has no annotation extractor today (everything outside Python / JS /
+  TS / TSX). They are removed from `modules_truly_orphan` so the
+  actionable list is no longer drowned by false positives — the gap is
+  in the extractor, not the project.
+
 ### Added — v0.12 P1 RAG layer wired end-to-end
 - **`search` MCP tool** (new, default surface). Hybrid retrieval over
   AST-aware chunked symbols + RFs. FTS5 lane always live; vector lane

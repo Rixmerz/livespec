@@ -37,6 +37,14 @@ def detect_language(path: Path) -> str | None:
     return EXT_LANGUAGE.get(path.suffix.lower())
 
 
+# Languages whose extractor populates `symbol.docstring` so the @rf:
+# annotation matcher can find tags. Used by audit_coverage to separate
+# "actually un-covered" from "extractor can't see annotations here yet".
+ANNOTATION_SUPPORTED_LANGUAGES: frozenset[str] = frozenset({
+    "python", "javascript", "typescript", "tsx",
+})
+
+
 @lru_cache(maxsize=64)
 def get_parser(language: str):
     """Return a tree-sitter Parser configured for the given language id.

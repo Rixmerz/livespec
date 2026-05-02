@@ -145,3 +145,62 @@ def test_ts_js_scoped_resolution_imports(lang_dir: str, main_file: str):
     assert refs_by_target.get("format") == "utils", (
         f"utils.format() should be scoped to 'utils' via leftmost lookup, got: {refs_by_target}"
     )
+
+
+def test_ts_jsdoc_docstring_populated(tmp_path: Path):
+    """JSDoc `/** ... */` immediately preceding a TS declaration is captured
+    as the symbol's docstring so the @rf: matcher can find tags. Covers the
+    bug where TS symbols always had `docstring=None` even when an
+    `@rf:RF-NNN` annotation lived right above the function."""
+    src = """/**
+ * Fetches a token.
+ * @rf:BE-RF-016
+ */
+export async function getManyChatToken() { return 'x'; }
+
+/** @rf:RF-001, RF-002 */
+function helper() {}
+
+// @rf:RF-009
+function lineCommented() {}
+"""
+    p = tmp_path / "main.ts"
+    p.write_text(src, encoding="utf-8")
+    _, result = extract(p, src, tmp_path)
+    by_name = {s.name: s for s in result.symbols}
+    assert "getManyChatToken" in by_name
+    assert "@rf:BE-RF-016" in (by_name["getManyChatToken"].docstring or "")
+    assert "@rf:RF-001" in (by_name["helper"].docstring or "")
+    # // line comments are also kept so inline `@rf:` tags still match
+    assert "@rf:RF-009" in (by_name["lineCommented"].docstring or "")
+
+
+def test_ts_jsdoc_wins_over_adjacent_separator_line_comment(tmp_path: Path):
+    """Bug from real session: `// ---\n/** @rf:RF-001 */\nfunction foo() {}`
+    used to concatenate raw text and run a single strip pass keyed on the
+    leading `//`, leaving the block's `/**` mid-text and defeating the
+    matcher's line-start anchor for `@rf:`. Each comment must be stripped
+    individually, and pure ASCII separator lines (`// ---`) must not be
+    chosen as the docstring lead.
+    """
+    from livespec_mcp.domain.matcher import parse_annotations
+
+    src = """// ---
+// helper section
+/**
+ * Resolve a token from cache.
+ * @rf:BE-RF-016
+ */
+export async function getManyChatToken() { return 'x'; }
+"""
+    p = tmp_path / "main.ts"
+    p.write_text(src, encoding="utf-8")
+    _, result = extract(p, src, tmp_path)
+    sym = next(s for s in result.symbols if s.name == "getManyChatToken")
+    assert sym.docstring is not None
+    # Pure separator line dropped — lead is the meaningful content.
+    assert not sym.docstring.lstrip().startswith("---")
+    # Block delimiters cleaned, so `@rf:` lives at line start.
+    hits = parse_annotations(sym.docstring)
+    rf_ids = {h.rf_id for h in hits}
+    assert "RF-016" in rf_ids, f"matcher missed @rf in {sym.docstring!r}"

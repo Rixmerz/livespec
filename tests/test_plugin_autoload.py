@@ -142,10 +142,14 @@ async def test_rf_plugin_registers_mutation_tools(workspace, monkeypatch):
     async with Client(test_mcp) as c:
         tools = await c.list_tools()
         names = {t.name for t in tools}
-    # The 11 mutation tools must all be present
+    # Mutation tools that must be present in the plugin surface.
+    # `bulk_link_rf_symbols` was promoted to the agentic surface (default
+    # tier) so agents can wire annotations on languages where the
+    # in-source extractor doesn't yet read tags — it is therefore NOT
+    # re-registered by the plugin.
     expected_mutation = {
         "create_requirement", "update_requirement", "delete_requirement",
-        "link_rf_symbol", "bulk_link_rf_symbols",
+        "link_rf_symbol",
         "link_rf_dependency", "unlink_rf_dependency",
         "get_rf_dependency_graph",
         "scan_rf_annotations", "scan_docstrings_for_rf_hints",
@@ -156,6 +160,7 @@ async def test_rf_plugin_registers_mutation_tools(workspace, monkeypatch):
     # Agentic tools must NOT be re-registered by the plugin
     assert "list_requirements" not in names
     assert "get_requirement_implementation" not in names
+    assert "bulk_link_rf_symbols" not in names
 
 
 def test_detect_survives_missing_table(workspace, monkeypatch):

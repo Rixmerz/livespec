@@ -359,6 +359,113 @@ _ANONYMOUS_FN_TYPES = {
 }
 
 
+def _ts_leading_doc_comment(node, src_bytes: bytes, language: str) -> str | None:
+    """Return the JSDoc / leading doc-comment text immediately preceding `node`.
+
+    Tree-sitter exposes comments as sibling nodes of declarations. For
+    `export ...` and `export default ...`, we walk up so the comment is
+    found relative to the wrapping export statement (where it actually
+    sits). Supports JS/TS JSDoc (`/** ... */`), Rust outer-doc lines
+    (`/// ...`), and runs of `//` line comments. The returned text is
+    raw (delimiters stripped, leading `*` / `/` markers trimmed) so the
+    `@rf:` annotation matcher can scan it as if it were a Python
+    docstring.
+    """
+    # Walk up through wrapping export statements so we can see the
+    # comment that sits above `export function foo()`.
+    cur = node
+    parent = getattr(cur, "parent", None)
+    while parent is not None and parent.type in (
+        "export_statement",
+        "export_default_declaration",
+    ):
+        cur = parent
+        parent = getattr(cur, "parent", None)
+    if parent is None:
+        return None
+
+    # Find the immediate previous sibling by index.
+    prev_idx = -1
+    for i, c in enumerate(parent.children):
+        if c.start_byte == cur.start_byte and c.end_byte == cur.end_byte:
+            prev_idx = i - 1
+            break
+    if prev_idx < 0:
+        return None
+
+    # Collect a contiguous run of comment siblings (handles `//` blocks
+    # and `///` Rust doc comments). Each comment is stripped according
+    # to its own delimiter style BEFORE joining so a `/** ... */` block
+    # adjacent to `// ...` line comments still has its `@rf:` tag at
+    # column 0 of its joined line — otherwise the leading `/**` of the
+    # block leaks into the joined text and defeats the matcher's
+    # line-start anchor.
+    cleaned: list[str] = []
+    idx = prev_idx
+    while idx >= 0:
+        sib = parent.children[idx]
+        if "comment" not in sib.type:
+            break
+        raw = src_bytes[sib.start_byte : sib.end_byte].decode("utf-8", errors="replace")
+        piece = _strip_doc_comment(raw).strip()
+        # Skip pure ASCII separator lines (`// ---`, `// ===`, `// ***`)
+        # so they don't end up as `docstring_lead`. They carry no signal
+        # and only crowd out the JSDoc block sitting underneath.
+        if piece and not _is_separator_only(piece):
+            cleaned.append(piece)
+        idx -= 1
+    if not cleaned:
+        return None
+    cleaned.reverse()
+    return "\n".join(cleaned).strip() or None
+
+
+def _is_separator_only(text: str) -> bool:
+    """True if every non-empty line is just ASCII separator punctuation
+    (e.g. `---`, `===`, `***`, `###`). These show up as banner-style
+    line comments above declarations and must not be treated as the
+    declaration's docstring."""
+    sep_chars = set("-=*#_~ \t")
+    saw_line = False
+    for line in text.splitlines():
+        s = line.strip()
+        if not s:
+            continue
+        saw_line = True
+        if any(ch not in sep_chars for ch in s):
+            return False
+    return saw_line
+
+
+def _strip_doc_comment(raw: str) -> str:
+    """Strip JSDoc/`//`/`///` syntax to leave the inner text. Conservative:
+    if the comment isn't a recognised doc form, return it unchanged so
+    inline `@rf:` tags inside ordinary `//` comments still match."""
+    s = raw.strip()
+    # JSDoc / block comment
+    if s.startswith("/*"):
+        if s.endswith("*/"):
+            s = s[:-2]
+        s = s.lstrip("/*").rstrip()
+        lines = []
+        for line in s.splitlines():
+            stripped = line.strip()
+            if stripped.startswith("*"):
+                stripped = stripped[1:].lstrip()
+            lines.append(stripped)
+        return "\n".join(lines).strip()
+    # Run of `//` or `///` line comments
+    out_lines = []
+    for line in s.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("///"):
+            stripped = stripped[3:].lstrip()
+        elif stripped.startswith("//"):
+            stripped = stripped[2:].lstrip()
+        out_lines.append(stripped)
+    return "\n".join(out_lines).strip()
+
+
 def _ts_extract(
     source: str,
     language: str,
@@ -404,13 +511,14 @@ def _ts_extract(
         start_line = node.start_point[0] + 1
         end_line = node.end_point[0] + 1
         signature = text(node).splitlines()[0][:300] if node.start_byte != node.end_byte else None
+        docstring = _ts_leading_doc_comment(node, src_bytes, language)
         out.symbols.append(
             ExtractedSymbol(
                 name=name,
                 qualified_name=qname,
                 kind=kind,
                 signature=signature,
-                docstring=None,
+                docstring=docstring,
                 body_hash_seed=_normalize_ts_body(node, src_bytes),
                 start_line=start_line,
                 end_line=end_line,

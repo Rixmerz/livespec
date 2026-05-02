@@ -32,11 +32,40 @@ Todo el stack es local-first: 0 servicios externos, 0 API keys obligatorias, 0 D
 
 ---
 
-## 3. Estado actual: v0.12 P1 mergeado a main (RAG wire). Último tag `v0.11.0`.
+## 3. Estado actual: JS/TS JSDoc + agentic bulk-link + audit-coverage extractor-aware. Último tag `v0.11.0`.
 
-**HEAD:** `f161492`. Tests **243/243** default + **3/3** `-m embeddings`
-= **246 total**. Schema v7 (sin migración nueva — `chunk` + `chunk_fts`
-+ `embedded_at` ya existían).
+**HEAD:** working tree (uncommitted at time of writing).
+Tests **244/244** default + **3/3** `-m embeddings` = **247 total**.
+Schema v7 (sin migración nueva).
+
+### v0.12 P2 (JSDoc + bulk-link agentic + audit_coverage gap — 2026-05-02)
+
+Triggered por feedback de sesión real sobre proyecto TS/Node con 137
+archivos backend + 218 frontend, 60 RFs registrados y 34 anotaciones
+in-source en JSDoc — `index_project` reportaba `rf_links_created: 0`
+porque el extractor TS dejaba `docstring=None` hardcoded. Tres fixes:
+
+- **`domain/extractors.py:_ts_leading_doc_comment`** (nuevo): para
+  declaraciones JS/TS/TSX, lee el comentario inmediatamente anterior
+  al nodo (subiendo a través de `export_statement` /
+  `export_default_declaration`), soporta JSDoc bloque `/** ... */` y
+  runs de `//` o `///`. Se invoca desde `emit_symbol`. Ahora cualquier
+  `@rf:RF-NNN` arriba de una función TS lo captura
+  `scan_annotations` automáticamente sin cambios al matcher.
+- **`tools/requirements.py:bulk_link_rf_symbols`**: cambia
+  `@mutation_tool` → `@agentic_tool`. Ya no depende del plugin
+  `livespec-rf` para registrarse — siempre disponible como escape
+  hatch para configs/SQL/YAML o lenguajes sin extractor de
+  anotaciones. Plugin actualizado para no re-registrar.
+- **`tools/analysis.py:audit_coverage`**: nuevo bucket
+  `modules_unsupported_language` separa archivos cuyo lenguaje no
+  tiene extractor de anotaciones (todo lo que no sea Python / JS / TS
+  / TSX hoy). Se extraen de `modules_truly_orphan`. Driven por
+  `domain/languages.py:ANNOTATION_SUPPORTED_LANGUAGES`.
+- **Tests**: `test_ts_jsdoc_docstring_populated` cubre JSDoc bloque,
+  multi-RF y `//` line comments. `test_rf_plugin_registers_mutation_tools`
+  actualizado para reflejar el nuevo split (10 mutation tools en plugin,
+  bulk_link en agentic).
 
 ### v0.12 P1 (RAG wire — 2026-05-01, post-v0.11.0)
 

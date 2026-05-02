@@ -69,7 +69,7 @@ on top so an agent on a serious-software-shop codebase can answer
 one round-trip. RF agentic tools ship in the default surface;
 RF mutation/management tools live in the optional `livespec-rf` plugin
 that **auto-loads when the workspace already has RFs** — fresh repos get
-a 17-tool surface (18 with `[embeddings]` extra), RF-active repos
+a 18-tool surface (19 with `[embeddings]` extra), RF-active repos
 get 28, with no config.
 
 ### What "living" actually means here
@@ -164,7 +164,7 @@ server resolves to `LIVESPEC_WORKSPACE` env var or the current working
 directory. The runtime caches one DB connection per workspace (LRU=8), so a
 single MCP server instance can serve multiple repos in parallel.
 
-### Default surface — code intel + RF agentic (17)
+### Default surface — code intel + RF agentic (18)
 
 These tools answer the questions an agent ASKS on an unfamiliar codebase.
 Always registered.
@@ -211,9 +211,15 @@ Always registered.
   fastmcp, celery, django, None}.
 - `audit_coverage()` — RF coverage report: modules without direct RF,
   modules implicitly covered (transitively reached), modules truly orphan,
-  RFs without implementation, RFs with low avg confidence.
+  modules in languages whose annotation extractor isn't wired yet
+  (`modules_unsupported_language`), RFs without implementation, RFs with
+  low avg confidence.
 
-#### RF agentic — query, don't mutate (3)
+#### RF agentic — query, don't mutate (4)
+- `bulk_link_rf_symbols(mappings)` — batch-link N (rf_id, symbol_qname)
+  pairs in one transaction. Escape hatch for files/languages where the
+  in-source annotation extractor doesn't reach (configs, SQL, YAML).
+  Idempotent: re-linking an existing pair is a no-op.
 - `list_requirements(status, module, priority, has_implementation)` —
   RF discovery surface.
 - `get_requirement_implementation(rf_id)` — answers
@@ -223,16 +229,20 @@ Always registered.
   on an RF-empty repo. Groups symbols by module + PageRank, proposes
   RF candidates with humanized title + suggested_symbols.
 
-### `livespec-rf` plugin — RF mutation (11)
+### `livespec-rf` plugin — RF mutation (10)
 
 Auto-loads when the workspace DB has rf rows, or when `LIVESPEC_PLUGINS`
 includes `rf`. Tools an *operator* runs to mutate RF state.
+
+`bulk_link_rf_symbols` — previously in this plugin — was promoted to the
+default agentic surface so agents always have an escape hatch for
+languages/file types where the in-source annotation extractor can't
+reach (configs, SQL, YAML).
 
 - `create_requirement(title, ...)`, `update_requirement(rf_id, ...)`,
   `delete_requirement(rf_id)` — cascade-removes rf_symbol links.
 - `link_rf_symbol(rf_id, symbol_qname, relation, confidence, source, unlink)` —
   link / unlink a single RF↔symbol pair.
-- `bulk_link_rf_symbols(mappings)` — batch-link N pairs in one transaction.
 - `link_rf_dependency(parent_rf_id, child_rf_id, kind='requires')` /
   `unlink_rf_dependency` / `get_rf_dependency_graph` — RF→RF graph.
   `kind` ∈ {requires, extends, conflicts}; cycles rejected at insert time.

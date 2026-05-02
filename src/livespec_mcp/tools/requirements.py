@@ -273,7 +273,7 @@ def register(
             rf_id, symbol_qname, relation, confidence, source, unlink, workspace
         )
 
-    @mutation_tool(annotations={"readOnlyHint": False, "idempotentHint": True})
+    @agentic_tool(annotations={"readOnlyHint": False, "idempotentHint": True})
     def bulk_link_rf_symbols(
         mappings: list[dict[str, Any]],
         workspace: str | None = None,

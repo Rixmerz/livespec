@@ -1830,6 +1830,10 @@ def register(mcp: FastMCP) -> None:
           API handlers that carry the `@rf:` annotation)
         - `modules_truly_orphan`: subset of `modules_without_rf` with NO direct
           link AND no transitive coverage — the actually-actionable list
+        - `modules_unsupported_language`: files in languages whose extractor
+          does not yet read in-source `@rf:` annotations (everything outside
+          Python / JS / TS today). Listed separately so they aren't reported
+          as orphans — the gap is in the extractor, not the project.
         - `rfs_without_implementation`: RFs with no `rf_symbol` row at all
         - `rfs_low_confidence`: RFs whose avg(rf_symbol.confidence) < 0.7
           (typically means only verb-anchored matches, no `@rf:` annotation)
@@ -1864,7 +1868,18 @@ def register(mcp: FastMCP) -> None:
         def _is_package_marker(path: str) -> bool:
             return path.rsplit("/", 1)[-1] in _PACKAGE_MARKER_BASENAMES
 
-        modules_no_rf = [
+        from pathlib import Path as _Path
+
+        from livespec_mcp.domain.languages import (
+            ANNOTATION_SUPPORTED_LANGUAGES,
+            detect_language,
+        )
+
+        def _annotation_supported(path: str) -> bool:
+            lang = detect_language(_Path(path))
+            return lang in ANNOTATION_SUPPORTED_LANGUAGES
+
+        all_no_rf = [
             r["path"]
             for r in st.conn.execute(
                 """SELECT f.path FROM file f
@@ -1879,6 +1894,10 @@ def register(mcp: FastMCP) -> None:
             )
             if not _is_package_marker(r["path"])
         ]
+        # Split off files whose language has no annotation extractor —
+        # these are not "truly orphan", just outside what we can scan.
+        modules_unsupported_language = [p for p in all_no_rf if not _annotation_supported(p)]
+        modules_no_rf = [p for p in all_no_rf if _annotation_supported(p)]
 
         # Split direct-orphan into implicitly-covered vs truly-orphan via the
         # call graph: a file is implicitly covered if any of its symbols has
@@ -1974,6 +1993,7 @@ def register(mcp: FastMCP) -> None:
             "modules_without_rf": len(modules_no_rf),
             "modules_implicitly_covered": len(modules_implicit),
             "modules_truly_orphan": len(modules_truly_orphan),
+            "modules_unsupported_language": len(modules_unsupported_language),
             "rfs_without_implementation": len(rfs_no_impl),
             "rfs_low_confidence": len(rfs_low_conf),
             "rfs_with_test_coverage": len(rf_test_coverage),
@@ -1989,6 +2009,7 @@ def register(mcp: FastMCP) -> None:
         mw_p, mw_next = _page(modules_no_rf)
         mi_p, mi_next = _page(modules_implicit)
         mt_p, mt_next = _page(modules_truly_orphan)
+        mu_p, mu_next = _page(modules_unsupported_language)
         rfn_p, rfn_next = _page(rfs_no_impl)
         rfl_p, rfl_next = _page(rfs_low_conf)
         rftc_p, rftc_next = _page(rf_test_coverage)
@@ -1997,6 +2018,7 @@ def register(mcp: FastMCP) -> None:
             "modules_without_rf": mw_p,
             "modules_implicitly_covered": mi_p,
             "modules_truly_orphan": mt_p,
+            "modules_unsupported_language": mu_p,
             "rfs_without_implementation": rfn_p,
             "rfs_low_confidence": rfl_p,
             "rf_test_coverage": rftc_p,
@@ -2004,6 +2026,7 @@ def register(mcp: FastMCP) -> None:
                 "modules_without_rf": mw_next,
                 "modules_implicitly_covered": mi_next,
                 "modules_truly_orphan": mt_next,
+                "modules_unsupported_language": mu_next,
                 "rfs_without_implementation": rfn_next,
                 "rfs_low_confidence": rfl_next,
                 "rf_test_coverage": rftc_next,
