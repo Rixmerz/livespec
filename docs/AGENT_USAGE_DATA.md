@@ -604,6 +604,38 @@ the next release.
   4 profiles is enough to lock the v0.8 tier list. Session 05 (TS/JS
   feature) remains valuable for language coverage.
 
+### Wire validation of v0.9 fixes against Django (post-`d9d936d`)
+
+After landing v0.9 P3 (weight filter), P4 (non-Python skip + dotted-
+path strings + Meta inner classes), and P5 (Django CBV detection),
+the same Django workspace re-indexed and queried:
+
+| Tool | v0.8 baseline (session 04) | v0.9 (post-fixes) | Delta |
+|---|---:|---:|---:|
+| `find_dead_code` count | 824 | **514** | −38% noise |
+| `find_dead_code` functions | 450 | 189 | **−58%** (JS skip + dotted strings dominate) |
+| `find_dead_code` classes | 293 | 251 | −14% (Meta + AppConfig protected) |
+| `find_dead_code` methods | 81 | 74 | −9% |
+| `find_endpoints(framework='django')` | 20 | **162** | **+710%** (CBVs surfaced) |
+
+The 514 remaining dead candidates on Django itself are largely:
+- `Argon2PasswordHasher`, `ScryptPasswordHasher` — referenced by
+  string in `PASSWORD_HASHERS` in user settings (out-of-tree).
+- Database backend internal classes (Oracle, MySQL, GIS variants)
+  — registered via dotted-path strings in user `DATABASES` settings.
+- Lookups (`OverlapsLeftLookup`, etc.) — registered via
+  `Field.register_lookup(...)` runtime calls.
+- Public Django API exposed via `from django.x import Y` for
+  third-party code — no in-project caller.
+
+Pattern: each remaining false-positive needs either runtime-call
+detection or out-of-tree-string awareness — both larger surface
+than v0.9. Marked for v0.10+ planning.
+
+`find_endpoints(framework='django')` 20 → 162 confirms the CBV
+detection is the right fix. Before P5 the agent had no way to ask
+"what views does this Django app expose?" and get a real answer.
+
 ### Updated tier signal (n=4 sessions, 4 profiles, 65 calls)
 
 **Tier-1 (data-validated, ≥1 use across sessions of relevant profile)**:
