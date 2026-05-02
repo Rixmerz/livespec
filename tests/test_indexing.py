@@ -155,12 +155,19 @@ async def test_resource_overview_parity_with_tool(sample_repo):
 
 @pytest.mark.asyncio
 async def test_resource_index_status_parity_with_tool(sample_repo):
-    """project://index/status output must match get_index_status tool output."""
+    """project://index/status output must match get_index_status tool output.
+
+    v0.8 P3.2: the deprecated tool adds `deprecated`/`replacement`/`removal`
+    keys advising agents to migrate; the resource (the canonical surface)
+    does not. Parity is over the data payload, not the deprecation envelope.
+    """
     async with Client(mcp) as c:
         await c.call_tool("index_project", {})
         tool_data = (await c.call_tool("get_index_status", {})).data
         res = await c.read_resource("project://index/status")
         resource_data = json.loads(res[0].text)
+        for key in ("deprecated", "replacement", "removal"):
+            tool_data.pop(key, None)
         assert tool_data == resource_data
 
 
