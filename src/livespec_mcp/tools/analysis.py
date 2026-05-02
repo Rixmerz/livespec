@@ -95,6 +95,60 @@ def _decorator_matches_any(name: str, patterns: tuple[str, ...]) -> bool:
     return last in {p.lower() for p in patterns}
 
 
+_DJANGO_CBV_BASES = frozenset({
+    # Generic class-based views
+    "View", "TemplateView", "RedirectView", "ListView", "DetailView",
+    "FormView", "CreateView", "UpdateView", "DeleteView",
+    "BaseDetailView", "BaseListView", "BaseFormView", "BaseCreateView",
+    "BaseUpdateView", "BaseDeleteView", "ProcessFormView",
+    "ArchiveIndexView", "YearArchiveView", "MonthArchiveView",
+    "WeekArchiveView", "DayArchiveView", "DateDetailView",
+    # Auth views (django.contrib.auth.views)
+    "LoginView", "LogoutView",
+    "PasswordChangeView", "PasswordChangeDoneView",
+    "PasswordResetView", "PasswordResetDoneView",
+    "PasswordResetConfirmView", "PasswordResetCompleteView",
+    # Auth mixins
+    "LoginRequiredMixin", "PermissionRequiredMixin",
+    "UserPassesTestMixin", "AccessMixin",
+    # Middleware base
+    "MiddlewareMixin",
+    # Admin views
+    "AutocompleteJsonView",
+    # API view patterns from DRF (common-enough adjacent)
+    "APIView", "ViewSet", "ModelViewSet", "GenericViewSet",
+    "ReadOnlyModelViewSet",
+})
+
+
+def _django_cbv_base_from_signature(sig: str | None) -> str | None:
+    """Return the matched Django CBV base class name found in `sig`, or None.
+
+    `sig` is the class signature string emitted by the Python extractor —
+    e.g. ``class LoginView(SuccessURLAllowedHostsMixin, FormView)``. We
+    take the bases between the first ``(`` and last ``)``, split on
+    commas, strip dotted-path prefixes, and return the first hit
+    against `_DJANGO_CBV_BASES`. Returns None when the class has no
+    bases or none match.
+    """
+    if not sig or not sig.startswith("class "):
+        return None
+    open_paren = sig.find("(")
+    close_paren = sig.rfind(")")
+    if open_paren < 0 or close_paren <= open_paren:
+        return None
+    bases_part = sig[open_paren + 1 : close_paren]
+    if not bases_part.strip():
+        return None
+    for raw in bases_part.split(","):
+        # Strip generic / subscript suffix (`View[T]`) and dotted prefix.
+        token = raw.strip().split("[", 1)[0].split("=", 1)[0].strip()
+        last = token.rsplit(".", 1)[-1]
+        if last in _DJANGO_CBV_BASES:
+            return last
+    return None
+
+
 def _collect_module_refs(node: ast.AST, into: set[str]) -> None:
     """Walk an AST node, collecting Name/Attribute identifiers, but PRUNE
     bodies of nested function/class defs so refs inside their scopes are
@@ -1278,6 +1332,14 @@ def register(mcp: FastMCP) -> None:
         to filter to its decorator set (matched against the LAST dotted
         segment of each decorator, so aliasing like `from flask import Flask
         as App; @App().route(...)` still resolves).
+
+        v0.9 P5: when ``framework='django'`` (or ``None``), classes that
+        inherit from Django class-based view bases or auth mixins
+        (LoginView/LogoutView/View/TemplateView/ListView/DetailView/
+        FormView/CreateView/UpdateView/DeleteView/RedirectView/
+        LoginRequiredMixin/PermissionRequiredMixin/UserPassesTestMixin/
+        MiddlewareMixin) are also surfaced even when they have no
+        decorator. Closes session-04 bug #15.
         """
         st = get_state(workspace)
         pid = st.project_id
@@ -1301,6 +1363,7 @@ def register(mcp: FastMCP) -> None:
                 return [d for d in decs if _decorator_lastseg(d) in _ENTRY_POINT_DECORATOR_LASTSEG]
 
         endpoints: list[dict[str, Any]] = []
+        seen_qnames: set[str] = set()
         for r in rows:
             try:
                 decs = json.loads(r["decorators"] or "[]")
@@ -1317,6 +1380,40 @@ def register(mcp: FastMCP) -> None:
                 "end_line": r["end_line"],
                 "decorators": matching,
             })
+            seen_qnames.add(r["qualified_name"])
+
+        # v0.9 P5: Django class-based view detection. Classes that
+        # inherit from a Django CBV / mixin base are entry points without
+        # decorators — the framework dispatches them via URL routing or
+        # MIDDLEWARE setting. Run only when the requested framework is
+        # 'django' or None (no filter).
+        if framework in ("django", None):
+            cbv_rows = st.conn.execute(
+                """SELECT s.qualified_name, s.kind, s.signature, s.start_line,
+                          s.end_line, f.path AS file_path
+                   FROM symbol s JOIN file f ON f.id=s.file_id
+                   WHERE f.project_id=? AND s.kind='class' AND s.signature IS NOT NULL
+                   ORDER BY f.path, s.start_line""",
+                (pid,),
+            ).fetchall()
+            for r in cbv_rows:
+                if r["qualified_name"] in seen_qnames:
+                    continue
+                cbv_base = _django_cbv_base_from_signature(r["signature"])
+                if cbv_base is None:
+                    continue
+                endpoints.append({
+                    "qualified_name": r["qualified_name"],
+                    "kind": r["kind"],
+                    "file_path": r["file_path"],
+                    "start_line": r["start_line"],
+                    "end_line": r["end_line"],
+                    "decorators": [],
+                    "django_cbv_base": cbv_base,
+                })
+                seen_qnames.add(r["qualified_name"])
+
+        endpoints.sort(key=lambda e: (e["file_path"], e["start_line"]))
         total = len(endpoints)
         if summary_only:
             return {"framework": framework, "count": total}
