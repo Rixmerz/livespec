@@ -32,7 +32,24 @@ Todo el stack es local-first: 0 servicios externos, 0 API keys obligatorias, 0 D
 
 ---
 
-## 3. Estado actual: v0.8.0 cortado. Default surface 17 tools + 14 plugin = 31 max activos.
+## 3. Estado actual: v0.9.0 cortado. Default surface 16 tools + 14 plugin = 30 max activos.
+
+**Tag:** `v0.9.0`. Tests **175/175**, schema v7.
+
+v0.9 entera ejecutada en una sesión post-v0.8.0:
+- **P0** targeted resolver walk (perf, 25→12ms partial en `requests`)
+- **P1** session 04 battle-test (Django, 16 calls, 5 bugs surfaceados)
+- **P2** pagination en `who_calls`/`who_does_this_call`/`analyze_impact`
+- **P3** `min_weight=0.6` filter en traversal tools (mute fan-out)
+- **P4** Django dead-code accuracy (skip JS, dotted-strings, Meta inner)
+- **P5** Django CBV detection en `find_endpoints`
+- **P6** drop deprecated `get_index_status`
+
+**Wire-validation contra Django 5.1.4 (40K syms):**
+- `find_dead_code`: 824 → **514** (−38% noise)
+- `find_endpoints(django)`: 20 → **162** (+8×)
+
+### Estado previo: v0.8.0 cortado. Default surface 17 tools + 14 plugin = 31 max activos.
 
 **Último commit antes del tag:** `<bump-commit>` (P7 release prep).
 **Tag:** `v0.8.0` apunta a este commit. **Tests 157/157**, schema v7.

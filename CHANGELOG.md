@@ -6,6 +6,107 @@ follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.9.0] — 2026-05-01
+
+The "Django readiness" release. Drives the v0.8 P2 battle-test bugs
+(#12-#16) to closure end-to-end. The primary signal: same Django
+codebase, same queries, dramatically cleaner answers.
+
+| Tool | v0.8 | v0.9 | Delta |
+|---|---:|---:|---:|
+| `find_dead_code` count | 824 | 514 | −38% noise |
+| `find_dead_code` functions | 450 | 189 | −58% |
+| `find_endpoints(django)` | 20 | 162 | +8× |
+
+### Removed (breaking) — v0.9 P6
+- **`get_index_status` tool**. Honors the v0.8 P3.2 deprecation
+  contract. Read the `project://index/status` resource for the
+  same payload.
+
+### Added — v0.9 P0 perf
+- **Targeted `_resolve_refs` walk** on partial reindex. Closes the
+  v0.7 deferred item. When a re-index changes only a subset of
+  files (no `force`, no deletions, prior index run exists), the
+  resolver walks only refs whose src is in a changed file OR whose
+  `target_name` matches a name re-inserted in a changed file. Refs
+  from unchanged files to unchanged files keep their existing
+  edges (INSERT OR IGNORE on the same `(src, dst)` is a no-op).
+  Measured on `requests`: partial reindex 25.3ms → 12.3ms (−51%).
+  On Django the relative win is larger (refs scale superlinearly
+  with symbols).
+
+### Added — v0.9 P2 pagination on traversals
+- **`who_calls`, `who_does_this_call`, `analyze_impact`** now accept
+  the v0.7 B3 pagination contract — `limit` (default 200), `cursor`,
+  `summary_only`. Closes session-04 bugs #12 and #13. At
+  `max_depth=2` on `BaseBackend.authenticate` the unpaginated
+  response was 102 KB (400 callers / 71 files); `analyze_impact`
+  at `max_depth=3` was 332 KB (664 callers + 848 calls_into).
+
+### Added — v0.9 P3 weight filter on traversals
+- **`who_calls` / `who_does_this_call` / `quick_orient` /
+  `analyze_impact`** default to `min_weight=0.6`, dropping the
+  resolver fan-out edges (weight 0.5 — short-name candidates the
+  static analyzer couldn't disambiguate). Closes session-04 bugs
+  #14 and #17. Pass `min_weight=0.0` to recover the legacy
+  unfiltered cone. The internal correctness tools (`find_dead_code`,
+  `audit_coverage`) continue to count every edge so an ambiguous
+  caller still proves the symbol is reachable.
+
+### Added — v0.9 P4 Django dead-code accuracy (#16)
+- **Skip non-Python files in `find_dead_code` by default**. The
+  module-level reference scanner is Python-only — JS/Go/Java
+  callsites are invisible to it. Vendored xregexp.js helpers
+  (~70 of them) used to be over-reported on Django. New
+  `include_non_python=True` opt-in restores the legacy behavior.
+- **Recognize string-based dotted-path references** in the
+  module-level scanner. Django settings register implementations
+  as strings: `INSTALLED_APPS = ['app.apps.AdminConfig']`,
+  `MIDDLEWARE`, `PASSWORD_HASHERS`, `default_app_config`.
+  `_collect_module_refs` now adds the trailing identifier of any
+  validated dotted-path string constant to the refs set.
+- **Recognize Django framework inner-class hooks**:
+  `class Meta:` / `class Migration:` inner classes are read
+  reflectively by Django's metaclasses. Guarded by parent-segment
+  PascalCase check so a stray module-level `class Meta:` is still
+  flagged dead.
+
+### Added — v0.9 P5 Django CBV detection in `find_endpoints` (#15)
+- **`find_endpoints(framework='django')`** now scans class
+  signatures for inheritance from Django's class-based view bases
+  (View, TemplateView, ListView, DetailView, FormView, CreateView,
+  UpdateView, DeleteView, RedirectView, archive views), auth
+  mixins (LoginRequiredMixin, PermissionRequiredMixin,
+  UserPassesTestMixin, AccessMixin), auth views (LoginView,
+  LogoutView, PasswordResetView family), MiddlewareMixin,
+  AutocompleteJsonView, and DRF-adjacent (APIView, ViewSet
+  family). Matched classes ship a `django_cbv_base` field naming
+  the responsible parent. Endpoints from both passes (decorator +
+  CBV) are merged on `qualified_name` and sorted by
+  `(file_path, start_line)` for stable cursor pagination.
+
+### Tooling
+- Default surface: 17 → **16 tools** after dropping
+  `get_index_status`. Plugin tier unchanged (11 RF + 3 docs).
+  Total max active: **30**.
+- Tests: 157 → **175** (+18 net: +4 targeted resolver, +6
+  traversal pagination, +4 weight filter, +4 dead-code Django,
+  +4 CBV detection; −4 deprecation tests deleted with the tool).
+- Schema: v7 (no migration in v0.9).
+
+### Deferred to v0.10+
+- Out-of-tree runtime registration detection (Django
+  `PASSWORD_HASHERS` + `DATABASES` backend dotted-paths,
+  `Field.register_lookup()` runtime calls). The remaining 514
+  Django dead-code candidates are largely this pattern.
+- Closure-capture detection in non-Python languages (TS arrow
+  callbacks, Rust closures). Still open from v0.8.
+- Optional LLM-assisted RF refinement on
+  `propose_requirements_from_codebase`. Still open from v0.7.
+- Session 05 (TS/JS feature flow) for language coverage closeout.
+
+---
+
 ## [0.8.0] — 2026-05-01
 
 The "curation" release. v0.7 piled on tools (39 + 4 deprecated aliases);
