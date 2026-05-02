@@ -6,6 +6,35 @@ follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Added — v0.12 P1 RAG layer wired end-to-end
+- **`search` MCP tool** (new, default surface). Hybrid retrieval over
+  AST-aware chunked symbols + RFs. FTS5 lane always live; vector lane
+  fuses via Reciprocal Rank Fusion (k=60) when `[embeddings]` extra is
+  installed and chunks are embedded. Reverses the v0.8 drop: this
+  iteration the tool is wired to a real chunk pipeline and locked in
+  by 9 tests, not the orphan stub from v0.7.
+- **`embed_chunks` MCP tool** (new). Populates `chunk_vec_code` /
+  `chunk_vec_text` vec0 tables for any chunks missing embeddings.
+  No-ops cleanly when extras aren't installed (returns `mcp_error`
+  with install hint).
+- **`index_project` payload** gains `{chunks, embeddings}` fields and
+  a new `embed=False` flag. Rebuilds chunks idempotently after the
+  symbol/edge pass; skipped when no files changed and a chunk set
+  already exists. With `embed=True`, also runs `embed_pending` so
+  vector lane activates without a separate call.
+- **9 tests** locking the contract: 6 default (chunk population, FTS
+  keyword hit, scope filter, error shape, no-vec without embed,
+  rebuild skip on no-change) + 3 `@pytest.mark.embeddings` (vec0
+  populated, hybrid query lights up `lanes.vector`, `embed_chunks`
+  idempotent). Suite total **243 default + 3 embeddings = 246**.
+- **`.gitignore`** hardened for personal + ML artefacts: `.claude/`
+  whole, model weight extensions (`.onnx|safetensors|gguf|bin|pt`),
+  numpy dumps, fastembed/HF cache dirs, debug dumps, editor/OS files.
+
+No schema migration (`chunk` + `chunk_fts` + `embedded_at` already
+existed). No new dependencies (`fastembed` + `sqlite-vec` remain
+opt-in via `pip install -e ".[embeddings]"`).
+
 ## [0.11.0] — 2026-05-01
 
 The "TS framework readiness" release. Closes session-05 bugs #18-#20

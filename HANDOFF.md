@@ -143,13 +143,11 @@ quedan items menores + polish + corte de tag v0.12.0**:
 
 ### Pendiente para cortar v0.12.0
 
+CHANGELOG [Unreleased] + README ya actualizados con P1 (RAG wire). Falta:
+
 - Bump `pyproject.toml` a `0.12.0`
-- Promover `CHANGELOG [Unreleased]` → `[0.12.0]` con bullets de P1
-  (RAG wire) + tool count update (16 default + 1 nuevo `search`,
-  + `embed_chunks` activable)
-- README: mencionar `search` tool en la lista tier-1 + nota de
-  `pip install -e .[embeddings]` para vec lane
-- Tag + push + GH release
+- Promover `CHANGELOG [Unreleased]` → `[0.12.0] — YYYY-MM-DD`
+- Tag + push + GH release con notes-file
 
 ### Opciones para v0.12 (elegir 1-2 según tiempo)
 

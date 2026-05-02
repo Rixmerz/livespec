@@ -232,6 +232,42 @@ data, not before. See ROADMAP §4 Pillar B → A → C ordering.
 
 ## Conventions
 
+### Documentation sync rules (NON-NEGOTIABLE)
+
+Every dev iteration that lands code on `main` MUST update the relevant
+docs **in the same commit batch** (not "next session"). These are not
+suggestions — they're the contract that keeps HANDOFF resumable and the
+public surface honest. Apply each rule by triggering condition:
+
+- **HANDOFF.md — ALWAYS.** Any code-changing commit on `main` updates
+  Section 3 ("Estado actual") with: new HEAD short-sha, total test
+  count, one-paragraph summary of what landed, commit shas. Demote the
+  prior state to a `### vX.Y resumen (referencia)` subsection. If the
+  iteration plans further work, refresh Section 3a.
+- **CHANGELOG.md — when public behaviour changes.** New tool, removed
+  tool, changed payload shape, new flag, new error code, dependency
+  bump that affects users, schema migration, perf-visible refactor →
+  add bullet under `[Unreleased]`. Pure internal refactors / test-only
+  / docs-only commits skip this. When cutting a tag, promote
+  `[Unreleased]` → `[X.Y.Z] - YYYY-MM-DD` (release-flow checklist
+  earlier in this file).
+- **README.md — when surface changes.** Tool count in headline, the
+  tool list, install instructions, headline numbers (Django dead-code
+  reduction, etc.), or "what this answers" lead questions. NOT for
+  internal phase notes — those live in CHANGELOG.
+- **ROADMAP.md — when strategy moves.** A pillar advances, a tier
+  decision is made with battle-test data, a feature is added/dropped
+  from the v1.0 cut. NOT for tactical phase work.
+- **pyproject.toml version — only when cutting a tag.** Never bump
+  mid-phase; phase work lands under `[Unreleased]`.
+
+**Enforcement heuristic before `git commit`**: ask yourself "did I
+change behaviour an agent or user would notice?" If yes → CHANGELOG +
+README. "Did I land code at all on main?" → HANDOFF. Treat skipping
+these as a blocker, same as a failing test. If unsure whether something
+qualifies, update the doc anyway — false positives are cheap, missed
+updates rot the resume contract.
+
 ### Direct push to main
 
 User has saved preference: commit + push directly to `main` for this repo.

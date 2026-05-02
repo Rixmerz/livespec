@@ -69,7 +69,8 @@ on top so an agent on a serious-software-shop codebase can answer
 one round-trip. RF agentic tools ship in the default surface;
 RF mutation/management tools live in the optional `livespec-rf` plugin
 that **auto-loads when the workspace already has RFs** — fresh repos get
-a 16-tool surface, RF-active repos get 27, with no config.
+a 17-tool surface (18 with `[embeddings]` extra), RF-active repos
+get 28, with no config.
 
 ### What "living" actually means here
 
@@ -163,15 +164,27 @@ server resolves to `LIVESPEC_WORKSPACE` env var or the current working
 directory. The runtime caches one DB connection per workspace (LRU=8), so a
 single MCP server instance can serve multiple repos in parallel.
 
-### Default surface — code intel + RF agentic (16)
+### Default surface — code intel + RF agentic (17)
 
 These tools answer the questions an agent ASKS on an unfamiliar codebase.
 Always registered.
 
 #### Indexing (1)
-- `index_project(force=False, watch=False)` — walk, parse, persist. Read
+- `index_project(force=False, watch=False, embed=False)` — walk, parse,
+  persist. Also rebuilds search chunks idempotently. Pass `embed=True`
+  to populate vector embeddings (requires `[embeddings]` extra). Read
   the `project://index/status` resource for current status (the legacy
   `get_index_status` tool was dropped in v0.9).
+
+#### Search (1, v0.12)
+- `search(query, scope='all'|'code'|'requirements', limit=20)` — hybrid
+  retrieval over AST-aware chunks of symbols + RFs. FTS5 keyword lane
+  always live; vector lane fuses via Reciprocal Rank Fusion (k=60)
+  when `[embeddings]` extra is installed and chunks are embedded.
+  Use when you want "code that talks about X" without an exact
+  symbol-name match. Companion tool `embed_chunks()` (also default
+  surface) populates vec0 tables on demand; ~200MB model download
+  on first run, cached afterwards.
 
 #### Code intelligence (12)
 - `find_symbol(query, kind, limit)` — separator-agnostic name lookup.
@@ -250,7 +263,7 @@ includes `docs`. Human-tier ceremony for managing generated docs.
 | `find_references` (v0.1) | `analyze_impact(target_type='symbol', target=qname, max_depth=1)` |
 | `get_symbol_info` (v0.7) | `quick_orient` (composite) + `get_symbol_source` (body) |
 | `get_call_graph` (v0.7) | `who_calls` + `who_does_this_call` |
-| `search`, `rebuild_chunks` (v0.7) | `find_symbol` + `quick_orient`; FTS surface dropped due to zero agent uptake |
+| `search`, `rebuild_chunks` (v0.7, dropped v0.8) | `search` is **back in v0.12** wired to a real chunk pipeline + vector lane via Reciprocal Rank Fusion. `rebuild_chunks` is now auto-run inside `index_project` (no separate tool). `find_symbol` + `quick_orient` still cover exact-name lookup. |
 | `list_files` (v0.7) | grep / ripgrep host with path glob |
 | `start_watcher` / `stop_watcher` / `watcher_status` (v0.7) | re-run `index_project` on demand (watcher race-condition trap for editing agents) |
 | `link_requirement_to_code` (v0.6 alias) | `link_rf_symbol` |
@@ -323,7 +336,7 @@ In-memory FastMCP `Client(mcp)` so tests run without subprocess or network.
 
 livespec ships two user shapes deliberately:
 
-- **Agents** see the 16-tool default surface and the agentic-read RF tools
+- **Agents** see the 17-tool default surface and the agentic-read RF tools
   (`list_requirements`, `get_requirement_implementation`,
   `propose_requirements_from_codebase`, `audit_coverage`). The composite
   `quick_orient` is the canonical first-contact tool — it returns
