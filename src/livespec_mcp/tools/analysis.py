@@ -433,6 +433,44 @@ def _is_implicit_entry_point(meta: dict) -> bool:
 
 _STRUCTURAL_NAME_FILE_THRESHOLD = 3
 
+# v0.11 P0 (bug #18): top-level bundler/build output dirs. Symbols extracted
+# from files under these paths are noise for "what's in this codebase" — they
+# are generated artifacts, not source. Applied to top_symbols (project
+# overview) and find_dead_code. Set, not regex, for cheap prefix checks.
+_BUNDLER_OUTPUT_DIRS = (
+    "_fresh/",
+    "dist/",
+    "build/",
+    ".next/",
+    "out/",
+    "node_modules/",
+    ".svelte-kit/",
+    "target/",
+    "__pycache__/",
+    ".turbo/",
+    ".vite/",
+    ".cache/",
+    ".parcel-cache/",
+)
+
+# Minified-file suffixes (fallback signal: bundlers emit `*.min.js` etc.)
+_MINIFIED_SUFFIXES = (".min.js", ".min.mjs", ".min.css", ".bundle.js")
+
+
+def _is_bundler_output_path(path: str) -> bool:
+    """True if path lives under a known bundler/build output dir or looks
+    like a minified artifact. Path is project-relative (no leading slash)."""
+    if not path:
+        return False
+    p = path[2:] if path.startswith("./") else path
+    for d in _BUNDLER_OUTPUT_DIRS:
+        if p.startswith(d) or f"/{d}" in p:
+            return True
+    for sfx in _MINIFIED_SUFFIXES:
+        if p.endswith(sfx):
+            return True
+    return False
+
 
 def _structural_pattern_names(conn, project_id: int, threshold: int) -> set[str]:
     """Names appearing as a symbol in ≥`threshold` distinct files in the project.
@@ -490,6 +528,8 @@ def compute_project_overview(
         if not include_infrastructure and _is_infrastructure(meta):
             continue
         if structural_names and meta.get("name") in structural_names:
+            continue
+        if _is_bundler_output_path(meta.get("file_path") or ""):
             continue
         top_syms.append({**meta, "pagerank": round(score, 6)})
         if len(top_syms) >= 20:
@@ -1183,6 +1223,10 @@ def register(mcp: FastMCP) -> None:
 
         Filters out, by default:
         - Files under `tests/`, `scripts/`, `bin/`; `__main__.py`; `manage.py`
+        - Bundler/build output dirs (`_fresh/`, `dist/`, `build/`, `.next/`,
+          `out/`, `node_modules/`, `.svelte-kit/`, `target/`, `__pycache__/`,
+          `.turbo/`, `.vite/`, `.cache/`, `.parcel-cache/`) and minified
+          artifacts (`*.min.js`, `*.bundle.js`). v0.11 P0 (bug #18).
         - Infrastructure (DI helpers, dunders, FastMCP `register` fns, ≤4-line
           wrappers). Pass `include_infrastructure=True` to keep them.
         - **Public symbols** (Rust `pub`/`pub(crate)`, TS/JS `exported`,
@@ -1306,6 +1350,8 @@ def register(mcp: FastMCP) -> None:
         for r in rows:
             meta = dict(r)
             if is_entry_point_path(meta["file_path"]):
+                continue
+            if _is_bundler_output_path(meta["file_path"]):
                 continue
             if not include_non_python and not meta["file_path"].endswith(".py"):
                 continue

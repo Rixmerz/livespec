@@ -6,6 +6,19 @@ follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Added — v0.11 P0 bundler/build output dir filter
+- New module-level helper `_is_bundler_output_path(path)` recognises
+  generated artefact dirs (`_fresh/`, `dist/`, `build/`, `.next/`,
+  `out/`, `node_modules/`, `.svelte-kit/`, `target/`, `__pycache__/`,
+  `.turbo/`, `.vite/`, `.cache/`, `.parcel-cache/`) plus minified
+  artefacts (`*.min.js`, `*.min.mjs`, `*.min.css`, `*.bundle.js`).
+- Applied in `find_dead_code` (skips bundler-generated symbols from
+  the dead-code report) and `compute_project_overview` (filters
+  `top_symbols` so generated noise no longer dominates project
+  overview). Closes bug #18 surfaced by session 05 (Deno Fresh / TS).
+- Tests: `tests/test_bundler_filter.py` covers the helper plus
+  end-to-end behaviour for `find_dead_code` and `get_project_overview`.
+
 ## [0.10.0] — 2026-05-01
 
 The "library codebase" release. v0.9 dropped Django `find_dead_code`
