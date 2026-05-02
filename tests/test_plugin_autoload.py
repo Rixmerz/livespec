@@ -109,6 +109,23 @@ def test_register_active_returns_active_set_and_is_idempotent(
 
 
 @pytest.mark.asyncio
+async def test_docs_plugin_registers_doc_tools(workspace, monkeypatch):
+    """v0.8 P3.5: docs plugin owns generate_docs, list_docs, export_documentation."""
+    from fastmcp import Client
+
+    state = get_state()
+    monkeypatch.setenv("LIVESPEC_PLUGINS", "docs")
+    test_mcp = FastMCP(name="docs-plugin-test")
+    register_active(test_mcp, state)
+
+    async with Client(test_mcp) as c:
+        tools = await c.list_tools()
+        names = {t.name for t in tools}
+    expected_docs = {"generate_docs", "list_docs", "export_documentation"}
+    assert expected_docs <= names, f"missing: {expected_docs - names}"
+
+
+@pytest.mark.asyncio
 async def test_rf_plugin_registers_mutation_tools(workspace, monkeypatch):
     """v0.8 P3.4: when the rf plugin loads, mutation tools become callable.
 
