@@ -4,6 +4,53 @@
 bidirectional **Functional Requirement ↔ code** traceability. Local-first,
 zero external services, runs as an MCP server next to your editor.
 
+Battle-tested on real codebases. v0.9 numbers vs the same Django 5.1.4
+queries one release earlier:
+
+| Tool on Django (40K symbols) | v0.8 | v0.9 |
+|---|---:|---:|
+| `find_dead_code` candidates | 824 | **514** (−38% noise) |
+| `find_endpoints(framework='django')` | 20 | **162** (+8×) |
+| `quick_orient` p95 | ~60 ms | ~60 ms |
+| Partial reindex (touch 1 file) | 25 ms | **12 ms** (−51%) |
+
+> Want the agentic flow without reading further?
+> See [`docs/AGENT_QUICKSTART.md`](docs/AGENT_QUICKSTART.md) for the
+> 10-step brownfield onboarding flow that 4 sessions of real-agent
+> battle-testing converged on.
+
+## 30-second tour
+
+```bash
+# Wire as an MCP server next to your editor (claude.ai/code, Cursor, ...).
+# Pointed at any local repo via LIVESPEC_WORKSPACE.
+livespec-mcp
+```
+
+```jsonc
+// First call: cold-index the workspace once
+> index_project()
+{ "files_total": 2898, "symbols_total": 39789, "edges_total": 465179,
+  "languages": {"python": 2786, "javascript": 112}, "watcher_started": false }
+
+// Composite first-contact on an unfamiliar symbol
+> quick_orient(qname="django.contrib.auth.middleware.AuthenticationMiddleware.process_request")
+{ "kind": "method", "is_entry_point": false,
+  "callers_count": 56, "callees_count": 3,
+  "top_callees": [
+    {"qualified_name": "django.contrib.auth.middleware.get_user", "pagerank": 0.000024},
+    {"qualified_name": "django.utils.functional.SimpleLazyObject", "pagerank": 0.000209},
+    {"qualified_name": "django.core.exceptions.ImproperlyConfigured", "pagerank": 0.000872}
+  ],
+  "requirements": [] }
+
+// Wider blast radius on an RF-active codebase
+> analyze_impact(target_type="requirement", target="RF-042")
+{ "rf_id": "RF-042", "implementing_symbols": [...],
+  "dependent_requirements": ["RF-088", "RF-091"],
+  "impacted_callers": [...] }
+```
+
 Built for the questions an agent asks on an unfamiliar codebase:
 
 - ¿Qué código implementa el RF-042?
@@ -15,11 +62,10 @@ RF traceability is the differentiator. Most code-intel tools stop at "what
 calls this function?". livespec layers Functional Requirement ↔ code links
 on top so an agent on a serious-software-shop codebase can answer
 *"changing this function affects RF-042, RF-088 and 3 dependent RFs"* in
-one round-trip. RF agentic tools (`get_requirement_implementation`,
-`audit_coverage`, `propose_requirements_from_codebase`,
-`list_requirements`) ship in the default surface; RF mutation/management
-tools live in the optional `livespec-rf` plugin that auto-loads when the
-workspace already has RFs.
+one round-trip. RF agentic tools ship in the default surface;
+RF mutation/management tools live in the optional `livespec-rf` plugin
+that **auto-loads when the workspace already has RFs** — fresh repos get
+a 16-tool surface, RF-active repos get 27, with no config.
 
 ### What "living" actually means here
 
@@ -231,9 +277,10 @@ includes `docs`. Human-tier ceremony for managing generated docs.
 
 ## Performance
 
-Numbers from the v0.8 P2 battle-test harness (40 calls / 3 sessions / 3
-profiles). Cold = first run; warm = cached run on the same workspace.
-Latency p95 measured with the in-process middleware
+Numbers from the v0.8/v0.9 battle-test harness (4 sessions / 4 profiles
+/ 65+ logged calls in [`docs/AGENT_USAGE_DATA.md`](docs/AGENT_USAGE_DATA.md)).
+Cold = first run; warm = cached run on the same workspace. Latency p95
+measured with the in-process middleware
 (`src/livespec_mcp/instrumentation.py`).
 
 | Repo | Files / Symbols | `index_project` cold | `quick_orient` p95 | `get_project_overview` p95 |
@@ -241,14 +288,24 @@ Latency p95 measured with the in-process middleware
 | demo-app (Python) | 4 / 23 | ~50 ms | <5 ms | ~10 ms |
 | livespec-mcp itself (Python+8 langs) | 84 / 495 | ~400 ms | ~60 ms | ~75 ms |
 | the workflow runner (Python) | 130 / 1173 | ~600 ms | ~50 ms | ~80 ms |
-| Django subset (Python, stress) | 9K / 40K | ~25 s | <100 ms | ~250 ms |
+| Django (Python, stress) | 2898 / 39789 | ~25 s | <100 ms | ~250 ms |
 | a large Rust monorepo subset (Rust, stress) | 5K / 50K | ~30 s | <100 ms | ~300 ms |
 
-For repos > 30K symbols, pass `summary_only=True` on aggregator tools
-(`audit_coverage`, `find_dead_code`, `find_orphan_tests`, `find_endpoints`,
-`git_diff_impact`) to keep payloads under ~200 KB. Counts stay exact
+For repos > 30K symbols, pass `summary_only=True` on aggregator and
+traversal tools (`audit_coverage`, `find_dead_code`, `find_orphan_tests`,
+`find_endpoints`, `git_diff_impact`, `who_calls`, `who_does_this_call`,
+`analyze_impact`) to keep payloads under ~200 KB. Counts stay exact
 regardless of pagination — see `bench/run.py --large` for the Django
 stress profile.
+
+### v0.9 Django wins (same queries, one release apart)
+
+| Tool | v0.8 | v0.9 | Why |
+|---|---:|---:|---|
+| `find_dead_code` | 824 candidates | **514** | non-Python skip + dotted-path string refs + Django `Meta` inner classes |
+| `find_dead_code` functions | 450 | 189 | most of the drop comes from xregexp.js skipped + template tag / hasher protection |
+| `find_endpoints(django)` | 20 (decorators only) | **162** | class-based view detection via inheritance from `View` / `LoginRequiredMixin` / etc. |
+| Partial reindex on `requests` | 25 ms | **12 ms** | targeted `_resolve_refs` walk |
 
 ## Tests
 
@@ -262,7 +319,7 @@ In-memory FastMCP `Client(mcp)` so tests run without subprocess or network.
 
 livespec ships two user shapes deliberately:
 
-- **Agents** see the 17-tool default surface and the agentic-read RF tools
+- **Agents** see the 16-tool default surface and the agentic-read RF tools
   (`list_requirements`, `get_requirement_implementation`,
   `propose_requirements_from_codebase`, `audit_coverage`). The composite
   `quick_orient` is the canonical first-contact tool — it returns
@@ -295,3 +352,4 @@ data trumped the prior intuition.
 | 11 — v0.6 | ✅ | Hardening: explicit migration framework, unified error shape, RF link tools renamed, deprecated `use_workspace` removed, Django stress test (40K symbols), graph cache, README pitch reframe |
 | 12 — v0.7 | ✅ | Brownfield onboarding: `propose_requirements_from_codebase`, `bulk_link_rf_symbols`, `scan_docstrings_for_rf_hints`. Pagination on aggregator tools. Rust `pub` visibility-aware dead-code filter. `find_symbol` separator-agnostic |
 | 13 — v0.8 | ✅ | Curation pass driven by 3-session battle-test data: 4 quick-win agentic tools (`quick_orient`, `who_calls`, `who_does_this_call`, `get_symbol_source`). 11 P2 bug fixes on `find_dead_code`, `audit_coverage`, `git_diff_impact`, `propose_requirements_from_codebase`. Plugin auto-detect framework — RF mutation (11 tools) and doc management (3 tools) move into auto-loading plugins. Tier-4 drops: `list_files`, `search`, `rebuild_chunks`, `get_call_graph`, `get_symbol_info`, watcher trio. Default surface 39 → 17 tools |
+| 14 — v0.9 | ✅ | Django readiness: targeted `_resolve_refs` walk on partial reindex (closes v0.7 deferred). Pagination on `who_calls` / `who_does_this_call` / `analyze_impact`. `min_weight=0.6` filter mutes resolver fan-out. Django dead-code accuracy (skip non-Python, recognize dotted-path strings + `class Meta:`). Django CBV detection in `find_endpoints` (LoginView/FormView/LoginRequiredMixin/etc.). Drop `get_index_status`. Default surface 17 → 16. Wire-validated: Django `find_dead_code` 824 → 514, `find_endpoints(django)` 20 → 162 |
