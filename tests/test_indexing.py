@@ -142,21 +142,21 @@ async def test_resource_overview_parity_with_tool(sample_repo):
 
 
 @pytest.mark.asyncio
-async def test_resource_index_status_parity_with_tool(sample_repo):
-    """project://index/status output must match get_index_status tool output.
-
-    v0.8 P3.2: the deprecated tool adds `deprecated`/`replacement`/`removal`
-    keys advising agents to migrate; the resource (the canonical surface)
-    does not. Parity is over the data payload, not the deprecation envelope.
-    """
+async def test_resource_index_status_returns_full_payload(sample_repo):
+    """v0.9 P6: the `get_index_status` tool was dropped; the
+    `project://index/status` resource is the canonical surface."""
     async with Client(mcp) as c:
         await c.call_tool("index_project", {})
-        tool_data = (await c.call_tool("get_index_status", {})).data
         res = await c.read_resource("project://index/status")
-        resource_data = json.loads(res[0].text)
-        for key in ("deprecated", "replacement", "removal"):
-            tool_data.pop(key, None)
-        assert tool_data == resource_data
+        data = json.loads(res[0].text)
+        for key in (
+            "workspace", "project_id", "files", "symbols", "edges",
+            "requirements", "last_run",
+        ):
+            assert key in data, f"missing key {key!r}: {data}"
+        # Drop markers must NOT leak from the resource surface
+        assert "deprecated" not in data
+        assert "replacement" not in data
 
 
 @pytest.mark.asyncio

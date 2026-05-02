@@ -138,5 +138,10 @@ def register(mcp: FastMCP) -> None:
 
     @mcp.resource("project://index/status", mime_type="application/json")
     def index_status() -> str:
-        """Tool-parity view of get_index_status."""
+        """Index status payload — canonical surface.
+
+        v0.9 P6: replaced the deprecated `get_index_status` tool wrapper.
+        Returns `{workspace, project_id, files, symbols, edges,
+        requirements, last_run}`.
+        """
         return json.dumps(compute_index_status(get_state()))

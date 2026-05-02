@@ -1,4 +1,4 @@
-"""Indexing tools: index_project, get_index_status.
+"""Indexing tool: index_project.
 
 Every tool accepts an optional `workspace` argument. When omitted, the server
 falls back to the LIVESPEC_WORKSPACE env var or the current working directory
@@ -7,15 +7,12 @@ falls back to the LIVESPEC_WORKSPACE env var or the current working directory
 v0.6: `use_workspace` was removed (deprecated since v0.2). Pass `workspace=`
 to every tool, or set LIVESPEC_WORKSPACE in the environment.
 
-v0.8 P3.2: `get_index_status` is deprecated in favor of the
-`project://index/status` resource (paritetic since P3b prep). The tool
-emits a one-time stderr warning and ships a `deprecated` marker in its
-payload. Removal scheduled for v0.9.
+v0.9 P6: `get_index_status` removed (deprecated in v0.8 P3.2). Read the
+`project://index/status` resource for the same payload.
 """
 
 from __future__ import annotations
 
-import sys
 from typing import Any
 
 from fastmcp import FastMCP
@@ -23,24 +20,13 @@ from fastmcp import FastMCP
 from livespec_mcp.domain.indexer import index_project as run_index
 from livespec_mcp.state import AppState, get_state
 
-_DEPRECATION_WARNED: set[str] = set()
-
-
-def _warn_deprecated_once(name: str, replacement: str, removal: str) -> None:
-    """Emit a one-time stderr warning. Idempotent within a process."""
-    if name in _DEPRECATION_WARNED:
-        return
-    _DEPRECATION_WARNED.add(name)
-    print(
-        f"[livespec-mcp] DEPRECATED: tool {name!r} will be removed in {removal}. "
-        f"Use the {replacement!r} resource instead.",
-        file=sys.stderr,
-        flush=True,
-    )
-
 
 def compute_index_status(st: AppState) -> dict[str, Any]:
-    """Module-level so resources.py and the tool wrapper share one source of truth."""
+    """Module-level so resources.py keeps a stable shape.
+
+    The tool wrapper around this helper was removed in v0.9 P6 — the
+    `project://index/status` resource is the canonical surface now.
+    """
     pid = st.project_id
     last = st.conn.execute(
         "SELECT * FROM index_run WHERE project_id=? ORDER BY id DESC LIMIT 1", (pid,)
@@ -112,23 +98,3 @@ def register(mcp: FastMCP) -> None:
             w.start()
             result["watcher_started"] = True
         return result
-
-    @mcp.tool(annotations={"readOnlyHint": True, "idempotentHint": True})
-    def get_index_status(workspace: str | None = None) -> dict[str, Any]:
-        """Report current index status: latest run, totals, freshness.
-
-        DEPRECATED (v0.8): use the ``project://index/status`` resource. The
-        tool returns the same payload plus a ``deprecated`` marker and will
-        be removed in v0.9.
-        """
-        _warn_deprecated_once(
-            "get_index_status",
-            replacement="project://index/status",
-            removal="v0.9",
-        )
-        payload = compute_index_status(get_state(workspace))
-        payload["deprecated"] = True
-        payload["replacement"] = "project://index/status"
-        payload["removal"] = "v0.9"
-        return payload
-

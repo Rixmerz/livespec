@@ -106,22 +106,22 @@ By default it picks the **current working directory** as workspace, or
 when bootstrapping RFs on a fresh repo. Default behavior: plugins
 auto-load when their tables already have rows.
 
-## Tools (17 default + 14 plugin = 31 max)
+## Tools (16 default + 14 plugin = 30 max)
 
 Every tool accepts an optional `workspace: str` argument. When omitted, the
 server resolves to `LIVESPEC_WORKSPACE` env var or the current working
 directory. The runtime caches one DB connection per workspace (LRU=8), so a
 single MCP server instance can serve multiple repos in parallel.
 
-### Default surface — code intel + RF agentic (17)
+### Default surface — code intel + RF agentic (16)
 
 These tools answer the questions an agent ASKS on an unfamiliar codebase.
 Always registered.
 
-#### Indexing (2)
-- `index_project(force=False, watch=False)` — walk, parse, persist.
-- `get_index_status()` — *(deprecated: prefer the `project://index/status`
-  resource. Removal in v0.9.)*
+#### Indexing (1)
+- `index_project(force=False, watch=False)` — walk, parse, persist. Read
+  the `project://index/status` resource for current status (the legacy
+  `get_index_status` tool was dropped in v0.9).
 
 #### Code intelligence (12)
 - `find_symbol(query, kind, limit)` — separator-agnostic name lookup.
@@ -206,6 +206,7 @@ includes `docs`. Human-tier ceremony for managing generated docs.
 | `link_requirement_to_code` (v0.6 alias) | `link_rf_symbol` |
 | `link_requirements` / `unlink_requirements` (v0.6 alias) | `link_rf_dependency` / `unlink_rf_dependency` |
 | `get_requirement_dependencies` (v0.6 alias) | `get_rf_dependency_graph` |
+| `get_index_status` (v0.9, deprecated in v0.8) | read the `project://index/status` resource |
 
 ## Resources
 
