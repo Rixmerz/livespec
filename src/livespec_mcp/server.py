@@ -7,7 +7,7 @@ from fastmcp import FastMCP
 from livespec_mcp import prompts, resources
 from livespec_mcp.instrumentation import AgentLogMiddleware
 from livespec_mcp.state import get_state
-from livespec_mcp.tools import analysis, indexing, requirements
+from livespec_mcp.tools import analysis, indexing, requirements, search
 from livespec_mcp.tools.plugins import register_active as register_active_plugins
 
 mcp = FastMCP(
@@ -25,6 +25,7 @@ mcp.add_middleware(AgentLogMiddleware())
 indexing.register(mcp)
 analysis.register(mcp)
 requirements.register(mcp)
+search.register(mcp)
 resources.register(mcp)
 prompts.register(mcp)
 

@@ -18,6 +18,7 @@ from typing import Any
 from fastmcp import FastMCP
 
 from livespec_mcp.domain.indexer import index_project as run_index
+from livespec_mcp.domain.rag import embed_pending, rebuild_chunks
 from livespec_mcp.state import AppState, get_state
 
 
@@ -62,6 +63,7 @@ def register(mcp: FastMCP) -> None:
     def index_project(
         force: bool = False,
         watch: bool = False,
+        embed: bool = False,
         workspace: str | None = None,
     ) -> dict[str, Any]:
         """Walk the workspace, parse code, persist symbols + call edges.
@@ -69,11 +71,24 @@ def register(mcp: FastMCP) -> None:
         File-incremental via xxh3 content hash; pass force=True to re-extract.
         Pass watch=True to also start a filesystem watcher after indexing so
         subsequent edits trigger automatic re-index (debounce 2s).
+        Pass embed=True to populate vector embeddings after chunking
+        (requires the [embeddings] extra: fastembed + sqlite-vec). First
+        run downloads ~200MB of model weights; FTS5 lane works without it.
         Use after pulling new commits or when documentation feels stale.
         """
         st = get_state(workspace)
         with st.lock():
             stats = run_index(st.settings, st.conn, force=force)
+            existing = st.conn.execute(
+                "SELECT COUNT(*) c FROM chunk WHERE project_id=?", (st.project_id,)
+            ).fetchone()["c"]
+            if force or stats.files_changed or existing == 0:
+                chunk_stats: dict[str, Any] = dict(rebuild_chunks(st.conn, st.project_id))
+            else:
+                chunk_stats = {"skipped": "no file changes"}
+            embed_stats: dict[str, Any] = {"requested": embed}
+            if embed:
+                embed_stats.update(embed_pending(st.conn, st.project_id))
         result: dict[str, Any] = {
             "files_total": stats.files_total,
             "files_changed": stats.files_changed,
@@ -84,6 +99,8 @@ def register(mcp: FastMCP) -> None:
             "languages": stats.languages,
             "workspace": str(st.settings.workspace),
             "watcher_started": False,
+            "chunks": chunk_stats,
+            "embeddings": embed_stats,
         }
         if watch:
             from livespec_mcp.domain.watcher import Watcher, register_watcher
