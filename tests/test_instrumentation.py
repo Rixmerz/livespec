@@ -71,11 +71,11 @@ async def test_log_records_isError_results_with_error_field_none(sample_repo):
     stays None but the result_chars covers the error envelope."""
     async with Client(mcp) as c:
         await c.call_tool("index_project", {})
-        await c.call_tool("get_symbol_info", {"identifier": "does.not.exist"})
+        await c.call_tool("quick_orient", {"qname": "does.not.exist"})
 
     entries = _read_log(sample_repo)
     last = entries[-1]
-    assert last["tool_name"] == "get_symbol_info"
+    assert last["tool_name"] == "quick_orient"
     assert last["error"] is None  # mcp_error is a value, not a raise
     assert last["result_chars"] > 0
 

@@ -9,11 +9,13 @@ from livespec_mcp.server import mcp
 
 
 @pytest.mark.asyncio
-async def test_did_you_mean_in_get_symbol_info(sample_repo):
+async def test_did_you_mean_in_quick_orient(sample_repo):
+    """v0.8 P3.3: quick_orient is the new first-contact tool;
+    did_you_mean must surface for fat-fingered names."""
     async with Client(mcp) as c:
         await c.call_tool("index_project", {})
         # 'logn' is a fat-fingered 'login' — sample_repo has pkg.auth.login
-        out = (await c.call_tool("get_symbol_info", {"identifier": "logn"})).data
+        out = (await c.call_tool("quick_orient", {"qname": "logn"})).data
         assert out.get("isError") is True
         suggestions = out.get("did_you_mean")
         assert isinstance(suggestions, list)
@@ -24,11 +26,12 @@ async def test_did_you_mean_in_get_symbol_info(sample_repo):
 
 
 @pytest.mark.asyncio
-async def test_did_you_mean_in_get_call_graph(sample_repo):
+async def test_did_you_mean_in_who_calls(sample_repo):
+    """v0.8 P3.3: who_calls replaces get_call_graph for backward cones."""
     async with Client(mcp) as c:
         await c.call_tool("index_project", {})
         out = (
-            await c.call_tool("get_call_graph", {"identifier": "verify_xx", "max_depth": 2})
+            await c.call_tool("who_calls", {"qname": "verify_xx", "max_depth": 2})
         ).data
         assert out.get("isError") is True
         qnames = {s["qualified_name"] for s in out["did_you_mean"]}
@@ -76,6 +79,6 @@ async def test_did_you_mean_empty_when_no_match(sample_repo):
     """Garbage identifier still returns a list (possibly empty), never crashes."""
     async with Client(mcp) as c:
         await c.call_tool("index_project", {})
-        out = (await c.call_tool("get_symbol_info", {"identifier": "zzzzzz"})).data
+        out = (await c.call_tool("quick_orient", {"qname": "zzzzzz"})).data
         assert out.get("isError") is True
         assert isinstance(out.get("did_you_mean"), list)

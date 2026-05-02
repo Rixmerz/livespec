@@ -23,7 +23,6 @@ from livespec_mcp.domain.graph import (
     descendants_within,
     load_graph,
     page_rank,
-    subgraph_edges,
 )
 from livespec_mcp.state import AppState, get_state
 from livespec_mcp.tools._errors import mcp_error
@@ -519,77 +518,6 @@ def register(mcp: FastMCP) -> None:
         return {"matches": [dict(r) for r in rows]}
 
     @mcp.tool(annotations={"readOnlyHint": True, "idempotentHint": True})
-    def get_symbol_info(
-        identifier: str,
-        detail: Literal["summary", "full"] = "summary",
-        workspace: str | None = None,
-    ) -> dict[str, Any]:
-        """Detail for a single symbol by qualified_name (preferred) or short name.
-
-        `summary`: metadata + counts. `full`: also includes source body, callers,
-        callees, and linked RFs.
-        """
-        st = get_state(workspace)
-        pid = st.project_id
-        sym = _resolve_symbol(st.conn, pid, identifier)
-        if not sym:
-            return symbol_not_found_error(st.conn, pid, identifier)
-        callers_n = st.conn.execute(
-            "SELECT COUNT(*) c FROM symbol_edge WHERE dst_symbol_id=? AND edge_type='calls'",
-            (sym["id"],),
-        ).fetchone()["c"]
-        callees_n = st.conn.execute(
-            "SELECT COUNT(*) c FROM symbol_edge WHERE src_symbol_id=? AND edge_type='calls'",
-            (sym["id"],),
-        ).fetchone()["c"]
-        rfs = st.conn.execute(
-            """SELECT r.rf_id, r.title, rs.relation, rs.confidence
-               FROM rf_symbol rs JOIN rf r ON r.id=rs.rf_id WHERE rs.symbol_id=?""",
-            (sym["id"],),
-        ).fetchall()
-        out: dict[str, Any] = {
-            "id": sym["id"],
-            "name": sym["name"],
-            "qualified_name": sym["qualified_name"],
-            "kind": sym["kind"],
-            "signature": sym["signature"],
-            "docstring": sym["docstring"],
-            "file_path": sym["file_path"],
-            "start_line": sym["start_line"],
-            "end_line": sym["end_line"],
-            "body_hash": sym["body_hash"],
-            "callers_count": int(callers_n),
-            "callees_count": int(callees_n),
-            "requirements": [dict(r) for r in rfs],
-        }
-        if detail == "full":
-            callers = st.conn.execute(
-                """SELECT s.qualified_name, f.path, s.start_line
-                   FROM symbol_edge e JOIN symbol s ON s.id=e.src_symbol_id
-                   JOIN file f ON f.id=s.file_id
-                   WHERE e.dst_symbol_id=? AND e.edge_type='calls' LIMIT 200""",
-                (sym["id"],),
-            ).fetchall()
-            callees = st.conn.execute(
-                """SELECT s.qualified_name, f.path, s.start_line
-                   FROM symbol_edge e JOIN symbol s ON s.id=e.dst_symbol_id
-                   JOIN file f ON f.id=s.file_id
-                   WHERE e.src_symbol_id=? AND e.edge_type='calls' LIMIT 200""",
-                (sym["id"],),
-            ).fetchall()
-            out["callers"] = [dict(r) for r in callers]
-            out["callees"] = [dict(r) for r in callees]
-            try:
-                fp = st.settings.workspace / sym["file_path"]
-                lines = fp.read_text(encoding="utf-8", errors="replace").splitlines()
-                start = max(sym["start_line"] - 1, 0)
-                end = min(sym["end_line"], len(lines))
-                out["source"] = "\n".join(lines[start:end])
-            except OSError:
-                out["source"] = None
-        return out
-
-    @mcp.tool(annotations={"readOnlyHint": True, "idempotentHint": True})
     def get_symbol_source(
         qname: str,
         workspace: str | None = None,
@@ -771,37 +699,6 @@ def register(mcp: FastMCP) -> None:
             "top_callers": _topn(callers_all),
             "top_callees": _topn(callees_all),
             "requirements": [dict(r) for r in rfs],
-        }
-
-    @mcp.tool(annotations={"readOnlyHint": True, "idempotentHint": True})
-    def get_call_graph(
-        identifier: str,
-        direction: Literal["forward", "backward", "both"] = "both",
-        max_depth: int = 3,
-        workspace: str | None = None,
-    ) -> dict[str, Any]:
-        """Subgraph of calls around a symbol up to `max_depth`.
-
-        forward = what this calls; backward = what calls this; both = union.
-        """
-        st = get_state(workspace)
-        pid = st.project_id
-        sym = _resolve_symbol(st.conn, pid, identifier)
-        if not sym:
-            return symbol_not_found_error(st.conn, pid, identifier)
-        view = load_graph(st.conn, pid)
-        sid = int(sym["id"])
-        if sid not in view.g:
-            return {"nodes": [], "edges": [], "root": sym["qualified_name"]}
-        nodes: set[int] = {sid}
-        if direction in ("forward", "both"):
-            nodes |= descendants_within(view.g, sid, max_depth)
-        if direction in ("backward", "both"):
-            nodes |= ancestors_within(view.g, sid, max_depth)
-        return {
-            "root": sym["qualified_name"],
-            "nodes": [view.sym_meta[n] for n in nodes if n in view.sym_meta],
-            "edges": subgraph_edges(view, nodes),
         }
 
     @mcp.tool(annotations={"readOnlyHint": True, "idempotentHint": True})

@@ -25,37 +25,37 @@ async def test_index_and_overview(sample_repo):
 
 
 @pytest.mark.asyncio
-async def test_find_symbol_and_info(sample_repo):
+async def test_find_symbol_and_quick_orient(sample_repo):
+    """v0.8 P3.3: get_symbol_info dropped — quick_orient is the first-contact
+    composite, get_symbol_source the body-extraction primitive."""
     async with Client(mcp) as c:
         await c.call_tool("index_project", {})
         found = (await c.call_tool("find_symbol", {"query": "login"})).data
         names = {m["name"] for m in found["matches"]}
         assert "login" in names
 
-        info = (
-            await c.call_tool(
-                "get_symbol_info",
-                {"identifier": "pkg.auth.login", "detail": "full"},
-            )
+        orient = (
+            await c.call_tool("quick_orient", {"qname": "pkg.auth.login"})
         ).data
-        assert info["name"] == "login"
-        assert info["kind"] == "function"
-        assert info["callers_count"] >= 1  # API.handle calls it
+        assert orient["qualified_name"] == "pkg.auth.login"
+        assert orient["kind"] == "function"
+        assert orient["callers_count"] >= 1  # API.handle calls it
 
 
 @pytest.mark.asyncio
-async def test_call_graph_and_impact(sample_repo):
+async def test_who_calls_and_impact(sample_repo):
+    """v0.8 P3.3: get_call_graph dropped — who_calls + who_does_this_call are
+    the slim alternatives, analyze_impact is the wider blast-radius tool."""
     async with Client(mcp) as c:
         await c.call_tool("index_project", {})
-        cg = (
+        callers = (
             await c.call_tool(
-                "get_call_graph",
-                {"identifier": "pkg.auth.login", "direction": "both", "max_depth": 3},
+                "who_calls",
+                {"qname": "pkg.auth.verify", "max_depth": 2},
             )
         ).data
-        node_qnames = {n["qualified_name"] for n in cg["nodes"]}
-        assert "pkg.auth.login" in node_qnames
-        assert any("verify" in q for q in node_qnames)
+        caller_qnames = {n["qualified_name"] for n in callers["callers"]}
+        assert "pkg.auth.login" in caller_qnames
 
         impact = (
             await c.call_tool(
@@ -63,8 +63,8 @@ async def test_call_graph_and_impact(sample_repo):
                 {"target_type": "symbol", "target": "pkg.auth.verify", "max_depth": 4},
             )
         ).data
-        callers = {n["qualified_name"] for n in impact["impacted_callers"]}
-        assert "pkg.auth.login" in callers
+        impact_callers = {n["qualified_name"] for n in impact["impacted_callers"]}
+        assert "pkg.auth.login" in impact_callers
 
 
 @pytest.mark.asyncio
@@ -114,18 +114,6 @@ async def test_requirement_crud_and_link(sample_repo):
         ).data
         assert impact["rf_id"] == "RF-001"
         assert len(impact["implementing_symbols"]) >= 1
-
-
-@pytest.mark.asyncio
-async def test_search_keyword(sample_repo):
-    async with Client(mcp) as c:
-        await c.call_tool("index_project", {})
-        await c.call_tool(
-            "create_requirement",
-            {"title": "Login flow with password verification", "rf_id": "RF-001"},
-        )
-        results = (await c.call_tool("search", {"query": "login password", "limit": 5})).data
-        assert len(results["results"]) > 0
 
 
 @pytest.mark.asyncio

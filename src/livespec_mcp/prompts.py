@@ -42,7 +42,9 @@ def register(mcp: FastMCP) -> None:
         """Infer candidate RFs by reading the public surface of a module."""
         return (
             f"Infer Functional Requirements from `{module_or_path}`. Steps:\n"
-            f"1) `list_files(path_glob='{module_or_path}*')` and read public symbols via `find_symbol`.\n"
+            f"1) `propose_requirements_from_codebase(scope='{module_or_path}')` —\n"
+            f"   heuristic groups + suggested symbols. If nothing is returned,\n"
+            f"   fall back to `find_symbol(query='*')` to enumerate by hand.\n"
             f"2) Group by behavioral intent (auth, billing, ingestion, ...).\n"
             f"3) Draft 3-7 RFs (id, title, 1-line description, suggested module).\n"
             f"4) Ask the user which to persist via `create_requirement`."
@@ -54,9 +56,10 @@ def register(mcp: FastMCP) -> None:
         return (
             f"Document missing symbols in `{module_glob}`. Steps:\n"
             f"1) `list_docs(target_type='symbol')` -> set of already-documented qnames.\n"
-            f"2) `list_files(path_glob='{module_glob}')` then `find_symbol(query='*')` to enumerate.\n"
+            f"2) `find_symbol(query='*')` to enumerate; pair with `quick_orient`\n"
+            f"   for first-contact metadata.\n"
             f"3) For each undocumented function/class above PageRank threshold:\n"
-            f"   a) `get_symbol_info(identifier=qname, detail='full')` to read the source.\n"
+            f"   a) `get_symbol_source(qname=...)` to read the body.\n"
             f"   b) Write Markdown docs yourself based on the source.\n"
             f"   c) `generate_docs(target_type='symbol', identifier=qname, content=<markdown>)`.\n"
             f"      Without `content` the tool will try MCP sampling; in Claude Code\n"
@@ -79,9 +82,10 @@ def register(mcp: FastMCP) -> None:
         """One-pass explanation: code + callers + RFs touched."""
         return (
             f"Explain `{qname}` end-to-end:\n"
-            f"1) `get_symbol_info(identifier='{qname}', detail='full')`.\n"
-            f"2) `analyze_impact(target_type='symbol', target='{qname}', max_depth=1)`\n"
-            f"   to list direct callers (replaces the old `find_references`).\n"
-            f"3) `analyze_impact(target_type='symbol', target='{qname}')` for full blast radius.\n"
+            f"1) `quick_orient(qname='{qname}')` — metadata, top callers/callees,\n"
+            f"   linked RFs, entry-point flag.\n"
+            f"2) `get_symbol_source(qname='{qname}')` to read the body.\n"
+            f"3) `analyze_impact(target_type='symbol', target='{qname}')` for the full\n"
+            f"   blast radius (transitive callers + RF rollup).\n"
             f"4) Synthesize: purpose, who depends on it, which RFs are affected."
         )

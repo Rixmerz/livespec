@@ -115,18 +115,6 @@ async def test_large_repo_partial_reindex_preserves_edges(large_repo):
 
 
 @pytest.mark.asyncio
-async def test_large_repo_search_returns_relevant_results(large_repo):
-    async with Client(mcp) as c:
-        await c.call_tool("index_project", {})
-        await c.call_tool("rebuild_chunks", {})
-        results = (
-            await c.call_tool("search", {"query": "double_step Helper", "limit": 10})
-        ).data
-        assert len(results["results"]) > 0
-        assert all(r["score"] > 0 for r in results["results"])
-
-
-@pytest.mark.asyncio
 async def test_large_repo_pagerank_consistent(large_repo):
     """PageRank must rank chain-callee functions higher than chain-caller fns,
     because the callee is reached from many sources.

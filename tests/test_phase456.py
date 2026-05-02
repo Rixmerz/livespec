@@ -1,8 +1,9 @@
-"""Tests for Phase 4 (RAG/search), Phase 5 (docs), Phase 6 (suggest_rf_links).
+"""Doc-generation tests (Phase 5).
 
-These tests do NOT require fastembed/sqlite-vec — the FTS5 lane is enough to
-exercise hybrid search and ranking. Doc generation is tested with a stub
-sampling handler that mimics a Claude client.
+v0.8 P3.3 dropped the search/RAG tool wrappers (`search`, `rebuild_chunks`)
+along with the related tests; the RAG domain code stays for future use.
+Doc generation is exercised with a stub sampling handler that mimics a
+Claude client.
 """
 
 from __future__ import annotations
@@ -11,57 +12,8 @@ import json
 
 import pytest
 from fastmcp import Client
-from mcp.types import (
-    CreateMessageRequestParams,
-    CreateMessageResult,
-    SamplingMessage,
-    TextContent,
-)
 
 from livespec_mcp.server import mcp
-
-
-@pytest.mark.asyncio
-async def test_rebuild_chunks_and_search(sample_repo):
-    async with Client(mcp) as c:
-        await c.call_tool("index_project", {})
-        rc = (await c.call_tool("rebuild_chunks", {})).data
-        assert rc["chunks_total"] >= 4
-
-        res = (await c.call_tool("search", {"query": "login user password", "limit": 5})).data
-        assert res["lanes"]["fts"] is True
-        assert len(res["results"]) > 0
-        # Top hit should be the login function
-        top = res["results"][0]
-        assert top["source_type"] in ("symbol", "requirement")
-
-
-@pytest.mark.asyncio
-async def test_search_replaces_suggest_rf_links(sample_repo):
-    """P1.2: suggest_rf_links removed. Use search(scope='code') with the RF
-    title+description as the query and post-filter in the agent."""
-    async with Client(mcp) as c:
-        await c.call_tool("index_project", {})
-        await c.call_tool(
-            "create_requirement",
-            {
-                "title": "User login flow",
-                "description": "User authenticates by password verification",
-                "rf_id": "RF-100",
-            },
-        )
-        await c.call_tool("rebuild_chunks", {})
-        # The agent's job: build query from RF metadata, hit search, post-filter
-        results = (
-            await c.call_tool(
-                "search",
-                {"query": "User login flow authenticates password verification", "scope": "code", "limit": 5},
-            )
-        ).data
-        assert "results" in results
-        assert len(results["results"]) > 0
-        # Results expose source_id (symbol id) — the agent maps them with get_symbol_info
-        # before calling link_rf_symbol.
 
 
 @pytest.mark.asyncio

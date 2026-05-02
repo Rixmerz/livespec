@@ -68,7 +68,7 @@ async def test_unknown_rf_error_shape(workspace):
 async def test_unknown_symbol_error_shape(sample_repo):
     async with Client(mcp) as c:
         await c.call_tool("index_project", {})
-        out = (await c.call_tool("get_symbol_info", {"identifier": "zzzz"})).data
+        out = (await c.call_tool("quick_orient", {"qname": "zzzz"})).data
         _assert_canonical_error(out)
         # Should also have did_you_mean for typo recovery
         assert "did_you_mean" in out

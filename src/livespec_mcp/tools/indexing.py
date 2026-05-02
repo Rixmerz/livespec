@@ -1,4 +1,4 @@
-"""Indexing tools: index_project, get_index_status, list_files.
+"""Indexing tools: index_project, get_index_status.
 
 Every tool accepts an optional `workspace` argument. When omitted, the server
 falls back to the LIVESPEC_WORKSPACE env var or the current working directory
@@ -132,31 +132,3 @@ def register(mcp: FastMCP) -> None:
         payload["removal"] = "v0.9"
         return payload
 
-    @mcp.tool(annotations={"readOnlyHint": True, "idempotentHint": True})
-    def list_files(
-        path_glob: str | None = None,
-        language: str | None = None,
-        limit: int = 200,
-        cursor: int = 0,
-        workspace: str | None = None,
-    ) -> dict[str, Any]:
-        """List indexed files with optional filters and pagination."""
-        st = get_state(workspace)
-        pid = st.project_id
-        sql = ["SELECT id, path, language, line_count, content_hash, mtime FROM file WHERE project_id=?"]
-        args: list[Any] = [pid]
-        if language:
-            sql.append("AND language = ?")
-            args.append(language)
-        if path_glob:
-            sql.append("AND path GLOB ?")
-            args.append(path_glob)
-        sql.append("ORDER BY id LIMIT ? OFFSET ?")
-        args.extend([limit + 1, cursor])
-        rows = st.conn.execute(" ".join(sql), args).fetchall()
-        has_more = len(rows) > limit
-        rows = rows[:limit]
-        return {
-            "files": [dict(r) for r in rows],
-            "next_cursor": (cursor + limit) if has_more else None,
-        }
