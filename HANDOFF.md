@@ -32,7 +32,47 @@ Todo el stack es local-first: 0 servicios externos, 0 API keys obligatorias, 0 D
 
 ---
 
-## 3. Estado actual: v0.11.0 cortado. Default surface 16 tools + 14 plugin = 30 max activos.
+## 3. Estado actual: v0.12 P1 mergeado a main (RAG wire). Último tag `v0.11.0`.
+
+**HEAD:** `f161492`. Tests **243/243** default + **3/3** `-m embeddings`
+= **246 total**. Schema v7 (sin migración nueva — `chunk` + `chunk_fts`
++ `embedded_at` ya existían).
+
+### v0.12 P1 (RAG wire — 2026-05-01, post-v0.11.0)
+
+La capa RAG en `domain/rag.py` (chunking AST-aware, FTS5, sqlite-vec
+opcional con RRF) estaba **completamente implementada pero orphan**:
+ningún tool la exponía y cero tests cubrían el extra `[embeddings]`.
+Sesión wire-up end-to-end:
+
+- **`tools/indexing.py`**: `index_project` ahora corre
+  `rebuild_chunks` después del pase de symbols/edges (idempotente,
+  skip cuando no cambian files y ya hay chunks). Flag nuevo
+  `embed=False` dispara `embed_pending` para activar lane vectorial
+  sin segunda call. Payload gana `{chunks, embeddings}`.
+- **`tools/search.py`** (nuevo): expone `search(query, scope, limit)`
+  sobre `hybrid_search`, más `embed_chunks()` para población explícita
+  de vec0. Validación con `mcp_error()`. Capability de la lane
+  reportada en respuesta (`lanes.fts5`, `lanes.vector`).
+- **`server.py`**: registra el módulo nuevo.
+- **`tests/test_search.py`** (nuevo, 9 tests): 6 default (chunks
+  populados, FTS keyword hit, scope=code filter, empty-query error,
+  no vec_chunks sin embed, skip on second index) + 3
+  `@pytest.mark.embeddings` (vec0 populado, hybrid lights up
+  `lanes.vector` para query semántica "authenticate credentials",
+  embed_chunks idempotente).
+
+**Sin schema migration. Sin nuevas dependencias** (fastembed +
+sqlite-vec siguen opt-in via `pip install -e ".[embeddings]"`).
+
+Commits:
+- `b7fbf72` v0.12 P1: wire RAG layer
+- `f161492` chore: harden .gitignore for personal + RAG artifacts
+  (`.claude/` whole, `*.onnx|safetensors|gguf|bin|pt|npy|npz`,
+  `local_cache/`, `models/`, `.fastembed_cache/`, `.huggingface/`,
+  dumps debug, editor/OS files)
+
+### v0.11.0 (cortado, referencia)
 
 **Tag:** `v0.11.0`. Tests **237/237**, schema v7.
 
@@ -98,7 +138,18 @@ v0.10 entera ejecutada en una sesión post-v0.9.0:
 ## 3a. Plan v0.12 (próxima sesión, post `/clear`)
 
 Para reanudar: `leé HANDOFF.md y continuá`. v0.11 cerró todos los
-bugs de session 05. **Para v1.0 quedan items menores + polish**:
+bugs de session 05; **v0.12 P1 ya merged** (RAG wire). **Para v1.0
+quedan items menores + polish + corte de tag v0.12.0**:
+
+### Pendiente para cortar v0.12.0
+
+- Bump `pyproject.toml` a `0.12.0`
+- Promover `CHANGELOG [Unreleased]` → `[0.12.0]` con bullets de P1
+  (RAG wire) + tool count update (16 default + 1 nuevo `search`,
+  + `embed_chunks` activable)
+- README: mencionar `search` tool en la lista tier-1 + nota de
+  `pip install -e .[embeddings]` para vec lane
+- Tag + push + GH release
 
 ### Opciones para v0.12 (elegir 1-2 según tiempo)
 
