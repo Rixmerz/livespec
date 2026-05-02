@@ -362,6 +362,84 @@ def _publicly_exported_names(file_path_abs: str) -> frozenset[str]:
     return frozenset(out)
 
 
+# v0.11 P3: registration-verb set. Conservative — false-skip risk (hiding
+# real dead code) is worse than false-flag risk. Verbs here unambiguously
+# mean "hand this callable/class to a framework for later invocation".
+# Excluded (too broad): `add`, `set`, `put`, `push`, `bind`, `attach`,
+# `register_converter` (SQLite — registers a TYPE converter, not a callable
+# in the Django sense), `signal` (too generic). Kept tight on purpose.
+_REGISTRATION_VERBS: frozenset[str] = frozenset({
+    "register",
+    "register_lookup",
+    "register_function",
+    "register_view",
+    "register_filter",
+    "register_tag",
+    "register_serializer",
+    "register_admin",
+    "connect",
+    "add_handler",
+    "subscribe",
+    "add_middleware",
+    "add_listener",
+    "on",
+    "use",
+})
+
+
+@lru_cache(maxsize=128)
+def _runtime_registered_names(file_path_abs: str) -> frozenset[str]:
+    """Names passed as arguments to known runtime-registration method calls.
+
+    v0.11 P3: covers the pattern where a class or function is handed to a
+    framework via a method call so the framework invokes it later, leaving
+    zero in-project call edges. Examples:
+
+    * ``Field.register_lookup(MyLookup)``   in ``apps.py:AppConfig.ready()``
+    * ``pre_save.connect(my_handler)``       at module level
+    * ``app.add_middleware(MyMiddleware)``   inside a setup function
+
+    Walks ALL function/method/class bodies (not just module level), since
+    registration calls frequently live inside ``AppConfig.ready()``, model
+    class bodies, test fixtures, etc.
+
+    Conservative rules to minimise false-skips:
+    * Only attribute-call nodes whose attribute name is in
+      ``_REGISTRATION_VERBS``.
+    * Only positional ``ast.Name`` args (direct identifier references).
+    * Only keyword values that are ``ast.Name`` nodes.
+    * String args, lambda args, and complex expressions are ignored.
+
+    Cached. Non-Python files / parse failures return empty frozenset.
+    """
+    try:
+        source = Path(file_path_abs).read_text(encoding="utf-8", errors="replace")
+        tree = ast.parse(source)
+    except (OSError, SyntaxError, ValueError):
+        return frozenset()
+
+    out: set[str] = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        # Must be an attribute call: x.register_lookup(...)
+        if not isinstance(func, ast.Attribute):
+            continue
+        if func.attr not in _REGISTRATION_VERBS:
+            continue
+        # Collect positional Name args.
+        for arg in node.args:
+            if isinstance(arg, ast.Name):
+                out.add(arg.id)
+        # Collect keyword Name values.
+        for kw in node.keywords:
+            if isinstance(kw.value, ast.Name):
+                out.add(kw.value.id)
+
+    return frozenset(out)
+
+
 @lru_cache(maxsize=128)
 def _module_level_referenced_names(file_path_abs: str) -> frozenset[str]:
     """Names referenced at Python module top-level (outside any function /
@@ -1453,6 +1531,11 @@ def register(mcp: FastMCP) -> None:
                 # __all__) protect library-side classes that have no
                 # in-tree caller because their callers are user code.
                 global_module_refs |= _publicly_exported_names(abs_path)
+                # v0.11 P3: runtime-registration patterns — class/fn passed
+                # to a framework method so the framework calls it later.
+                # Covers Field.register_lookup(MyLookup), signal.connect(h),
+                # app.add_middleware(M), etc.
+                global_module_refs |= _runtime_registered_names(abs_path)
                 nested_uses = _used_nested_def_names(abs_path)
                 if nested_uses:
                     nested_uses_by_file[path_row["path"]] = nested_uses

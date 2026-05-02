@@ -6,23 +6,6 @@ follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
-### Added — v0.11 P2 JSX element refs as call-graph edges
-- `_ts_collect_calls` in `domain/extractors.py` now walks
-  `jsx_opening_element` and `jsx_self_closing_element` nodes inside TSX
-  function/component bodies and emits an `ExtractedRef` (kind `"jsx"`) for
-  each component-typed JSX usage. Uppercase identifiers (`<Counter />`) and
-  member-expression leftmost segments (`<Form.Field />` → `Form`) become
-  ref targets; lowercase HTML elements (`<div>`, `<span>`) are skipped.
-- The resolver's existing `_resolve_refs` path handles JSX refs identically
-  to call refs — no schema change required.
-- `find_dead_code` no longer over-reports React/Preact components that are
-  only used as JSX elements (edge exists → not flagged as dead). Closes
-  bug #20 surfaced by session 05 (Deno Fresh / TSX).
-- Tests: `tests/test_tsx_jsx_refs.py` — 10 cases covering extractor-level
-  ref emission (self-closing, paired, member-expression, HTML skip,
-  multiple components) and integration-level call-graph edges + dead-code
-  integration win.
-
 ### Added — v0.11 P0 bundler/build output dir filter
 - New module-level helper `_is_bundler_output_path(path)` recognises
   generated artefact dirs (`_fresh/`, `dist/`, `build/`, `.next/`,
@@ -53,6 +36,42 @@ follows [SemVer](https://semver.org/).
 - Tests: `tests/test_ts_framework_entry_points.py` — 24 unit tests on
   path-matching helpers + 8 MCP integration tests (find_dead_code
   suppression + find_endpoints surfacing). 32 new tests total.
+
+### Added — v0.11 P2 JSX element refs as call-graph edges
+- `_ts_collect_calls` in `domain/extractors.py` now walks
+  `jsx_opening_element` and `jsx_self_closing_element` nodes inside TSX
+  function/component bodies and emits an `ExtractedRef` (kind `"jsx"`) for
+  each component-typed JSX usage. Uppercase identifiers (`<Counter />`) and
+  member-expression leftmost segments (`<Form.Field />` → `Form`) become
+  ref targets; lowercase HTML elements (`<div>`, `<span>`) are skipped.
+- The resolver's existing `_resolve_refs` path handles JSX refs identically
+  to call refs — no schema change required.
+- `find_dead_code` no longer over-reports React/Preact components that are
+  only used as JSX elements (edge exists → not flagged as dead). Closes
+  bug #20 surfaced by session 05 (Deno Fresh / TSX).
+- Tests: `tests/test_tsx_jsx_refs.py` — 10 cases covering extractor-level
+  ref emission (self-closing, paired, member-expression, HTML skip,
+  multiple components) and integration-level call-graph edges + dead-code
+  integration win.
+
+### Added — v0.11 P3 runtime-registration name protection
+- New `_runtime_registered_names(file_path_abs)` helper walks ALL function/
+  method/class bodies for method calls whose attribute name is in a
+  conservative set of registration verbs: `register`, `register_lookup`,
+  `register_function`, `register_view`, `register_filter`, `register_tag`,
+  `register_serializer`, `register_admin`, `connect`, `add_handler`,
+  `subscribe`, `add_middleware`, `add_listener`, `on`, `use`.  Collects
+  positional `Name` args and keyword `Name` values; ignores string args and
+  lambdas to keep false-skip risk minimal.
+- Wired into `find_dead_code`'s per-file loop alongside
+  `_module_level_referenced_names` and `_publicly_exported_names`. Closes
+  the last major bucket of Django false-positives from runtime registrations
+  like `Field.register_lookup(MyLookup)` in `AppConfig.ready()`,
+  `pre_save.connect(my_handler)` at module level, and
+  `app.add_middleware(MyMiddleware)` in setup functions.
+- Tests: `tests/test_runtime_registration.py` (13 cases: helper unit tests
+  for all patterns + negative cases for non-registration verbs and string
+  args + end-to-end `find_dead_code` integration tests).
 
 ## [0.10.0] — 2026-05-01
 
