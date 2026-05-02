@@ -122,8 +122,20 @@ def invalidate_graph_cache(project_id: int | None = None) -> int:
         return len(keys)
 
 
-def descendants_within(g: nx.DiGraph, source: int, max_depth: int) -> set[int]:
-    """BFS up to max_depth, collect descendants (forward slicing)."""
+def descendants_within(
+    g: nx.DiGraph,
+    source: int,
+    max_depth: int,
+    min_weight: float = 0.0,
+) -> set[int]:
+    """BFS up to max_depth, collect descendants (forward slicing).
+
+    v0.9 P3: ``min_weight`` skips edges below the threshold. Resolver
+    fan-out (multiple short-name candidates that the static analyzer
+    can't disambiguate) lands at weight 0.5; pass ``min_weight=0.6`` to
+    drop that noise from the traversal. Default 0.0 keeps the legacy
+    behavior (every edge counted).
+    """
     seen: set[int] = set()
     frontier: list[tuple[int, int]] = [(source, 0)]
     while frontier:
@@ -131,14 +143,24 @@ def descendants_within(g: nx.DiGraph, source: int, max_depth: int) -> set[int]:
         if d >= max_depth:
             continue
         for succ in g.successors(node):
-            if succ not in seen and succ != source:
-                seen.add(succ)
-                frontier.append((succ, d + 1))
+            if succ in seen or succ == source:
+                continue
+            if min_weight > 0.0:
+                ed = g.get_edge_data(node, succ) or {}
+                if float(ed.get("weight", 1.0)) < min_weight:
+                    continue
+            seen.add(succ)
+            frontier.append((succ, d + 1))
     return seen
 
 
-def ancestors_within(g: nx.DiGraph, source: int, max_depth: int) -> set[int]:
-    return descendants_within(g.reverse(copy=False), source, max_depth)
+def ancestors_within(
+    g: nx.DiGraph,
+    source: int,
+    max_depth: int,
+    min_weight: float = 0.0,
+) -> set[int]:
+    return descendants_within(g.reverse(copy=False), source, max_depth, min_weight)
 
 
 def page_rank(g: nx.DiGraph, personalization: dict[int, float] | None = None) -> dict[int, float]:

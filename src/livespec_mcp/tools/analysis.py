@@ -561,6 +561,7 @@ def register(mcp: FastMCP) -> None:
         limit: int = 200,
         cursor: int = 0,
         summary_only: bool = False,
+        min_weight: float = 0.6,
         workspace: str | None = None,
     ) -> dict[str, Any]:
         """Symbols that call `qname` (transitive backward cone up to max_depth).
@@ -576,6 +577,11 @@ def register(mcp: FastMCP) -> None:
         ``root`` + ``max_depth`` (no caller list). Surfaced by Django
         battle-test where ``max_depth=2`` produced 102KB / 400 callers.
         ``count`` is always exact regardless of pagination.
+
+        v0.9 P3: ``min_weight`` (default 0.6) skips the resolver
+        fan-out edges that the static analyzer couldn't disambiguate
+        (weight 0.5 — multiple short-name candidates, no scope match).
+        Pass ``min_weight=0.0`` to see the unfiltered cone (legacy).
         """
         st = get_state(workspace)
         pid = st.project_id
@@ -584,7 +590,11 @@ def register(mcp: FastMCP) -> None:
             return symbol_not_found_error(st.conn, pid, qname)
         view = load_graph(st.conn, pid)
         sid = int(sym["id"])
-        callers = ancestors_within(view.g, sid, max_depth) if sid in view.g else set()
+        callers = (
+            ancestors_within(view.g, sid, max_depth, min_weight=min_weight)
+            if sid in view.g
+            else set()
+        )
         total = len(callers)
         if summary_only:
             return {
@@ -613,12 +623,14 @@ def register(mcp: FastMCP) -> None:
         limit: int = 200,
         cursor: int = 0,
         summary_only: bool = False,
+        min_weight: float = 0.6,
         workspace: str | None = None,
     ) -> dict[str, Any]:
         """Symbols that `qname` calls (transitive forward cone up to max_depth).
 
         Forward-direction counterpart of `who_calls`. Same v0.9 P2
         pagination contract: ``limit`` / ``cursor`` / ``summary_only``.
+        Same v0.9 P3 fan-out filter: ``min_weight=0.6`` by default.
         """
         st = get_state(workspace)
         pid = st.project_id
@@ -627,7 +639,11 @@ def register(mcp: FastMCP) -> None:
             return symbol_not_found_error(st.conn, pid, qname)
         view = load_graph(st.conn, pid)
         sid = int(sym["id"])
-        callees = descendants_within(view.g, sid, max_depth) if sid in view.g else set()
+        callees = (
+            descendants_within(view.g, sid, max_depth, min_weight=min_weight)
+            if sid in view.g
+            else set()
+        )
         total = len(callees)
         if summary_only:
             return {
@@ -675,8 +691,21 @@ def register(mcp: FastMCP) -> None:
         view = load_graph(st.conn, pid)
         ranks = page_rank(view.g) if sid in view.g else {}
 
-        callers_all = ancestors_within(view.g, sid, 1) if sid in view.g else set()
-        callees_all = descendants_within(view.g, sid, 1) if sid in view.g else set()
+        # v0.9 P3: filter out resolver fan-out (weight 0.5 — short-name
+        # collisions the static analyzer couldn't disambiguate). Surfaced
+        # by Django battle-test where two different `process_request`
+        # methods reported identical top_callers because every callsite
+        # matched both their short names.
+        callers_all = (
+            ancestors_within(view.g, sid, 1, min_weight=0.6)
+            if sid in view.g
+            else set()
+        )
+        callees_all = (
+            descendants_within(view.g, sid, 1, min_weight=0.6)
+            if sid in view.g
+            else set()
+        )
 
         def _topn(ids: set[int], n: int = 5) -> list[dict[str, Any]]:
             scored = sorted(
@@ -751,6 +780,7 @@ def register(mcp: FastMCP) -> None:
         limit: int = 200,
         cursor: int = 0,
         summary_only: bool = False,
+        min_weight: float = 0.6,
         workspace: str | None = None,
     ) -> dict[str, Any]:
         """Topological impact analysis: what changes if `target` changes.
@@ -766,6 +796,12 @@ def register(mcp: FastMCP) -> None:
         Surfaced by Django battle-test where ``max_depth=3`` produced
         332KB / 664 callers / 848 calls_into. Counts and the ``count``
         fields are always exact regardless of pagination.
+
+        v0.9 P3: ``min_weight`` (default 0.6) drops the resolver
+        fan-out edges (weight 0.5 — short-name collisions without
+        scope match). Surfaced by Django battle-test where
+        ``calls_into`` reported ~70 symbols vs ~10 actual. Pass
+        ``min_weight=0.0`` for legacy unfiltered behavior.
         """
         st = get_state(workspace)
         pid = st.project_id
@@ -801,8 +837,16 @@ def register(mcp: FastMCP) -> None:
             if not sym:
                 return symbol_not_found_error(st.conn, pid, target)
             sid = int(sym["id"])
-            impacted = ancestors_within(view.g, sid, max_depth) if sid in view.g else set()
-            forward = descendants_within(view.g, sid, max_depth) if sid in view.g else set()
+            impacted = (
+                ancestors_within(view.g, sid, max_depth, min_weight=min_weight)
+                if sid in view.g
+                else set()
+            )
+            forward = (
+                descendants_within(view.g, sid, max_depth, min_weight=min_weight)
+                if sid in view.g
+                else set()
+            )
             if summary_only:
                 return {
                     "root": sym["qualified_name"],
@@ -842,7 +886,9 @@ def register(mcp: FastMCP) -> None:
             impacted: set[int] = set()
             for sid in sids:
                 if sid in view.g:
-                    impacted |= ancestors_within(view.g, sid, max_depth)
+                    impacted |= ancestors_within(
+                        view.g, sid, max_depth, min_weight=min_weight
+                    )
             impacted -= set(sids)
             if summary_only:
                 return {
