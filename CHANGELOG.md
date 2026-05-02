@@ -13,10 +13,16 @@ The "TS framework readiness" release. Closes session-05 bugs #18-#20
 runtime-registration false-positives. Every win lands behind the same
 default surface — no new tools, no breaking changes.
 
-| Tool on session-05 Fresh app | v0.10 | v0.11 | Delta |
+**Wire-validation against `SpeedRunners-landing` (217 files / 2532 symbols / 16567 edges, Deno Fresh + TS + TSX):**
+
+| Tool | v0.10 | v0.11 | Delta |
 |---|---:|---:|---:|
-| `find_dead_code` candidates | 974 | (post-bundler+islands+JSX) | drop |
-| `top_symbols` from `_fresh/` | 18/20 | 0/20 | clean |
+| `find_dead_code` (default) | 974 | **0** | −100% |
+| `find_dead_code` (`include_non_python=True`) | 974 | **118** | −88% |
+| `find_endpoints(framework="fresh")` | 0 (n/a) | **340** | new tool branch |
+| `top_symbols` from `_fresh/` or `dist/` | 18/20 | **0/20** | clean |
+
+The default-mode 974 → 0 reflects the combined effect of P0 (bundler dirs filtered), P1 (islands/routes recognised as entry points) and P2 (JSX edges connect islands to their renderers). The non-Python opt-in still drops 88% (974 → 118) because the bundler filter alone removes most of the noise even when entry-point heuristics are bypassed by `include_non_python=True`.
 
 ### Added — v0.11 P0 bundler/build output dir filter
 - New module-level helper `_is_bundler_output_path(path)` recognises

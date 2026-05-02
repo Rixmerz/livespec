@@ -32,7 +32,50 @@ Todo el stack es local-first: 0 servicios externos, 0 API keys obligatorias, 0 D
 
 ---
 
-## 3. Estado actual: v0.10.0 cortado. Default surface 16 tools + 14 plugin = 30 max activos.
+## 3. Estado actual: v0.11.0 cortado. Default surface 16 tools + 14 plugin = 30 max activos.
+
+**Tag:** `v0.11.0`. Tests **237/237**, schema v7.
+
+v0.11 entera ejecutada en una sesión post-v0.10.0 con **paralelización
+de subagentes en worktrees aislados** (primera vez en este repo):
+
+- **P0** (Opus, secuencial): bundler/build dir filter (`_fresh/`,
+  `dist/`, `build/`, `.next/`, `out/`, `node_modules/`,
+  `.svelte-kit/`, `target/`, `__pycache__/`, `.turbo/`, `.vite/`,
+  `.cache/`, `.parcel-cache/`) + minified suffixes. Helper
+  `_is_bundler_output_path` aplicado en `find_dead_code` +
+  `compute_project_overview.top_symbols`. Bug #18 cerrado.
+- **P1** (Sonnet, worktree paralelo): TS framework entry-points.
+  Helpers `_ts_framework_entry_point_kind` + `_is_ts_framework_entry_point`
+  detectan Fresh `islands/`, Next pages router + app router,
+  SvelteKit `routes/+page.*`, Remix `app/routes/`. `find_endpoints`
+  literal extendido con `nextjs`/`fresh`/`sveltekit`/`remix`. Bug #19
+  cerrado. (32 tests nuevos)
+- **P2** (Sonnet, worktree paralelo): JSX element refs como edges.
+  `_ts_collect_calls` walks `jsx_opening_element` +
+  `jsx_self_closing_element`, emite refs a componentes uppercase
+  (skip lowercase HTML). Member-expression `<Form.Field />` resuelve
+  a `Form` (leftmost). Bug #20 cerrado. (10 tests nuevos)
+- **P3** (Sonnet, worktree paralelo): runtime registration name
+  protection. Helper `_runtime_registered_names` walks AST por
+  registration verbs (`register`, `register_lookup`, `connect`,
+  `add_middleware`, `subscribe`, `on`, `use`, +9 más). Cierra el
+  último bucket grande de Django false-positives. (13 tests nuevos)
+
+**Wire-validation contra `SpeedRunners-landing` (Deno Fresh, 217 files /
+2532 syms / 16567 edges):**
+- `find_dead_code` default: **974 → 0** (−100%)
+- `find_dead_code` con `include_non_python=True`: 974 → 118 (−88%)
+- `find_endpoints(fresh)`: **340 entry points** detectados (era 0)
+- `top_symbols` de `_fresh/` o `dist/`: **0/20** (era 18/20)
+
+**Workflow win**: P1 + P2 + P3 implementados en paralelo por 3
+sonnet subagents en worktrees aislados (~14 min concurrente vs ~20+
+min secuencial en Opus). Token spend total subagents ~236k. Merge
+sequential cherry-pick a main, 1 conflicto trivial en CHANGELOG
+[Unreleased] resuelto a mano.
+
+### v0.10 resumen (referencia rápida — ya cortado)
 
 **Tag:** `v0.10.0`. Tests **179/179**, schema v7.
 
@@ -52,40 +95,55 @@ v0.10 entera ejecutada en una sesión post-v0.9.0:
 
 ---
 
-## 3a. Plan v0.11 (próxima sesión, post `/clear`)
+## 3a. Plan v0.12 (próxima sesión, post `/clear`)
 
-Para reanudar: `leé HANDOFF.md y continuá`. Default next is **v0.11
-P0 — bundler dir filter** (bug #18, trivial fix, very high impact for
-TS/JS users):
+Para reanudar: `leé HANDOFF.md y continuá`. v0.11 cerró todos los
+bugs de session 05. **Para v1.0 quedan items menores + polish**:
 
-1. **v0.11 P0** (½ día): bundler-output dir blacklist en
-   `top_symbols` y `find_dead_code`. Skip top-level dirs:
-   `_fresh/`, `dist/`, `build/`, `.next/`, `out/`,
-   `node_modules/`, `.svelte-kit/`, `target/` (Rust),
-   `__pycache__/`. Detect minified files como fallback (single-line
-   content, mangled identifiers). Bug #18 closed.
+### Opciones para v0.12 (elegir 1-2 según tiempo)
 
-2. **v0.11 P1** (1 día): TS framework entry-point detection.
-   Mirror v0.9 P5 Django CBV: detect Fresh `islands/` (any default
-   export from a file under islands/ is an entry point), Next.js
-   `pages/` + `app/`, SvelteKit `routes/`. Bug #19 closed.
+1. **v0.12 wire-validation re-run sobre Django** (½ día, alto valor
+   de proof-point). v0.10 reportó 348 candidates Django. v0.11 P3
+   debería bajarlo más (Field.register_lookup + signal.connect +
+   middleware patterns). **Tarea**: re-correr `find_dead_code` sobre
+   Django 5.1.4, comparar contra el 348 baseline, actualizar tabla
+   en CHANGELOG/README. Si baja a <200, mencionarlo en headline.
+   **Por qué primero**: cierra el loop de proof-points serie
+   `824 → 514 → 348 → ?` y nutre la pitch de v1.0.
 
-3. **v0.11 P2** (1-2 días): JSX element refs as edges. Extend the
-   TSX extractor to walk `JSXElement` / `JSXOpeningElement` nodes
-   and emit refs to the component name. Bug #20 closed.
-   **Riesgo medio**: JSX is the trickiest extractor change since v0.5.
+2. **v0.12 closure-capture detection en non-Python** (1-2 días). El
+   per-file `_used_nested_def_names` Python-only se podría portar a
+   TS/Rust/Go. TS arrow callbacks son el patrón más común
+   (`button.on("click", _handler)` con `_handler` definido en el
+   parent scope). Mirror la heurística de v0.8 P2 fix #11 para
+   tree-sitter. **Riesgo bajo**: la lógica ya existe, sólo es port.
 
-4. **v0.11 P3** (½ día, opcional): out-of-tree runtime registration
-   (Django `Field.register_lookup()`, similar patterns). Last big
-   bucket of Django false-positives.
+3. **v0.12 plugin auto-detect refinement** (½ día). El framework
+   actual chequea `rf` y `doc` table count una vez en startup.
+   Agregar `LIVESPEC_PLUGINS=` env var override más explicit en
+   docstring + tests para los 4 estados (rf only / docs only /
+   both / neither). Cierre menor, baja prioridad.
 
-5. **Cut v0.10.x patch o v0.11.0** dependiendo del scope.
+4. **v0.12 demo asciicast** (½ día, marketing). Grabar 60s flow:
+   `index_project` → `propose_requirements_from_codebase` →
+   `link_rf_symbol` → `audit_coverage`. Embed en README.
+
+5. **v0.12 LLM-assisted RF refinement** (1-2 días, optional feature
+   sobre `propose_requirements_from_codebase`). Toma los proposals
+   y los pasa al cliente vía MCP sampling para mejorar título +
+   descripción. **Diferido desde v0.7+** — sigue siendo opcional.
+
+### Camino sugerido a v1.0
+
+- v0.12: items 1 + 2 (Django re-validation + closure-capture port)
+- v0.13: item 3 + 4 (plugin polish + demo)
+- v1.0: docs lift + CHANGELOG resumen + tag. No nuevas features.
 
 **Para v1.0** falta:
-- Bugs #18-20 cerrados
-- Sessions 04 + 05 ya cerradas → `find_orphan_tests` sigue silent
-  pero esperable.
-- Posiblemente un demo asciicast (UX-level, opcional).
+- Django re-validation (v0.11 effect documentado)
+- Closure-capture cross-language (opcional pero alto valor)
+- Demo asciicast (UX-level)
+- Posible CHANGELOG resumen ejecutivo "lo que cambió desde v0.1"
 
 ### Estado previo: v0.9.0 cortado. Default surface 16 tools + 14 plugin = 30 max activos.
 
