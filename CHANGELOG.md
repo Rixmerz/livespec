@@ -6,15 +6,63 @@ follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
-### Removed (breaking) — v0.8 P3a
-- **Deprecated v0.6 RF tool aliases** are gone. Call sites must use
-  the canonical names introduced in v0.6:
+## [0.8.0] — 2026-05-01
+
+The "curation" release. v0.7 piled on tools (39 + 4 deprecated aliases);
+v0.8 cuts the surface to **17 default tools** plus two auto-loading
+plugins (RF mutation = 11 tools, doc management = 3 tools). The
+curation is data-driven: 3 sessions of real-agent battle-test logged
+40 calls across 3 codebases (the workflow runner, livespec-mcp, demo-app)
+and 24 of 39 tools never got called. The drops follow the data, not
+the prior intuition. Stakeholder posture stays locked in: RF
+traceability is the differentiator (RF agentic tools stay tier-1),
+agent UX is the product (4 quick-win composites added before the
+battle-test).
+
+### Removed (breaking) — tier-4 drops (v0.8 P3.3)
+- **8 tools dropped** based on zero or near-zero agent calls in
+  3 sessions across 3 profiles:
+  - `list_files` — Grep/ripgrep host with path glob covers it
+  - `start_watcher`, `stop_watcher`, `watcher_status` — race-condition
+    trap for editing agents; re-run `index_project` on demand
+  - `rebuild_chunks` — auto-runs inside `index_project`
+  - `get_call_graph` — `who_calls` + `who_does_this_call` cover both
+    cones with cleaner output
+  - `get_symbol_info` — `quick_orient` (composite) +
+    `get_symbol_source` (body) cover both modes
+  - `search` — FTS5 lane logged 0 agent calls; `find_symbol` +
+    `quick_orient` are the canonical lookup path
+- **Deprecated v0.6 RF tool aliases** are gone (P3a):
   - `link_requirement_to_code`     → use `link_rf_symbol`
   - `link_requirements`            → use `link_rf_dependency`
   - `unlink_requirements`          → use `unlink_rf_dependency`
   - `get_requirement_dependencies` → use `get_rf_dependency_graph`
-  These were promised through v0.7; v0.8 delivers on that. Wire-count
-  drops by 4 with no loss of functionality.
+
+### Changed (breaking) — plugin auto-detect (v0.8 P3.1, P3.4, P3.5)
+- New `tools/plugins/` framework: at server startup the active
+  workspace's DB is probed; plugins auto-load based on table state.
+  `LIVESPEC_PLUGINS=none|all|rf,docs` env var overrides the soft
+  default.
+- **`livespec-rf` plugin** (auto-on when the `rf` table has rows for
+  the active project, or when `LIVESPEC_PLUGINS` includes `rf`):
+  registers the 11 RF mutation/linking tools — `create_requirement`,
+  `update_requirement`, `delete_requirement`, `link_rf_symbol`,
+  `bulk_link_rf_symbols`, `link_rf_dependency`, `unlink_rf_dependency`,
+  `get_rf_dependency_graph`, `scan_rf_annotations`,
+  `scan_docstrings_for_rf_hints`, `import_requirements_from_markdown`.
+- **`livespec-docs` plugin** (auto-on when the `doc` table has rows,
+  or when `LIVESPEC_PLUGINS` includes `docs`): registers the 3 doc-
+  management tools — `generate_docs`, `list_docs`, `export_documentation`.
+- The agentic-read RF tools (`list_requirements`,
+  `get_requirement_implementation`, `propose_requirements_from_codebase`,
+  `audit_coverage`) stay in the default surface — they answer questions
+  an agent ASKS during work.
+
+### Deprecated (non-breaking, drops in v0.9) — v0.8 P3.2
+- **`get_index_status` tool**. Use the `project://index/status`
+  resource (parity since P3b prep). The tool now ships
+  `deprecated`/`replacement`/`removal` keys in its payload and emits
+  a one-time stderr warning per process.
 
 ### Added — v0.8 P0 quick wins
 - **`get_symbol_source(qname)`** — body slice extraction. Lighter than
@@ -58,11 +106,91 @@ follows [SemVer](https://semver.org/).
   dispatch. Sets up the v0.8 P2 battle-test (5 codebases × 3-5
   sessions) and feeds the v0.8 P3 data-driven curation pass.
 
+### Added — v0.8 P2 battle-test sessions
+- **3 sessions logged** across 3 codebases (the workflow runner 1173 syms, livespec-mcp
+  itself 495 syms, demo-app 23 syms / 6 RFs), 40 calls total.
+  Surfaces 11 bugs (#1-11), all fixed in this release.
+
+### Fixed — v0.8 P2 bug batch (#1-11)
+- **#1 Edge resolver same-name fan-out** (`_resolve_refs`). Multiple
+  symbols sharing a short name (`list_tools` x3, `_cosine` x2)
+  matched against a single call site, polluting `who_calls` and
+  `quick_orient.top_callees`. Same-file fallback weight 0.7 when scope
+  doesn't disambiguate. livespec-mcp edge count 969 → 752 (−227,
+  ~22% reduction in false positives).
+- **#2 Entry-point flag** in `quick_orient`. `@mcp.tool` / `@app.route`
+  / etc. with 0 callers no longer reads as "dead". Output now ships
+  `is_entry_point: bool` + `framework_decorators: [...]`.
+- **#3 Structural-pattern noise** in `get_project_overview`. Top
+  symbols dominated by `.get` x4 modules, `add_parser` x6 CLI
+  subcommands, `run` x5 etc. — high PageRank but zero "what is this
+  codebase about" signal. New filter excludes names that appear in
+  ≥3 distinct files; opt-out via `include_structural_patterns=True`.
+- **#4 `__main__` guards** as entry points. `bench.run.main`,
+  `server.main` etc. flagged dead despite being called from
+  `if __name__ == "__main__":` blocks. Module-level AST walk now
+  collects refs from those guards.
+- **#5 List/tuple-stored function refs**. `_m001_drop_dead_tables`
+  through `_m007_visibility` flagged dead despite being referenced
+  in the `MIGRATIONS = [(version, name, fn), ...]` list literal.
+  Module-level walk now picks up bare-name refs in collection
+  literals.
+- **#6 Cross-file middleware lifecycle hooks**.
+  `AgentLogMiddleware.on_call_tool` flagged dead despite being
+  registered cross-file via `mcp.add_middleware(AgentLogMiddleware())`.
+  Detection extended to recognize classes passed as arguments to
+  `add_middleware` / similar registration calls.
+- **#7 Test-fixture leakage** in `git_diff_impact.suggested_tests`.
+  Files under `tests/fixtures/`, `tests/data/`, `__fixtures__/` now
+  excluded from suggestions (they are not tests, they are inputs).
+- **#8 `__init__.py` orphan flag** in `audit_coverage`. Package-marker
+  files (`__init__.py`, `mod.rs`, `package-info.java`, `lib.rs`,
+  `index.{ts,js}`) excluded from `modules_truly_orphan`.
+- **#9 RF test-coverage signal** in `audit_coverage`. New
+  `rf_test_coverage` field + `rfs_with_test_coverage` count surfaces
+  test edges (`relation='tests'`) as a positive signal distinct from
+  `relation='implements'`.
+- **#10 Test-file proposals** from `propose_requirements_from_codebase`.
+  No more "RF-009 Test Shortener" groupings: paths under `tests/`,
+  `test/`, `__tests__/`, `fixtures/` skipped.
+- **#11 Closure-callback nested fns** in `find_dead_code`.
+  `start_watcher._do_reindex` flagged dead despite being passed as
+  a callback (`Watcher(on_reindex=_do_reindex)`). Per-file
+  `_used_nested_def_names` walk recognizes nested-def references in
+  the parent scope's body.
+
+After all 11 fixes wire-validated against livespec-mcp itself,
+`find_dead_code` reports 0 (vs 18 pre-fix) — 100% noise reduction on
+the dogfood repo.
+
+### Added — v0.8 P4 pitch alignment
+- `README.md` rewrite: new headline framing RF traceability as the
+  defensible differentiator (not "(optional)"), tool surface restructured
+  by tier (default / livespec-rf plugin / livespec-docs plugin),
+  Performance section with battle-test numbers, "Agent vs human user"
+  section explaining the surface split.
+- `docs/AGENT_QUICKSTART.md` documents the canonical brownfield flow.
+- `docs/AGENT_USAGE_DATA.md` captures the field log behind the
+  curation decisions (40 calls / 3 sessions / 3 profiles).
+
 ### Tooling
-- Tools: 35 → 39. Wire count was 43 in v0.7 (39 + 4 deprecated
-  aliases). After P3a: wire count 39, no deprecated surface.
-- Tests: 118 → 139 (+9 quick wins, +5 instrumentation, +8 analyzer,
-  −1 dropped alias-compat test).
+- Default surface: **17 tools** (down from 39 in v0.7). Plugins add
+  11 (rf) + 3 (docs) = **31 max active** when both plugins are loaded.
+  Removed 4 deprecated v0.6 aliases for a true wire-count of 31 with
+  no deprecated surface.
+- Tests: 118 → **157**. Net +39 (+10 quick wins, +5 instrumentation,
+  +8 analyzer, +12 plugin autoload, +4 deprecation, +others;
+  −9 search/watcher/embeddings tests, −1 alias-compat).
+- Schema: v7 (no migration in v0.8).
+
+### Deferred to v0.9
+- Drop the deprecated `get_index_status` tool (resource has been
+  parity-equivalent since v0.8 P3b prep).
+- Closure-capture detection in non-Python languages (TS arrow
+  callbacks, Rust closures).
+- `_resolve_refs` targeted re-walk (Django partial 7s → 1s) — still
+  open from v0.7.
+- Optional LLM-assisted RF refinement on `propose_requirements_from_codebase`.
 
 ---
 

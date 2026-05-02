@@ -32,10 +32,16 @@ Todo el stack es local-first: 0 servicios externos, 0 API keys obligatorias, 0 D
 
 ---
 
-## 3. Estado actual: v0.8 P0+P1+P2(full)+P3a+P3b-prep hechos. P3 main pass desbloqueado.
+## 3. Estado actual: v0.8.0 cortado. Default surface 17 tools + 14 plugin = 31 max activos.
 
-**Último commit:** `2956bcc v0.8 P2 fix #11: nested-fn closure callback detection`
-**HEAD sincronizado con origin/main.** Working tree clean. Tests 150/150.
+**Último commit antes del tag:** `<bump-commit>` (P7 release prep).
+**Tag:** `v0.8.0` apunta a este commit. **Tests 157/157**, schema v7.
+
+v0.8 entera ejecutada en una sesión: P0 quick wins → P1 instrumentation
+→ P2 (3 battle-test sessions / 11 bug fixes) → P3a alias drop → P3b
+prep → P3.1 plugin framework → P3.2 deprecate get_index_status → P3.3
+drop 8 tier-4 tools → P3.4 RF mutation plugin → P3.5 docs plugin → P4
+pitch alignment → P7 release.
 
 Sesión 2026-05-01 ejecutó **batch completo P2**: 3 sesiones de
 battle-test reales (the workflow runner + livespec-mcp + demo-app) → surfacearon
@@ -59,6 +65,13 @@ battle-test reales (the workflow runner + livespec-mcp + demo-app) → surfacear
 | **P2 fix #6 cross-file** | `a8daf0d` | middleware classes registered cross-file |
 | **P2 wire validation** | `e40a693` | 18→1 dead-code false positives doc |
 | **P2 fix #11 closures** | `2956bcc` | nested-fn closure callback detection |
+| **HANDOFF P2 closeout** | `b564c70` | doc update post P2 |
+| **P3.1** plugin framework | `db05bde` | tools/plugins/ + auto-detect, no-breaking |
+| **P3.2** deprecate get_index_status | `9278eb2` | payload marker + once-stderr warning |
+| **P3.3** drop 8 tier-4 tools | `590a52b` | search/watcher trio/list_files/get_symbol_info/get_call_graph/rebuild_chunks |
+| **P3.4** RF mutation plugin | `cdca0e9` | 11 tools moved to livespec-rf plugin |
+| **P3.5** docs plugin | `bac0af6` | 3 tools moved to livespec-docs plugin |
+| **P4** pitch alignment | `ea171f5` | README rewrite + AGENT_QUICKSTART.md |
 
 ### P0 — quick wins (4 tools)
 
