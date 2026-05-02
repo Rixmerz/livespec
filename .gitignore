@@ -11,4 +11,30 @@ build/
 .mcp-docs/
 .env
 .DS_Store
-.claude/worktrees/
+.claude/
+
+# RAG layer / ML model caches (never commit weights or local dumps)
+local_cache/
+models/
+.fastembed_cache/
+.huggingface/
+.cache/
+*.onnx
+*.safetensors
+*.gguf
+*.bin
+*.pt
+*.npy
+*.npz
+
+# Ad-hoc dumps from search/embeddings debugging
+chunks_dump.*
+embeddings_dump.*
+*.dump.json
+
+# Editor / OS personal
+.idea/
+.vscode/
+*.swp
+*.swo
+Thumbs.db
