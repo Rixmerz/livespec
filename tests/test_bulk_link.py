@@ -107,3 +107,47 @@ async def test_bulk_link_partial_failure(workspace):
     assert any("RF-NONE" in e for e in error_msgs)
     assert any("does_not_exist" in e for e in error_msgs)
     assert any("required" in e for e in error_msgs)
+
+
+@pytest.mark.asyncio
+async def test_manual_links_survive_force_reindex(workspace):
+    """Data-loss regression: `index_project(force=True)` cascades through
+    `symbol` → `rf_symbol`, which used to silently wipe links created by
+    `bulk_link_rf_symbols` / `link_rf_symbol`. The indexer now snapshots
+    non-annotation rf_symbol rows before re-extract and restores them by
+    qname after symbols are re-inserted."""
+    pkg = workspace / "pkg"
+    pkg.mkdir()
+    (pkg / "__init__.py").write_text("")
+    (pkg / "auth.py").write_text("def login():\n    return True\n")
+    (pkg / "api.py").write_text("def handle():\n    return None\n")
+
+    async with Client(mcp) as c:
+        await c.call_tool("index_project", {})
+        await c.call_tool("create_requirement", {"rf_id": "RF-001", "title": "auth"})
+        await c.call_tool("create_requirement", {"rf_id": "RF-002", "title": "api"})
+        bl = (await c.call_tool(
+            "bulk_link_rf_symbols",
+            {"mappings": [
+                {"rf_id": "RF-001", "symbol_qname": "pkg.auth.login"},
+                {"rf_id": "RF-002", "symbol_qname": "pkg.api.handle",
+                 "confidence": 0.85, "source": "embedding"},
+            ]},
+        )).data
+        assert bl["linked"] == 2
+
+        # Force re-extract — pre-fix, this dropped both manual links to 0.
+        idx = (await c.call_tool("index_project", {"force": True})).data
+        assert idx["manual_links_restored"] == 2
+
+        impl_001 = (await c.call_tool(
+            "get_requirement_implementation", {"rf_id": "RF-001"}
+        )).data
+        impl_002 = (await c.call_tool(
+            "get_requirement_implementation", {"rf_id": "RF-002"}
+        )).data
+
+    qnames_001 = {s["qualified_name"] for s in impl_001["symbols"]}
+    qnames_002 = {s["qualified_name"] for s in impl_002["symbols"]}
+    assert "pkg.auth.login" in qnames_001
+    assert "pkg.api.handle" in qnames_002

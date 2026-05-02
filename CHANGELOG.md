@@ -6,6 +6,26 @@ follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed — JSDoc banner-with-text + manual-links data loss on force=True
+- **`_is_separator_only` extended** to skip banner-style line comments
+  with internal text wrapped in ≥2 separator chars (`// --- Token
+  Management ---`, `// ============= Tool Execution Dispatcher
+  =============`). Previously only pure separator lines (`// ---`)
+  were dropped, so banner sections still won `docstring_lead` over
+  the JSDoc immediately below. Locked in by
+  `test_ts_jsdoc_skips_banner_with_internal_text`.
+- **Data-loss fix on `index_project(force=True)`**: re-extraction
+  cascade-deleted every `rf_symbol` row through the `symbol` FK,
+  silently wiping links created by `bulk_link_rf_symbols` /
+  `link_rf_symbol`. The indexer now snapshots non-annotation
+  rf_symbol rows before re-extract and restores them by symbol qname
+  after the new symbols are inserted. `index_project` payload gains
+  `manual_links_restored`. Annotation-sourced links (`source =
+  'annotation'`) intentionally NOT snapshotted — they are re-derived
+  from fresh docstrings by `scan_annotations`, so preserving them
+  would shadow legitimate edits to `@rf:` tags. Locked in by
+  `test_manual_links_survive_force_reindex`.
+
 ### Added — JS/TS JSDoc support + agentic bulk-link + extractor-aware audit
 - **JSDoc annotations now extracted on JS/TS.** `_ts_extract` reads the
   comment(s) immediately preceding a declaration (walking through wrapping

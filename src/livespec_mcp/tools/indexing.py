@@ -96,6 +96,7 @@ def register(mcp: FastMCP) -> None:
             "symbols_total": stats.symbols_total,
             "edges_total": stats.edges_total,
             "rf_links_created": stats.rf_links_created,
+            "manual_links_restored": stats.manual_links_restored,
             "languages": stats.languages,
             "workspace": str(st.settings.workspace),
             "watcher_started": False,

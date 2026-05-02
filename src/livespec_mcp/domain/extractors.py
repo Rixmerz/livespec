@@ -420,11 +420,24 @@ def _ts_leading_doc_comment(node, src_bytes: bytes, language: str) -> str | None
     return "\n".join(cleaned).strip() or None
 
 
+_BANNER_RE = __import__("re").compile(
+    r"^[-=*#_~]{2,}.+?[-=*#_~]{2,}$"
+)
+
+
 def _is_separator_only(text: str) -> bool:
-    """True if every non-empty line is just ASCII separator punctuation
-    (e.g. `---`, `===`, `***`, `###`). These show up as banner-style
-    line comments above declarations and must not be treated as the
-    declaration's docstring."""
+    """True if every non-empty line is either:
+
+    - pure ASCII separator punctuation (e.g. `---`, `===`, `***`,
+      `###`), or
+    - a banner with internal text wrapped in ≥2 separator chars on each
+      side (e.g. `--- Token Management ---`,
+      `============= Tool Execution Dispatcher =============`).
+
+    These show up as section headers above declarations and must not be
+    treated as the declaration's docstring — they would otherwise win
+    `docstring_lead` over the meaningful JSDoc that follows.
+    """
     sep_chars = set("-=*#_~ \t")
     saw_line = False
     for line in text.splitlines():
@@ -432,8 +445,11 @@ def _is_separator_only(text: str) -> bool:
         if not s:
             continue
         saw_line = True
-        if any(ch not in sep_chars for ch in s):
-            return False
+        if all(ch in sep_chars for ch in s):
+            continue
+        if _BANNER_RE.match(s):
+            continue
+        return False
     return saw_line
 
 

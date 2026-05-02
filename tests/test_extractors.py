@@ -204,3 +204,32 @@ export async function getManyChatToken() { return 'x'; }
     hits = parse_annotations(sym.docstring)
     rf_ids = {h.rf_id for h in hits}
     assert "RF-016" in rf_ids, f"matcher missed @rf in {sym.docstring!r}"
+
+
+def test_ts_jsdoc_skips_banner_with_internal_text(tmp_path: Path):
+    """Banner-style line comments with text wrapped in `---`/`===` runs
+    are section dividers, not docstrings. They must be skipped so the
+    JSDoc immediately underneath wins `docstring_lead`. Reproduces the
+    real-world cases `// --- Token Management ---` and
+    `// ============= Tool Execution Dispatcher =============`."""
+    src = """// --- Token Management ---
+/**
+ * Resolve a token from cache.
+ * @rf:BE-RF-016
+ */
+export async function getManyChatToken() { return 'x'; }
+
+// ============= Tool Execution Dispatcher =============
+/** @rf:BE-RF-001 */
+export function dispatchTool() { return null; }
+"""
+    p = tmp_path / "main.ts"
+    p.write_text(src, encoding="utf-8")
+    _, result = extract(p, src, tmp_path)
+    by_name = {s.name: s for s in result.symbols}
+    a = by_name["getManyChatToken"]
+    b = by_name["dispatchTool"]
+    assert a.docstring is not None and "Token Management" not in a.docstring
+    assert "Resolve a token" in a.docstring
+    assert b.docstring is not None and "Tool Execution Dispatcher" not in b.docstring
+    assert "BE-RF-001" in b.docstring

@@ -40,6 +40,7 @@ class IndexStats:
     symbols_total: int = 0
     edges_total: int = 0
     rf_links_created: int = 0
+    manual_links_restored: int = 0
     languages: dict[str, int] = None  # type: ignore
 
     def __post_init__(self) -> None:
@@ -105,6 +106,38 @@ def index_project(
     seen: set[str] = set()
     changed_file_ids: list[int] = []
     files_deleted = False
+
+    # Snapshot manual / non-annotation rf_symbol links before any cascade
+    # delete fires. Re-extracting a file wipes its symbols (and via FK
+    # cascade, every rf_symbol row pointing at them), which silently
+    # destroyed mappings created by `bulk_link_rf_symbols` /
+    # `link_rf_symbol`. We re-resolve by symbol qname after the new
+    # symbols are inserted and INSERT OR IGNORE the manual links back.
+    # `source = 'annotation'` is intentionally NOT snapshotted: those
+    # are re-derived by `scan_annotations` from the fresh docstrings,
+    # so trying to preserve them would just shadow legitimate edits to
+    # `@rf:` tags in source.
+    manual_links_snapshot: list[tuple[str, str, str, float, str]] = [
+        (
+            r["rf_id"],
+            r["qname"],
+            r["relation"],
+            float(r["confidence"]),
+            r["source"],
+        )
+        for r in conn.execute(
+            """SELECT r.rf_id AS rf_id, s.qualified_name AS qname,
+                      rs.relation AS relation, rs.confidence AS confidence,
+                      rs.source AS source
+               FROM rf_symbol rs
+               JOIN rf r ON r.id = rs.rf_id
+               JOIN symbol s ON s.id = rs.symbol_id
+               JOIN file f ON f.id = s.file_id
+               WHERE f.project_id = ?
+                 AND rs.source != 'annotation'""",
+            (project_id,),
+        )
+    ]
 
     with transaction(conn):
         for p in files:
@@ -176,6 +209,37 @@ def index_project(
         # stale when an edited symbol's old rf_symbol row is cascaded away.
         from livespec_mcp.domain.matcher import scan_annotations
         stats.rf_links_created = scan_annotations(conn, project_id=project_id)
+
+        # Restore manual rf_symbol links wiped by the symbol cascade. We
+        # re-resolve symbol qname → new symbol_id and INSERT OR IGNORE,
+        # so links whose target symbol now lives at a new id come back,
+        # and links whose symbol qname disappeared from the codebase
+        # silently drop (the symbol no longer exists — nothing to link).
+        if manual_links_snapshot:
+            restored = 0
+            for rf_id_str, qname, relation, confidence, source in manual_links_snapshot:
+                row = conn.execute(
+                    """SELECT rf.id AS rf_pk, s.id AS sym_id
+                       FROM rf
+                       JOIN symbol s ON 1=1
+                       JOIN file f ON f.id = s.file_id
+                       WHERE rf.project_id = ?
+                         AND f.project_id = ?
+                         AND rf.rf_id = ?
+                         AND s.qualified_name = ?
+                       LIMIT 1""",
+                    (project_id, project_id, rf_id_str, qname),
+                ).fetchone()
+                if row is None:
+                    continue
+                cur = conn.execute(
+                    """INSERT OR IGNORE INTO rf_symbol(rf_id, symbol_id, relation, confidence, source)
+                       VALUES(?,?,?,?,?)""",
+                    (int(row["rf_pk"]), int(row["sym_id"]), relation, confidence, source),
+                )
+                if cur.rowcount > 0:
+                    restored += 1
+            stats.manual_links_restored = restored
 
     stats.edges_total = int(
         conn.execute(

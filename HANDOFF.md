@@ -32,13 +32,33 @@ Todo el stack es local-first: 0 servicios externos, 0 API keys obligatorias, 0 D
 
 ---
 
-## 3. Estado actual: JS/TS JSDoc + agentic bulk-link + audit-coverage extractor-aware. Último tag `v0.11.0`.
+## 3. Estado actual: JS/TS JSDoc + bulk-link agentic + audit extractor-aware + banner-skip + manual-links survive force. Último tag `v0.11.0`.
 
-**HEAD:** working tree (uncommitted at time of writing).
-Tests **244/244** default + **3/3** `-m embeddings` = **247 total**.
-Schema v7 (sin migración nueva).
+**HEAD:** `962a00a` (P2 batch 1) + working tree (P2 batch 2 — banner
+skip y data-loss fix). Tests **247/247** default + **3/3** `-m
+embeddings` = **250 total**. Schema v7 (sin migración nueva).
 
-### v0.12 P2 (JSDoc + bulk-link agentic + audit_coverage gap — 2026-05-02)
+### v0.12 P2 batch 2 (banner-with-text skip + force-reindex preserves manual links — 2026-05-02)
+
+Reportes desde sesión real post-deploy del batch 1:
+
+- **Banner con texto interno no era atrapado.** `_is_separator_only`
+  sólo cubría líneas 100% separator (`// ---`). Banners reales tipo
+  `// --- Token Management ---` o `// ============= Tool Execution
+  Dispatcher =============` pasaban el filtro y ganaban
+  `docstring_lead` sobre el JSDoc inmediato. Fix: `_BANNER_RE`
+  matchea `^[-=*#_~]{2,}.+?[-=*#_~]{2,}$` (texto wrapeado en ≥2
+  separator chars a cada lado).
+- **`index_project(force=True)` borra rf_symbol manuales.** El
+  cascade `DELETE FROM symbol → rf_symbol` no distinguía source y
+  destruía links de `bulk_link_rf_symbols` sin warning. Fix:
+  snapshot pre-extract de filas `source != 'annotation'`, restore
+  post-`scan_annotations` por (rf_id, symbol_qname). Anotaciones NO
+  se snapshotean (se re-derivan de docstrings frescos para reflejar
+  edits reales). Payload de `index_project` gana
+  `manual_links_restored`.
+
+### v0.12 P2 batch 1 (JSDoc + bulk-link agentic + audit_coverage gap — 2026-05-02, commit `962a00a`)
 
 Triggered por feedback de sesión real sobre proyecto TS/Node con 137
 archivos backend + 218 frontend, 60 RFs registrados y 34 anotaciones
