@@ -6,6 +6,18 @@ follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.11.0] — 2026-05-01
+
+The "TS framework readiness" release. Closes session-05 bugs #18-#20
+(Deno Fresh / TS over-reporting) plus the last big bucket of Django
+runtime-registration false-positives. Every win lands behind the same
+default surface — no new tools, no breaking changes.
+
+| Tool on session-05 Fresh app | v0.10 | v0.11 | Delta |
+|---|---:|---:|---:|
+| `find_dead_code` candidates | 974 | (post-bundler+islands+JSX) | drop |
+| `top_symbols` from `_fresh/` | 18/20 | 0/20 | clean |
+
 ### Added — v0.11 P0 bundler/build output dir filter
 - New module-level helper `_is_bundler_output_path(path)` recognises
   generated artefact dirs (`_fresh/`, `dist/`, `build/`, `.next/`,
