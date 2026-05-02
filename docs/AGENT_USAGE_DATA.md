@@ -604,6 +604,107 @@ the next release.
   4 profiles is enough to lock the v0.8 tier list. Session 05 (TS/JS
   feature) remains valuable for language coverage.
 
+---
+
+## Session 05 — Deno Fresh feature profile (2026-05-01)
+
+Workspace: `~/my_projects/SpeedRunners-landing` (Deno Fresh app, 217
+files / **2532 symbols** / 16,525 edges across TypeScript + TSX +
+JavaScript). Session id `0608d774-2501-4e7e-955c-b1de7b92a30b`. Task:
+trace `apiFetch` (the central HTTP helper) and assess refactor scope.
+
+### Aggregate (sessions 01 + 02 + 03 + 04 + 05 = 74 calls / 5 profiles)
+
+5/5 profiles covered: exploration (the workflow runner), refactor (livespec-mcp), RF
+flow (demo-app), Django-bugfix (Django), TS feature
+(SpeedRunners-landing). Single silent default-tier tool remains:
+`find_orphan_tests`.
+
+### Performance at scale (Deno Fresh, 2532 symbols)
+
+- `index_project` cold: ~6s (TSX/TS/JS extractor).
+- `quick_orient` <50ms (warm cache).
+- `find_dead_code(summary_only=True, include_non_python=True)`: ~80ms.
+- `analyze_impact(summary_only=True, max_depth=2)`: ~10ms.
+
+### Confirmed working on TS
+
+- `find_symbol`: matches across `.ts`/`.tsx`/`.js` separator-agnostic.
+- `quick_orient`: clean signal — `apiFetch` reported 11 callers / 2
+  callees with `apiPost`/`apiPatch`/`apiDelete`/`apiGet` as top-5.
+- `who_calls(max_depth=2)`: paginated correctly (count=27,
+  next_cursor=10) — both Fresh islands and their event handlers
+  surfaced as expected callers of `apiPost`.
+- `get_symbol_source`: full TS body extracted with no escaping issues.
+- `analyze_impact(summary_only=True)`: 73 impacted_callers / 4
+  calls_into. Counts exact under summary mode.
+- `audit_coverage(summary_only=True)`: gracefully handles 0-RF TS
+  repo (217 modules orphan, no errors).
+
+### NEW bugs surfaced in session 05
+
+18. **`get_project_overview.top_symbols` polluted by bundle output**.
+    Top 18 of 20 symbols on a Fresh app live in
+    `_fresh/client/assets/echarts-theme-*.js`,
+    `_fresh/client/assets/fresh-island__*.js`, etc. — these are
+    minified bundler output, not source code. Real source-level
+    centerpiece (`lib.api.apiFetch`) shows up at rank 4 buried under
+    bundler noise. Fix: skip top-level dirs `_fresh/`, `dist/`,
+    `build/`, `.next/`, `out/` from `top_symbols` by default.
+    Detect minified files (single-line content with mangled
+    one-letter identifiers) as a fallback.
+
+19. **`find_dead_code` over-reports on Fresh apps**. With
+    `include_non_python=True` (required for TS), 974 candidates —
+    630 in `_fresh/` (bundler output again, same root cause as #18)
+    and 222 in `islands/` (Fresh islands referenced via JSX
+    `<MyIsland />` from `routes/*.tsx`, but the extractor doesn't
+    treat JSX element usage as a call edge). Fix: extend the
+    `is_entry_point_path` skip list with bundler-output dirs;
+    extend the entry-point heuristic to mark Fresh `islands/*`,
+    Next.js `pages/*` / `app/*`, and SvelteKit `routes/*` as
+    framework-routing entry points (similar to v0.9 P5 Django
+    CBV detection).
+
+20. **JSX element references not captured as edges**. `<ContactList />`
+    in a route file doesn't create an edge to the `ContactList`
+    component in islands/. Detected only via PageRank on the
+    function's transitive callers. The TSX extractor would need to
+    walk JSX elements (`JSXElement`/`JSXOpeningElement`) and emit
+    refs.
+
+### Decisions taken from session 05
+
+- ✅ **TS/JS feature flow validated**. `quick_orient`, `who_calls`,
+  `get_symbol_source`, `analyze_impact` all returned clean signal
+  on TypeScript symbols. The 4 quick-win agentic tools earn their
+  tier-1 slots across 5 profiles.
+- ✅ **Pagination contract paid off** on `who_calls` (count=27 with
+  limit=10).
+- ✅ **`audit_coverage` handles 0-RF TS repos gracefully** —
+  consistent with the v0.8 dogfood result on livespec-mcp itself.
+- ⚠️  **TS-specific dead-code accuracy needs framework awareness**
+  similar to v0.9 P5 (Django CBV) — Fresh islands, Next.js pages,
+  SvelteKit routes. Queued for v0.10+.
+- ⚠️  **`top_symbols` filter must skip bundler output** —
+  `_fresh/`, `dist/`, `build/`, `.next/`, `out/`. Trivial fix,
+  high impact on first-impression UX for any TS/JS user.
+
+### Updated tier signal (n=5 sessions, 5 profiles, 74 calls)
+
+Default surface (16 tools after v0.9 P6 drop): all called at least
+once across 5 profiles **except `find_orphan_tests`**. That last
+silent tool needs a session that explicitly looks for orphan tests
+(refactor profile on a repo with broken test coverage); leaving it
+in tier-1 for now.
+
+Plugin tier (11 RF mutation + 3 docs): RF mutation tools called only
+in the demo-app session (the one with @rf: annotations).
+Docs tools never called by an agent in 5 sessions — confirms the
+v0.8 P3.5 decision to plugin-gate them.
+
+---
+
 ### Wire validation of v0.9 fixes against Django (post-`d9d936d`)
 
 After landing v0.9 P3 (weight filter), P4 (non-Python skip + dotted-
