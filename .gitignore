@@ -11,3 +11,4 @@ build/
 .mcp-docs/
 .env
 .DS_Store
+.claude/worktrees/
