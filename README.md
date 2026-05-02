@@ -4,15 +4,19 @@
 bidirectional **Functional Requirement ↔ code** traceability. Local-first,
 zero external services, runs as an MCP server next to your editor.
 
-Battle-tested on real codebases. v0.9 numbers vs the same Django 5.1.4
-queries one release earlier:
+Battle-tested on real codebases. Three releases of compounding wins
+on the same Django 5.1.4 queries:
 
-| Tool on Django (40K symbols) | v0.8 | v0.9 |
-|---|---:|---:|
-| `find_dead_code` candidates | 824 | **514** (−38% noise) |
-| `find_endpoints(framework='django')` | 20 | **162** (+8×) |
-| `quick_orient` p95 | ~60 ms | ~60 ms |
-| Partial reindex (touch 1 file) | 25 ms | **12 ms** (−51%) |
+| Tool on Django (40K symbols) | v0.8 | v0.9 | v0.10 |
+|---|---:|---:|---:|
+| `find_dead_code` candidates | 824 | 514 | **348** (−58% cumulative) |
+| `find_endpoints(framework='django')` | 20 | **162** (+8×) | 162 |
+| `quick_orient` p95 | ~60 ms | ~60 ms | ~60 ms |
+| Partial reindex (touch 1 file) | 25 ms | **12 ms** | 12 ms |
+
+Validated across 5 distinct agent profiles (exploration, refactor,
+RF flow, Django bugfix, TypeScript feature) — see
+[`docs/AGENT_USAGE_DATA.md`](docs/AGENT_USAGE_DATA.md).
 
 > Want the agentic flow without reading further?
 > See [`docs/AGENT_QUICKSTART.md`](docs/AGENT_QUICKSTART.md) for the
@@ -353,3 +357,4 @@ data trumped the prior intuition.
 | 12 — v0.7 | ✅ | Brownfield onboarding: `propose_requirements_from_codebase`, `bulk_link_rf_symbols`, `scan_docstrings_for_rf_hints`. Pagination on aggregator tools. Rust `pub` visibility-aware dead-code filter. `find_symbol` separator-agnostic |
 | 13 — v0.8 | ✅ | Curation pass driven by 3-session battle-test data: 4 quick-win agentic tools (`quick_orient`, `who_calls`, `who_does_this_call`, `get_symbol_source`). 11 P2 bug fixes on `find_dead_code`, `audit_coverage`, `git_diff_impact`, `propose_requirements_from_codebase`. Plugin auto-detect framework — RF mutation (11 tools) and doc management (3 tools) move into auto-loading plugins. Tier-4 drops: `list_files`, `search`, `rebuild_chunks`, `get_call_graph`, `get_symbol_info`, watcher trio. Default surface 39 → 17 tools |
 | 14 — v0.9 | ✅ | Django readiness: targeted `_resolve_refs` walk on partial reindex (closes v0.7 deferred). Pagination on `who_calls` / `who_does_this_call` / `analyze_impact`. `min_weight=0.6` filter mutes resolver fan-out. Django dead-code accuracy (skip non-Python, recognize dotted-path strings + `class Meta:`). Django CBV detection in `find_endpoints` (LoginView/FormView/LoginRequiredMixin/etc.). Drop `get_index_status`. Default surface 17 → 16. Wire-validated: Django `find_dead_code` 824 → 514, `find_endpoints(django)` 20 → 162 |
+| 15 — v0.10 | ✅ | Library codebase release: `from .x import Y` re-exports + `__all__` lists protect names from `find_dead_code` (closes the largest remaining false-positive bucket on Django). README lift — Django numbers above the fold + 30-second tour. Battle-test session 05 against Deno Fresh (TS/TSX/JS) — 5/5 profiles covered. Wire-validated: Django `find_dead_code` 514 → 348 (−58% cumulative from v0.8 baseline of 824) |

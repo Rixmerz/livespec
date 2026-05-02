@@ -32,7 +32,62 @@ Todo el stack es local-first: 0 servicios externos, 0 API keys obligatorias, 0 D
 
 ---
 
-## 3. Estado actual: v0.9.0 cortado. Default surface 16 tools + 14 plugin = 30 max activos.
+## 3. Estado actual: v0.10.0 cortado. Default surface 16 tools + 14 plugin = 30 max activos.
+
+**Tag:** `v0.10.0`. Tests **179/179**, schema v7.
+
+v0.10 entera ejecutada en una sesión post-v0.9.0:
+- **P0** README lift (Django numbers above fold + 30-sec tour + AGENT_QUICKSTART link)
+- **P1** `__init__.py` re-exports + `__all__` protect from dead-code
+- **P2** session 05 (Deno Fresh, TS/TSX/JS) — 5/5 profiles cubiertos
+
+**Wire-validation contra Django 5.1.4 (post-`b74e69a`):**
+- `find_dead_code`: 514 → **348** (−32% additional, **−58% cumulative desde v0.8 baseline 824**)
+- Classes: 251 → 164, methods: 74 → 24, functions: 189 → 160
+
+**Bugs nuevos abiertos (TS-specific, session 05):**
+- #18 `top_symbols` polluted by bundler dirs (`_fresh/`, `dist/`, `.next/`, `out/`, `build/`)
+- #19 `find_dead_code` over-reports en Fresh apps (islands not entry-points)
+- #20 JSX element refs no son call-graph edges
+
+---
+
+## 3a. Plan v0.11 (próxima sesión, post `/clear`)
+
+Para reanudar: `leé HANDOFF.md y continuá`. Default next is **v0.11
+P0 — bundler dir filter** (bug #18, trivial fix, very high impact for
+TS/JS users):
+
+1. **v0.11 P0** (½ día): bundler-output dir blacklist en
+   `top_symbols` y `find_dead_code`. Skip top-level dirs:
+   `_fresh/`, `dist/`, `build/`, `.next/`, `out/`,
+   `node_modules/`, `.svelte-kit/`, `target/` (Rust),
+   `__pycache__/`. Detect minified files como fallback (single-line
+   content, mangled identifiers). Bug #18 closed.
+
+2. **v0.11 P1** (1 día): TS framework entry-point detection.
+   Mirror v0.9 P5 Django CBV: detect Fresh `islands/` (any default
+   export from a file under islands/ is an entry point), Next.js
+   `pages/` + `app/`, SvelteKit `routes/`. Bug #19 closed.
+
+3. **v0.11 P2** (1-2 días): JSX element refs as edges. Extend the
+   TSX extractor to walk `JSXElement` / `JSXOpeningElement` nodes
+   and emit refs to the component name. Bug #20 closed.
+   **Riesgo medio**: JSX is the trickiest extractor change since v0.5.
+
+4. **v0.11 P3** (½ día, opcional): out-of-tree runtime registration
+   (Django `Field.register_lookup()`, similar patterns). Last big
+   bucket of Django false-positives.
+
+5. **Cut v0.10.x patch o v0.11.0** dependiendo del scope.
+
+**Para v1.0** falta:
+- Bugs #18-20 cerrados
+- Sessions 04 + 05 ya cerradas → `find_orphan_tests` sigue silent
+  pero esperable.
+- Posiblemente un demo asciicast (UX-level, opcional).
+
+### Estado previo: v0.9.0 cortado. Default surface 16 tools + 14 plugin = 30 max activos.
 
 **Tag:** `v0.9.0`. Tests **175/175**, schema v7.
 

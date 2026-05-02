@@ -6,6 +6,93 @@ follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.10.0] — 2026-05-01
+
+The "library codebase" release. v0.9 dropped Django `find_dead_code`
+824 → 514 (−38%). v0.10 drops it further to **348** (−32% additional,
+**−58% cumulative from v0.8**). Plus the language-coverage closeout:
+session 05 against a Deno Fresh app validates the agentic flow on
+TypeScript / TSX / JS, locking 5 profiles into the tier signal.
+
+| Tool on Django (40K symbols) | v0.8 | v0.9 | v0.10 | Cumulative |
+|---|---:|---:|---:|---:|
+| `find_dead_code` count | 824 | 514 | **348** | **−58%** |
+| `find_dead_code` classes | 293 | 251 | 164 | −44% |
+| `find_dead_code` methods | 81 | 74 | 24 | −70% |
+| `find_dead_code` functions | 450 | 189 | 160 | −64% |
+
+### Added — v0.10 P1 publicly-exported names protect from dead-code
+- New `_publicly_exported_names(file_path_abs)` walks each .py file's
+  top-level for two patterns and adds them to `find_dead_code`'s
+  `global_module_refs`:
+  - **`from .impl import Foo, Bar as Baz`** in any module — the
+    imported names (and their aliases) are recorded. Critical for
+    library `__init__.py` re-exports: `django/contrib/auth/__init__.py`
+    re-exporting `authenticate`, `Argon2PasswordHasher`, etc.
+  - **`__all__ = ['Foo', 'Bar']`** module-level list/tuple — each
+    string's trailing identifier is recorded.
+  - `import x.y as z` recognized: bound name (or head segment for
+    bare `import x.y`) recorded.
+- Closes the largest remaining false-positive bucket on Django
+  (~166 of the v0.9 514 candidates).
+
+### Added — v0.10 P0 README lift
+- v0.9 Django wins lifted above-the-fold to a four-row pull-out
+  table (`find_dead_code`, `find_endpoints(django)`, `quick_orient`
+  p95, partial reindex).
+- New "30-second tour" section under the headline shows the agentic
+  flow as runnable code with realistic JSON output sourced from
+  Django session 04 logs.
+- `docs/AGENT_QUICKSTART.md` now linked as a callout — existed
+  since v0.8 P4 but was never surfaced.
+- Plugin auto-detect framing tightened: "fresh repos get a 16-tool
+  surface, RF-active repos get 27, with no config".
+
+### Added — v0.10 P2 language coverage closeout (session 05)
+- Battle-test session 05 against `SpeedRunners-landing` (Deno Fresh
+  app, 217 files / 2532 symbols / 16,525 edges across TypeScript +
+  TSX + JS). Validates the agentic flow on the most common non-Python
+  stack. **5/5 profiles now covered**: exploration (the workflow runner), refactor
+  (livespec-mcp), RF flow (demo-app), Django bugfix
+  (Django), TS feature (SpeedRunners-landing).
+- Confirmed working clean on TypeScript: `find_symbol`,
+  `quick_orient`, `who_calls(max_depth=2)` (paginated to 10 of 27),
+  `get_symbol_source`, `analyze_impact(summary_only=True)`,
+  `audit_coverage(summary_only=True)` on a 0-RF TS repo.
+- Three new TS-specific bugs surfaced (#18-#20):
+  - **#18** `get_project_overview.top_symbols` polluted by bundler
+    output (`_fresh/`, `dist/`, etc.) — top 18 of 20 symbols on a
+    Fresh app live in minified bundles.
+  - **#19** `find_dead_code` over-reports on Fresh apps (974
+    candidates: 630 in `_fresh/`, 222 in `islands/` referenced via
+    JSX from `routes/*.tsx`).
+  - **#20** JSX element references not captured as call-graph
+    edges. The TSX extractor would need to walk `JSXElement` nodes
+    and emit refs.
+
+### Tooling
+- Default surface: **16 tools** (unchanged from v0.9). Plugin tier:
+  14. Total max active: 30.
+- Tests: 175 → **179** (+4 from `tests/test_exports_protect.py`).
+- Schema: v7 (no migration in v0.10).
+
+### Deferred to v0.11+
+- Bug #18 — bundler-output dir filter on `top_symbols` and
+  `find_dead_code` (`_fresh/`, `dist/`, `build/`, `.next/`, `out/`).
+  Trivial fix, queue for next cycle.
+- Bug #19 — TS framework entry-point detection (Fresh `islands/`,
+  Next.js `pages/` + `app/`, SvelteKit `routes/`). Mirrors v0.9 P5
+  Django CBV detection for the JS frameworks.
+- Bug #20 — JSX element refs as edges in the TSX extractor.
+- Out-of-tree runtime registration (Django `Field.register_lookup()`
+  runtime calls). The remaining 348 Django candidates are largely
+  this pattern.
+- Closure-capture detection in non-Python languages.
+- Optional LLM-assisted RF refinement on
+  `propose_requirements_from_codebase`.
+
+---
+
 ## [0.9.0] — 2026-05-01
 
 The "Django readiness" release. Drives the v0.8 P2 battle-test bugs
