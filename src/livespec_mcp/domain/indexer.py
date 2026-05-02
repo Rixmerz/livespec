@@ -15,6 +15,7 @@ import os
 import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 import xxhash
 
@@ -102,6 +103,8 @@ def index_project(
         )
     }
     seen: set[str] = set()
+    changed_file_ids: list[int] = []
+    files_deleted = False
 
     with transaction(conn):
         for p in files:
@@ -138,17 +141,36 @@ def index_project(
                 mtime=mtime,
             )
             _replace_symbols(conn, file_id=file_id, result=result)
+            changed_file_ids.append(file_id)
 
         # Remove deleted files
         for rel, row in existing.items():
             if rel not in seen:
                 conn.execute("DELETE FROM file WHERE id = ?", (row["id"],))
+                files_deleted = True
 
-    # Re-resolve all refs in the project. Cheap: indexed by target_name, and
-    # we only INSERT OR IGNORE so existing edges survive unchanged. Refs whose
-    # src symbol was deleted in a re-extract were cascaded out automatically.
+    # Re-resolve refs. v0.9: when partial changes are detected (no force,
+    # no deletions, prior index_run exists), walk only the affected ref
+    # subset — refs whose src is in a changed file OR whose target_name
+    # matches a name re-inserted in a changed file. Falls back to the
+    # full walk on `force=True`, file deletions (their target names need
+    # global cleanup), or the very first index run on this project.
     if stats.files_changed > 0 or force:
-        _resolve_refs(conn, project_id=project_id)
+        prior_runs = conn.execute(
+            "SELECT COUNT(*) c FROM index_run WHERE project_id=? AND finished_at IS NOT NULL",
+            (project_id,),
+        ).fetchone()["c"]
+        use_targeted = (
+            not force
+            and not files_deleted
+            and bool(changed_file_ids)
+            and int(prior_runs) > 0
+        )
+        _resolve_refs(
+            conn,
+            project_id=project_id,
+            changed_file_ids=changed_file_ids if use_targeted else None,
+        )
         # P0.1: also re-link RF annotations from docstrings. Cheap, idempotent
         # (INSERT OR IGNORE), and prevents traceability from going silently
         # stale when an edited symbol's old rf_symbol row is cascaded away.
@@ -266,7 +288,12 @@ def _replace_symbols(conn: sqlite3.Connection, *, file_id: int, result: ExtractR
         )
 
 
-def _resolve_refs(conn: sqlite3.Connection, *, project_id: int) -> int:
+def _resolve_refs(
+    conn: sqlite3.Connection,
+    *,
+    project_id: int,
+    changed_file_ids: list[int] | None = None,
+) -> int:
     """Resolve every symbol_ref in the project into symbol_edge rows.
 
     INSERT OR IGNORE only — never DELETE. The unique constraint on
@@ -274,6 +301,17 @@ def _resolve_refs(conn: sqlite3.Connection, *, project_id: int) -> int:
     deleted in a re-extract were cascaded out automatically; refs from
     unchanged files survive and re-resolve against the new symbol IDs of
     re-extracted files.
+
+    Targeted walk (v0.9): when ``changed_file_ids`` is provided, only refs
+    that need re-resolution are walked:
+      - refs whose src is in a changed file (their old edges died via
+        cascade when the file's symbols were wiped + re-inserted), OR
+      - refs whose target_name matches a name defined in a changed file
+        (edges to those names died via dst-cascade when the changed
+        file's symbols were re-inserted with new IDs).
+    Refs from unchanged files to unchanged files keep their existing
+    edges untouched (INSERT OR IGNORE on the same (src, dst) is a no-op).
+    Pass ``changed_file_ids=None`` for a full re-walk (force re-index).
 
     Disambiguation precedence when target_name has multiple candidates:
     1. scope_module match (Python imports captured by extractor) → weight 0.9.
@@ -285,14 +323,39 @@ def _resolve_refs(conn: sqlite3.Connection, *, project_id: int) -> int:
        cross-file ambiguous call where the extractor missed the import.
     Single-candidate matches are always weight 1.0.
     """
-    rows = conn.execute(
-        """SELECT u.src_symbol_id, u.target_name, u.scope_module, s.file_id AS src_file_id
-           FROM symbol_ref u
-           JOIN symbol s ON s.id = u.src_symbol_id
-           JOIN file f ON f.id = s.file_id
-           WHERE f.project_id = ?""",
-        (project_id,),
-    ).fetchall()
+    if changed_file_ids:
+        placeholders = ",".join("?" * len(changed_file_ids))
+        names_in_changed = {
+            r["name"]
+            for r in conn.execute(
+                f"SELECT DISTINCT name FROM symbol WHERE file_id IN ({placeholders})",
+                changed_file_ids,
+            )
+        }
+        params: list[Any] = [project_id, *changed_file_ids]
+        sql = (
+            f"SELECT u.src_symbol_id, u.target_name, u.scope_module, s.file_id AS src_file_id "
+            f"FROM symbol_ref u "
+            f"JOIN symbol s ON s.id = u.src_symbol_id "
+            f"JOIN file f ON f.id = s.file_id "
+            f"WHERE f.project_id = ? AND ("
+            f"  s.file_id IN ({placeholders})"
+        )
+        if names_in_changed:
+            name_placeholders = ",".join("?" * len(names_in_changed))
+            sql += f" OR u.target_name IN ({name_placeholders})"
+            params.extend(names_in_changed)
+        sql += ")"
+        rows = conn.execute(sql, params).fetchall()
+    else:
+        rows = conn.execute(
+            """SELECT u.src_symbol_id, u.target_name, u.scope_module, s.file_id AS src_file_id
+               FROM symbol_ref u
+               JOIN symbol s ON s.id = u.src_symbol_id
+               JOIN file f ON f.id = s.file_id
+               WHERE f.project_id = ?""",
+            (project_id,),
+        ).fetchall()
 
     # name_index: short name -> [(symbol_id, qualified_name, file_id)]
     name_index: dict[str, list[tuple[int, str, int]]] = {}
