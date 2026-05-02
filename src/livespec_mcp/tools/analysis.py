@@ -472,6 +472,137 @@ def _is_bundler_output_path(path: str) -> bool:
     return False
 
 
+# v0.11 P1 (bug #19): TS framework entry-point detection.
+# Files under these path patterns are reachable via filesystem-based routing,
+# not call edges — symbols in them are NOT dead code.
+#
+# Pattern: (path_segment_check, optional_basename_set_or_None)
+#   - path_segment_check: substring that must appear anywhere in the path
+#   - optional_basename_set: if not None, ONLY files whose stem is in this
+#     set are treated as entry points (app-router style). If None, ANY file
+#     under the segment is treated as entry-point (islands, pages-router).
+_TS_FRAMEWORK_ENTRY_PATTERNS: tuple[tuple[str, frozenset[str] | None], ...] = (
+    # Deno Fresh islands: any .ts/.tsx/.js/.jsx under islands/
+    ("/islands/", None),
+    # Next.js pages router: any file under pages/
+    ("/pages/", None),
+    # Next.js app router: only these magic basenames
+    (
+        "/app/",
+        frozenset(
+            {
+                "page", "layout", "loading", "error",
+                "not-found", "template", "default", "route",
+            }
+        ),
+    ),
+    # SvelteKit routes: only +page, +layout, +server, +error files
+    (
+        "/routes/",
+        frozenset(
+            {
+                "+page", "+layout", "+server", "+error",
+                "+page.server", "+layout.server",
+            }
+        ),
+    ),
+    # Remix app/routes: any file under app/routes/
+    ("/routes/", None),
+)
+
+# TS/JS source extensions supported by the extractor
+_TS_SRC_EXTS = frozenset({".ts", ".tsx", ".js", ".jsx", ".svelte"})
+
+
+def _ts_framework_entry_point_kind(path: str) -> str | None:
+    """Return a framework label if *path* is a TS/JS/Svelte file that lives
+    inside a filesystem-based routing directory.
+
+    Returns one of ``"fresh"``, ``"nextjs_pages"``, ``"nextjs_app"``,
+    ``"sveltekit"``, ``"remix"`` or ``None``.
+
+    Path must be project-relative (no leading slash).  Both
+    ``pages/index.tsx`` and ``src/pages/index.tsx`` must match — the
+    patterns check for the dir segment anywhere in the path so the
+    optional ``src/`` prefix is handled automatically.
+    """
+    if not path:
+        return None
+    # Normalise: strip leading "./" and ensure leading "/" for segment checks
+    p = path[2:] if path.startswith("./") else path
+    # Extension filter first — cheap and eliminates most paths
+    dot = p.rfind(".")
+    ext = p[dot:].lower() if dot >= 0 else ""
+    if ext not in _TS_SRC_EXTS:
+        return None
+
+    # Derive the file stem (basename without extension, and for SvelteKit
+    # also strip the .server / .js/.ts secondary extension from "+page.server.ts")
+    slash = p.rfind("/")
+    basename = p[slash + 1 :] if slash >= 0 else p
+    # strip extension(s): e.g. "+page.server.ts" → "+page.server"
+    stem = basename[: basename.find(".")] if "." in basename else basename
+
+    # Normalise path with a leading slash for consistent segment matching
+    normalised = "/" + p
+
+    # Islands (Fresh)
+    if "/islands/" in normalised:
+        return "fresh"
+
+    # SvelteKit routes (must check before generic /routes/ below)
+    if "/routes/" in normalised:
+        sveltekit_stems = frozenset(
+            {"+page", "+layout", "+server", "+error"}
+        )
+        if stem in sveltekit_stems or basename.startswith("+page.server") or basename.startswith("+layout.server"):
+            return "sveltekit"
+        # SvelteKit .svelte files under routes/ are always entry points
+        if ext == ".svelte":
+            return "sveltekit"
+        # Remix: any .ts/.tsx/.js/.jsx under app/routes/
+        if "/app/routes/" in normalised or normalised.startswith("/app/routes/"):
+            return "remix"
+
+    # Next.js pages router
+    if "/pages/" in normalised:
+        return "nextjs_pages"
+
+    # Next.js app router
+    if "/app/" in normalised:
+        app_router_stems = frozenset(
+            {
+                "page", "layout", "loading", "error",
+                "not-found", "template", "default", "route",
+            }
+        )
+        if stem in app_router_stems:
+            return "nextjs_app"
+
+    return None
+
+
+def _is_ts_framework_entry_point(meta: dict) -> bool:
+    """True when the symbol lives in a TS framework filesystem-routing path.
+
+    Used by ``find_dead_code`` to skip symbols that are reachable via routing
+    conventions (Fresh islands, Next.js pages/app, SvelteKit routes, Remix
+    routes) rather than explicit call edges.
+
+    Any top-level ``function`` or ``class`` in those files counts as an
+    entry point, regardless of whether the extractor captured a ``default``
+    export marker (since tree-sitter TS extraction doesn't reliably surface
+    that yet — v0.11 P2 will extend edges for JSX; for now, the path
+    heuristic is the safe conservative choice).
+    """
+    file_path = meta.get("file_path") or ""
+    kind = meta.get("kind") or ""
+    return (
+        kind in ("function", "class", "method")
+        and _ts_framework_entry_point_kind(file_path) is not None
+    )
+
+
 def _structural_pattern_names(conn, project_id: int, threshold: int) -> set[str]:
     """Names appearing as a symbol in ≥`threshold` distinct files in the project.
 
@@ -1238,6 +1369,11 @@ def register(mcp: FastMCP) -> None:
           callsites the scanner can't read. Surfaced by Django where
           70+ vendored xregexp.js helpers were over-reported. Pass
           `include_non_python=True` to surface them.
+        - **TS framework filesystem-routing files** (v0.11 P1, bug #19).
+          Functions/classes in Fresh ``islands/``, Next.js ``pages/`` /
+          ``app/``, SvelteKit ``routes/``, and Remix ``app/routes/`` are
+          reachable via filesystem routing, not call edges. Skipped by
+          default; pass `include_infrastructure=True` to surface them.
 
         v0.7 (B3): paginated. `limit` (default 200) caps `dead_symbols` per
         call; `cursor` resumes from a previous call's `next_cursor`;
@@ -1353,6 +1489,12 @@ def register(mcp: FastMCP) -> None:
                 continue
             if _is_bundler_output_path(meta["file_path"]):
                 continue
+            # v0.11 P1 (bug #19): TS framework filesystem-routing entry points.
+            # Fresh islands, Next.js pages/app, SvelteKit routes, Remix routes
+            # are reachable via path conventions — they have zero call edges
+            # by design but are never dead.
+            if not include_infrastructure and _is_ts_framework_entry_point(meta):
+                continue
             if not include_non_python and not meta["file_path"].endswith(".py"):
                 continue
             if not include_infrastructure and _is_implicit_entry_point(meta):
@@ -1432,7 +1574,8 @@ def register(mcp: FastMCP) -> None:
     @mcp.tool(annotations={"readOnlyHint": True, "idempotentHint": True})
     def find_endpoints(
         framework: Literal[
-            "flask", "fastapi", "click", "pytest", "fastmcp", "celery", "django"
+            "flask", "fastapi", "click", "pytest", "fastmcp", "celery", "django",
+            "nextjs", "fresh", "sveltekit", "remix",
         ] | None = None,
         limit: int = 200,
         cursor: int = 0,
@@ -1450,6 +1593,12 @@ def register(mcp: FastMCP) -> None:
         to filter to its decorator set (matched against the LAST dotted
         segment of each decorator, so aliasing like `from flask import Flask
         as App; @App().route(...)` still resolves).
+
+        v0.11 P1: ``framework='fresh'``, ``'nextjs'``, ``'sveltekit'``,
+        ``'remix'`` (or ``None``) surfaces symbols in filesystem-routing
+        files: Fresh ``islands/``, Next.js ``pages/`` and ``app/``,
+        SvelteKit ``routes/``, Remix ``app/routes/``. Detection is
+        path-based (no decorator needed).
 
         v0.9 P5: when ``framework='django'`` (or ``None``), classes that
         inherit from Django class-based view bases or auth mixins
@@ -1499,6 +1648,43 @@ def register(mcp: FastMCP) -> None:
                 "decorators": matching,
             })
             seen_qnames.add(r["qualified_name"])
+
+        # v0.11 P1: TS framework filesystem-routing detection (bug #19).
+        # Fresh islands, Next.js pages/app, SvelteKit routes, and Remix routes
+        # are reachable via path conventions — no decorators needed.
+        # Run when framework is one of the TS framework names or None.
+        _TS_FRAMEWORKS = {"nextjs", "fresh", "sveltekit", "remix"}
+        if framework in _TS_FRAMEWORKS or framework is None:
+            ts_rows = st.conn.execute(
+                """SELECT s.qualified_name, s.kind, s.start_line, s.end_line,
+                          f.path AS file_path
+                   FROM symbol s JOIN file f ON f.id=s.file_id
+                   WHERE f.project_id=? AND s.kind IN ('function', 'class')
+                   ORDER BY f.path, s.start_line""",
+                (pid,),
+            ).fetchall()
+            for r in ts_rows:
+                if r["qualified_name"] in seen_qnames:
+                    continue
+                fp = r["file_path"]
+                fw_kind = _ts_framework_entry_point_kind(fp)
+                if fw_kind is None:
+                    continue
+                # When a specific TS framework is requested, filter to it
+                if framework is not None and framework != fw_kind and not (
+                    framework == "nextjs" and fw_kind in ("nextjs_pages", "nextjs_app")
+                ):
+                    continue
+                endpoints.append({
+                    "qualified_name": r["qualified_name"],
+                    "kind": r["kind"],
+                    "file_path": fp,
+                    "start_line": r["start_line"],
+                    "end_line": r["end_line"],
+                    "decorators": [],
+                    "ts_framework": fw_kind,
+                })
+                seen_qnames.add(r["qualified_name"])
 
         # v0.9 P5: Django class-based view detection. Classes that
         # inherit from a Django CBV / mixin base are entry points without

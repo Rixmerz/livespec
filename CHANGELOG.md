@@ -19,6 +19,24 @@ follows [SemVer](https://semver.org/).
 - Tests: `tests/test_bundler_filter.py` covers the helper plus
   end-to-end behaviour for `find_dead_code` and `get_project_overview`.
 
+### Added — v0.11 P1 TS framework entry-point detection
+- New helpers `_ts_framework_entry_point_kind(path)` and
+  `_is_ts_framework_entry_point(meta)` detect TS framework
+  filesystem-routing files: Fresh `islands/`, Next.js `pages/` (pages
+  router) and `app/{page,layout,loading,...}.tsx` (app router), SvelteKit
+  `routes/+{page,layout,server,error}.*`, and Remix `app/routes/`.
+- `find_dead_code`: symbols in those files are skipped from the dead-code
+  report (guarded by `include_infrastructure=False` default). Closes
+  bug #19 surfaced by session 05 (Deno Fresh / TS over-reporting).
+- `find_endpoints`: extended `framework` literal to accept `"nextjs"`,
+  `"fresh"`, `"sveltekit"`, `"remix"`. These frameworks are surfaced
+  via a path-based scan (no decorators needed), returning symbols with a
+  `ts_framework` field (`"fresh"`, `"nextjs_pages"`, `"nextjs_app"`,
+  `"sveltekit"`, `"remix"`).
+- Tests: `tests/test_ts_framework_entry_points.py` — 24 unit tests on
+  path-matching helpers + 8 MCP integration tests (find_dead_code
+  suppression + find_endpoints surfacing). 32 new tests total.
+
 ## [0.10.0] — 2026-05-01
 
 The "library codebase" release. v0.9 dropped Django `find_dead_code`
