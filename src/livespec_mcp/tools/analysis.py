@@ -558,6 +558,9 @@ def register(mcp: FastMCP) -> None:
     def who_calls(
         qname: str,
         max_depth: int = 1,
+        limit: int = 200,
+        cursor: int = 0,
+        summary_only: bool = False,
         workspace: str | None = None,
     ) -> dict[str, Any]:
         """Symbols that call `qname` (transitive backward cone up to max_depth).
@@ -566,6 +569,13 @@ def register(mcp: FastMCP) -> None:
         max_depth=...)` that returns only the callers list — no forward cone,
         no RF rollup. Use when an agent only needs the answer to "what would
         break if I touched this?".
+
+        v0.9 P2: pagination contract. ``limit`` (default 200) caps the
+        ``callers`` array; ``cursor`` resumes from a prior call's
+        ``next_cursor``; ``summary_only=True`` returns only ``count`` +
+        ``root`` + ``max_depth`` (no caller list). Surfaced by Django
+        battle-test where ``max_depth=2`` produced 102KB / 400 callers.
+        ``count`` is always exact regardless of pagination.
         """
         st = get_state(workspace)
         pid = st.project_id
@@ -575,22 +585,40 @@ def register(mcp: FastMCP) -> None:
         view = load_graph(st.conn, pid)
         sid = int(sym["id"])
         callers = ancestors_within(view.g, sid, max_depth) if sid in view.g else set()
+        total = len(callers)
+        if summary_only:
+            return {
+                "root": sym["qualified_name"],
+                "max_depth": max_depth,
+                "count": total,
+            }
+        meta_sorted = sorted(
+            (view.sym_meta[n] for n in callers if n in view.sym_meta),
+            key=lambda m: (m.get("file_path", ""), m.get("start_line", 0)),
+        )
+        page = meta_sorted[cursor : cursor + limit]
+        next_cursor = cursor + limit if cursor + limit < len(meta_sorted) else None
         return {
             "root": sym["qualified_name"],
             "max_depth": max_depth,
-            "callers": [view.sym_meta[n] for n in callers if n in view.sym_meta],
-            "count": len(callers),
+            "callers": page,
+            "count": total,
+            "next_cursor": next_cursor,
         }
 
     @mcp.tool(annotations={"readOnlyHint": True, "idempotentHint": True})
     def who_does_this_call(
         qname: str,
         max_depth: int = 1,
+        limit: int = 200,
+        cursor: int = 0,
+        summary_only: bool = False,
         workspace: str | None = None,
     ) -> dict[str, Any]:
         """Symbols that `qname` calls (transitive forward cone up to max_depth).
 
-        Forward-direction counterpart of `who_calls`.
+        Forward-direction counterpart of `who_calls`. Same v0.9 P2
+        pagination contract: ``limit`` / ``cursor`` / ``summary_only``.
         """
         st = get_state(workspace)
         pid = st.project_id
@@ -600,11 +628,25 @@ def register(mcp: FastMCP) -> None:
         view = load_graph(st.conn, pid)
         sid = int(sym["id"])
         callees = descendants_within(view.g, sid, max_depth) if sid in view.g else set()
+        total = len(callees)
+        if summary_only:
+            return {
+                "root": sym["qualified_name"],
+                "max_depth": max_depth,
+                "count": total,
+            }
+        meta_sorted = sorted(
+            (view.sym_meta[n] for n in callees if n in view.sym_meta),
+            key=lambda m: (m.get("file_path", ""), m.get("start_line", 0)),
+        )
+        page = meta_sorted[cursor : cursor + limit]
+        next_cursor = cursor + limit if cursor + limit < len(meta_sorted) else None
         return {
             "root": sym["qualified_name"],
             "max_depth": max_depth,
-            "callees": [view.sym_meta[n] for n in callees if n in view.sym_meta],
-            "count": len(callees),
+            "callees": page,
+            "count": total,
+            "next_cursor": next_cursor,
         }
 
     @mcp.tool(annotations={"readOnlyHint": True, "idempotentHint": True})
@@ -706,6 +748,9 @@ def register(mcp: FastMCP) -> None:
         target_type: Literal["symbol", "file", "requirement"],
         target: str,
         max_depth: int = 5,
+        limit: int = 200,
+        cursor: int = 0,
+        summary_only: bool = False,
         workspace: str | None = None,
     ) -> dict[str, Any]:
         """Topological impact analysis: what changes if `target` changes.
@@ -714,6 +759,13 @@ def register(mcp: FastMCP) -> None:
           Set max_depth=1 to get the equivalent of a "find references".
         - file:   union of impacts from every symbol in the file.
         - requirement: forward cone from every symbol implementing the RF + their callers.
+
+        v0.9 P2: pagination contract. ``impacted_callers`` and (for symbol
+        target) ``calls_into`` are paginated by ``limit`` (default 200).
+        ``cursor`` resumes; ``summary_only=True`` returns counts only.
+        Surfaced by Django battle-test where ``max_depth=3`` produced
+        332KB / 664 callers / 848 calls_into. Counts and the ``count``
+        fields are always exact regardless of pagination.
         """
         st = get_state(workspace)
         pid = st.project_id
@@ -733,6 +785,17 @@ def register(mcp: FastMCP) -> None:
                 ).fetchall()
             ]
 
+        def _paginate_meta(ids: set[int]) -> tuple[list[dict], int, int | None]:
+            """Sort + slice. Returns (page, total, next_cursor)."""
+            sorted_meta = sorted(
+                (view.sym_meta[i] for i in ids if i in view.sym_meta),
+                key=lambda m: (m.get("file_path", ""), m.get("start_line", 0)),
+            )
+            total = len(sorted_meta)
+            page = sorted_meta[cursor : cursor + limit]
+            next_c = cursor + limit if cursor + limit < total else None
+            return page, total, next_c
+
         if target_type == "symbol":
             sym = _resolve_symbol(st.conn, pid, target)
             if not sym:
@@ -740,11 +803,27 @@ def register(mcp: FastMCP) -> None:
             sid = int(sym["id"])
             impacted = ancestors_within(view.g, sid, max_depth) if sid in view.g else set()
             forward = descendants_within(view.g, sid, max_depth) if sid in view.g else set()
+            if summary_only:
+                return {
+                    "root": sym["qualified_name"],
+                    "counts": {
+                        "impacted_callers": len(impacted),
+                        "calls_into": len(forward),
+                        "affected_requirements": len(rfs_for_symbols(impacted | {sid})),
+                    },
+                }
+            callers_page, callers_total, callers_next = _paginate_meta(impacted)
+            calls_page, calls_total, calls_next = _paginate_meta(forward)
             return {
                 "root": sym["qualified_name"],
-                "impacted_callers": [view.sym_meta[n] for n in impacted if n in view.sym_meta],
-                "calls_into": [view.sym_meta[n] for n in forward if n in view.sym_meta],
+                "impacted_callers": callers_page,
+                "calls_into": calls_page,
                 "affected_requirements": rfs_for_symbols(impacted | {sid}),
+                "counts": {
+                    "impacted_callers": callers_total,
+                    "calls_into": calls_total,
+                },
+                "next_cursor": callers_next if callers_next is not None else calls_next,
             }
         if target_type == "file":
             sids = [
@@ -758,18 +837,32 @@ def register(mcp: FastMCP) -> None:
             if not sids:
                 return mcp_error(
                     f"File '{target}' not indexed",
-                    hint="run `index_project()` or check `list_files(path_glob=...)` for the correct path",
+                    hint="run `index_project()` to (re-)index the workspace",
                 )
             impacted: set[int] = set()
             for sid in sids:
                 if sid in view.g:
                     impacted |= ancestors_within(view.g, sid, max_depth)
             impacted -= set(sids)
+            if summary_only:
+                return {
+                    "file": target,
+                    "symbols_in_file": len(sids),
+                    "counts": {
+                        "impacted_callers": len(impacted),
+                        "affected_requirements": len(
+                            rfs_for_symbols(impacted | set(sids))
+                        ),
+                    },
+                }
+            callers_page, callers_total, callers_next = _paginate_meta(impacted)
             return {
                 "file": target,
                 "symbols_in_file": len(sids),
-                "impacted_callers": [view.sym_meta[n] for n in impacted if n in view.sym_meta],
+                "impacted_callers": callers_page,
                 "affected_requirements": rfs_for_symbols(impacted | set(sids)),
+                "counts": {"impacted_callers": callers_total},
+                "next_cursor": callers_next,
             }
         if target_type == "requirement":
             rf = st.conn.execute(
