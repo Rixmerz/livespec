@@ -86,7 +86,9 @@ async def test_find_dead_code_skips_pub_rust_items(workspace):
 
     async with Client(mcp) as c:
         await c.call_tool("index_project", {})
-        out = (await c.call_tool("find_dead_code", {})).data
+        out = (
+            await c.call_tool("find_dead_code", {"include_non_python": True})
+        ).data
         qnames = {d["qualified_name"] for d in out["dead_symbols"]}
 
         assert "src.lib.public_api" not in qnames, (
@@ -102,7 +104,10 @@ async def test_find_dead_code_skips_pub_rust_items(workspace):
 
         # include_public=True surfaces the pub fn too
         out2 = (
-            await c.call_tool("find_dead_code", {"include_public": True})
+            await c.call_tool(
+                "find_dead_code",
+                {"include_public": True, "include_non_python": True},
+            )
         ).data
         qnames2 = {d["qualified_name"] for d in out2["dead_symbols"]}
         assert "src.lib.public_api" in qnames2

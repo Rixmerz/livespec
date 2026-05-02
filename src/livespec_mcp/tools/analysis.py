@@ -100,6 +100,13 @@ def _collect_module_refs(node: ast.AST, into: set[str]) -> None:
     bodies of nested function/class defs so refs inside their scopes are
     NOT counted as module-level. Decorators, base classes, default-arg
     expressions, and class-level type-annotations *are* still walked.
+
+    v0.9 P4: also captures the trailing segment of dotted-path string
+    constants (`"app.apps.AdminConfig"` → `AdminConfig`). Django and
+    other frameworks register implementations through string paths in
+    settings (INSTALLED_APPS, MIDDLEWARE, PASSWORD_HASHERS, STORAGES,
+    DEFAULT_AUTO_FIELD, default_app_config, ...). Without this the
+    referenced classes look dead to the static analyzer.
     """
     if isinstance(node, ast.Name):
         into.add(node.id)
@@ -108,6 +115,17 @@ def _collect_module_refs(node: ast.AST, into: set[str]) -> None:
         into.add(node.attr)
         if isinstance(node.value, ast.AST):
             _collect_module_refs(node.value, into)
+        return
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        s = node.value
+        if 1 < len(s) < 200 and "." in s and not s.startswith("."):
+            tail = s.rsplit(".", 1)[-1]
+            if tail.isidentifier():
+                # Validate the full path looks like a dotted Python ref
+                # (alphanumeric + underscores + dots only).
+                core = s.replace(".", "").replace("_", "")
+                if core.isalnum():
+                    into.add(tail)
         return
     skip_field = None
     if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
@@ -251,6 +269,14 @@ def _module_level_referenced_names(file_path_abs: str) -> frozenset[str]:
     return frozenset(refs)
 
 
+_FRAMEWORK_INNER_CLASS_NAMES = frozenset({
+    # Django ORM model + form metaclass hook — reflected via ModelBase.
+    "Meta",
+    # Django migration unit — registered via MigrationLoader.
+    "Migration",
+})
+
+
 def _is_implicit_entry_point(meta: dict) -> bool:
     """Stricter subset of `_is_infrastructure`: only the cases where a symbol
     has invisible callers (Python protocol dunders, FastMCP `register`, DI
@@ -269,6 +295,17 @@ def _is_implicit_entry_point(meta: dict) -> bool:
         name.endswith(suf) for suf in _INFRA_NAME_SUFFIXES
     ):
         return True
+    # v0.9 P4: framework inner-class hooks. Django's ModelBase / FormMeta
+    # metaclass reads `class Meta:` reflectively; MigrationLoader does the
+    # same with `class Migration:`. They have zero direct callers but are
+    # never dead. Heuristic guard: parent segment starts with an uppercase
+    # letter, signaling it's an outer class (PascalCase) rather than a
+    # module path (lowercase). Avoids protecting a stray top-level
+    # `class Meta:` in a normal module.
+    if kind == "class" and name in _FRAMEWORK_INNER_CLASS_NAMES:
+        parts = qname.split(".")
+        if len(parts) >= 3 and parts[-2][:1].isupper():
+            return True
     return False
 
 
@@ -1014,6 +1051,7 @@ def register(mcp: FastMCP) -> None:
     def find_dead_code(
         include_infrastructure: bool = False,
         include_public: bool = False,
+        include_non_python: bool = False,
         limit: int = 200,
         cursor: int = 0,
         summary_only: bool = False,
@@ -1028,6 +1066,12 @@ def register(mcp: FastMCP) -> None:
         - **Public symbols** (Rust `pub`/`pub(crate)`, TS/JS `exported`,
           Java/PHP `public`). They have potential callers from outside the
           indexed crate/package. Pass `include_public=True` to surface them.
+        - **Non-Python files** (v0.9 P4). The module-level reference
+          scanner is Python-only, so JS/Go/Java/Rust symbols can be
+          flagged dead just because their callers are in non-Python
+          callsites the scanner can't read. Surfaced by Django where
+          70+ vendored xregexp.js helpers were over-reported. Pass
+          `include_non_python=True` to surface them.
 
         v0.7 (B3): paginated. `limit` (default 200) caps `dead_symbols` per
         call; `cursor` resumes from a previous call's `next_cursor`;
@@ -1136,6 +1180,8 @@ def register(mcp: FastMCP) -> None:
         for r in rows:
             meta = dict(r)
             if is_entry_point_path(meta["file_path"]):
+                continue
+            if not include_non_python and not meta["file_path"].endswith(".py"):
                 continue
             if not include_infrastructure and _is_implicit_entry_point(meta):
                 continue
