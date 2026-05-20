@@ -19,9 +19,9 @@ RF flow, Django bugfix, TypeScript feature) — see
 [`docs/AGENT_USAGE_DATA.md`](docs/AGENT_USAGE_DATA.md).
 
 > Want the agentic flow without reading further?
-> See [`docs/AGENT_QUICKSTART.md`](docs/AGENT_QUICKSTART.md) for the
-> 10-step brownfield onboarding flow that 4 sessions of real-agent
-> battle-testing converged on.
+> - **MCP prompt `agent_playbook`** — how to use tools *and* annotate code (`@rf:`).
+> - [`docs/AGENT_QUICKSTART.md`](docs/AGENT_QUICKSTART.md) — 10-step cold-open flow.
+> - [`docs/AGENT_PLAYBOOK.md`](docs/AGENT_PLAYBOOK.md) — same content as the prompt.
 
 ## 30-second tour
 
@@ -143,26 +143,21 @@ By default it picks the **current working directory** as workspace, or
   "mcpServers": {
     "livespec": {
       "command": "uv",
-      "args": ["--directory", "/path/to/livespec-mcp", "run", "livespec-mcp"],
-      "env": {
-        "LIVESPEC_WORKSPACE": "/path/to/your/project",
-        "LIVESPEC_PLUGINS": "all"
-      }
+      "args": ["--directory", "/path/to/livespec-mcp", "run", "livespec-mcp"]
     }
   }
 }
 ```
 
-`LIVESPEC_PLUGINS=all` opts every plugin in regardless of DB state — useful
-when bootstrapping RFs on a fresh repo. Default behavior: plugins
-auto-load when their tables already have rows.
+**Multi-repo:** pass `workspace="/abs/path/to/project"` on **every** tool call (required).
+No `LIVESPEC_WORKSPACE` — switching repos is only a different `workspace=` value.
+The server caches up to 8 workspaces (LRU); no MCP restart.
 
 ## Tools (16 default + 14 plugin = 30 max)
 
-Every tool accepts an optional `workspace: str` argument. When omitted, the
-server resolves to `LIVESPEC_WORKSPACE` env var or the current working
-directory. The runtime caches one DB connection per workspace (LRU=8), so a
-single MCP server instance can serve multiple repos in parallel.
+Every tool requires `workspace` (absolute project root). Pass it on each call;
+omitting it is an error (no env fallback). LRU cache (8 workspaces) — one MCP
+server, many projects, no restart.
 
 ### Default surface — code intel + RF agentic (18)
 
@@ -294,6 +289,7 @@ includes `docs`. Human-tier ceremony for managing generated docs.
 
 ## Prompts (slash commands)
 
+- **`agent_playbook`** — primary agent guide: tool tiers, call patterns, `@rf:` commenting, brownfield RF workflow, anti-patterns
 - `onboard_project`
 - `analyze_change_impact`
 - `audit_requirement_coverage`

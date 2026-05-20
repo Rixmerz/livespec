@@ -6,19 +6,18 @@ repo agents, parallel pytest workers. We keep an LRU cache of `AppState`
 keyed by absolute workspace path. Each AppState owns its own SQLite
 connection against the corresponding `.mcp-docs/docs.db`.
 
-Backward compatibility:
-- `get_state()` (no args) resolves to the workspace from the env var
-  `LIVESPEC_WORKSPACE` or the current working directory, matching v0.1.
-- `get_state(workspace=path)` returns the state for a specific workspace.
+Multi-repo (required):
+- Pass ``workspace="/abs/path/to/project"`` on **every** tool call. The server
+  keeps an LRU cache of up to 8 open workspaces — no MCP restart between repos.
 
-v0.6: the `use_workspace` MCP tool was removed (deprecated since v0.2). The
-internal `use_workspace()` helper is also gone — set LIVESPEC_WORKSPACE in
-the environment if you need a default, or pass `workspace=` to every tool.
+There is **no** ``LIVESPEC_WORKSPACE`` (or cwd) fallback. Omitting ``workspace``
+returns an error.
+
+v0.6: the ``use_workspace`` MCP tool was removed.
 """
 
 from __future__ import annotations
 
-import os
 import sqlite3
 import threading
 from collections import OrderedDict
@@ -27,6 +26,7 @@ from pathlib import Path
 
 from livespec_mcp.config import Settings
 from livespec_mcp.storage.db import connect, get_or_create_project
+from livespec_mcp.workspace_param import WorkspaceRequiredError
 
 _LRU_MAX = 8
 
@@ -52,9 +52,11 @@ _cache_lock = threading.Lock()
 
 
 def _resolve_workspace(path: str | Path | None) -> Path:
-    if path is None:
-        path = os.environ.get("LIVESPEC_WORKSPACE") or os.environ.get(
-            "DOCS_BRAIN_WORKSPACE", os.getcwd()
+    if path is None or (isinstance(path, str) and not str(path).strip()):
+        raise WorkspaceRequiredError(
+            "workspace is required on every tool call. "
+            "Pass workspace='/absolute/path/to/project' (your repository root). "
+            "LIVESPEC_WORKSPACE and other env defaults are not used."
         )
     return Path(str(path)).expanduser().resolve()
 
@@ -62,9 +64,14 @@ def _resolve_workspace(path: str | Path | None) -> Path:
 def get_state(workspace: str | Path | None = None) -> AppState:
     """Return the AppState for the given workspace, opening it if needed.
 
-    With workspace=None, resolves via env var or cwd (v0.1 behaviour).
+    Requires ``workspace`` on every call (absolute project root).
     """
     ws = _resolve_workspace(workspace)
+    if not ws.is_dir():
+        raise FileNotFoundError(
+            f"Workspace directory not found: {ws}. "
+            "Pass workspace='/absolute/path/to/project' on the tool call."
+        )
     with _cache_lock:
         st = _cache.get(ws)
         if st is not None:

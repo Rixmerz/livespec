@@ -21,6 +21,7 @@ from livespec_mcp.domain.rag import (
     hybrid_search,
 )
 from livespec_mcp.state import get_state
+from livespec_mcp.workspace_param import WORKSPACE_DOCSTRING_NOTE, Workspace
 from livespec_mcp.tools._errors import mcp_error
 
 
@@ -30,7 +31,7 @@ def register(mcp: FastMCP) -> None:
         query: str,
         scope: Literal["all", "code", "requirements"] = "all",
         limit: int = 20,
-        workspace: str | None = None,
+        workspace: Workspace | None = None,
     ) -> dict[str, Any]:
         """Hybrid retrieval over chunked symbols + RFs.
 
@@ -39,8 +40,7 @@ def register(mcp: FastMCP) -> None:
         Run `index_project(embed=True)` once to populate vectors;
         subsequent calls reuse them.
 
-        scope: 'all' | 'code' | 'requirements'
-        """
+        scope: 'all' | 'code' | 'requirements'""" + WORKSPACE_DOCSTRING_NOTE
         if not query or not query.strip():
             return mcp_error("query is required", hint="pass a non-empty query string")
         if limit < 1 or limit > 200:
@@ -59,7 +59,7 @@ def register(mcp: FastMCP) -> None:
         }
 
     @mcp.tool(annotations={"readOnlyHint": False, "idempotentHint": True})
-    def embed_chunks(workspace: str | None = None) -> dict[str, Any]:
+    def embed_chunks(workspace: Workspace | None = None) -> dict[str, Any]:
         """Populate vector embeddings for any unembedded chunks.
 
         Requires the [embeddings] extra (fastembed + sqlite-vec). First

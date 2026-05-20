@@ -92,4 +92,23 @@ def register_active(mcp: FastMCP, state: AppState) -> set[str]:
     return active
 
 
-__all__ = ["KNOWN_PLUGINS", "detect_active_plugins", "register_active"]
+def register_all_plugins(mcp: FastMCP) -> set[str]:
+    """Register rf + docs plugins unconditionally (multi-tenant MCP servers).
+
+    Use at server boot so mutation/doc tools are available for any
+    ``workspace=`` path without restarting or setting LIVESPEC_WORKSPACE.
+    """
+    from livespec_mcp.tools.plugins import docs as docs_plugin
+    from livespec_mcp.tools.plugins import rf as rf_plugin
+
+    rf_plugin.register(mcp)
+    docs_plugin.register(mcp)
+    return set(KNOWN_PLUGINS)
+
+
+__all__ = [
+    "KNOWN_PLUGINS",
+    "detect_active_plugins",
+    "register_active",
+    "register_all_plugins",
+]

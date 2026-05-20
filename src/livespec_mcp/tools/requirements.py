@@ -24,6 +24,7 @@ from livespec_mcp.domain.graph import load_graph, page_rank
 from livespec_mcp.domain.matcher import scan_annotations
 from livespec_mcp.domain.md_rfs import parse_rfs_markdown
 from livespec_mcp.state import get_state
+from livespec_mcp.workspace_param import WORKSPACE_DOCSTRING_NOTE, Workspace
 from livespec_mcp.tools._errors import mcp_error
 from livespec_mcp.tools.analysis import symbol_not_found_error
 
@@ -111,13 +112,12 @@ def register(
         module: str | None = None,
         priority: Literal["low", "medium", "high", "critical"] = "medium",
         status: Literal["draft", "active", "deprecated"] = "draft",
-        workspace: str | None = None,
+        workspace: Workspace | None = None,
     ) -> dict[str, Any]:
         """Create a Functional Requirement.
 
         Auto-assigns rf_id (RF-NNN) if not provided. Not idempotent — use
-        `update_requirement` for changes.
-        """
+        `update_requirement` for changes.""" + WORKSPACE_DOCSTRING_NOTE
         st = get_state(workspace)
         pid = st.project_id
         rid = rf_id or _next_rf_id(st.conn, pid)
@@ -148,7 +148,7 @@ def register(
         status: Literal["draft", "active", "deprecated"] | None = None,
         priority: Literal["low", "medium", "high", "critical"] | None = None,
         module: str | None = None,
-        workspace: str | None = None,
+        workspace: Workspace | None = None,
     ) -> dict[str, Any]:
         """Patch fields on an existing RF. Idempotent."""
         st = get_state(workspace)
@@ -191,9 +191,9 @@ def register(
         priority: str | None = None,
         has_implementation: bool | None = None,
         limit: int = 100,
-        workspace: str | None = None,
+        workspace: Workspace | None = None,
     ) -> dict[str, Any]:
-        """List RFs with filters. Returns rf_id, title, status, priority, module, link_count."""
+        """List RFs with filters. Returns rf_id, title, status, priority, module, link_count.""" + WORKSPACE_DOCSTRING_NOTE
         st = get_state(workspace)
         pid = st.project_id
         sql = [
@@ -223,7 +223,7 @@ def register(
         confidence: float,
         source: str,
         unlink: bool,
-        workspace: str | None,
+        workspace: Workspace | None = None,
     ) -> dict[str, Any]:
         st = get_state(workspace)
         pid = st.project_id
@@ -263,7 +263,7 @@ def register(
         confidence: float = 1.0,
         source: Literal["manual", "annotation", "embedding", "llm"] = "manual",
         unlink: bool = False,
-        workspace: str | None = None,
+        workspace: Workspace | None = None,
     ) -> dict[str, Any]:
         """Link (or unlink) an RF to a code symbol. unlink=True removes the link.
 
@@ -276,7 +276,7 @@ def register(
     @agentic_tool(annotations={"readOnlyHint": False, "idempotentHint": True})
     def bulk_link_rf_symbols(
         mappings: list[dict[str, Any]],
-        workspace: str | None = None,
+        workspace: Workspace | None = None,
     ) -> dict[str, Any]:
         """Batch-link N (rf_id, symbol_qname) pairs in a single transaction.
 
@@ -373,7 +373,7 @@ def register(
     @agentic_tool(annotations={"readOnlyHint": True, "idempotentHint": True})
     def get_requirement_implementation(
         rf_id: str,
-        workspace: str | None = None,
+        workspace: Workspace | None = None,
     ) -> dict[str, Any]:
         """What code implements an RF: list of symbols + files + coverage signals."""
         st = get_state(workspace)
@@ -416,7 +416,7 @@ def register(
     @mutation_tool(annotations={"readOnlyHint": False, "idempotentHint": True})
     def import_requirements_from_markdown(
         path: str,
-        workspace: str | None = None,
+        workspace: Workspace | None = None,
     ) -> dict[str, Any]:
         """Bulk-create / update RFs from a Markdown spec file.
 
@@ -478,7 +478,7 @@ def register(
         }
 
     @mutation_tool(annotations={"readOnlyHint": False, "idempotentHint": True, "destructiveHint": True})
-    def delete_requirement(rf_id: str, workspace: str | None = None) -> dict[str, Any]:
+    def delete_requirement(rf_id: str, workspace: Workspace | None = None) -> dict[str, Any]:
         """Permanently delete an RF and its rf_symbol links (cascade).
 
         Idempotent: deleting an unknown rf_id returns deleted=False without error.
@@ -496,7 +496,7 @@ def register(
         min_symbols_per_group: int = 3,
         max_proposals: int = 30,
         skip_already_covered: bool = True,
-        workspace: str | None = None,
+        workspace: Workspace | None = None,
     ) -> dict[str, Any]:
         """Heuristic RF discovery for brownfield projects (v0.7 B2).
 
@@ -675,7 +675,7 @@ def register(
         limit: int = 200,
         cursor: int = 0,
         summary_only: bool = False,
-        workspace: str | None = None,
+        workspace: Workspace | None = None,
     ) -> dict[str, Any]:
         """Surface RF candidates from existing docstrings — brownfield helper.
 
@@ -774,7 +774,7 @@ def register(
         }
 
     @mutation_tool(annotations={"readOnlyHint": False, "idempotentHint": True})
-    def scan_rf_annotations(workspace: str | None = None) -> dict[str, Any]:
+    def scan_rf_annotations(workspace: Workspace | None = None) -> dict[str, Any]:
         """Re-scan all symbol docstrings for RF annotations and (re)link them.
 
         Two-level matcher (P1.4):
@@ -793,7 +793,7 @@ def register(
         parent_rf_id: str,
         child_rf_id: str,
         kind: str,
-        workspace: str | None,
+        workspace: Workspace | None = None,
     ) -> dict[str, Any]:
         st = get_state(workspace)
         pid = st.project_id
@@ -853,7 +853,7 @@ def register(
         parent_rf_id: str,
         child_rf_id: str,
         kind: Literal["requires", "extends", "conflicts"] = "requires",
-        workspace: str | None = None,
+        workspace: Workspace | None = None,
     ) -> dict[str, Any]:
         """Declare that one RF depends on another (RF-RF edge).
 
@@ -877,7 +877,7 @@ def register(
         parent_rf_id: str,
         child_rf_id: str,
         kind: str | None,
-        workspace: str | None,
+        workspace: Workspace | None = None,
     ) -> dict[str, Any]:
         st = get_state(workspace)
         pid = st.project_id
@@ -914,7 +914,7 @@ def register(
         parent_rf_id: str,
         child_rf_id: str,
         kind: Literal["requires", "extends", "conflicts"] | None = None,
-        workspace: str | None = None,
+        workspace: Workspace | None = None,
     ) -> dict[str, Any]:
         """Remove an RF dependency edge. If `kind` is None, drops every edge
         between the pair regardless of kind. Idempotent.
@@ -925,7 +925,7 @@ def register(
         rf_id: str,
         direction: str,
         max_depth: int,
-        workspace: str | None,
+        workspace: Workspace | None = None,
     ) -> dict[str, Any]:
         st = get_state(workspace)
         pid = st.project_id
@@ -1017,7 +1017,7 @@ def register(
         rf_id: str,
         direction: Literal["forward", "backward", "both"] = "both",
         max_depth: int = 5,
-        workspace: str | None = None,
+        workspace: Workspace | None = None,
     ) -> dict[str, Any]:
         """Walk the RF dependency graph from a given RF.
 

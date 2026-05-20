@@ -1,11 +1,8 @@
 """Indexing tool: index_project.
 
-Every tool accepts an optional `workspace` argument. When omitted, the server
-falls back to the LIVESPEC_WORKSPACE env var or the current working directory
-(P1.1 multi-tenant).
-
-v0.6: `use_workspace` was removed (deprecated since v0.2). Pass `workspace=`
-to every tool, or set LIVESPEC_WORKSPACE in the environment.
+Every tool accepts ``workspace`` (absolute project root). Pass it on each call
+when one MCP server handles multiple repos — no ``LIVESPEC_WORKSPACE`` in
+mcp.json and no restart (LRU cache in ``get_state``).
 
 v0.9 P6: `get_index_status` removed (deprecated in v0.8 P3.2). Read the
 `project://index/status` resource for the same payload.
@@ -20,6 +17,7 @@ from fastmcp import FastMCP
 from livespec_mcp.domain.indexer import index_project as run_index
 from livespec_mcp.domain.rag import embed_pending, rebuild_chunks
 from livespec_mcp.state import AppState, get_state
+from livespec_mcp.workspace_param import WORKSPACE_DOCSTRING_NOTE, Workspace
 
 
 def compute_index_status(st: AppState) -> dict[str, Any]:
@@ -64,9 +62,9 @@ def register(mcp: FastMCP) -> None:
         force: bool = False,
         watch: bool = False,
         embed: bool = False,
-        workspace: str | None = None,
+        workspace: Workspace | None = None,
     ) -> dict[str, Any]:
-        """Walk the workspace, parse code, persist symbols + call edges.
+        f"""Walk the workspace, parse code, persist symbols + call edges.
 
         File-incremental via xxh3 content hash; pass force=True to re-extract.
         Pass watch=True to also start a filesystem watcher after indexing so
@@ -75,6 +73,7 @@ def register(mcp: FastMCP) -> None:
         (requires the [embeddings] extra: fastembed + sqlite-vec). First
         run downloads ~200MB of model weights; FTS5 lane works without it.
         Use after pulling new commits or when documentation feels stale.
+        {WORKSPACE_DOCSTRING_NOTE}
         """
         st = get_state(workspace)
         with st.lock():

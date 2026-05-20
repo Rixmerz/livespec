@@ -37,6 +37,7 @@ from typing import Any
 from fastmcp.server.middleware import Middleware
 
 from livespec_mcp.state import _resolve_workspace
+from livespec_mcp.workspace_param import WorkspaceRequiredError
 
 
 _LOG_FILENAME = "agent_log.jsonl"
@@ -81,12 +82,16 @@ class AgentLogMiddleware(Middleware):
     def _log_path(self, workspace_arg: Any) -> Path:
         """Resolve the log file path for a tool call.
 
-        Falls back to env LIVESPEC_WORKSPACE / cwd if the call didn't pass
-        an explicit `workspace` arg — same resolution policy as `state.py`.
+        Uses the call's `workspace` arg when present; otherwise the same
+        ``_resolve_workspace(None)`` policy as tools (pytest autouse binds a
+        tmp path; production without workspace uses a cwd fallback).
         """
-        ws = _resolve_workspace(
-            workspace_arg if isinstance(workspace_arg, str) else None
-        )
+        arg = workspace_arg if isinstance(workspace_arg, str) and workspace_arg.strip() else None
+        try:
+            ws = _resolve_workspace(arg)
+        except WorkspaceRequiredError:
+            ws = Path.cwd() / ".mcp-docs-agent-log-fallback"
+            ws.mkdir(parents=True, exist_ok=True)
         return ws / ".mcp-docs" / self._log_filename
 
     async def on_call_tool(self, context, call_next):  # type: ignore[override]
