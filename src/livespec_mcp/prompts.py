@@ -2,10 +2,34 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from fastmcp import FastMCP
+
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+_AGENT_PLAYBOOK = _REPO_ROOT / "docs" / "AGENT_PLAYBOOK.md"
+
+
+def _load_agent_playbook() -> str:
+    if not _AGENT_PLAYBOOK.is_file():
+        return (
+            "Agent playbook file missing. See docs/AGENT_QUICKSTART.md and README.md "
+            "in the livespec-mcp repository."
+        )
+    return _AGENT_PLAYBOOK.read_text(encoding="utf-8")
 
 
 def register(mcp: FastMCP) -> None:
+    @mcp.prompt
+    def agent_playbook() -> str:
+        """How to use livespec tools and how to comment/link code (@rf: annotations).
+
+        Invoke at the start of a session on any livespec-indexed repo. Covers cold-open
+        tool patterns, RF traceability in docstrings, Markdown RF import, anti-patterns,
+        and brownfield onboarding — the operational guide agents should follow.
+        """
+        return _load_agent_playbook()
+
     @mcp.prompt
     def onboard_project() -> str:
         """Walk a new project: index, list languages, surface top symbols, draft RFs."""

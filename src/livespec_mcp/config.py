@@ -1,12 +1,10 @@
 """Workspace configuration.
 
-DOCS_BRAIN_WORKSPACE env var sets the root of the project being documented.
-Defaults to current working directory.
+Project root comes from the ``workspace`` argument on each MCP tool call.
 """
 
 from __future__ import annotations
 
-import os
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -18,21 +16,6 @@ class Settings:
     db_path: Path
     docs_dir: Path
     models_dir: Path
-
-    @classmethod
-    def load(cls) -> Settings:
-        ws_raw = os.environ.get("LIVESPEC_WORKSPACE") or os.environ.get(
-            "DOCS_BRAIN_WORKSPACE", os.getcwd()
-        )
-        workspace = Path(ws_raw).expanduser().resolve()
-        state_dir = workspace / ".mcp-docs"
-        return cls(
-            workspace=workspace,
-            state_dir=state_dir,
-            db_path=state_dir / "docs.db",
-            docs_dir=state_dir / "docs",
-            models_dir=state_dir / "models",
-        )
 
     def ensure_dirs(self) -> None:
         self.state_dir.mkdir(parents=True, exist_ok=True)

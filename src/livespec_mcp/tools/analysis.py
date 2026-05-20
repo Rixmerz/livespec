@@ -26,6 +26,7 @@ from livespec_mcp.domain.graph import (
 )
 from livespec_mcp.state import AppState, get_state
 from livespec_mcp.tools._errors import mcp_error
+from livespec_mcp.workspace_param import WORKSPACE_DOCSTRING_NOTE, Workspace
 
 
 _INFRA_NAME_SUFFIXES = ("_state", "_settings", "_config", "_session")
@@ -885,7 +886,7 @@ def register(mcp: FastMCP) -> None:
         query: str,
         kind: str | None = None,
         limit: int = 50,
-        workspace: str | None = None,
+        workspace: Workspace | None = None,
     ) -> dict[str, Any]:
         """Search symbols by name substring or qualified name.
 
@@ -896,7 +897,7 @@ def register(mcp: FastMCP) -> None:
         are both normalized so that `Type::method`, `Type.method`, and
         `module/Type::method` all match the same symbols. Useful in Rust
         repos where qnames mix `.` (file path) and `::` (impl method)
-        separators."""
+        separators.""" + WORKSPACE_DOCSTRING_NOTE
         st = get_state(workspace)
         pid = st.project_id
 
@@ -928,7 +929,7 @@ def register(mcp: FastMCP) -> None:
     @mcp.tool(annotations={"readOnlyHint": True, "idempotentHint": True})
     def get_symbol_source(
         qname: str,
-        workspace: str | None = None,
+        workspace: Workspace | None = None,
     ) -> dict[str, Any]:
         """Source body for a symbol — file slice between start_line and end_line.
 
@@ -970,7 +971,7 @@ def register(mcp: FastMCP) -> None:
         cursor: int = 0,
         summary_only: bool = False,
         min_weight: float = 0.6,
-        workspace: str | None = None,
+        workspace: Workspace | None = None,
     ) -> dict[str, Any]:
         """Symbols that call `qname` (transitive backward cone up to max_depth).
 
@@ -1032,7 +1033,7 @@ def register(mcp: FastMCP) -> None:
         cursor: int = 0,
         summary_only: bool = False,
         min_weight: float = 0.6,
-        workspace: str | None = None,
+        workspace: Workspace | None = None,
     ) -> dict[str, Any]:
         """Symbols that `qname` calls (transitive forward cone up to max_depth).
 
@@ -1076,7 +1077,7 @@ def register(mcp: FastMCP) -> None:
     @mcp.tool(annotations={"readOnlyHint": True, "idempotentHint": True})
     def quick_orient(
         qname: str,
-        workspace: str | None = None,
+        workspace: Workspace | None = None,
     ) -> dict[str, Any]:
         """Composite snapshot — collapses 3-4 tool calls into one.
 
@@ -1088,8 +1089,7 @@ def register(mcp: FastMCP) -> None:
         so a `callers_count: 0` result is not misread as dead code.
         Designed for an agent's first contact with an unfamiliar symbol:
         instead of `find_symbol` -> `get_symbol_info` -> `analyze_impact`
-        -> `get_requirement_implementation`, run this once.
-        """
+        -> `get_requirement_implementation`, run this once.""" + WORKSPACE_DOCSTRING_NOTE
         st = get_state(workspace)
         pid = st.project_id
         sym = _resolve_symbol(st.conn, pid, qname)
@@ -1189,7 +1189,7 @@ def register(mcp: FastMCP) -> None:
         cursor: int = 0,
         summary_only: bool = False,
         min_weight: float = 0.6,
-        workspace: str | None = None,
+        workspace: Workspace | None = None,
     ) -> dict[str, Any]:
         """Topological impact analysis: what changes if `target` changes.
 
@@ -1397,7 +1397,7 @@ def register(mcp: FastMCP) -> None:
     def get_project_overview(
         include_infrastructure: bool = False,
         include_structural_patterns: bool = False,
-        workspace: str | None = None,
+        workspace: Workspace | None = None,
     ) -> dict[str, Any]:
         """High-level snapshot: languages, modules, top symbols by PageRank, RF coverage.
 
@@ -1410,8 +1410,7 @@ def register(mcp: FastMCP) -> None:
           etc.). PageRank correctly identifies them as central but they
           carry near-zero "what is this codebase about" signal. Pass
           `include_structural_patterns=True` to keep them. The names
-          actually filtered come back in `structural_patterns_filtered`.
-        """
+          actually filtered come back in `structural_patterns_filtered`.""" + WORKSPACE_DOCSTRING_NOTE
         return compute_project_overview(
             get_state(workspace),
             include_infrastructure,
@@ -1426,7 +1425,7 @@ def register(mcp: FastMCP) -> None:
         limit: int = 200,
         cursor: int = 0,
         summary_only: bool = False,
-        workspace: str | None = None,
+        workspace: Workspace | None = None,
     ) -> dict[str, Any]:
         """Symbols with zero callers and zero RF links — removal candidates.
 
@@ -1663,7 +1662,7 @@ def register(mcp: FastMCP) -> None:
         limit: int = 200,
         cursor: int = 0,
         summary_only: bool = False,
-        workspace: str | None = None,
+        workspace: Workspace | None = None,
     ) -> dict[str, Any]:
         """Symbols decorated with framework entry-point markers.
 
@@ -1818,7 +1817,7 @@ def register(mcp: FastMCP) -> None:
         limit: int = 200,
         cursor: int = 0,
         summary_only: bool = False,
-        workspace: str | None = None,
+        workspace: Workspace | None = None,
     ) -> dict[str, Any]:
         """RF coverage audit: what's missing / under-confident.
 
@@ -2039,7 +2038,7 @@ def register(mcp: FastMCP) -> None:
         limit: int = 200,
         cursor: int = 0,
         summary_only: bool = False,
-        workspace: str | None = None,
+        workspace: Workspace | None = None,
     ) -> dict[str, Any]:
         """Test functions whose descendant cone never reaches production code.
 
@@ -2115,7 +2114,7 @@ def register(mcp: FastMCP) -> None:
         impacted_limit: int = 200,
         impacted_cursor: int = 0,
         summary_only: bool = False,
-        workspace: str | None = None,
+        workspace: Workspace | None = None,
     ) -> dict[str, Any]:
         """Topological impact of a git diff: changed files -> RFs + callers + suggested tests.
 

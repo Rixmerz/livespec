@@ -19,11 +19,22 @@ from livespec_mcp.domain.graph import invalidate_graph_cache
 
 
 @pytest.fixture
-def workspace(tmp_path: Path, monkeypatch) -> Path:
-    monkeypatch.setenv("LIVESPEC_WORKSPACE", str(tmp_path))
+def workspace(tmp_path: Path) -> Path:
+    return tmp_path
+
+
+@pytest.fixture(autouse=True)
+def _bind_workspace_for_tests(workspace: Path, monkeypatch):
+    """Tests may omit workspace= on tool calls; bind to the test ``workspace``."""
     state_module.reset_state()
     invalidate_graph_cache()
-    yield tmp_path
+    real = state_module._resolve_workspace
+
+    def _resolve(path: str | Path | None = None) -> Path:
+        return real(path if path is not None else workspace)
+
+    monkeypatch.setattr(state_module, "_resolve_workspace", _resolve)
+    yield
     state_module.reset_state()
     invalidate_graph_cache()
 

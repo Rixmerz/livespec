@@ -20,10 +20,11 @@ def _read_log(workspace: Path) -> list[dict]:
 
 @pytest.mark.asyncio
 async def test_every_dispatch_logs_one_line(sample_repo):
+    ws = str(sample_repo)
     async with Client(mcp) as c:
-        await c.call_tool("index_project", {})
-        await c.call_tool("list_requirements", {})
-        await c.call_tool("find_symbol", {"query": "login"})
+        await c.call_tool("index_project", {"workspace": ws})
+        await c.call_tool("list_requirements", {"workspace": ws})
+        await c.call_tool("find_symbol", {"query": "login", "workspace": ws})
 
     entries = _read_log(sample_repo)
     names = [e["tool_name"] for e in entries]
@@ -69,9 +70,10 @@ async def test_args_redacted_strips_workspace_path(sample_repo):
 async def test_log_records_isError_results_with_error_field_none(sample_repo):
     """Tools that return mcp_error() payloads aren't exceptions — `error`
     stays None but the result_chars covers the error envelope."""
+    ws = str(sample_repo)
     async with Client(mcp) as c:
-        await c.call_tool("index_project", {})
-        await c.call_tool("quick_orient", {"qname": "does.not.exist"})
+        await c.call_tool("index_project", {"workspace": ws})
+        await c.call_tool("quick_orient", {"qname": "does.not.exist", "workspace": ws})
 
     entries = _read_log(sample_repo)
     last = entries[-1]
@@ -83,8 +85,9 @@ async def test_log_records_isError_results_with_error_field_none(sample_repo):
 @pytest.mark.asyncio
 async def test_logging_disabled_via_env(sample_repo, monkeypatch):
     monkeypatch.setenv("LIVESPEC_AGENT_LOG", "0")
+    ws = str(sample_repo)
     async with Client(mcp) as c:
-        await c.call_tool("list_requirements", {})
+        await c.call_tool("list_requirements", {"workspace": ws})
 
     log = sample_repo / ".mcp-docs" / "agent_log.jsonl"
     assert not log.exists()
@@ -92,10 +95,10 @@ async def test_logging_disabled_via_env(sample_repo, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_log_file_lives_under_resolved_workspace(sample_repo):
-    """No-arg tool calls still resolve the workspace via env -> log lands
-    in the right .mcp-docs/."""
+    """Log lands under the workspace path passed on the tool call."""
+    ws = str(sample_repo)
     async with Client(mcp) as c:
-        await c.call_tool("list_requirements", {})
+        await c.call_tool("list_requirements", {"workspace": ws})
 
     log = sample_repo / ".mcp-docs" / "agent_log.jsonl"
     assert log.exists()

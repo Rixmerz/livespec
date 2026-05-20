@@ -21,6 +21,7 @@ from typing import Any, Literal
 from fastmcp import Context, FastMCP
 
 from livespec_mcp.state import get_state
+from livespec_mcp.workspace_param import WORKSPACE_DOCSTRING_NOTE, Workspace
 from livespec_mcp.tools._errors import mcp_error
 from livespec_mcp.tools.analysis import symbol_not_found_error
 
@@ -86,7 +87,7 @@ def register(mcp: FastMCP) -> None:
         ctx: Context,
         content: str | None = None,
         max_tokens: int = 600,
-        workspace: str | None = None,
+        workspace: Workspace | None = None,
     ) -> dict[str, Any]:
         """Persist Markdown docs for a symbol or RF.
 
@@ -216,7 +217,7 @@ def register(mcp: FastMCP) -> None:
     def list_docs(
         target_type: Literal["symbol", "requirement", "all"] = "all",
         only_stale: bool = False,
-        workspace: str | None = None,
+        workspace: Workspace | None = None,
     ) -> dict[str, Any]:
         """List generated docs.
 
@@ -284,7 +285,7 @@ def register(mcp: FastMCP) -> None:
     def export_documentation(
         format: Literal["markdown", "json"] = "markdown",
         out_subdir: str = "export",
-        workspace: str | None = None,
+        workspace: Workspace | None = None,
     ) -> dict[str, Any]:
         """Dump the entire `doc` table to disk for sharing or static-site building."""
         st = get_state(workspace)

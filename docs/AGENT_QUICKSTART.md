@@ -4,11 +4,16 @@ The brownfield-onboarding flow that 3 sessions of real agent battle-testing
 converged on. If you are an AI agent dropped into an unfamiliar repo with
 livespec-mcp configured, run this sequence top-down.
 
+> **Full guide (tools + how to comment/link code):** invoke the MCP prompt
+> **`agent_playbook`** or read [`AGENT_PLAYBOOK.md`](AGENT_PLAYBOOK.md).
+
 ## 1. Cold open
 
+Pass the absolute project path on every call (`PROJECT` = e.g. `/Users/me/sample-api`):
+
 ```
-index_project()
-get_project_overview()
+index_project(workspace="PROJECT")
+get_project_overview(workspace="PROJECT")
 ```
 
 `index_project` walks the workspace, parses every supported file

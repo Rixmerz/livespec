@@ -5,7 +5,7 @@ Every tool error must use `mcp_error(...)` so the shape is consistent:
 
 The `did_you_mean` field is for typo recovery (top-N substring/edit-distance
 matches against the universe of indexed names). The `hint` field is for
-short actionable guidance ("run `git init` first", "set LIVESPEC_WORKSPACE",
+short actionable guidance ("run `git init` first", "pass workspace=/abs/path",
 etc.). Both are optional — omit when not applicable.
 
 Successful-but-empty responses are NOT errors and should not use this helper.
