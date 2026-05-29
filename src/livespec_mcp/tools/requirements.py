@@ -14,19 +14,18 @@ deprecated aliases):
 from __future__ import annotations
 
 import re
+from pathlib import Path
 from typing import Any, Literal
 
 from fastmcp import FastMCP
-
-from pathlib import Path
 
 from livespec_mcp.domain.graph import load_graph, page_rank
 from livespec_mcp.domain.matcher import scan_annotations
 from livespec_mcp.domain.md_rfs import parse_rfs_markdown
 from livespec_mcp.state import get_state
-from livespec_mcp.workspace_param import WORKSPACE_DOCSTRING_NOTE, Workspace
 from livespec_mcp.tools._errors import mcp_error
 from livespec_mcp.tools.analysis import symbol_not_found_error
+from livespec_mcp.workspace_param import WORKSPACE_DOCSTRING_NOTE, Workspace
 
 
 def _humanize_module_segment(seg: str) -> str:
@@ -205,12 +204,16 @@ def register(
         ]
         args: list[Any] = [pid]
         if status:
-            sql.append("AND r.status=?"); args.append(status)
+            sql.append("AND r.status=?")
+            args.append(status)
         if priority:
-            sql.append("AND r.priority=?"); args.append(priority)
+            sql.append("AND r.priority=?")
+            args.append(priority)
         if module:
-            sql.append("AND m.name=?"); args.append(module)
-        sql.append("ORDER BY r.rf_id LIMIT ?"); args.append(limit)
+            sql.append("AND m.name=?")
+            args.append(module)
+        sql.append("ORDER BY r.rf_id LIMIT ?")
+        args.append(limit)
         rows = [dict(r) for r in st.conn.execute(" ".join(sql), args).fetchall()]
         if has_implementation is not None:
             rows = [r for r in rows if (r["link_count"] > 0) == has_implementation]

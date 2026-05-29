@@ -12,9 +12,9 @@ Models when enabled (via `pip install -e .[embeddings]`):
 from __future__ import annotations
 
 import sqlite3
+from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable
 
 import xxhash
 
@@ -217,7 +217,7 @@ def embed_texts(texts: list[str], kind: str) -> list[list[float]]:
 
 def have_sqlite_vec(conn: sqlite3.Connection) -> bool:
     try:
-        import sqlite_vec  # noqa: F401
+        import sqlite_vec
     except ImportError:
         return False
     try:
@@ -355,7 +355,7 @@ def embed_pending(conn: sqlite3.Connection, project_id: int) -> dict[str, int]:
         ids = [int(r["id"]) for r in rows]
         texts = [r["text"] for r in rows]
         vecs = embed_texts(texts, kind)
-        for cid, vec in zip(ids, vecs):
+        for cid, vec in zip(ids, vecs, strict=False):
             conn.execute(
                 f"INSERT OR REPLACE INTO {table}(chunk_id, embedding) VALUES(?, ?)",
                 (cid, _floats_blob(vec)),

@@ -8,6 +8,7 @@ Each extractor returns:
 from __future__ import annotations
 
 import ast
+import re as _re_rs
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -1110,9 +1111,6 @@ def _php_collect_imports(root_node, src_bytes: bytes) -> dict[str, str]:
 
 
 # ---------- Rust use-declaration scanner (P4.A3 v0.5) ----------
-
-
-import re as _re_rs
 
 
 def _rs_collect_imports(root_node, src_bytes: bytes) -> dict[str, str]:

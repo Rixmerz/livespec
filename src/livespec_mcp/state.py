@@ -47,7 +47,7 @@ class AppState:
         return self._lock
 
 
-_cache: "OrderedDict[Path, AppState]" = OrderedDict()
+_cache: OrderedDict[Path, AppState] = OrderedDict()
 _cache_lock = threading.Lock()
 
 
