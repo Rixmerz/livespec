@@ -4,7 +4,22 @@ All notable changes to this project are documented here. Format loosely
 follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), versioning
 follows [SemVer](https://semver.org/).
 
-## [Unreleased]
+## [0.12.0] — 2026-05-29
+
+### Added — multi-repo workspace support (require workspace on every call)
+- **`workspace` is now required on every tool call.** No more
+  `LIVESPEC_WORKSPACE` env var dependency or per-session state.
+  Pass the absolute repo root on every invocation; the LRU cache
+  (`get_state`) makes repeated calls to the same workspace cheap.
+  One MCP server instance can now serve multiple repos concurrently
+  by varying only the `workspace` argument — no restart required.
+- **`index_project` docstring fixed** (B021). The docstring was an
+  `f"""..."""` expression — Python treats it as a runtime expression,
+  not `__doc__`, so MCP clients saw `None` as the tool description.
+  Fixed by restoring a plain docstring and appending
+  `WORKSPACE_DOCSTRING_NOTE` via `index_project.__doc__ =` after the
+  function definition. Closes the "None description" report for the
+  flagship tool.
 
 ### Fixed — JSDoc banner-with-text + manual-links data loss on force=True
 - **`_is_separator_only` extended** to skip banner-style line comments
@@ -936,7 +951,8 @@ Bootstrap. Phases 0–6 of the original design.
   `project://files/{path*}`, `project://symbols/{qname*}`,
   `doc://symbol/{qname*}`, `doc://requirement/{rf_id}`.
 
-[Unreleased]: https://github.com/Rixmerz/livespec-mcp/compare/v0.7.0...HEAD
+[0.12.0]: https://github.com/Rixmerz/livespec-mcp/compare/v0.11.0...v0.12.0
+[0.11.0]: https://github.com/Rixmerz/livespec-mcp/releases/tag/v0.11.0
 [0.7.0]: https://github.com/Rixmerz/livespec-mcp/releases/tag/v0.7.0
 [0.6.0]: https://github.com/Rixmerz/livespec-mcp/releases/tag/v0.6.0
 [0.5.0]: https://github.com/Rixmerz/livespec-mcp/releases/tag/v0.5.0
