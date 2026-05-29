@@ -32,11 +32,9 @@ Todo el stack es local-first: 0 servicios externos, 0 API keys obligatorias, 0 D
 
 ---
 
-## 3. Estado actual: JS/TS JSDoc + bulk-link agentic + audit extractor-aware + banner-skip + manual-links survive force. Último tag `v0.11.0`.
+## 3. Estado actual: v0.12.0 cortado. Multi-repo workspace + docstring fix + ruff clean + dep refresh.
 
-**HEAD:** `962a00a` (P2 batch 1) + working tree (P2 batch 2 — banner
-skip y data-loss fix). Tests **247/247** default + **3/3** `-m
-embeddings` = **250 total**. Schema v7 (sin migración nueva).
+**HEAD:** `v0.12.0` tag. Tests **257/257** default + embeddings = **257 total** (suite unified). Schema v7 (sin migración nueva).
 
 ### v0.12 P2 batch 2 (banner-with-text skip + force-reindex preserves manual links — 2026-05-02)
 
@@ -190,13 +188,16 @@ Para reanudar: `leé HANDOFF.md y continuá`. v0.11 cerró todos los
 bugs de session 05; **v0.12 P1 ya merged** (RAG wire). **Para v1.0
 quedan items menores + polish + corte de tag v0.12.0**:
 
-### Pendiente para cortar v0.12.0
+### Pendiente para cortar v0.12.0 — COMPLETADO 2026-05-29
 
-CHANGELOG [Unreleased] + README ya actualizados con P1 (RAG wire). Falta:
-
-- Bump `pyproject.toml` a `0.12.0`
-- Promover `CHANGELOG [Unreleased]` → `[0.12.0] — YYYY-MM-DD`
-- Tag + push + GH release con notes-file
+- ✅ Bump `pyproject.toml` a `0.12.0`
+- ✅ Promover `CHANGELOG [Unreleased]` → `[0.12.0] — 2026-05-29`
+- ✅ Fix docstring bug: `index_project` f-string → `__doc__` assignment
+- ✅ `ruff check src/` → 0 violations (18 auto-fixed + 7 manual)
+- ✅ `fastmcp>=3` tightened in pyproject; `uv lock --upgrade` ran
+- ✅ `__init__.__version__` wired via `importlib.metadata.version`
+- ✅ `git tag -a v0.12.0` (local only; push when ready)
+- ⏳ `git push origin main` + `gh release create v0.12.0` (user to run)
 
 ### Opciones para v0.12 (elegir 1-2 según tiempo)
 
