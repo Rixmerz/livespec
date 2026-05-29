@@ -39,7 +39,6 @@ from fastmcp.server.middleware import Middleware
 from livespec_mcp.state import _resolve_workspace
 from livespec_mcp.workspace_param import WorkspaceRequiredError
 
-
 _LOG_FILENAME = "agent_log.jsonl"
 
 

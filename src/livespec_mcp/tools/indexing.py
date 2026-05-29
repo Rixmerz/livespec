@@ -64,7 +64,7 @@ def register(mcp: FastMCP) -> None:
         embed: bool = False,
         workspace: Workspace | None = None,
     ) -> dict[str, Any]:
-        f"""Walk the workspace, parse code, persist symbols + call edges.
+        """Walk the workspace, parse code, persist symbols + call edges.
 
         File-incremental via xxh3 content hash; pass force=True to re-extract.
         Pass watch=True to also start a filesystem watcher after indexing so
@@ -73,7 +73,6 @@ def register(mcp: FastMCP) -> None:
         (requires the [embeddings] extra: fastembed + sqlite-vec). First
         run downloads ~200MB of model weights; FTS5 lane works without it.
         Use after pulling new commits or when documentation feels stale.
-        {WORKSPACE_DOCSTRING_NOTE}
         """
         st = get_state(workspace)
         with st.lock():
@@ -115,3 +114,8 @@ def register(mcp: FastMCP) -> None:
             w.start()
             result["watcher_started"] = True
         return result
+
+    # Append the shared workspace note as a real docstring. A bare f-string as
+    # the first statement is an expression, not a docstring, so __doc__ would be
+    # None and the MCP client would see no description for this flagship tool.
+    index_project.__doc__ = (index_project.__doc__ or "") + WORKSPACE_DOCSTRING_NOTE

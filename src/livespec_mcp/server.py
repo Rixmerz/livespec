@@ -8,7 +8,6 @@ from livespec_mcp import prompts, resources
 from livespec_mcp.instrumentation import AgentLogMiddleware
 from livespec_mcp.tools import analysis, indexing, requirements, search
 from livespec_mcp.tools.plugins import register_all_plugins
-from livespec_mcp.workspace_param import WORKSPACE_DESCRIPTION
 
 mcp = FastMCP(
     name="livespec-mcp",

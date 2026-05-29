@@ -28,7 +28,6 @@ from livespec_mcp.state import AppState, get_state
 from livespec_mcp.tools._errors import mcp_error
 from livespec_mcp.workspace_param import WORKSPACE_DOCSTRING_NOTE, Workspace
 
-
 _INFRA_NAME_SUFFIXES = ("_state", "_settings", "_config", "_session")
 
 # v0.5 P1: framework decorator names that imply hidden callers (HTTP routers,
@@ -823,7 +822,6 @@ def did_you_mean_symbols(conn, project_id: int, identifier: str, limit: int = 3)
     Ranked by ratio descending. Project-scoped.
     """
     short = identifier.split(".")[-1]
-    needle = f"%{short}%"
     rows = conn.execute(
         """SELECT s.qualified_name, s.kind, f.path AS file_path, s.name
            FROM symbol s JOIN file f ON f.id=s.file_id

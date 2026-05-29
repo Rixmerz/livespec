@@ -9,10 +9,10 @@ on success so subsequent connects skip already-applied work.
 from __future__ import annotations
 
 import sqlite3
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from importlib import resources
 from pathlib import Path
-from typing import Callable, Iterator
 
 _SCHEMA_CACHE: str | None = None
 

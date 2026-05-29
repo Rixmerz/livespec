@@ -21,8 +21,8 @@ from livespec_mcp.domain.rag import (
     hybrid_search,
 )
 from livespec_mcp.state import get_state
-from livespec_mcp.workspace_param import WORKSPACE_DOCSTRING_NOTE, Workspace
 from livespec_mcp.tools._errors import mcp_error
+from livespec_mcp.workspace_param import WORKSPACE_DOCSTRING_NOTE, Workspace
 
 
 def register(mcp: FastMCP) -> None:

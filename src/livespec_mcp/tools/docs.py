@@ -21,9 +21,9 @@ from typing import Any, Literal
 from fastmcp import Context, FastMCP
 
 from livespec_mcp.state import get_state
-from livespec_mcp.workspace_param import WORKSPACE_DOCSTRING_NOTE, Workspace
 from livespec_mcp.tools._errors import mcp_error
 from livespec_mcp.tools.analysis import symbol_not_found_error
+from livespec_mcp.workspace_param import Workspace
 
 
 def _persist_doc(

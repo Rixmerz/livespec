@@ -15,9 +15,9 @@ from __future__ import annotations
 import atexit
 import threading
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable
 
 from watchdog.events import FileSystemEvent, FileSystemEventHandler
 from watchdog.observers import Observer
@@ -42,7 +42,7 @@ def _is_relevant(path: Path) -> bool:
 
 
 class _Handler(FileSystemEventHandler):
-    def __init__(self, watcher: "Watcher") -> None:
+    def __init__(self, watcher: Watcher) -> None:
         self.watcher = watcher
 
     def on_any_event(self, event: FileSystemEvent) -> None:
