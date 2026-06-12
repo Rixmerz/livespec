@@ -6,6 +6,16 @@ follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Added — headless CLI subcommands
+- **`livespec-mcp index <path> [--force] [--embed]`** and
+  **`livespec-mcp status <path>`** run the exact same pipeline as the
+  `index_project` tool / `project://index/status` resource and print
+  JSON to stdout — index from cron, systemd timers, pre-commit hooks or
+  CI without an MCP host in the middle. Errors go to stderr with exit
+  code 1. `livespec-mcp` with no arguments (and the explicit
+  `livespec-mcp serve`) remains the stdio MCP server, so existing
+  mcp.json entries are untouched.
+
 ### Added — `.livespec.toml` per-repo config
 - **Optional `.livespec.toml` at the workspace root** tunes indexing
   per-repo, loaded fresh on every `index_project` call (no restart).

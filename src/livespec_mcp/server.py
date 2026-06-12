@@ -38,7 +38,11 @@ register_all_plugins(mcp)
 
 
 def main() -> None:
-    mcp.run()  # stdio transport by default
+    import sys
+
+    from livespec_mcp.cli import main as cli_main
+
+    sys.exit(cli_main())
 
 
 if __name__ == "__main__":
