@@ -6,6 +6,35 @@ follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed — resources broken under multi-tenant (since v0.12)
+- **Every `project://` / `doc://` / `code://` resource raised
+  `WorkspaceRequiredError` in real use** since v0.12 made `workspace`
+  per-call (resources have no parameter channel; the in-repo test
+  fixture masked it). Resources now bind to the **most recently used
+  workspace** (whatever the last tool call touched) — correct by
+  construction for single-repo sessions. Before any tool call, JSON
+  resources return an `mcp_error`-shaped payload with a hint; text
+  resources a one-line explanation.
+- **Resource error payloads now use the `mcp_error` shape**
+  (`{error, isError, hint?}`) instead of ad-hoc `{"error": ...}` JSON —
+  closes the v0.6 P4 contract gap for the resource surface.
+
+### Changed — explicit unsupported-language reporting
+- Files whose extension maps to a language **without an extractor**
+  (c, cpp, c_sharp, kotlin, swift, scala) are no longer indexed as
+  silent zero-symbol rows. They're skipped at walk time and counted in
+  a new `languages_unsupported` payload key on `index_project`
+  (`{"cpp": 12, ...}`), so agents see the coverage gap instead of
+  inferring it. `.livespec.toml [index].languages` now validates
+  against extractor-supported labels only.
+- `index_project(force=True)` restores manual RF links with one
+  set-based `INSERT..SELECT` instead of two queries per link.
+
+### Fixed — watcher reindex failures now logged
+- The debounced watcher worker swallowed every reindex exception
+  (`except Exception: pass`). Still survives bad runs, but now logs the
+  traceback under the `livespec.watcher` logger.
+
 ### Added — headless CLI subcommands
 - **`livespec-mcp index <path> [--force] [--embed]`** and
   **`livespec-mcp status <path>`** run the exact same pipeline as the

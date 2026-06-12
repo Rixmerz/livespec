@@ -13,6 +13,7 @@ called repeatedly without leaking observers.
 from __future__ import annotations
 
 import atexit
+import logging
 import threading
 import time
 from collections.abc import Callable
@@ -24,6 +25,8 @@ from watchdog.observers import Observer
 
 from livespec_mcp.domain.indexer import DEFAULT_IGNORES
 from livespec_mcp.domain.languages import detect_language
+
+logger = logging.getLogger("livespec.watcher")
 
 
 @dataclass
@@ -117,7 +120,10 @@ class Watcher:
                     self.stats.reindex_runs += 1
                     self.stats.last_reindex_at = time.time()
             except Exception:
-                pass
+                # Keep the worker alive — one bad reindex (transient FS
+                # state, mid-write parse) must not kill the watcher — but
+                # leave a trace instead of swallowing it.
+                logger.exception("watcher reindex failed for %s", self.workspace)
 
 
 # ---------- Global per-workspace registry ----------

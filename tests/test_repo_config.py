@@ -61,7 +61,7 @@ def test_max_file_bytes(workspace: Path):
     "content,fragment",
     [
         ("[index]\nignore = 3\n", "list of strings"),
-        ("[index]\nlanguages = ['klingon']\n", "unknown languages"),
+        ("[index]\nlanguages = ['klingon']\n", "unsupported languages"),
         ("[index]\nmax_file_bytes = -5\n", "positive integer"),
         ("[index]\nbogus = true\n", "unknown [index] keys"),
         ("not toml ][", ".livespec.toml"),
