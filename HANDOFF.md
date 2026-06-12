@@ -7,7 +7,10 @@
 ## 1. Identidad del proyecto
 
 - **Repo remoto:** https://github.com/Rixmerz/livespec-mcp (branch `main`)
-- **Repo local:** `/Users/juanpablodiaz/my_projects/livespec-mcp`
+- **Repo local:** `/home/rixmerz/Projects/mcp/livespec-mcp` (Arch box,
+  desde 2026-06; el path histórico `/Users/juanpablodiaz/my_projects/livespec-mcp`
+  era la máquina macOS anterior — referencias viejas en este doc pueden
+  mencionarlo)
 - **Demo project:** `/Users/juanpablodiaz/my_projects/url-shortener-demo` (4 archivos Python con `@rf:` annotations en docstrings, ya tiene RFs persistidas en su `.mcp-docs/docs.db`)
 - **MCP server:** instalado user-scope como `livespec` en `~/.claude.json`. Comando: `uv --directory /Users/juanpablodiaz/my_projects/livespec-mcp run livespec-mcp`. Env actual: `LIVESPEC_WORKSPACE=/Users/juanpablodiaz/my_projects/url-shortener-demo` (pero las tools aceptan `workspace=` per-call vía P1.1 multi-tenant).
 - **Git user:** Juan Pablo Díaz S.
@@ -32,9 +35,31 @@ Todo el stack es local-first: 0 servicios externos, 0 API keys obligatorias, 0 D
 
 ---
 
-## 3. Estado actual: v0.12.0 cortado. Multi-repo workspace + docstring fix + ruff clean + dep refresh.
+## 3. Estado actual: v0.13 framework sprint — Spring/Angular/Hono + dead-code 0
 
-**HEAD:** `v0.12.0` tag. Tests **257/257** default + embeddings = **257 total** (suite unified). Schema v7 (sin migración nueva).
+**HEAD:** `63e621e` (v0.13 P3). Tests **271 default + 3 embeddings = 274**.
+Schema **v8** (`ts_java_decorators_reextract` — flag re-extract, sin columnas
+nuevas). Working tree clean, pushed. v0.12.0 tag + release publicados.
+
+Sesión 2026-06-11 (Arch box `/home/rixmerz/Projects/mcp/livespec-mcp`):
+
+| Fase | Commit | Qué |
+|---|---|---|
+| P0 | `4046578` | Dual-decorator alias detection (`agentic_tool = mcp.tool if X else _noop`): `_entry_point_decorator_aliases` AST scan per-file, union project-wide; protege también el branch no-ganador del IfExp (`_noop_decorator`). 4 fns genuinamente muertas BORRADAS (graph.subgraph_edges + watcher get/unregister/all — huérfanas de drops v0.8). **find_dead_code sobre livespec: 22 → 0** sin trucos |
+| chore | `d62ad32` | ruff clean tests/ (20 autofixes + 2 dead assignments) — `ruff check src/ tests/` = 0 |
+| P1 | `84ee868` | `_ts_node_decorators`: TS/JS/TSX `decorator` nodes (en el nodo, en export_statement wrapper, y como preceding-siblings de members en class_body) + Java `annotation`/`marker_annotation` en `modifiers`. Migración v8 flaggea needs_reextract para backfill |
+| P2 | `ff22791` | Spring Boot + Angular: `_ENTRY_POINT_DECORATOR_LASTSEG` += stereotypes/mappings Spring + decorators Angular; presets `find_endpoints(framework='spring'\|'angular')`; find_dead_code protege métodos de clases template-bound (Component/Directive/Pipe — HTML invisible al indexer) + lifecycle hooks ngXxx |
+| P3 | `63e621e` | Hono: refs `callback_arg` extract-time (handlers nombrados pasados a get/post/.../on/use), scan TS/JS module-level en find_dead_code (mirror de `_runtime_registered_names`), `find_endpoints(framework='hono')` con method+path+handler resolution. Cubre Express-style gratis |
+
+**Pendiente próximo (orden sugerido):** gitignore-aware indexing
+(`pathspec`), `.livespec.toml` config per-repo, CLI subcommands
+(`livespec-mcp index <path>` / `status`), freshness vía hook PostToolUse,
+Django re-validation (serie 824→514→348→?), closure-capture port TS/Go/Rust.
+Backlog completo del análisis 2026-06-11 en la conversación de esa sesión.
+
+### v0.12 resumen (referencia)
+
+**Tag:** `v0.12.0`. Tests **257/257** default + embeddings (suite unified). Schema v7 (sin migración nueva).
 
 ### v0.12 P2 batch 2 (banner-with-text skip + force-reindex preserves manual links — 2026-05-02)
 
@@ -197,7 +222,7 @@ quedan items menores + polish + corte de tag v0.12.0**:
 - ✅ `fastmcp>=3` tightened in pyproject; `uv lock --upgrade` ran
 - ✅ `__init__.__version__` wired via `importlib.metadata.version`
 - ✅ `git tag -a v0.12.0` (local only; push when ready)
-- ⏳ `git push origin main` + `gh release create v0.12.0` (user to run)
+- ✅ `git push origin main` + tag `v0.12.0` en remoto (verificado 2026-06-11)
 
 ### Opciones para v0.12 (elegir 1-2 según tiempo)
 
