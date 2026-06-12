@@ -82,3 +82,24 @@ async def test_did_you_mean_empty_when_no_match(sample_repo):
         out = (await c.call_tool("quick_orient", {"qname": "zzzzzz"})).data
         assert out.get("isError") is True
         assert isinstance(out.get("did_you_mean"), list)
+
+
+@pytest.mark.asyncio
+async def test_did_you_mean_in_find_symbol_zero_matches(sample_repo):
+    """v0.14 dogfood fix: find_symbol with a typo ('logn' for 'login')
+    returned a bare empty matches list — a dead end. Now suggests."""
+    async with Client(mcp) as c:
+        await c.call_tool("index_project", {})
+        out = (await c.call_tool("find_symbol", {"query": "logn"})).data
+        assert out["matches"] == []
+        suggested = {s["qualified_name"] for s in out["did_you_mean"]}
+        assert "pkg.auth.login" in suggested
+
+
+@pytest.mark.asyncio
+async def test_find_symbol_with_matches_has_no_did_you_mean(sample_repo):
+    async with Client(mcp) as c:
+        await c.call_tool("index_project", {})
+        out = (await c.call_tool("find_symbol", {"query": "login"})).data
+        assert out["matches"]
+        assert "did_you_mean" not in out

@@ -37,7 +37,7 @@ Todo el stack es local-first: 0 servicios externos, 0 API keys obligatorias, 0 D
 
 ## 3. Estado actual: v0.14.0 CORTADO — backlog 2026-06-11 cerrado completo
 
-Tests **303 default + 3 embeddings = 306**. Schema **v8**. Tag
+Tests **305 default + 3 embeddings = 308**. Schema **v8**. Tag
 **v0.14.0** (incluye batch v0.13 que nunca se taggeó). pyproject
 0.14.0. Tool surface real: **32 (19 core + 10 RF + 3 docs, plugins
 always-on)** — conteos README/CLAUDE.md corregidos al cortar.
@@ -70,6 +70,12 @@ shipped o resueltos (14 ya estaba implementado — stale); item 13 (LLM
 sampling) DROPPED con racional en ROADMAP §6b. Copia del backlog en
 memoria persistente del proyecto
 (`~/.claude/projects/-home-rixmerz-Projects-mcp-livespec-mcp/memory/backlog-v013-analysis.md`).
+Post-release dogfood vía jig proxy sobre livespec mismo: index 111
+files/723 symbols, dead-code 0, quick_orient/who_calls/analyze_impact/
+search OK en código nuevo de la sesión. Gap encontrado y cerrado:
+`find_symbol` con typo devolvía `{matches: []}` pelado → ahora incluye
+`did_you_mean` (2 tests).
+
 **Pendiente próximo:** ninguno comprometido. Candidatos naturales para
 v0.15: extractores C/C++/C#/Kotlin/Swift/Scala (hoy reportados como
 `languages_unsupported`), battle-test de la superficie v0.14 en repos
