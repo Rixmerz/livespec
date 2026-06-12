@@ -8,11 +8,8 @@ find_dead_code does not flag components that are only used as JSX elements.
 
 from __future__ import annotations
 
-import shutil
 import sqlite3
 from pathlib import Path
-
-import pytest
 
 from livespec_mcp.config import Settings
 from livespec_mcp.domain.extractors import extract
@@ -198,11 +195,14 @@ def test_jsx_member_expression_edge_to_existing_symbol(tmp_path: Path):
 
 def test_find_dead_code_not_flagged_when_jsx_used(tmp_path: Path):
     """find_dead_code must NOT report Counter as dead when it's only used as <Counter />."""
+    import asyncio
+    import os
+
     from fastmcp import Client
-    from livespec_mcp.server import mcp
+
     from livespec_mcp import state as state_module
     from livespec_mcp.domain.graph import invalidate_graph_cache
-    import os, asyncio
+    from livespec_mcp.server import mcp
 
     os.environ["LIVESPEC_WORKSPACE"] = str(tmp_path)
     state_module.reset_state()

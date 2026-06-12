@@ -7,8 +7,6 @@ that move tools into plugins inherit a stable wiring.
 
 from __future__ import annotations
 
-import sqlite3
-
 import pytest
 from fastmcp import FastMCP
 

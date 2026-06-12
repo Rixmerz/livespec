@@ -2,12 +2,10 @@
 
 from __future__ import annotations
 
+import pytest
 from fastmcp import Client
 
 from livespec_mcp.server import mcp
-
-
-import pytest
 
 
 @pytest.mark.asyncio

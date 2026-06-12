@@ -7,7 +7,6 @@ on any state, etc.
 
 from __future__ import annotations
 
-import sqlite3
 from pathlib import Path
 
 import hypothesis.strategies as st
@@ -17,7 +16,6 @@ from livespec_mcp.config import Settings
 from livespec_mcp.domain.indexer import index_project
 from livespec_mcp.domain.matcher import parse_annotations
 from livespec_mcp.storage.db import connect
-
 
 # ---------- Matcher ----------
 

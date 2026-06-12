@@ -14,8 +14,6 @@ candidates, 801 in `django/`):
 
 from __future__ import annotations
 
-from pathlib import Path
-
 import pytest
 from fastmcp import Client
 

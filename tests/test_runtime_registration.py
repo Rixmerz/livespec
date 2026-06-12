@@ -13,7 +13,6 @@ from fastmcp import Client
 from livespec_mcp.server import mcp
 from livespec_mcp.tools.analysis import _runtime_registered_names
 
-
 # ---------------------------------------------------------------------------
 # Unit tests for the helper directly
 # ---------------------------------------------------------------------------
@@ -208,7 +207,6 @@ async def test_non_registration_verb_still_dead(workspace):
     async with Client(mcp) as c:
         await c.call_tool("index_project", {})
         out = (await c.call_tool("find_dead_code", {})).data
-        qnames = {d["qualified_name"] for d in out["dead_symbols"]}
         # MyThing has a module-level reference via append arg — but append is
         # not a registration verb so it should NOT be protected by
         # _runtime_registered_names. However, it MAY be caught by
