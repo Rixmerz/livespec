@@ -9,7 +9,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 **livespec-mcp** is a local-first MCP server that maintains a live call graph,
 RF↔code traceability, and on-demand documentation for any codebase. It speaks
 9 languages with passing extractor tests (Python, Go, Java, JS, TS, Rust,
-Ruby, PHP) plus scoped resolution in 8 of them.
+Ruby, PHP) plus scoped resolution in 8 of them, and is framework-aware for
+Flask, FastAPI, Click, pytest, FastMCP, Celery, Django, Next.js, Deno Fresh,
+SvelteKit, Remix, Spring Boot, Angular and Hono (v0.13).
 
 ## Stakeholder posture (not co-architect — owner-with-skin)
 
@@ -102,37 +104,46 @@ populates new fields.
 ### Layered stack
 
 ```
-tools/          MCP-exposed surface (32 tools default, ~3 plugins eventually)
-  analysis.py     find_symbol, get_symbol_info, analyze_impact, audit_coverage,
+tools/          MCP-exposed surface (32 tools: 18 core + 11 RF + 3 docs)
+  analysis.py     find_symbol, quick_orient, get_symbol_source, who_calls,
+                  who_does_this_call, analyze_impact, audit_coverage,
                   find_dead_code, find_orphan_tests, find_endpoints,
-                  git_diff_impact, get_project_overview, get_call_graph
-  requirements.py CRUD + RF-symbol linking (link_rf_symbol, bulk_link_rf_symbols)
-                  + RF-RF graph (link_rf_dependency, get_rf_dependency_graph)
-                  + brownfield (propose_requirements_from_codebase, scan_docstrings_for_rf_hints)
-  indexing.py     index_project, get_index_status, list_files
-  search.py       search (hybrid FTS5 + sqlite-vec) + rebuild_chunks
-  docs.py         generate_docs, list_docs, export_documentation
-  watcher.py      start_watcher, stop_watcher, watcher_status
+                  git_diff_impact, get_project_overview
+  requirements.py RF agentic queries (list_requirements,
+                  get_requirement_implementation) + brownfield
+                  (propose_requirements_from_codebase) + bulk_link_rf_symbols
+  indexing.py     index_project (runs rebuild_chunks + optional embed inside)
+  search.py       search (hybrid FTS5 + sqlite-vec RRF) + embed_chunks
+  docs.py         shared doc helpers (doc tools live in plugins/docs.py)
+  plugins/rf.py   RF mutation: create/update/delete_requirement,
+                  link_rf_symbol, link/unlink_rf_dependency,
+                  get_rf_dependency_graph, scan_rf_annotations,
+                  scan_docstrings_for_rf_hints, import_requirements_from_markdown
+  plugins/docs.py generate_docs, list_docs, export_documentation
   _errors.py      mcp_error() helper — every tool error returns
                   {error, isError, did_you_mean?, hint?}
 
 domain/         Pure business logic, no MCP coupling
   extractors.py   tree-sitter dispatcher per language; _ts_extract handles
-                  JS/TS/Go/Ruby/PHP/Rust; _py_extract uses ast for precision
-  indexer.py     walks workspace, calls extractors, persists to symbol_ref,
+                  JS/TS/Go/Ruby/PHP/Rust/Java; _py_extract uses ast for
+                  precision. Decorators/annotations extracted for Python +
+                  TS/JS/TSX + Java (v0.13). Hono route scan +
+                  registration-callback name scan (v0.13)
+  indexer.py      walks workspace, calls extractors, persists to symbol_ref,
                   resolves edges via _resolve_refs (INSERT OR IGNORE)
-  graph.py       NetworkX wrapper + cache by (db_path, project_id, last_run_id)
+  graph.py        NetworkX wrapper + cache by (db_path, project_id, last_run_id)
                   -- v0.6 P3, ~4s -> µs on cache hit
-  matcher.py     @rf: annotation parser (multi-RF, confidence override,
+  matcher.py      @rf: annotation parser (multi-RF, confidence override,
                   @not_rf negation, verb-anchored level-2 with negation guard)
-  md_rfs.py      markdown spec importer
-  rag.py         AST-aware chunking + FTS5 + optional sqlite-vec via RRF
-  watcher.py     watchdog wrapper + per-workspace registry + atexit cleanup
+  md_rfs.py       markdown spec importer
+  rag.py          AST-aware chunking + FTS5 + optional sqlite-vec via RRF
+  watcher.py      watchdog wrapper used by index_project(watch=True) + atexit
+                  cleanup (watcher MCP tools dropped in v0.8)
 
 storage/        SQLite persistence
   schema.sql      single-file schema; CREATE TABLE IF NOT EXISTS for everything
-  db.py          connection bootstrap + ordered migration framework
-                 (schema_migrations table; MIGRATIONS list is append-only)
+  db.py           connection bootstrap + ordered migration framework
+                  (schema_migrations table; MIGRATIONS list append-only, at v8)
 ```
 
 ### Critical contracts (don't break)
@@ -171,62 +182,34 @@ must drift; reformat must not. Tested in
 produce duplicate symbols at the same line. Keep the first occurrence
 (source order).
 
-### Tool tier vision (v0.8 target — not yet implemented)
+### Tool tiers (landed v0.8, multi-tenant since v0.12)
 
-The ~35 tools today should be split by **agent usage shape**, not by
-"feature category". Two principles drive the split:
+The v0.8 curation pass shipped: battle-test data (3 sessions, 40 calls,
+11 bug fixes) drove the tier split. Current state:
 
-1. **Stakeholder posture wins:** RF traceability is the differentiator
-   defensible. Tools that answer agent questions about RFs stay in
-   the default menu. README leads with "¿Qué código implementa el
-   RF-042?" — the tool that answers that (`get_requirement_implementation`)
-   must be tier-1.
-2. **Plugin auto-activation by DB state, not config flag.** Server
-   queries DB at startup; if `rf` table has rows, RF plugin loads.
-   If `doc` table has rows, docs plugin loads. `LIVESPEC_PLUGINS`
-   env override available for power users. Zero cognitive friction
-   for agents adopting brownfield repos.
+- **18 core tools** always registered: code intel (find_symbol,
+  quick_orient, get_symbol_source, who_calls, who_does_this_call,
+  analyze_impact, git_diff_impact, find_dead_code, find_orphan_tests,
+  find_endpoints, get_project_overview, index_project, search,
+  embed_chunks) + RF agentic queries (audit_coverage, list_requirements,
+  get_requirement_implementation, propose_requirements_from_codebase)
+  + bulk_link_rf_symbols (escape hatch, promoted v0.12).
+- **Plugin `livespec-rf` (11 tools)** — RF mutation ceremony: CRUD,
+  link/unlink, RF-RF graph, scans, markdown import.
+- **Plugin `livespec-docs` (3 tools)** — generate_docs, list_docs,
+  export_documentation.
+- **Dropped (v0.8-v0.9)**: list_files, get_index_status (resource
+  `project://index/status`), get_symbol_info, get_call_graph,
+  rebuild_chunks (runs inside index_project), watcher trio
+  (race-condition trap; `index_project(watch=True)` remains).
 
-#### Tier 1 default (~16 tools)
-
-**Code intel core (8):** `index_project`, `find_symbol`, `get_symbol_info`,
-`analyze_impact`, `git_diff_impact`, `find_dead_code`, `find_orphan_tests`,
-`find_endpoints`.
-
-**RF agentic — questions an agent ASKS (4):** `audit_coverage`,
-`propose_requirements_from_codebase`, `get_requirement_implementation`
-(README lead question), `list_requirements` (RF discoverability).
-
-**Quick wins to add (4):** `get_symbol_source`, `who_calls`,
-`who_does_this_call`, `quick_orient` — agent-UX wins independent of curation.
-
-#### Plugin `livespec-rf` (auto-on if rf table has rows, ~10 tools)
-
-CRUD + linking + bulk + RF-RF graph + scan + import. Ceremony a HUMAN
-runs to mutate RF state, not questions an agent asks during work.
-Specifically: `create_requirement`, `update_requirement`,
-`delete_requirement`, `link_rf_symbol`, `bulk_link_rf_symbols`,
-`link_rf_dependency`, `unlink_rf_dependency`, `get_rf_dependency_graph`
-(redundant with `analyze_impact(target_type='requirement')` cascade),
-`scan_rf_annotations`, `scan_docstrings_for_rf_hints`,
-`import_requirements_from_markdown`.
-
-#### Plugin `livespec-docs` (auto-on if doc table has rows, 3 tools)
-
-`generate_docs`, `list_docs`, `export_documentation`. Bulk doc
-generation is a human-tier feature; agents already write docs as
-part of their LLM output.
-
-#### Drops (no plugin, no opt-in — gone)
-
-`list_files` (Grep host with path glob covers), `get_index_status`
-(re-expose as `project://index/status` resource), `start_watcher` /
-`stop_watcher` / `watcher_status` (race-condition trap for editing
-agents per ROADMAP §2 tier-4), `rebuild_chunks` (auto-run inside
-`index_project`).
-
-This curation is the headline of v0.8 — but it lands AFTER battle-test
-data, not before. See ROADMAP §4 Pillar B → A → C ordering.
+**Plugin loading reality (v0.12+):** plugins register UNCONDITIONALLY at
+startup (`register_all_plugins` in server.py). The original
+auto-detect-by-DB-state design died with multi-tenant workspaces — there
+is no single DB to query at startup when every call carries its own
+`workspace`. All 32 tools are always visible. If per-workspace tool
+menus matter again, the mechanism must become per-call, not
+startup-time.
 
 ---
 
