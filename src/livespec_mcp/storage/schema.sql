@@ -47,7 +47,7 @@ CREATE TABLE IF NOT EXISTS symbol (
     signature_hash TEXT,           -- xxh3 of signature; drift trigger independent of body
     docstring TEXT,
     body_hash TEXT,
-    decorators TEXT,               -- JSON array of decorator names (Python today; extensible)
+    decorators TEXT,               -- JSON array of decorator/annotation names (Python, TS/JS/TSX, Java)
     visibility TEXT,               -- v0.7: pub/pub(crate)/private/exported/public/...
     start_line INTEGER NOT NULL,
     end_line INTEGER NOT NULL,

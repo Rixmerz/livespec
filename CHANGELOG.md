@@ -6,6 +6,18 @@ follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Added — TS decorator + Java annotation extraction
+- **`symbol.decorators` now populates for TS/JS/TSX and Java**, not just
+  Python. TS/JS: `decorator` nodes on the declaration, on a wrapping
+  `export_statement` (`@Component() export class Foo`), or as preceding
+  siblings of class members (`@HostListener() onResize()`). Java:
+  `annotation` / `marker_annotation` inside `modifiers`
+  (`@RestController`, `@GetMapping("/x")`, dotted forms preserved).
+  Foundation for Angular / Spring Boot framework detection.
+- **Schema migration v8** (`ts_java_decorators_reextract`): no schema
+  change; queues `needs_reextract` so existing DBs backfill decorators on
+  the next `index_project` without `force=True`.
+
 ### Fixed — dual-decorator alias false positives in `find_dead_code`
 - **Decorator aliases now recognized as entry points.** The plugin-framework
   pattern `agentic_tool = mcp.tool if X else _noop_decorator` hid the real

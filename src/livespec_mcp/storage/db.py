@@ -133,6 +133,13 @@ def _m007_visibility(conn: sqlite3.Connection) -> None:
     _flag_reextract(conn)
 
 
+def _m008_ts_java_decorators(conn: sqlite3.Connection) -> None:
+    """v0.13 P1: extractor now fills symbol.decorators for TS/JS/TSX
+    (`decorator` nodes) and Java (annotations). No schema change — existing
+    rows for those languages carry NULL until re-extract. Queue it."""
+    _flag_reextract(conn)
+
+
 def _m006_legacy_v02_recover(conn: sqlite3.Connection) -> None:
     """P0.2: detect a v0.2-era DB whose symbol_ref is empty even though edges
     exist. That happens when the project was indexed before the persistent
@@ -154,6 +161,7 @@ MIGRATIONS: list[Migration] = [
     (5, "decorators", _m005_decorators),
     (6, "legacy_v02_recover", _m006_legacy_v02_recover),
     (7, "visibility", _m007_visibility),
+    (8, "ts_java_decorators_reextract", _m008_ts_java_decorators),
 ]
 
 
