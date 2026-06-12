@@ -56,6 +56,39 @@ def compute_index_status(st: AppState) -> dict[str, Any]:
     }
 
 
+def run_index_pipeline(st: AppState, *, force: bool = False, embed: bool = False) -> dict[str, Any]:
+    """Index + idempotent chunk rebuild + optional embed. Shared by the
+    `index_project` MCP tool and the `livespec-mcp index` CLI subcommand —
+    both surfaces must report the same payload shape."""
+    with st.lock():
+        stats = run_index(st.settings, st.conn, force=force)
+        existing = st.conn.execute(
+            "SELECT COUNT(*) c FROM chunk WHERE project_id=?", (st.project_id,)
+        ).fetchone()["c"]
+        if force or stats.files_changed or existing == 0:
+            chunk_stats: dict[str, Any] = dict(rebuild_chunks(st.conn, st.project_id))
+        else:
+            chunk_stats = {"skipped": "no file changes"}
+        embed_stats: dict[str, Any] = {"requested": embed}
+        if embed:
+            embed_stats.update(embed_pending(st.conn, st.project_id))
+    return {
+        "files_total": stats.files_total,
+        "files_changed": stats.files_changed,
+        "files_skipped": stats.files_skipped,
+        "symbols_total": stats.symbols_total,
+        "edges_total": stats.edges_total,
+        "rf_links_created": stats.rf_links_created,
+        "manual_links_restored": stats.manual_links_restored,
+        "languages": stats.languages,
+        "repo_config": stats.repo_config,
+        "workspace": str(st.settings.workspace),
+        "watcher_started": False,
+        "chunks": chunk_stats,
+        "embeddings": embed_stats,
+    }
+
+
 def register(mcp: FastMCP) -> None:
     @mcp.tool(annotations={"readOnlyHint": False, "idempotentHint": True, "destructiveHint": False})
     def index_project(
@@ -78,33 +111,7 @@ def register(mcp: FastMCP) -> None:
         Use after pulling new commits or when documentation feels stale.
         """
         st = get_state(workspace)
-        with st.lock():
-            stats = run_index(st.settings, st.conn, force=force)
-            existing = st.conn.execute(
-                "SELECT COUNT(*) c FROM chunk WHERE project_id=?", (st.project_id,)
-            ).fetchone()["c"]
-            if force or stats.files_changed or existing == 0:
-                chunk_stats: dict[str, Any] = dict(rebuild_chunks(st.conn, st.project_id))
-            else:
-                chunk_stats = {"skipped": "no file changes"}
-            embed_stats: dict[str, Any] = {"requested": embed}
-            if embed:
-                embed_stats.update(embed_pending(st.conn, st.project_id))
-        result: dict[str, Any] = {
-            "files_total": stats.files_total,
-            "files_changed": stats.files_changed,
-            "files_skipped": stats.files_skipped,
-            "symbols_total": stats.symbols_total,
-            "edges_total": stats.edges_total,
-            "rf_links_created": stats.rf_links_created,
-            "manual_links_restored": stats.manual_links_restored,
-            "languages": stats.languages,
-            "repo_config": stats.repo_config,
-            "workspace": str(st.settings.workspace),
-            "watcher_started": False,
-            "chunks": chunk_stats,
-            "embeddings": embed_stats,
-        }
+        result = run_index_pipeline(st, force=force, embed=embed)
         if watch:
             from livespec_mcp.domain.watcher import Watcher, register_watcher
 

@@ -1,0 +1,81 @@
+"""CLI entry point: MCP server by default, plus headless subcommands.
+
+`livespec-mcp` with no arguments runs the stdio MCP server — the form every
+mcp.json out there already uses, so it must never change. Subcommands give
+the same indexing pipeline a scriptable surface (cron, systemd timers,
+pre-commit hooks, CI) without an MCP host in the middle:
+
+    livespec-mcp index <path> [--force] [--embed]   # index + chunks, JSON out
+    livespec-mcp status <path>                      # index status, JSON out
+    livespec-mcp serve                              # explicit server form
+
+JSON goes to stdout, errors to stderr with exit code 1.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+from typing import Any
+
+
+def _serve() -> None:
+    from livespec_mcp.server import mcp
+
+    mcp.run()  # stdio transport by default
+
+
+def _cmd_index(path: str, *, force: bool, embed: bool) -> dict[str, Any]:
+    from livespec_mcp.state import get_state
+    from livespec_mcp.tools.indexing import run_index_pipeline
+
+    return run_index_pipeline(get_state(path), force=force, embed=embed)
+
+
+def _cmd_status(path: str) -> dict[str, Any]:
+    from livespec_mcp.state import get_state
+    from livespec_mcp.tools.indexing import compute_index_status
+
+    return compute_index_status(get_state(path))
+
+
+def main(argv: list[str] | None = None) -> int:
+    argv = sys.argv[1:] if argv is None else argv
+    if not argv:
+        _serve()
+        return 0
+
+    parser = argparse.ArgumentParser(
+        prog="livespec-mcp",
+        description="Code intelligence MCP server + headless indexing CLI.",
+    )
+    sub = parser.add_subparsers(dest="cmd", required=True)
+
+    sub.add_parser("serve", help="run the MCP server on stdio (same as no arguments)")
+
+    p_index = sub.add_parser("index", help="index a repo and print JSON stats")
+    p_index.add_argument("path", help="absolute or relative path to the repo root")
+    p_index.add_argument("--force", action="store_true", help="re-extract every file")
+    p_index.add_argument(
+        "--embed", action="store_true", help="populate vector embeddings ([embeddings] extra)"
+    )
+
+    p_status = sub.add_parser("status", help="print index status JSON for a repo")
+    p_status.add_argument("path", help="absolute or relative path to the repo root")
+
+    args = parser.parse_args(argv)
+
+    if args.cmd == "serve":
+        _serve()
+        return 0
+    try:
+        if args.cmd == "index":
+            payload = _cmd_index(args.path, force=args.force, embed=args.embed)
+        else:
+            payload = _cmd_status(args.path)
+    except (FileNotFoundError, ValueError) as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 1
+    print(json.dumps(payload, indent=2))
+    return 0

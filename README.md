@@ -130,11 +130,21 @@ uv pip install -e ".[dev]"
 ## Run as MCP server
 
 ```bash
-livespec-mcp
+livespec-mcp          # stdio MCP server (same as `livespec-mcp serve`)
 ```
 
-By default it picks the **current working directory** as workspace, or
-`LIVESPEC_WORKSPACE` if set. Persistent state lives in `.mcp-docs/docs.db`.
+Every tool call requires `workspace="/abs/path"` (no cwd or env fallback
+since v0.12). Persistent state lives in `<workspace>/.mcp-docs/docs.db`.
+
+### Headless CLI (v0.14)
+
+The same indexing pipeline without an MCP host — for cron, systemd
+timers, pre-commit hooks, CI:
+
+```bash
+livespec-mcp index /path/to/repo [--force] [--embed]   # JSON stats to stdout
+livespec-mcp status /path/to/repo                      # index status JSON
+```
 
 ### Claude Code / Cursor wiring
 
