@@ -6,6 +6,20 @@ follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Added — Spring Boot + Angular framework support
+- **`find_endpoints(framework='spring')`**: surfaces `@RestController` /
+  `@Controller` classes and `@GetMapping` / `@PostMapping` /
+  `@PutMapping` / `@DeleteMapping` / `@PatchMapping` / `@RequestMapping` /
+  `@ExceptionHandler` / `@EventListener` / `@Scheduled` methods.
+- **`find_endpoints(framework='angular')`**: surfaces `@Component` /
+  `@Injectable` / `@Directive` / `@Pipe` / `@NgModule` classes.
+- **`find_dead_code` Spring/Angular awareness**: Spring stereotype +
+  mapping annotations count as entry points (DI container invokes them).
+  Angular template-bound classes (Component/Directive/Pipe) protect ALL
+  their methods — HTML templates are invisible to the indexer
+  (`(click)="save()"`); lifecycle hooks (`ngOnInit` & friends) are
+  protected on any Angular-decorated class.
+
 ### Added — TS decorator + Java annotation extraction
 - **`symbol.decorators` now populates for TS/JS/TSX and Java**, not just
   Python. TS/JS: `decorator` nodes on the declaration, on a wrapping

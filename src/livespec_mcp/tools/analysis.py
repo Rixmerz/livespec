@@ -54,6 +54,19 @@ _ENTRY_POINT_DECORATOR_LASTSEG = frozenset({
     "hookimpl", "event", "event_handler", "handler", "listener",
     # Cron / schedules
     "cron", "schedule", "scheduled",
+    # v0.13 P2: Spring Boot annotations (Java) — the DI container / web
+    # layer instantiates and invokes these; zero in-project callers is
+    # expected, not dead code.
+    "getmapping", "postmapping", "putmapping", "deletemapping",
+    "patchmapping", "requestmapping", "restcontroller", "controller",
+    "service", "repository", "configuration", "bean", "autowired",
+    "eventlistener", "postconstruct", "predestroy", "exceptionhandler",
+    "kafkalistener", "rabbitlistener", "jmslistener",
+    "springbootapplication",
+    # v0.13 P2: Angular decorators (TS) — framework-instantiated, methods
+    # reachable from HTML templates the indexer can't parse.
+    "component", "injectable", "directive", "pipe", "ngmodule",
+    "hostlistener",
 })
 
 # Per-framework decorator presets for `find_endpoints(framework=...)`.
@@ -71,7 +84,32 @@ _FRAMEWORK_DECORATOR_PATTERNS: dict[str, tuple[str, ...]] = {
     "fastmcp": ("tool", "resource", "prompt"),
     "celery": ("task", "shared_task"),
     "django": ("login_required", "permission_required", "staff_member_required"),
+    # v0.13 P2: Java Spring Boot (annotations extracted since migration v8)
+    "spring": (
+        "GetMapping", "PostMapping", "PutMapping", "DeleteMapping",
+        "PatchMapping", "RequestMapping", "RestController", "Controller",
+        "ExceptionHandler", "EventListener", "Scheduled",
+    ),
+    # v0.13 P2: Angular (TS decorators extracted since migration v8)
+    "angular": ("Component", "Injectable", "Directive", "Pipe", "NgModule"),
 }
+
+# v0.13 P2: Angular lifecycle hooks — invoked by the framework, never by
+# in-project code. Protected when the parent class carries any Angular
+# decorator.
+_NG_LIFECYCLE_HOOKS = frozenset({
+    "ngOnInit", "ngOnDestroy", "ngOnChanges", "ngDoCheck",
+    "ngAfterViewInit", "ngAfterViewChecked",
+    "ngAfterContentInit", "ngAfterContentChecked",
+})
+
+# Angular decorators whose classes are TEMPLATE-bound: any public method may
+# be referenced from HTML the indexer can't parse (`(click)="save()"`), so
+# every method of such a class is protected from dead-code flagging.
+_NG_TEMPLATE_DECORATOR_LASTSEGS = frozenset({"component", "directive", "pipe"})
+_NG_ANY_DECORATOR_LASTSEGS = _NG_TEMPLATE_DECORATOR_LASTSEGS | frozenset(
+    {"injectable", "ngmodule"}
+)
 
 
 def _decorator_lastseg(name: str) -> str:
@@ -1630,6 +1668,28 @@ def register(mcp: FastMCP) -> None:
             )
         }
 
+        # v0.13 P2: Angular-decorated classes. Template-bound decorators
+        # (Component/Directive/Pipe) protect EVERY method — templates the
+        # indexer can't parse may call any of them. Any Angular decorator
+        # protects the lifecycle hooks by name.
+        ng_template_classes: set[str] = set()
+        ng_any_classes: set[str] = set()
+        for r in st.conn.execute(
+            """SELECT s.qualified_name, s.decorators FROM symbol s
+               JOIN file f ON f.id=s.file_id
+               WHERE f.project_id=? AND s.kind='class'
+                 AND s.decorators IS NOT NULL""",
+            (pid,),
+        ):
+            try:
+                segs = {_decorator_lastseg(d) for d in json.loads(r["decorators"])}
+            except (json.JSONDecodeError, TypeError):
+                continue
+            if segs & _NG_TEMPLATE_DECORATOR_LASTSEGS:
+                ng_template_classes.add(r["qualified_name"])
+            if segs & _NG_ANY_DECORATOR_LASTSEGS:
+                ng_any_classes.add(r["qualified_name"])
+
         alias_lastsegs = frozenset(decorator_aliases)
         filtered: list[dict[str, Any]] = []
         for r in rows:
@@ -1686,6 +1746,14 @@ def register(mcp: FastMCP) -> None:
                     parent_class_qname = ".".join(qname_parts[:-1])
                     if parent_class_qname in protected_class_qnames:
                         continue
+                    # v0.13 P2: Angular template reachability + lifecycle.
+                    if parent_class_qname in ng_template_classes:
+                        continue
+                    if (
+                        meta["name"] in _NG_LIFECYCLE_HOOKS
+                        and parent_class_qname in ng_any_classes
+                    ):
+                        continue
 
             filtered.append(meta)
 
@@ -1728,7 +1796,7 @@ def register(mcp: FastMCP) -> None:
     def find_endpoints(
         framework: Literal[
             "flask", "fastapi", "click", "pytest", "fastmcp", "celery", "django",
-            "nextjs", "fresh", "sveltekit", "remix",
+            "nextjs", "fresh", "sveltekit", "remix", "spring", "angular",
         ] | None = None,
         limit: int = 200,
         cursor: int = 0,
@@ -1760,6 +1828,11 @@ def register(mcp: FastMCP) -> None:
         LoginRequiredMixin/PermissionRequiredMixin/UserPassesTestMixin/
         MiddlewareMixin) are also surfaced even when they have no
         decorator. Closes session-04 bug #15.
+
+        v0.13 P2: ``framework='spring'`` surfaces Java Spring Boot
+        annotations (@RestController, @GetMapping & friends, requires the
+        v8 re-extract); ``framework='angular'`` surfaces @Component /
+        @Injectable / @Directive / @Pipe / @NgModule classes.
         """
         st = get_state(workspace)
         pid = st.project_id
