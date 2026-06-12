@@ -6,7 +6,12 @@ follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
-_(nothing yet)_
+### Added — `find_symbol` typo suggestions
+- `find_symbol` with zero matches now includes a `did_you_mean` list
+  (same suggester as the not-found errors) instead of a bare empty
+  result — found dogfooding v0.14.0 through the the workflow runner proxy: a typoed
+  query left the agent at a dead end. Key absent when there are
+  matches or no close candidates.
 
 ## [0.14.0] - 2026-06-12
 

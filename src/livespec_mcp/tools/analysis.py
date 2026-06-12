@@ -1113,7 +1113,16 @@ def register(mcp: FastMCP) -> None:
         sql.append("ORDER BY length(s.qualified_name) LIMIT ?")
         args.append(limit)
         rows = st.conn.execute(" ".join(sql), args).fetchall()
-        return {"matches": [dict(r) for r in rows]}
+        out: dict[str, Any] = {"matches": [dict(r) for r in rows]}
+        if not rows:
+            # v0.14: zero matches on the project's own fuzzy-lookup tool is
+            # a dead end for an agent — surface typo-distance suggestions
+            # the same way the not-found errors do. Not an error payload:
+            # empty matches is a valid result, did_you_mean rides along.
+            suggestions = did_you_mean_symbols(st.conn, pid, query)
+            if suggestions:
+                out["did_you_mean"] = suggestions
+        return out
 
     @mcp.tool(annotations={"readOnlyHint": True, "idempotentHint": True})
     def get_symbol_source(
