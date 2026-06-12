@@ -81,6 +81,7 @@ def run_index_pipeline(st: AppState, *, force: bool = False, embed: bool = False
         "rf_links_created": stats.rf_links_created,
         "manual_links_restored": stats.manual_links_restored,
         "languages": stats.languages,
+        "languages_unsupported": stats.languages_unsupported,
         "repo_config": stats.repo_config,
         "workspace": str(st.settings.workspace),
         "watcher_started": False,

@@ -105,13 +105,13 @@ def load_repo_config(workspace: Path) -> RepoConfig:
     if languages is not None:
         if not isinstance(languages, list) or not all(isinstance(x, str) for x in languages):
             raise _config_error("[index].languages must be a list of strings")
-        from livespec_mcp.domain.languages import EXT_LANGUAGE
+        from livespec_mcp.domain.languages import EXTRACTOR_SUPPORTED
 
-        valid = set(EXT_LANGUAGE.values())
-        bad = sorted(set(languages) - valid)
+        bad = sorted(set(languages) - EXTRACTOR_SUPPORTED)
         if bad:
             raise _config_error(
-                f"unknown languages {bad} (valid: {sorted(valid)})"
+                f"unsupported languages {bad} — no extractor yet "
+                f"(valid: {sorted(EXTRACTOR_SUPPORTED)})"
             )
 
     max_file_bytes = index.get("max_file_bytes", DEFAULT_MAX_FILE_BYTES)

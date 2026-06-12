@@ -22,7 +22,7 @@ from pathspec import GitIgnoreSpec
 
 from livespec_mcp.config import RepoConfig, Settings, load_repo_config
 from livespec_mcp.domain.extractors import ExtractResult, extract
-from livespec_mcp.domain.languages import detect_language
+from livespec_mcp.domain.languages import EXTRACTOR_SUPPORTED, detect_language
 from livespec_mcp.storage.db import consume_reextract_flag, get_or_create_project, transaction
 
 DEFAULT_IGNORES = {
@@ -43,11 +43,14 @@ class IndexStats:
     rf_links_created: int = 0
     manual_links_restored: int = 0
     languages: dict[str, int] = None  # type: ignore
+    languages_unsupported: dict[str, int] = None  # type: ignore  # mapped ext, no extractor
     repo_config: dict[str, Any] | None = None  # echo of .livespec.toml, if present
 
     def __post_init__(self) -> None:
         if self.languages is None:
             self.languages = {}
+        if self.languages_unsupported is None:
+            self.languages_unsupported = {}
 
 
 def _hash_bytes(b: bytes) -> str:
@@ -81,7 +84,13 @@ def _gitignored(path: Path, specs: list[tuple[Path, GitIgnoreSpec]], *, is_dir: 
     return False
 
 
-def _iter_files(root: Path, ignores: set[str], cfg: RepoConfig | None = None) -> list[Path]:
+def _iter_files(
+    root: Path,
+    ignores: set[str],
+    cfg: RepoConfig | None = None,
+    *,
+    unsupported: dict[str, int] | None = None,
+) -> list[Path]:
     cfg = cfg or RepoConfig()
     # .livespec.toml [index].ignore outranks every .gitignore: when the
     # config has an opinion (ignore or !re-include), that decision is final.
@@ -126,6 +135,10 @@ def _iter_files(root: Path, ignores: set[str], cfg: RepoConfig | None = None) ->
                 continue
             if _decide(p, is_dir=False, specs=specs):
                 continue
+            if lang not in EXTRACTOR_SUPPORTED:
+                if unsupported is not None:
+                    unsupported[lang] = unsupported.get(lang, 0) + 1
+                continue
             try:
                 if p.stat().st_size > cfg.max_file_bytes:
                     continue
@@ -159,7 +172,9 @@ def index_project(
     repo_cfg = load_repo_config(settings.workspace)
     if (settings.workspace / ".livespec.toml").is_file():
         stats.repo_config = repo_cfg.as_payload()
-    files = _iter_files(settings.workspace, DEFAULT_IGNORES, repo_cfg)
+    files = _iter_files(
+        settings.workspace, DEFAULT_IGNORES, repo_cfg, unsupported=stats.languages_unsupported
+    )
 
     # Build a snapshot of existing files for delta detection
     existing = {
@@ -282,30 +297,30 @@ def index_project(
         # and links whose symbol qname disappeared from the codebase
         # silently drop (the symbol no longer exists — nothing to link).
         if manual_links_snapshot:
-            restored = 0
-            for rf_id_str, qname, relation, confidence, source in manual_links_snapshot:
-                row = conn.execute(
-                    """SELECT rf.id AS rf_pk, s.id AS sym_id
-                       FROM rf
-                       JOIN symbol s ON 1=1
-                       JOIN file f ON f.id = s.file_id
-                       WHERE rf.project_id = ?
-                         AND f.project_id = ?
-                         AND rf.rf_id = ?
-                         AND s.qualified_name = ?
-                       LIMIT 1""",
-                    (project_id, project_id, rf_id_str, qname),
-                ).fetchone()
-                if row is None:
-                    continue
-                cur = conn.execute(
-                    """INSERT OR IGNORE INTO rf_symbol(rf_id, symbol_id, relation, confidence, source)
-                       VALUES(?,?,?,?,?)""",
-                    (int(row["rf_pk"]), int(row["sym_id"]), relation, confidence, source),
-                )
-                if cur.rowcount > 0:
-                    restored += 1
-            stats.manual_links_restored = restored
+            # Batch (v0.14): one set-based INSERT..SELECT instead of two
+            # queries per snapshot row. MIN(s.id) keeps the old LIMIT 1
+            # semantics when a qname exists in more than one file.
+            conn.execute(
+                """CREATE TEMP TABLE IF NOT EXISTS _manual_links(
+                       rf_id_str TEXT, qname TEXT, relation TEXT,
+                       confidence REAL, source TEXT)"""
+            )
+            conn.execute("DELETE FROM _manual_links")
+            conn.executemany(
+                "INSERT INTO _manual_links VALUES(?,?,?,?,?)", manual_links_snapshot
+            )
+            cur = conn.execute(
+                """INSERT OR IGNORE INTO rf_symbol(rf_id, symbol_id, relation, confidence, source)
+                   SELECT rf.id, MIN(s.id), m.relation, m.confidence, m.source
+                   FROM _manual_links m
+                   JOIN rf ON rf.rf_id = m.rf_id_str AND rf.project_id = ?
+                   JOIN symbol s ON s.qualified_name = m.qname
+                   JOIN file f ON f.id = s.file_id AND f.project_id = ?
+                   GROUP BY rf.id, m.qname, m.relation, m.confidence, m.source""",
+                (project_id, project_id),
+            )
+            stats.manual_links_restored = max(cur.rowcount, 0)
+            conn.execute("DELETE FROM _manual_links")
 
     stats.edges_total = int(
         conn.execute(

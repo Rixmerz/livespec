@@ -98,6 +98,19 @@ def get_state(workspace: str | Path | None = None) -> AppState:
         return new_state
 
 
+def get_mru_state() -> AppState | None:
+    """Most-recently-used workspace state, or None if nothing was opened yet.
+
+    Resources have no parameter channel for ``workspace`` (URI templates
+    only), so since multi-tenant v0.12 they bind to the workspace of the
+    most recent tool call. Single-repo sessions — the common case for
+    resources — always resolve correctly."""
+    with _cache_lock:
+        if not _cache:
+            return None
+        return _cache[next(reversed(_cache))]
+
+
 def reset_state() -> None:
     """For tests: drop every cached workspace."""
     with _cache_lock:

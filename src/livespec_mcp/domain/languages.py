@@ -37,6 +37,17 @@ def detect_language(path: Path) -> str | None:
     return EXT_LANGUAGE.get(path.suffix.lower())
 
 
+# Languages with a real extractor behind them. EXT_LANGUAGE maps more
+# extensions (c, cpp, c_sharp, kotlin, swift, scala) but those have no
+# symbol extraction yet — indexing them would parse for zero symbols.
+# v0.14: such files are skipped and reported as `languages_unsupported`
+# in the index_project payload instead of silently producing nothing.
+EXTRACTOR_SUPPORTED: frozenset[str] = frozenset({
+    "python", "javascript", "typescript", "tsx",
+    "go", "java", "rust", "ruby", "php",
+})
+
+
 # Languages whose extractor populates `symbol.docstring` so the @rf:
 # annotation matcher can find tags. Used by audit_coverage to separate
 # "actually un-covered" from "extractor can't see annotations here yet".
