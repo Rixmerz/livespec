@@ -689,6 +689,148 @@ def _ts_extract(
     return out
 
 
+# v0.13 P3: method names that take a callable and invoke it later (HTTP
+# routers like Hono/Express, event emitters, plugin registries). Lowercase;
+# compared against the call's last dotted segment. Kept tight — `add`/`set`/
+# `push` are too generic.
+_TS_CALLBACK_REG_VERBS = frozenset({
+    # HTTP verb routing (Hono, Express, Fastify, ...)
+    "get", "post", "put", "delete", "patch", "options", "all", "route",
+    # middleware / event registration
+    "use", "on", "once", "subscribe", "register", "connect",
+    "addeventlistener", "addlistener",
+})
+
+# HTTP verbs that map a path string to a handler (subset of the above used
+# for route extraction — `use`/`on` handled separately).
+_HONO_ROUTE_VERBS = frozenset({
+    "get", "post", "put", "delete", "patch", "options", "all",
+})
+
+
+def ts_registered_callback_names(source: str, language: str) -> frozenset[str]:
+    """Identifier names passed as args to registration-style calls, at ANY
+    nesting level including module top-level.
+
+    v0.13 P3: the extract-time `callback_arg` refs only cover calls inside
+    symbol bodies — the canonical Hono/Express pattern registers handlers at
+    module level (`app.get('/users', listUsers)`), which no symbol owns.
+    `find_dead_code` unions this set the same way the Python side uses
+    `_runtime_registered_names`. Parse failures return empty.
+    """
+    try:
+        parser = get_parser(language)
+    except Exception:
+        return frozenset()
+    src_bytes = source.encode("utf-8", errors="replace")
+    try:
+        tree = parser.parse(src_bytes)
+    except Exception:
+        return frozenset()
+
+    def text(n) -> str:
+        return src_bytes[n.start_byte : n.end_byte].decode("utf-8", errors="replace")
+
+    out: set[str] = set()
+
+    def walk(node) -> None:
+        if node.type == "call_expression":
+            fn = node.child_by_field_name("function")
+            prop = None
+            if fn is not None and fn.type == "member_expression":
+                prop = fn.child_by_field_name("property")
+            if prop is not None and text(prop).lower() in _TS_CALLBACK_REG_VERBS:
+                args_node = node.child_by_field_name("arguments")
+                if args_node is not None:
+                    for a in args_node.children:
+                        if a.type == "identifier":
+                            name = text(a)
+                            if name:
+                                out.add(name)
+        for c in node.children:
+            walk(c)
+
+    walk(tree.root_node)
+    return frozenset(out)
+
+
+def scan_hono_routes(source: str, language: str) -> list[dict]:
+    """Route registrations in a Hono-style app file.
+
+    v0.13 P3: returns ``[{method, path, handler_name, line}]`` for
+    ``app.get('/users', handler)`` / ``app.on('PURGE', '/cache', h)`` /
+    ``app.route('/api', subApp)`` call patterns. ``use`` is middleware, not
+    a route — skipped. The caller pre-filters files (source must mention
+    'hono') and resolves handler names to symbols.
+    """
+    try:
+        parser = get_parser(language)
+    except Exception:
+        return []
+    src_bytes = source.encode("utf-8", errors="replace")
+    try:
+        tree = parser.parse(src_bytes)
+    except Exception:
+        return []
+
+    def text(n) -> str:
+        return src_bytes[n.start_byte : n.end_byte].decode("utf-8", errors="replace")
+
+    def str_arg(n) -> str | None:
+        if n.type in ("string", "template_string"):
+            raw = text(n)
+            return raw[1:-1] if len(raw) >= 2 else raw
+        return None
+
+    routes: list[dict] = []
+
+    def walk(node) -> None:
+        if node.type == "call_expression":
+            fn = node.child_by_field_name("function")
+            prop = None
+            if fn is not None and fn.type == "member_expression":
+                prop = fn.child_by_field_name("property")
+            if prop is not None:
+                pname = text(prop).lower()
+                args_node = node.child_by_field_name("arguments")
+                args = [
+                    a
+                    for a in (args_node.children if args_node is not None else [])
+                    if a.type not in ("(", ")", ",", "comment")
+                ]
+                handler = next(
+                    (text(a) for a in reversed(args) if a.type == "identifier"),
+                    None,
+                )
+                line = node.start_point[0] + 1
+                if pname in _HONO_ROUTE_VERBS and args and str_arg(args[0]) is not None:
+                    routes.append({
+                        "method": pname.upper(),
+                        "path": str_arg(args[0]),
+                        "handler_name": handler,
+                        "line": line,
+                    })
+                elif pname == "on" and len(args) >= 2 and str_arg(args[1]) is not None:
+                    routes.append({
+                        "method": (str_arg(args[0]) or "ON").upper(),
+                        "path": str_arg(args[1]),
+                        "handler_name": handler,
+                        "line": line,
+                    })
+                elif pname == "route" and args and str_arg(args[0]) is not None:
+                    routes.append({
+                        "method": "ROUTE",
+                        "path": str_arg(args[0]),
+                        "handler_name": handler,
+                        "line": line,
+                    })
+        for c in node.children:
+            walk(c)
+
+    walk(tree.root_node)
+    return routes
+
+
 def _ts_collect_calls(def_node, src_qname: str, src_bytes: bytes, out: ExtractResult) -> None:
     def text(n) -> str:
         return src_bytes[n.start_byte : n.end_byte].decode("utf-8", errors="replace")
@@ -728,6 +870,37 @@ def _ts_collect_calls(def_node, src_qname: str, src_bytes: bytes, out: ExtractRe
                 t = text(c)
                 return t, receiver_text or t
         return None, None
+
+    def _callback_arg_refs(call_node, tgt: str) -> None:
+        """v0.13 P3: named handlers passed to registration-style calls.
+
+        `app.get('/users', listUsers)` / `emitter.on('x', handler)` hand a
+        callable to a framework that invokes it later — without this the
+        handler has zero inbound edges and looks dead. Emits a ref for each
+        bare-identifier argument when the call's method name is a known
+        registration verb. Non-identifier args (strings, arrows, member
+        expressions) are ignored — conservative on purpose.
+        """
+        if tgt.lower() not in _TS_CALLBACK_REG_VERBS:
+            return
+        args_node = call_node.child_by_field_name("arguments") if hasattr(call_node, "child_by_field_name") else None
+        if args_node is None:
+            return
+        for a in args_node.children:
+            if a.type != "identifier":
+                continue
+            name = text(a)
+            if not name:
+                continue
+            out.refs.append(
+                ExtractedRef(
+                    src_qname=src_qname,
+                    target_name=name,
+                    line=a.start_point[0] + 1,
+                    ref_type="callback_arg",
+                    scope_module=out.imports.get(name),
+                )
+            )
 
     # JSX node types that carry a component name (v0.11 P2, bug #20)
     _JSX_OPEN_TYPES = {"jsx_opening_element", "jsx_self_closing_element"}
@@ -805,6 +978,8 @@ def _ts_collect_calls(def_node, src_qname: str, src_bytes: bytes, out: ExtractRe
                         scope_module=scope,
                     )
                 )
+                # v0.13 P3: named handlers passed to registration calls.
+                _callback_arg_refs(node, tgt)
         # v0.11 P2: JSX element references as call-graph edges (bug #20).
         # Only jsx_opening_element (paired tags) and jsx_self_closing_element
         # are walked; jsx_closing_element is skipped (duplicate of opening tag).

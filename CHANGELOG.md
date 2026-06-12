@@ -6,6 +6,24 @@ follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Added — Hono framework support (call-style routing)
+- **`find_endpoints(framework='hono')`**: scans indexed TS/JS files whose
+  source mentions Hono for `app.get('/users', handler)` /
+  `app.on('PURGE', '/cache', h)` / `app.route('/api', sub)` patterns.
+  Each entry reports `hono_method` + `hono_path`; named handlers resolve
+  to their symbol (`qualified_name`), inline arrows fall back to a
+  `file:line` pseudo-qname. Opt-in only (reads files on demand, not part
+  of the `framework=None` sweep).
+- **Named-handler protection**: identifiers passed to registration-style
+  calls (`get/post/put/delete/patch/options/all/route/use/on/once/
+  subscribe/register/connect/addEventListener/addListener`) now emit
+  `callback_arg` refs at extract time (inside symbol bodies → `who_calls`
+  answers), and `find_dead_code(include_non_python=True)` runs a TS/JS
+  module-level registration scan mirroring the Python
+  `_runtime_registered_names` — the canonical Hono/Express pattern
+  registers handlers at module top-level where no symbol owns the call.
+  Also benefits Express-style apps and event emitters.
+
 ### Added — Spring Boot + Angular framework support
 - **`find_endpoints(framework='spring')`**: surfaces `@RestController` /
   `@Controller` classes and `@GetMapping` / `@PostMapping` /
