@@ -18,6 +18,10 @@ from typing import Any, Literal
 
 from fastmcp import FastMCP
 
+from livespec_mcp.domain.extractors import (
+    scan_hono_routes,
+    ts_registered_callback_names,
+)
 from livespec_mcp.domain.graph import (
     ancestors_within,
     descendants_within,
@@ -539,6 +543,20 @@ def _entry_point_decorator_aliases(file_path_abs: str) -> frozenset[str]:
                     if seg:
                         out.add(seg)
     return frozenset(out)
+
+
+@lru_cache(maxsize=256)
+def _ts_runtime_registered_names(file_path_abs: str, language: str) -> frozenset[str]:
+    """TS/JS mirror of `_runtime_registered_names`: identifiers passed to
+    registration-style calls (`app.get('/x', handler)`, `emitter.on(...)`)
+    at any nesting level, module top-level included — the canonical Hono /
+    Express pattern registers handlers outside any symbol body, so
+    extract-time refs can't see it. Cached per file path."""
+    try:
+        source = Path(file_path_abs).read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return frozenset()
+    return ts_registered_callback_names(source, language)
 
 
 @lru_cache(maxsize=128)
@@ -1646,6 +1664,23 @@ def register(mcp: FastMCP) -> None:
                 # Bad file paths shouldn't kill the whole audit.
                 continue
 
+        # v0.13 P3: TS/JS runtime-registration scan. Only pay the file
+        # reads when non-Python symbols are actually in scope.
+        if include_non_python:
+            for path_row in st.conn.execute(
+                """SELECT path, language FROM file
+                   WHERE project_id=? AND language IN
+                     ('typescript', 'javascript', 'tsx')""",
+                (pid,),
+            ):
+                try:
+                    abs_path = str(workspace_path / path_row["path"])
+                    global_module_refs |= _ts_runtime_registered_names(
+                        abs_path, path_row["language"]
+                    )
+                except Exception:
+                    continue
+
         # v0.8 P2 sessions 02 fix (bug #6 method propagation): a class
         # whose CONSTRUCTOR is called from anywhere in the indexed code
         # has its methods reachable through duck-typing (FastMCP middleware
@@ -1797,6 +1832,7 @@ def register(mcp: FastMCP) -> None:
         framework: Literal[
             "flask", "fastapi", "click", "pytest", "fastmcp", "celery", "django",
             "nextjs", "fresh", "sveltekit", "remix", "spring", "angular",
+            "hono",
         ] | None = None,
         limit: int = 200,
         cursor: int = 0,
@@ -1833,6 +1869,14 @@ def register(mcp: FastMCP) -> None:
         annotations (@RestController, @GetMapping & friends, requires the
         v8 re-extract); ``framework='angular'`` surfaces @Component /
         @Injectable / @Directive / @Pipe / @NgModule classes.
+
+        v0.13 P3: ``framework='hono'`` scans indexed TS/JS files whose
+        source mentions Hono for call-style route registrations
+        (``app.get('/users', handler)``, ``app.on(...)``,
+        ``app.route('/api', sub)``). Each route reports ``hono_method`` /
+        ``hono_path``; ``qualified_name`` resolves to the handler symbol
+        when the handler is a named identifier. Explicit-opt-in only (not
+        part of the ``framework=None`` sweep — it reads files on demand).
         """
         st = get_state(workspace)
         pid = st.project_id
@@ -1942,6 +1986,58 @@ def register(mcp: FastMCP) -> None:
                     "django_cbv_base": cbv_base,
                 })
                 seen_qnames.add(r["qualified_name"])
+
+        # v0.13 P3: Hono call-style routes. Opt-in (reads files on demand).
+        if framework == "hono":
+            workspace_path = st.settings.workspace
+            for fr in st.conn.execute(
+                """SELECT id, path, language FROM file
+                   WHERE project_id=? AND language IN
+                     ('typescript', 'javascript', 'tsx')
+                   ORDER BY path""",
+                (pid,),
+            ).fetchall():
+                try:
+                    src = (workspace_path / fr["path"]).read_text(
+                        encoding="utf-8", errors="replace"
+                    )
+                except OSError:
+                    continue
+                if "hono" not in src.lower():
+                    continue
+                for rt in scan_hono_routes(src, fr["language"]):
+                    qname = None
+                    kind = "route"
+                    start_line = end_line = rt["line"]
+                    if rt["handler_name"]:
+                        sym = st.conn.execute(
+                            """SELECT s.qualified_name, s.kind, s.start_line,
+                                      s.end_line
+                               FROM symbol s JOIN file f ON f.id=s.file_id
+                               WHERE f.project_id=? AND s.name=?
+                               ORDER BY (s.file_id=?) DESC LIMIT 1""",
+                            (pid, rt["handler_name"], fr["id"]),
+                        ).fetchone()
+                        if sym is not None:
+                            qname = sym["qualified_name"]
+                            kind = sym["kind"]
+                            start_line = sym["start_line"]
+                            end_line = sym["end_line"]
+                    entry_qname = qname or f"{fr['path']}:{rt['line']}"
+                    route_key = (rt["method"], rt["path"], entry_qname)
+                    if route_key in seen_qnames:
+                        continue
+                    endpoints.append({
+                        "qualified_name": entry_qname,
+                        "kind": kind,
+                        "file_path": fr["path"],
+                        "start_line": start_line,
+                        "end_line": end_line,
+                        "decorators": [],
+                        "hono_method": rt["method"],
+                        "hono_path": rt["path"],
+                    })
+                    seen_qnames.add(route_key)
 
         endpoints.sort(key=lambda e: (e["file_path"], e["start_line"]))
         total = len(endpoints)
