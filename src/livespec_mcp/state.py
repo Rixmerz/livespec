@@ -83,7 +83,6 @@ def get_state(workspace: str | Path | None = None) -> AppState:
             state_dir=ws / ".mcp-docs",
             db_path=ws / ".mcp-docs" / "docs.db",
             docs_dir=ws / ".mcp-docs" / "docs",
-            models_dir=ws / ".mcp-docs" / "models",
         )
         settings.ensure_dirs()
         conn = connect(settings.db_path)

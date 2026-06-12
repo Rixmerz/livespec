@@ -6,6 +6,22 @@ follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed — embedding model cache survives reboots
+- fastembed's default cache is `$TMPDIR/fastembed_cache` — wiped on
+  every reboot on tmpfs systems, silently re-downloading ~200MB of
+  model weights. Models now cache in
+  **`~/.cache/livespec-mcp/fastembed`** (XDG-aware, shared across all
+  workspaces). An explicit `FASTEMBED_CACHE_PATH` env var still wins.
+  The unused per-workspace `Settings.models_dir` field was removed —
+  per-workspace model copies were never the right design.
+
+### Added — index-freshness recipe for Claude Code
+- README documents a `PostToolUse` hook that runs
+  `livespec-mcp index "$CLAUDE_PROJECT_DIR"` in the background after
+  every Edit/Write — incremental hash-skip makes no-op runs cheap.
+  This is the recommended freshness mechanism for single-user
+  sessions; the watcher remains for multi-agent-free environments.
+
 ### Added — closure-capture detection for TS/JS/TSX + Rust
 - **`find_dead_code(include_non_python=True)` no longer flags nested
   named functions referenced in their parent's body** — the

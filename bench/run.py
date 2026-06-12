@@ -18,7 +18,6 @@ import json
 import shutil
 import subprocess
 import sys
-import tempfile
 import time
 from pathlib import Path
 from typing import Any
@@ -64,7 +63,6 @@ def _bench_repo(workspace: Path) -> dict[str, Any]:
         state_dir=state_dir,
         db_path=state_dir / "docs.db",
         docs_dir=state_dir / "docs",
-        models_dir=state_dir / "models",
     )
     settings.ensure_dirs()
 
@@ -78,7 +76,7 @@ def _bench_repo(workspace: Path) -> dict[str, Any]:
     # Warm run (no changes — should be fast)
     conn = connect(settings.db_path)
     t1 = time.perf_counter()
-    warm = index_project(settings, conn)
+    index_project(settings, conn)
     warm_ms = (time.perf_counter() - t1) * 1000
     conn.close()
 

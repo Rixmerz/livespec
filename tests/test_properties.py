@@ -55,7 +55,6 @@ def _bootstrap_settings(tmp_path: Path) -> Settings:
         state_dir=state_dir,
         db_path=state_dir / "docs.db",
         docs_dir=state_dir / "docs",
-        models_dir=state_dir / "models",
     )
 
 

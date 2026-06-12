@@ -25,7 +25,6 @@ class Settings:
     state_dir: Path
     db_path: Path
     docs_dir: Path
-    models_dir: Path
 
     def ensure_dirs(self) -> None:
         self.state_dir.mkdir(parents=True, exist_ok=True)

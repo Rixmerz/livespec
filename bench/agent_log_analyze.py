@@ -25,11 +25,11 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import itertools
 import json
 import sys
 from collections import Counter, defaultdict
 from pathlib import Path
-from statistics import median
 
 
 def _percentile(values: list[int], pct: float) -> int:
@@ -89,7 +89,7 @@ def aggregate(entries: list[dict], known_tools: list[str] | None = None) -> dict
     pairs: Counter[tuple[str, str]] = Counter()
     for sess_entries in by_session.values():
         sess_entries.sort(key=lambda x: x.get("ts", ""))
-        for a, b in zip(sess_entries, sess_entries[1:]):
+        for a, b in itertools.pairwise(sess_entries):
             pairs[(a["tool_name"], b["tool_name"])] += 1
 
     tool_rows = []
