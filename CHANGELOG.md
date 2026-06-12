@@ -6,6 +6,14 @@ follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Added — closure-capture detection for TS/JS/TSX + Rust
+- **`find_dead_code(include_non_python=True)` no longer flags nested
+  named functions referenced in their parent's body** — the
+  `new Watcher(onEvent)` / `let cb: fn() -> i32 = on_event;` callback
+  pattern. Port of the Python v0.8 fix #11 scan to tree-sitter; open
+  since v0.8. Go is exempt by design (no named nested functions exist —
+  closures are anonymous and never become symbols).
+
 ### Fixed — resources broken under multi-tenant (since v0.12)
 - **Every `project://` / `doc://` / `code://` resource raised
   `WorkspaceRequiredError` in real use** since v0.12 made `workspace`
