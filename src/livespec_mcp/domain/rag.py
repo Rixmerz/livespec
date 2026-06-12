@@ -173,6 +173,25 @@ _CODE_EMBEDDER = None
 _TEXT_EMBEDDER = None
 
 
+def _embed_cache_dir() -> str:
+    """Persistent, workspace-shared model cache.
+
+    fastembed's default is ``$TMPDIR/fastembed_cache`` — on tmpfs systems
+    that's wiped every reboot, re-downloading ~200MB of weights. We pin
+    XDG cache instead (`~/.cache/livespec-mcp/fastembed`), shared across
+    all workspaces (models are workspace-independent). An explicit
+    ``FASTEMBED_CACHE_PATH`` env var still wins."""
+    import os
+
+    env = os.getenv("FASTEMBED_CACHE_PATH")
+    if env:
+        return env
+    base = Path(os.getenv("XDG_CACHE_HOME") or Path.home() / ".cache")
+    cache = base / "livespec-mcp" / "fastembed"
+    cache.mkdir(parents=True, exist_ok=True)
+    return str(cache)
+
+
 def have_embeddings() -> bool:
     try:
         import fastembed  # noqa: F401
@@ -186,7 +205,10 @@ def _code_embedder():
     if _CODE_EMBEDDER is None:
         from fastembed import TextEmbedding
 
-        _CODE_EMBEDDER = TextEmbedding(model_name="jinaai/jina-embeddings-v2-base-code")
+        _CODE_EMBEDDER = TextEmbedding(
+            model_name="jinaai/jina-embeddings-v2-base-code",
+            cache_dir=_embed_cache_dir(),
+        )
     return _CODE_EMBEDDER
 
 
@@ -200,7 +222,8 @@ def _text_embedder():
         # late 2025 — only the -large 1024-dim variant is, which would require
         # a wider vec0 table.)
         _TEXT_EMBEDDER = TextEmbedding(
-            model_name="sentence-transformers/paraphrase-multilingual-mpnet-base-v2"
+            model_name="sentence-transformers/paraphrase-multilingual-mpnet-base-v2",
+            cache_dir=_embed_cache_dir(),
         )
     return _TEXT_EMBEDDER
 

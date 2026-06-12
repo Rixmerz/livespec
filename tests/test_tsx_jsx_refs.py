@@ -29,7 +29,6 @@ def _bootstrap(tmp_path: Path) -> tuple[Settings, sqlite3.Connection]:
         state_dir=state,
         db_path=state / "docs.db",
         docs_dir=state / "docs",
-        models_dir=state / "models",
     )
     settings.ensure_dirs()
     conn = connect(settings.db_path)

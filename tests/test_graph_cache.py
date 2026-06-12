@@ -18,7 +18,6 @@ def _bootstrap(tmp_path: Path):
         state_dir=state,
         db_path=state / "docs.db",
         docs_dir=state / "docs",
-        models_dir=state / "models",
     )
     settings.ensure_dirs()
     return settings, connect(settings.db_path)

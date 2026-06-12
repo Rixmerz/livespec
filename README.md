@@ -163,6 +163,34 @@ livespec-mcp status /path/to/repo                      # index status JSON
 No `LIVESPEC_WORKSPACE` — switching repos is only a different `workspace=` value.
 The server caches up to 8 workspaces (LRU); no MCP restart.
 
+### Keep the index fresh (Claude Code hook)
+
+The watcher (`index_project(watch=True)`) works but is a race trap when
+multiple agents write concurrently. For single-user Claude Code sessions
+a `PostToolUse` hook is simpler and exact — re-index incrementally after
+every file edit (hash-skip makes no-op runs cheap):
+
+```json
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write|NotebookEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "livespec-mcp index \"$CLAUDE_PROJECT_DIR\" >/dev/null 2>&1 &"
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+The trailing `&` keeps the hook non-blocking; the next tool call sees a
+fresh index.
+
 ## Tools (16 default + 14 plugin = 30 max)
 
 Every tool requires `workspace` (absolute project root). Pass it on each call;
@@ -200,8 +228,11 @@ Always registered.
   when `[embeddings]` extra is installed and chunks are embedded.
   Use when you want "code that talks about X" without an exact
   symbol-name match. Companion tool `embed_chunks()` (also default
-  surface) populates vec0 tables on demand; ~200MB model download
-  on first run, cached afterwards.
+  surface) populates vec0 tables on demand; ~200MB model download on
+  first run, cached afterwards in `~/.cache/livespec-mcp/fastembed`
+  (shared across workspaces; override with `FASTEMBED_CACHE_PATH`).
+  The download shows no progress under MCP — run
+  `livespec-mcp index <repo> --embed` in a terminal to watch it.
 
 #### Code intelligence (12)
 - `find_symbol(query, kind, limit)` — separator-agnostic name lookup.
