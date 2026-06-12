@@ -166,9 +166,11 @@ Always registered.
 
 #### Indexing (1)
 - `index_project(force=False, watch=False, embed=False)` — walk, parse,
-  persist. Also rebuilds search chunks idempotently. Pass `embed=True`
-  to populate vector embeddings (requires `[embeddings]` extra). Read
-  the `project://index/status` resource for current status (the legacy
+  persist. Also rebuilds search chunks idempotently. Respects
+  `.gitignore` (root + nested, negations included) on top of the
+  built-in ignore list (v0.14). Pass `embed=True` to populate vector
+  embeddings (requires `[embeddings]` extra). Read the
+  `project://index/status` resource for current status (the legacy
   `get_index_status` tool was dropped in v0.9).
 
 #### Search (1, v0.12)

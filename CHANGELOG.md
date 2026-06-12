@@ -6,6 +6,16 @@ follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Added — gitignore-aware indexing
+- **`index_project` now honours `.gitignore`** (root and nested files,
+  `!negation` patterns included) via the `pathspec` library, layered on
+  top of the existing hardcoded `DEFAULT_IGNORES` baseline. Git
+  precedence semantics: the deepest `.gitignore` with an opinion wins;
+  ignored directories are pruned (never descended), so re-includes
+  inside an ignored directory don't apply — same limitation git
+  documents. Workspaces without any `.gitignore` behave exactly as
+  before. New dependency: `pathspec>=0.12`.
+
 ### Added — Hono framework support (call-style routing)
 - **`find_endpoints(framework='hono')`**: scans indexed TS/JS files whose
   source mentions Hono for `app.get('/users', handler)` /
