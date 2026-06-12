@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Any
 
 import xxhash
+from pathspec import GitIgnoreSpec
 
 from livespec_mcp.config import Settings
 from livespec_mcp.domain.extractors import ExtractResult, extract
@@ -52,16 +53,61 @@ def _hash_bytes(b: bytes) -> str:
     return xxhash.xxh3_128_hexdigest(b)
 
 
+def _load_gitignore(d: Path) -> GitIgnoreSpec | None:
+    gi = d / ".gitignore"
+    try:
+        if not gi.is_file():
+            return None
+        lines = gi.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return None
+    spec = GitIgnoreSpec.from_lines(lines)
+    return spec if spec.patterns else None
+
+
+def _gitignored(path: Path, specs: list[tuple[Path, GitIgnoreSpec]], *, is_dir: bool) -> bool:
+    # Deepest .gitignore with an opinion wins, matching git's precedence
+    # (a nested `!pattern` can re-include what a parent ignored). Dirs
+    # pruned here never get walked, so re-includes *inside* an ignored
+    # directory don't apply — the same limitation git documents.
+    for base, spec in reversed(specs):
+        rel = path.relative_to(base).as_posix()
+        if is_dir:
+            rel += "/"
+        result = spec.check_file(rel)
+        if result.include is not None:
+            return result.include
+    return False
+
+
 def _iter_files(root: Path, ignores: set[str]) -> list[Path]:
     out: list[Path] = []
+    # Each walked dir inherits the .gitignore specs of its ancestors;
+    # os.walk is top-down so parents are always seen before children.
+    inherited: dict[str, list[tuple[Path, GitIgnoreSpec]]] = {str(root): []}
     for dirpath, dirnames, filenames in os.walk(root):
+        dp = Path(dirpath)
+        specs = inherited.pop(dirpath, [])
+        own = _load_gitignore(dp)
+        if own is not None:
+            specs = [*specs, (dp, own)]
         # Prune ignored dirs in-place
-        dirnames[:] = [d for d in dirnames if d not in ignores and not d.startswith(".")]
+        dirnames[:] = [
+            d
+            for d in dirnames
+            if d not in ignores
+            and not d.startswith(".")
+            and not (specs and _gitignored(dp / d, specs, is_dir=True))
+        ]
+        for d in dirnames:
+            inherited[os.path.join(dirpath, d)] = specs
         for fn in filenames:
             if fn.startswith("."):
                 continue
-            p = Path(dirpath) / fn
+            p = dp / fn
             if detect_language(p) is None:
+                continue
+            if specs and _gitignored(p, specs, is_dir=False):
                 continue
             try:
                 if p.stat().st_size > 2_000_000:  # skip >2MB

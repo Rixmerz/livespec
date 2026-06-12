@@ -35,11 +35,31 @@ Todo el stack es local-first: 0 servicios externos, 0 API keys obligatorias, 0 D
 
 ---
 
-## 3. Estado actual: v0.13 framework sprint — Spring/Angular/Hono + dead-code 0
+## 3. Estado actual: v0.14 P0 gitignore-aware indexing (post v0.13 framework sprint)
 
-**HEAD:** `63e621e` (v0.13 P3). Tests **271 default + 3 embeddings = 274**.
-Schema **v8** (`ts_java_decorators_reextract` — flag re-extract, sin columnas
-nuevas). Working tree clean, pushed. v0.12.0 tag + release publicados.
+Tests **278 default + 3 embeddings = 281**. Schema **v8** (sin cambios).
+v0.12.0 tag + release publicados; v0.13 sin tag aún (vive en `[Unreleased]`).
+
+Sesión 2026-06-12: **gitignore-aware indexing** (backlog item 5, tier P1
+"fricción uso personal"). `_iter_files` ahora carga `.gitignore` root +
+nested vía `pathspec` (`GitIgnoreSpec`, dep nueva `pathspec>=0.12`),
+encima del baseline `DEFAULT_IGNORES`. Semántica git: el `.gitignore` más
+profundo con opinión gana (`check_file` tri-state para negations
+cross-file); dirs ignorados se podan sin descender (re-includes adentro
+no aplican — misma limitación que git documenta). Workspaces sin
+`.gitignore` = comportamiento idéntico pre-v0.14. 7 tests nuevos
+(`tests/test_gitignore.py`). Watcher no tocado: delega a `index_project`,
+que ya filtra.
+
+**Pendiente próximo (orden sugerido):** `.livespec.toml` config per-repo
+(ignores extra, filtro lenguajes, embed model), CLI subcommands
+(`livespec-mcp index <path>` / `status`), freshness vía hook PostToolUse,
+Django re-validation (serie 824→514→348→?), closure-capture port TS/Go/Rust.
+Backlog completo (18 puntos, 4 tiers) del análisis 2026-06-11 guardado en
+memoria persistente del proyecto
+(`~/.claude/projects/-home-rixmerz-Projects-mcp-livespec-mcp/memory/backlog-v013-analysis.md`).
+
+### v0.13 resumen (referencia)
 
 Sesión 2026-06-11 (Arch box `<repo>`):
 
@@ -50,12 +70,7 @@ Sesión 2026-06-11 (Arch box `<repo>`):
 | P1 | `84ee868` | `_ts_node_decorators`: TS/JS/TSX `decorator` nodes (en el nodo, en export_statement wrapper, y como preceding-siblings de members en class_body) + Java `annotation`/`marker_annotation` en `modifiers`. Migración v8 flaggea needs_reextract para backfill |
 | P2 | `ff22791` | Spring Boot + Angular: `_ENTRY_POINT_DECORATOR_LASTSEG` += stereotypes/mappings Spring + decorators Angular; presets `find_endpoints(framework='spring'\|'angular')`; find_dead_code protege métodos de clases template-bound (Component/Directive/Pipe — HTML invisible al indexer) + lifecycle hooks ngXxx |
 | P3 | `63e621e` | Hono: refs `callback_arg` extract-time (handlers nombrados pasados a get/post/.../on/use), scan TS/JS module-level en find_dead_code (mirror de `_runtime_registered_names`), `find_endpoints(framework='hono')` con method+path+handler resolution. Cubre Express-style gratis |
-
-**Pendiente próximo (orden sugerido):** gitignore-aware indexing
-(`pathspec`), `.livespec.toml` config per-repo, CLI subcommands
-(`livespec-mcp index <path>` / `status`), freshness vía hook PostToolUse,
-Django re-validation (serie 824→514→348→?), closure-capture port TS/Go/Rust.
-Backlog completo del análisis 2026-06-11 en la conversación de esa sesión.
+| P4 | `4b05c5e` | Docs sync: CLAUDE.md arch real, HANDOFF estado, README frameworks |
 
 ### v0.12 resumen (referencia)
 
