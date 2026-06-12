@@ -376,14 +376,14 @@ traversal tools (`audit_coverage`, `find_dead_code`, `find_orphan_tests`,
 regardless of pagination — see `bench/run.py --large` for the Django
 stress profile.
 
-### v0.9 Django wins (same queries, one release apart)
+### Django precision series (same queries, across releases)
 
-| Tool | v0.8 | v0.9 | Why |
-|---|---:|---:|---|
-| `find_dead_code` | 824 candidates | **514** | non-Python skip + dotted-path string refs + Django `Meta` inner classes |
-| `find_dead_code` functions | 450 | 189 | most of the drop comes from xregexp.js skipped + template tag / hasher protection |
-| `find_endpoints(django)` | 20 (decorators only) | **162** | class-based view detection via inheritance from `View` / `LoginRequiredMixin` / etc. |
-| Partial reindex on `requests` | 25 ms | **12 ms** | targeted `_resolve_refs` walk |
+| Tool | v0.8 | v0.9 | v0.11 | v0.14 | Why |
+|---|---:|---:|---:|---:|---|
+| `find_dead_code` | 824 | 514 | 348 | **344** | non-Python skip → dotted-path string refs → runtime registration → closure-capture |
+| `find_endpoints(django)` | 20 | **162** | 162 | 162 | class-based view detection via inheritance from `View` / mixins |
+| Partial reindex (Django, 1 file) | — | ~7 s | — | **1.4 s** | targeted `_resolve_refs` walk |
+| `index_project` cold (Django) | — | ~148 s | — | **54 s** | (v0.14 re-run on Ryzen 7 4800H; edges 1.05M → 465K from scoped-resolution precision, DB 124 → 71 MB, RSS post-PageRank 609 → 294 MB — those three are machine-independent) |
 
 ## Tests
 

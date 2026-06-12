@@ -343,6 +343,22 @@ maintainers leyendo este doc — tomarlo con escepticismo proporcional.
 
 ---
 
+## 6b. Decisiones v0.14 (2026-06-12)
+
+- **LLM-assisted RF refinement vía MCP sampling: DROPPED definitivo**
+  (estaba "diferido desde v0.7"). Razón estratégica: el consumidor de
+  livespec es un agente que YA tiene un LLM — pedirle al server que
+  llame otro LLM para refinar títulos/descripciones de RFs es
+  complejidad (sampling support del host, latencia, costo opaco) para
+  una capacidad que el caller ejerce mejor con su propio contexto.
+  `propose_requirements_from_codebase` devuelve señal estructurada; el
+  refinamiento de lenguaje es trabajo del agente. Consistente con
+  "Agent UX is the actual product".
+- **`_resolve_refs` targeted re-walk: ya estaba implementado**
+  (use_targeted + changed_file_ids, tests/test_targeted_resolver.py).
+  El backlog lo arrastraba como abierto desde v0.7 — era stale, no
+  pendiente.
+
 ## 7. Notas para futuros maintainers (yo o cualquier otro agente)
 
 - **Direct push a main** para este repo. PRs sólo si el sandbox lo bloquea.
