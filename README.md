@@ -173,6 +173,16 @@ Always registered.
   `project://index/status` resource for current status (the legacy
   `get_index_status` tool was dropped in v0.9).
 
+  Optional per-repo tuning via `.livespec.toml` at the workspace root
+  (v0.14) — config patterns outrank `.gitignore`:
+
+  ```toml
+  [index]
+  ignore = ["assets/", "*.min.js"]      # gitignore syntax, "!" re-includes
+  languages = ["python", "typescript"]  # allow-list; absent = all 9
+  max_file_bytes = 2000000              # skip files larger than this
+  ```
+
 #### Search (1, v0.12)
 - `search(query, scope='all'|'code'|'requirements', limit=20)` — hybrid
   retrieval over AST-aware chunks of symbols + RFs. FTS5 keyword lane

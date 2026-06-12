@@ -20,7 +20,7 @@ from typing import Any
 import xxhash
 from pathspec import GitIgnoreSpec
 
-from livespec_mcp.config import Settings
+from livespec_mcp.config import RepoConfig, Settings, load_repo_config
 from livespec_mcp.domain.extractors import ExtractResult, extract
 from livespec_mcp.domain.languages import detect_language
 from livespec_mcp.storage.db import consume_reextract_flag, get_or_create_project, transaction
@@ -43,6 +43,7 @@ class IndexStats:
     rf_links_created: int = 0
     manual_links_restored: int = 0
     languages: dict[str, int] = None  # type: ignore
+    repo_config: dict[str, Any] | None = None  # echo of .livespec.toml, if present
 
     def __post_init__(self) -> None:
         if self.languages is None:
@@ -80,7 +81,20 @@ def _gitignored(path: Path, specs: list[tuple[Path, GitIgnoreSpec]], *, is_dir: 
     return False
 
 
-def _iter_files(root: Path, ignores: set[str]) -> list[Path]:
+def _iter_files(root: Path, ignores: set[str], cfg: RepoConfig | None = None) -> list[Path]:
+    cfg = cfg or RepoConfig()
+    # .livespec.toml [index].ignore outranks every .gitignore: when the
+    # config has an opinion (ignore or !re-include), that decision is final.
+    cfg_spec = GitIgnoreSpec.from_lines(cfg.ignore) if cfg.ignore else None
+
+    def _decide(path: Path, *, is_dir: bool, specs: list[tuple[Path, GitIgnoreSpec]]) -> bool:
+        if cfg_spec is not None:
+            rel = path.relative_to(root).as_posix()
+            verdict = cfg_spec.check_file(rel + "/" if is_dir else rel).include
+            if verdict is not None:
+                return verdict
+        return bool(specs) and _gitignored(path, specs, is_dir=is_dir)
+
     out: list[Path] = []
     # Each walked dir inherits the .gitignore specs of its ancestors;
     # os.walk is top-down so parents are always seen before children.
@@ -97,7 +111,7 @@ def _iter_files(root: Path, ignores: set[str]) -> list[Path]:
             for d in dirnames
             if d not in ignores
             and not d.startswith(".")
-            and not (specs and _gitignored(dp / d, specs, is_dir=True))
+            and not _decide(dp / d, is_dir=True, specs=specs)
         ]
         for d in dirnames:
             inherited[os.path.join(dirpath, d)] = specs
@@ -105,12 +119,15 @@ def _iter_files(root: Path, ignores: set[str]) -> list[Path]:
             if fn.startswith("."):
                 continue
             p = dp / fn
-            if detect_language(p) is None:
+            lang = detect_language(p)
+            if lang is None:
                 continue
-            if specs and _gitignored(p, specs, is_dir=False):
+            if cfg.languages is not None and lang not in cfg.languages:
+                continue
+            if _decide(p, is_dir=False, specs=specs):
                 continue
             try:
-                if p.stat().st_size > 2_000_000:  # skip >2MB
+                if p.stat().st_size > cfg.max_file_bytes:
                     continue
             except OSError:
                 continue
@@ -139,7 +156,10 @@ def index_project(
     ).lastrowid
 
     stats = IndexStats()
-    files = _iter_files(settings.workspace, DEFAULT_IGNORES)
+    repo_cfg = load_repo_config(settings.workspace)
+    if (settings.workspace / ".livespec.toml").is_file():
+        stats.repo_config = repo_cfg.as_payload()
+    files = _iter_files(settings.workspace, DEFAULT_IGNORES, repo_cfg)
 
     # Build a snapshot of existing files for delta detection
     existing = {

@@ -67,8 +67,11 @@ def register(mcp: FastMCP) -> None:
         """Walk the workspace, parse code, persist symbols + call edges.
 
         File-incremental via xxh3 content hash; pass force=True to re-extract.
-        Pass watch=True to also start a filesystem watcher after indexing so
-        subsequent edits trigger automatic re-index (debounce 2s).
+        Respects .gitignore and an optional .livespec.toml at the workspace
+        root ([index] table: ignore, languages, max_file_bytes — config
+        patterns outrank .gitignore). Pass watch=True to also start a
+        filesystem watcher after indexing so subsequent edits trigger
+        automatic re-index (debounce 2s).
         Pass embed=True to populate vector embeddings after chunking
         (requires the [embeddings] extra: fastembed + sqlite-vec). First
         run downloads ~200MB of model weights; FTS5 lane works without it.
@@ -96,6 +99,7 @@ def register(mcp: FastMCP) -> None:
             "rf_links_created": stats.rf_links_created,
             "manual_links_restored": stats.manual_links_restored,
             "languages": stats.languages,
+            "repo_config": stats.repo_config,
             "workspace": str(st.settings.workspace),
             "watcher_started": False,
             "chunks": chunk_stats,
