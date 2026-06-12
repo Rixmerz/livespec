@@ -104,7 +104,7 @@ populates new fields.
 ### Layered stack
 
 ```
-tools/          MCP-exposed surface (32 tools: 18 core + 11 RF + 3 docs)
+tools/          MCP-exposed surface (32 tools: 19 core + 10 RF + 3 docs)
   analysis.py     find_symbol, quick_orient, get_symbol_source, who_calls,
                   who_does_this_call, analyze_impact, audit_coverage,
                   find_dead_code, find_orphan_tests, find_endpoints,
@@ -187,14 +187,14 @@ produce duplicate symbols at the same line. Keep the first occurrence
 The v0.8 curation pass shipped: battle-test data (3 sessions, 40 calls,
 11 bug fixes) drove the tier split. Current state:
 
-- **18 core tools** always registered: code intel (find_symbol,
+- **19 core tools** always registered: code intel (find_symbol,
   quick_orient, get_symbol_source, who_calls, who_does_this_call,
   analyze_impact, git_diff_impact, find_dead_code, find_orphan_tests,
   find_endpoints, get_project_overview, index_project, search,
   embed_chunks) + RF agentic queries (audit_coverage, list_requirements,
   get_requirement_implementation, propose_requirements_from_codebase)
   + bulk_link_rf_symbols (escape hatch, promoted v0.12).
-- **Plugin `livespec-rf` (11 tools)** — RF mutation ceremony: CRUD,
+- **Plugin `livespec-rf` (10 tools)** — RF mutation ceremony: CRUD,
   link/unlink, RF-RF graph, scans, markdown import.
 - **Plugin `livespec-docs` (3 tools)** — generate_docs, list_docs,
   export_documentation.
