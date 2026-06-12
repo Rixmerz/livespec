@@ -35,10 +35,17 @@ Todo el stack es local-first: 0 servicios externos, 0 API keys obligatorias, 0 D
 
 ---
 
-## 3. Estado actual: v0.14 P0 gitignore-aware indexing (post v0.13 framework sprint)
+## 3. Estado actual: v0.14 personal-fit sprint en curso
 
-Tests **278 default + 3 embeddings = 281**. Schema **v8** (sin cambios).
-v0.12.0 tag + release publicados; v0.13 sin tag aún (vive en `[Unreleased]`).
+Tests **290 default + 3 embeddings = 293**. Schema **v8** (sin cambios).
+v0.12.0 tag + release publicados; v0.13/v0.14 sin tag aún (`[Unreleased]`).
+
+Sesión 2026-06-12, fases landeadas:
+
+| Fase | Qué |
+|---|---|
+| P0 (`877d878`) | gitignore-aware indexing vía `pathspec` (root+nested+negations, precedencia git real, dirs podados sin descender). 7 tests |
+| P1 | `.livespec.toml` per-repo: `[index] ignore` (outranks .gitignore), `languages` allow-list, `max_file_bytes`. Carga fresh por call, malformed → ValueError accionable, payload `repo_config` echo. Dep `tomli` sólo py<3.11. 12 tests |
 
 Sesión 2026-06-12: **gitignore-aware indexing** (backlog item 5, tier P1
 "fricción uso personal"). `_iter_files` ahora carga `.gitignore` root +

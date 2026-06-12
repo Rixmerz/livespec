@@ -6,6 +6,17 @@ follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Added — `.livespec.toml` per-repo config
+- **Optional `.livespec.toml` at the workspace root** tunes indexing
+  per-repo, loaded fresh on every `index_project` call (no restart).
+  `[index]` table: `ignore` (gitignore-syntax patterns that **outrank**
+  `.gitignore`, negations included), `languages` (extractor-label
+  allow-list, e.g. `["python", "typescript"]`), `max_file_bytes`
+  (default 2 MB). Malformed config fails the call with an actionable
+  message instead of being silently ignored. `index_project` payload
+  gains a `repo_config` echo key (`null` when no file). New dependency:
+  `tomli>=2` on Python < 3.11 only (3.11+ uses stdlib `tomllib`).
+
 ### Added — gitignore-aware indexing
 - **`index_project` now honours `.gitignore`** (root and nested files,
   `!negation` patterns included) via the `pathspec` library, layered on
