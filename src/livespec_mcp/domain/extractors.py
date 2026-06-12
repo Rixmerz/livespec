@@ -360,6 +360,67 @@ _ANONYMOUS_FN_TYPES = {
 }
 
 
+def _ts_node_decorators(node, src_bytes: bytes, language: str) -> list[str]:
+    """Decorator / annotation names for a tree-sitter declaration node.
+
+    v0.13 P1: fills `ExtractedSymbol.decorators` for non-Python languages
+    so framework detection (Angular `@Component`, Spring `@RestController` /
+    `@GetMapping`) works through the same `decorators` column the Python
+    extractor populates.
+
+    TS/JS/TSX: `decorator` children live on the declaration node itself or
+    on a wrapping `export_statement` (`@Component() export class Foo`).
+    Java: annotations live inside the `modifiers` child of the declaration
+    (`marker_annotation` = `@Override`, `annotation` = `@GetMapping("/x")`).
+
+    Returned in source order, dotted form without `@`, call arguments
+    stripped: `@Component({...})` -> `Component`, `@app.get('/x')` ->
+    `app.get`, `@org.junit.Test` -> `org.junit.Test`.
+    """
+
+    def text(n) -> str:
+        return src_bytes[n.start_byte : n.end_byte].decode("utf-8", errors="replace")
+
+    out: list[str] = []
+    if language in ("javascript", "typescript", "tsx"):
+        dec_nodes = [c for c in node.children if c.type == "decorator"]
+        # Method/field decorators are PRECEDING SIBLINGS of the member node
+        # inside class_body, not children — walk the contiguous run.
+        preceding = []
+        prev = node.prev_sibling
+        while prev is not None and prev.type == "decorator":
+            preceding.append(prev)
+            prev = prev.prev_sibling
+        dec_nodes = list(reversed(preceding)) + dec_nodes
+        parent = getattr(node, "parent", None)
+        if parent is not None and parent.type == "export_statement":
+            dec_nodes = [c for c in parent.children if c.type == "decorator"] + dec_nodes
+        for d in dec_nodes:
+            target = None
+            for c in d.children:  # first non-'@' payload child
+                if c.type in ("identifier", "member_expression", "call_expression"):
+                    target = c
+                    break
+            if target is None:
+                continue
+            if target.type == "call_expression":
+                fn = target.child_by_field_name("function")
+                if fn is not None:
+                    out.append(text(fn))
+            else:
+                out.append(text(target))
+    elif language == "java":
+        for c in node.children:
+            if c.type != "modifiers":
+                continue
+            for m in c.children:
+                if m.type in ("annotation", "marker_annotation"):
+                    name = m.child_by_field_name("name")
+                    if name is not None:
+                        out.append(text(name))
+    return out
+
+
 def _ts_leading_doc_comment(node, src_bytes: bytes, language: str) -> str | None:
     """Return the JSDoc / leading doc-comment text immediately preceding `node`.
 
@@ -541,6 +602,7 @@ def _ts_extract(
                 end_line=end_line,
                 parent_qname=parent_qname,
                 visibility=_extract_visibility(node, src_bytes, language),
+                decorators=_ts_node_decorators(node, src_bytes, language),
             )
         )
         return qname
