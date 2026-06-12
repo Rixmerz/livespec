@@ -6,6 +6,13 @@ follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+_(nothing yet)_
+
+## [0.14.0] - 2026-06-12
+
+Personal-fit sprint (multi-repo friction) + v0.13 framework sprint —
+v0.13 was never tagged, so this release ships both batches.
+
 ### Fixed — embedding model cache survives reboots
 - fastembed's default cache is `$TMPDIR/fastembed_cache` — wiped on
   every reboot on tmpfs systems, silently re-downloading ~200MB of

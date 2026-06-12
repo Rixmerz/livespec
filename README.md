@@ -4,15 +4,15 @@
 bidirectional **Functional Requirement ↔ code** traceability. Local-first,
 zero external services, runs as an MCP server next to your editor.
 
-Battle-tested on real codebases. Three releases of compounding wins
+Battle-tested on real codebases. Four releases of compounding wins
 on the same Django 5.1.4 queries:
 
-| Tool on Django (40K symbols) | v0.8 | v0.9 | v0.10 |
-|---|---:|---:|---:|
-| `find_dead_code` candidates | 824 | 514 | **348** (−58% cumulative) |
-| `find_endpoints(framework='django')` | 20 | **162** (+8×) | 162 |
-| `quick_orient` p95 | ~60 ms | ~60 ms | ~60 ms |
-| Partial reindex (touch 1 file) | 25 ms | **12 ms** | 12 ms |
+| Tool on Django (40K symbols) | v0.8 | v0.9 | v0.10 | v0.14 |
+|---|---:|---:|---:|---:|
+| `find_dead_code` candidates | 824 | 514 | 348 | **344** (−58% cumulative) |
+| `find_endpoints(framework='django')` | 20 | **162** (+8×) | 162 | 162 |
+| `quick_orient` p95 | ~60 ms | ~60 ms | ~60 ms | ~60 ms |
+| Partial reindex (touch 1 file, Django) | — | ~7 s | — | **1.4 s** |
 
 Validated across 5 distinct agent profiles (exploration, refactor,
 RF flow, Django bugfix, TypeScript feature) — see
@@ -27,7 +27,7 @@ RF flow, Django bugfix, TypeScript feature) — see
 
 ```bash
 # Wire as an MCP server next to your editor (claude.ai/code, Cursor, ...).
-# Pointed at any local repo via LIVESPEC_WORKSPACE.
+# Every tool call carries workspace="/abs/path" — one server, N repos.
 livespec-mcp
 ```
 
@@ -67,10 +67,10 @@ calls this function?". livespec layers Functional Requirement ↔ code links
 on top so an agent on a serious-software-shop codebase can answer
 *"changing this function affects RF-042, RF-088 and 3 dependent RFs"* in
 one round-trip. RF agentic tools ship in the default surface;
-RF mutation/management tools live in the optional `livespec-rf` plugin
-that **auto-loads when the workspace already has RFs** — fresh repos get
-a 18-tool surface (19 with `[embeddings]` extra), RF-active repos
-get 28, with no config.
+RF mutation/management tools live in the `livespec-rf` plugin. Since
+multi-tenant v0.12 all plugins register at startup (there is no single
+DB to auto-detect against when every call carries its own `workspace`),
+so the full 32-tool surface is always visible.
 
 ### What "living" actually means here
 
@@ -191,13 +191,13 @@ every file edit (hash-skip makes no-op runs cheap):
 The trailing `&` keeps the hook non-blocking; the next tool call sees a
 fresh index.
 
-## Tools (16 default + 14 plugin = 30 max)
+## Tools (32: 19 core + 10 RF plugin + 3 docs plugin)
 
 Every tool requires `workspace` (absolute project root). Pass it on each call;
 omitting it is an error (no env fallback). LRU cache (8 workspaces) — one MCP
 server, many projects, no restart.
 
-### Default surface — code intel + RF agentic (18)
+### Default surface — code intel + RF agentic (19)
 
 These tools answer the questions an agent ASKS on an unfamiliar codebase.
 Always registered.
@@ -434,4 +434,5 @@ data trumped the prior intuition.
 | 15 — v0.10 | ✅ | Library codebase release: `from .x import Y` re-exports + `__all__` lists protect names from `find_dead_code` (closes the largest remaining false-positive bucket on Django). README lift — Django numbers above the fold + 30-second tour. Battle-test session 05 against Deno Fresh (TS/TSX/JS) — 5/5 profiles covered. Wire-validated: Django `find_dead_code` 514 → 348 (−58% cumulative from v0.8 baseline of 824) |
 | 16 — v0.11 | ✅ | TS framework readiness: bundler/build dir filter (`_fresh/`, `dist/`, `build/`, `.next/`, `out/`, `node_modules/`, `.svelte-kit/`, `target/`, …), TS framework entry-point detection (Fresh `islands/`, Next `pages/` + `app/`, SvelteKit `routes/`, Remix `app/routes/`), JSX element refs as call-graph edges, runtime-registration name protection (`Field.register_lookup` / `signal.connect` / `add_middleware`). Closes session-05 bugs #18-#20. Wire-validated: Fresh `find_dead_code` 974 → **0** (default), 974 → 118 (`include_non_python=True`); `find_endpoints(fresh)` returns **340** entry points; `top_symbols` from `_fresh/` 18/20 → **0/20**. Three sonnet subagents in parallel worktrees |
 | 17 — v0.12 | ✅ | Multi-repo workspace: `workspace` required on every call, one server instance serves N repos (LRU per-workspace state). RAG layer wired: `index_project` runs AST-aware chunking, `search` (FTS5 + optional sqlite-vec via RRF) + `embed_chunks` exposed. JSDoc extraction for TS/JS (`@rf:` annotations in JSDoc now scanned). `bulk_link_rf_symbols` promoted out of the RF plugin. Banner-comment filter. `force=True` preserves manual RF links |
-| 18 — v0.13 | 🔧 | Framework coverage sprint: Spring Boot (Java annotations → endpoints + DI-aware dead-code), Angular (TS decorators, template-reachability method protection, lifecycle hooks), Hono (call-style route extraction with method+path, named-handler callback refs, module-level registration scan — also covers Express-style apps). TS decorator + Java annotation extraction (migration v8 auto re-extract). Dual-decorator alias fix: `find_dead_code` on livespec-mcp itself 22 → **0** |
+| 18 — v0.13 | ✅ | Framework coverage sprint: Spring Boot (Java annotations → endpoints + DI-aware dead-code), Angular (TS decorators, template-reachability method protection, lifecycle hooks), Hono (call-style route extraction with method+path, named-handler callback refs, module-level registration scan — also covers Express-style apps). TS decorator + Java annotation extraction (migration v8 auto re-extract). Dual-decorator alias fix: `find_dead_code` on livespec-mcp itself 22 → **0** |
+| 19 — v0.14 | ✅ | Personal-fit sprint: gitignore-aware indexing (root + nested + negations via `pathspec`), `.livespec.toml` per-repo config (ignore/languages/max_file_bytes, outranks .gitignore), headless CLI (`livespec-mcp index|status` — cron/systemd/pre-commit sin host MCP), fix resources rotos bajo multi-tenant (MRU binding + `mcp_error` shape), `languages_unsupported` reporting, closure-capture TS/JS/Rust, embed cache persistente XDG, Django re-validation: dead-code **344** (serie 824→514→348→344), partial reindex **1.4s** |

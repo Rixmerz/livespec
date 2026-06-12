@@ -35,10 +35,12 @@ Todo el stack es local-first: 0 servicios externos, 0 API keys obligatorias, 0 D
 
 ---
 
-## 3. Estado actual: v0.14 personal-fit sprint en curso
+## 3. Estado actual: v0.14.0 CORTADO — backlog 2026-06-11 cerrado completo
 
-Tests **303 default + 3 embeddings = 306**. Schema **v8** (sin cambios).
-v0.12.0 tag + release publicados; v0.13/v0.14 sin tag aún (`[Unreleased]`).
+Tests **303 default + 3 embeddings = 306**. Schema **v8**. Tag
+**v0.14.0** (incluye batch v0.13 que nunca se taggeó). pyproject
+0.14.0. Tool surface real: **32 (19 core + 10 RF + 3 docs, plugins
+always-on)** — conteos README/CLAUDE.md corregidos al cortar.
 
 Sesión 2026-06-12, fases landeadas:
 
@@ -68,9 +70,10 @@ shipped o resueltos (14 ya estaba implementado — stale); item 13 (LLM
 sampling) DROPPED con racional en ROADMAP §6b. Copia del backlog en
 memoria persistente del proyecto
 (`~/.claude/projects/-home-rixmerz-Projects-mcp-livespec-mcp/memory/backlog-v013-analysis.md`).
-**Pendiente próximo:** cortar release v0.14.0 (tag + GitHub release,
-promueve todo `[Unreleased]` que incluye v0.13+v0.14 — v0.13 nunca se
-taggeó).
+**Pendiente próximo:** ninguno comprometido. Candidatos naturales para
+v0.15: extractores C/C++/C#/Kotlin/Swift/Scala (hoy reportados como
+`languages_unsupported`), battle-test de la superficie v0.14 en repos
+personales reales, PyPI publish si se quiere instalación sin clone.
 
 ### v0.13 resumen (referencia)
 
