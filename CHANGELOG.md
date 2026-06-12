@@ -4,6 +4,25 @@ All notable changes to this project are documented here. Format loosely
 follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), versioning
 follows [SemVer](https://semver.org/).
 
+## [Unreleased]
+
+### Fixed — dual-decorator alias false positives in `find_dead_code`
+- **Decorator aliases now recognized as entry points.** The plugin-framework
+  pattern `agentic_tool = mcp.tool if X else _noop_decorator` hid the real
+  decorator from the entry-point matcher — the stored decorator name is the
+  alias, whose last segment is not in the known set. New cached per-file AST
+  scan (`_entry_point_decorator_aliases`) collects assignment targets whose
+  value (directly or through either branch of a conditional expression)
+  resolves to an entry-point dotted name; works for assignments inside
+  function bodies (`register()` pattern). Both IfExp branch names are also
+  protected (`_noop_decorator` was only referenced inside the expression).
+  Wire-validated: `find_dead_code` on livespec-mcp itself **22 → 0**.
+- **Genuinely dead code removed** instead of suppressed: `graph.subgraph_edges`
+  (orphaned by the v0.8 `get_call_graph` drop) and the watcher registry
+  helpers `get_watcher` / `unregister_watcher` / `all_watchers` (orphaned by
+  the v0.8 watcher-tool drops; `register_watcher` + `stop_all_watchers`
+  remain — they serve `index_project(watch=True)` and atexit cleanup).
+
 ## [0.12.0] — 2026-05-29
 
 ### Added — multi-repo workspace support (require workspace on every call)

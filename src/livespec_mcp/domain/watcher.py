@@ -126,31 +126,12 @@ _registry: dict[Path, Watcher] = {}
 _registry_lock = threading.Lock()
 
 
-def get_watcher(workspace: Path) -> Watcher | None:
-    with _registry_lock:
-        return _registry.get(workspace)
-
-
 def register_watcher(workspace: Path, watcher: Watcher) -> None:
     with _registry_lock:
         existing = _registry.get(workspace)
         if existing is not None:
             existing.stop()
         _registry[workspace] = watcher
-
-
-def unregister_watcher(workspace: Path) -> bool:
-    with _registry_lock:
-        watcher = _registry.pop(workspace, None)
-    if watcher is None:
-        return False
-    watcher.stop()
-    return True
-
-
-def all_watchers() -> dict[Path, Watcher]:
-    with _registry_lock:
-        return dict(_registry)
 
 
 def stop_all_watchers() -> int:
