@@ -49,7 +49,8 @@ Sesión 2026-06-12, fases landeadas:
 | P2 (`2ca24c4`) | CLI headless: `livespec-mcp index <path> [--force\|--embed]` / `status <path>` → JSON stdout, errors stderr rc=1. Mismo pipeline que el tool (`run_index_pipeline` compartido en tools/indexing.py). Sin args / `serve` = server stdio intacto. 4 tests |
 | P3 (`7e4c725`) | Robustez: **fix resources rotos desde v0.12** (get_state() sin workspace lanzaba — ahora MRU fallback + mcp_error shape en JSON resources); langs sin extractor (cpp/kotlin/etc.) skipped + reportados en `languages_unsupported` en vez de filas 0-symbol silenciosas; batch INSERT..SELECT para restore de RF links manuales; watcher loggea reindex failures (`livespec.watcher`) en vez de tragar. Índices multi-col NO agregados — sin evidencia bench de necesidad. 4 tests |
 | P4 (`b0e7f37`) | Closure-capture TS/JS/TSX+Rust: `_treesitter_used_nested_def_names` (mirror tree-sitter de `_used_nested_def_names`), wired al loop non-Python de find_dead_code. Go exento by design (sin nested fns nombradas). Cierra item abierto desde v0.8. 5 tests |
-| P5 | Embed cache persistente: fastembed default era `$TMPDIR/fastembed_cache` (tmpfs → re-download 200MB por reboot) → ahora `~/.cache/livespec-mcp/fastembed` XDG compartido, `FASTEMBED_CACHE_PATH` gana. `Settings.models_dir` muerto eliminado. README: hook PostToolUse freshness + docs cache embeddings. bench/ ruff clean (estaba fuera del lint) |
+| P5 (`0608630`) | Embed cache persistente: fastembed default era `$TMPDIR/fastembed_cache` (tmpfs → re-download 200MB por reboot) → ahora `~/.cache/livespec-mcp/fastembed` XDG compartido, `FASTEMBED_CACHE_PATH` gana. `Settings.models_dir` muerto eliminado. README: hook PostToolUse freshness + docs cache embeddings. bench/ ruff clean (estaba fuera del lint) |
+| P6 | Django re-validation (Arch box, Ryzen 4800H): **dead-code 824→514→348→344** (serie cerrada, sin regresión); cold 148s→54s, partial 7.0s→**1.4s** (targeted resolver confirmado shipped — backlog item 14 era stale), edges 1.05M→465K (machine-independent: precisión scoped), DB 124→71MB, RSS 609→294MB. Baseline `bench/results-large.json` actualizado. ROADMAP §6b: LLM sampling RF refinement DROPPED definitivo (agente caller ya tiene LLM) |
 
 Sesión 2026-06-12: **gitignore-aware indexing** (backlog item 5, tier P1
 "fricción uso personal"). `_iter_files` ahora carga `.gitignore` root +
@@ -62,13 +63,14 @@ no aplican — misma limitación que git documenta). Workspaces sin
 (`tests/test_gitignore.py`). Watcher no tocado: delega a `index_project`,
 que ya filtra.
 
-**Pendiente próximo (orden sugerido):** `.livespec.toml` config per-repo
-(ignores extra, filtro lenguajes, embed model), CLI subcommands
-(`livespec-mcp index <path>` / `status`), freshness vía hook PostToolUse,
-Django re-validation (serie 824→514→348→?), closure-capture port TS/Go/Rust.
-Backlog completo (18 puntos, 4 tiers) del análisis 2026-06-11 guardado en
+**Backlog 2026-06-11 (18 puntos, 4 tiers): CERRADO.** Items 1-12 y 14-18
+shipped o resueltos (14 ya estaba implementado — stale); item 13 (LLM
+sampling) DROPPED con racional en ROADMAP §6b. Copia del backlog en
 memoria persistente del proyecto
 (`~/.claude/projects/-home-rixmerz-Projects-mcp-livespec-mcp/memory/backlog-v013-analysis.md`).
+**Pendiente próximo:** cortar release v0.14.0 (tag + GitHub release,
+promueve todo `[Unreleased]` que incluye v0.13+v0.14 — v0.13 nunca se
+taggeó).
 
 ### v0.13 resumen (referencia)
 

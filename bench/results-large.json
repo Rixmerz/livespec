@@ -1,31 +1,31 @@
 {
   "results": {
     "django": {
-      "cold_ms": 147991.5,
-      "db_mb": 123.61,
-      "edges": 1048273,
+      "cold_ms": 53645.0,
+      "db_mb": 71.32,
+      "edges": 465207,
       "files": 2898,
       "languages": {
         "javascript": 112,
         "python": 2786
       },
-      "loc_per_sec": 269.0,
+      "loc_per_sec": 742.0,
       "memory": {
-        "graph_edges": 1048273,
+        "graph_edges": 465207,
         "graph_nodes": 39789,
-        "pagerank_ms": 3617.4,
+        "pagerank_ms": 5365.1,
         "ranks_computed": 39789,
-        "rss_after_load_mb": 592.2,
-        "rss_after_pagerank_mb": 608.9,
-        "rss_before_mb": 157.2
+        "rss_after_load_mb": 270.8,
+        "rss_after_pagerank_mb": 293.7,
+        "rss_before_mb": 87.2
       },
       "partial": {
-        "edges_total": 1048273,
+        "edges_total": 465207,
         "files_changed": 1,
-        "ms": 7044.2
+        "ms": 1428.6
       },
       "symbols": 39789,
-      "warm_ms": 860.6
+      "warm_ms": 916.0
     }
   }
 }
