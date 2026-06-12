@@ -17,8 +17,6 @@ Coverage:
 
 from __future__ import annotations
 
-from pathlib import Path
-
 import pytest
 from fastmcp import Client
 
@@ -27,7 +25,6 @@ from livespec_mcp.tools.analysis import (
     _is_ts_framework_entry_point,
     _ts_framework_entry_point_kind,
 )
-
 
 # ---------------------------------------------------------------------------
 # Unit tests for the helpers (no MCP round-trip needed)

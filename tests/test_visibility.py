@@ -32,19 +32,8 @@ def test_rust_visibility_extracted(tmp_path: Path):
     p.write_text(src)
     _, result = extract(p, src, tmp_path)
     # Multiple symbols can share `name` (struct A + impl A both emit 'A').
-    # Look up by (qualified_name, start_line) for unambiguous picks.
-    by_qname_kind: dict[tuple[str, str], str | None] = {
-        (s.qualified_name, s.kind): s.visibility for s in result.symbols
-    }
-    # Pick the struct entries (kind=class), not the impl-block aggregator.
-    structs = {
-        qn.split(".")[-1]: vis
-        for (qn, kind), vis in by_qname_kind.items()
-        if kind == "class" and "::" not in qn
-    }
     # The struct + impl-aggregator share the same qname; use the first
-    # (struct) which has the actual visibility modifier. Fall back via
-    # min-line lookup.
+    # (struct) which has the actual visibility modifier.
     structs_by_first_line: dict[str, str | None] = {}
     for s in sorted(result.symbols, key=lambda x: x.start_line):
         if s.kind == "class" and "::" not in s.qualified_name:

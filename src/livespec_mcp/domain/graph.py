@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import sqlite3
 import threading
-from collections.abc import Iterable
 from dataclasses import dataclass
 
 import networkx as nx
