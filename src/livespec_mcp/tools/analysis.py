@@ -559,6 +559,78 @@ def _ts_runtime_registered_names(file_path_abs: str, language: str) -> frozenset
     return ts_registered_callback_names(source, language)
 
 
+_TS_SCOPE_NODE_TYPES = frozenset({
+    "function_declaration", "generator_function_declaration",
+    "function_expression", "arrow_function", "method_definition",
+})
+_TS_NESTED_DEF_TYPES = frozenset({
+    "function_declaration", "generator_function_declaration", "class_declaration",
+})
+_RUST_SCOPE_NODE_TYPES = frozenset({"function_item", "closure_expression"})
+_RUST_NESTED_DEF_TYPES = frozenset({"function_item"})
+
+
+@lru_cache(maxsize=256)
+def _treesitter_used_nested_def_names(file_path_abs: str, language: str) -> frozenset[str]:
+    """TS/JS/TSX + Rust mirror of `_used_nested_def_names` (v0.14, closes
+    the closure-capture gap open since v0.8): a function declared inside
+    another function whose NAME is referenced in the parent's body —
+    `new Watcher(onEvent)`, `let cb = on_event;` — is reachable as a
+    callback even with zero call edges. Go is intentionally absent: it has
+    no named nested functions (closures are anonymous), so the false
+    positive can't occur. Same caveats as the Python version: direct
+    children of the parent body only, parse failure → empty set."""
+    try:
+        source = Path(file_path_abs).read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return frozenset()
+    try:
+        from livespec_mcp.domain.languages import get_parser
+
+        tree = get_parser(language).parse(source.encode("utf-8"))
+    except Exception:
+        return frozenset()
+
+    if language == "rust":
+        scope_types, def_types = _RUST_SCOPE_NODE_TYPES, _RUST_NESTED_DEF_TYPES
+    else:
+        scope_types, def_types = _TS_SCOPE_NODE_TYPES, _TS_NESTED_DEF_TYPES
+    ident_types = frozenset({"identifier", "shorthand_property_identifier"})
+
+    used: set[str] = set()
+
+    def _visit_scope(scope_node) -> None:
+        body = scope_node.child_by_field_name("body")
+        if body is None:
+            return
+        nested_names: set[str] = set()
+        for child in body.named_children:
+            if child.type in def_types:
+                name_node = child.child_by_field_name("name")
+                if name_node is not None:
+                    nested_names.add(name_node.text.decode("utf-8", "replace"))
+        if not nested_names:
+            return
+        # References in the parent body, excluding the nested defs
+        # themselves (refs inside a nested fn are internal, not "uses").
+        referenced: set[str] = set()
+        stack = [c for c in body.named_children if c.type not in def_types]
+        while stack:
+            node = stack.pop()
+            if node.type in ident_types:
+                referenced.add(node.text.decode("utf-8", "replace"))
+            stack.extend(node.named_children)
+        used.update(nested_names & referenced)
+
+    stack = [tree.root_node]
+    while stack:
+        node = stack.pop()
+        if node.type in scope_types:
+            _visit_scope(node)
+        stack.extend(node.named_children)
+    return frozenset(used)
+
+
 @lru_cache(maxsize=128)
 def _module_level_referenced_names(file_path_abs: str) -> frozenset[str]:
     """Names referenced at Python module top-level (outside any function /
@@ -1664,20 +1736,25 @@ def register(mcp: FastMCP) -> None:
                 # Bad file paths shouldn't kill the whole audit.
                 continue
 
-        # v0.13 P3: TS/JS runtime-registration scan. Only pay the file
-        # reads when non-Python symbols are actually in scope.
+        # v0.13 P3: TS/JS runtime-registration scan. v0.14: plus the
+        # closure-capture scan (nested fn referenced in parent body) for
+        # TS/JS/TSX and Rust — Go has no named nested fns, nothing to scan.
+        # Only pay the file reads when non-Python symbols are in scope.
         if include_non_python:
             for path_row in st.conn.execute(
                 """SELECT path, language FROM file
                    WHERE project_id=? AND language IN
-                     ('typescript', 'javascript', 'tsx')""",
+                     ('typescript', 'javascript', 'tsx', 'rust')""",
                 (pid,),
             ):
                 try:
                     abs_path = str(workspace_path / path_row["path"])
-                    global_module_refs |= _ts_runtime_registered_names(
-                        abs_path, path_row["language"]
-                    )
+                    lang = path_row["language"]
+                    if lang != "rust":
+                        global_module_refs |= _ts_runtime_registered_names(abs_path, lang)
+                    nested_uses = _treesitter_used_nested_def_names(abs_path, lang)
+                    if nested_uses:
+                        nested_uses_by_file[path_row["path"]] = nested_uses
                 except Exception:
                     continue
 

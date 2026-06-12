@@ -37,7 +37,7 @@ Todo el stack es local-first: 0 servicios externos, 0 API keys obligatorias, 0 D
 
 ## 3. Estado actual: v0.14 personal-fit sprint en curso
 
-Tests **298 default + 3 embeddings = 301**. Schema **v8** (sin cambios).
+Tests **303 default + 3 embeddings = 306**. Schema **v8** (sin cambios).
 v0.12.0 tag + release publicados; v0.13/v0.14 sin tag aún (`[Unreleased]`).
 
 Sesión 2026-06-12, fases landeadas:
@@ -47,7 +47,8 @@ Sesión 2026-06-12, fases landeadas:
 | P0 (`877d878`) | gitignore-aware indexing vía `pathspec` (root+nested+negations, precedencia git real, dirs podados sin descender). 7 tests |
 | P1 (`b6471f4`) | `.livespec.toml` per-repo: `[index] ignore` (outranks .gitignore), `languages` allow-list, `max_file_bytes`. Carga fresh por call, malformed → ValueError accionable, payload `repo_config` echo. Dep `tomli` sólo py<3.11. 12 tests |
 | P2 (`2ca24c4`) | CLI headless: `livespec-mcp index <path> [--force\|--embed]` / `status <path>` → JSON stdout, errors stderr rc=1. Mismo pipeline que el tool (`run_index_pipeline` compartido en tools/indexing.py). Sin args / `serve` = server stdio intacto. 4 tests |
-| P3 | Robustez: **fix resources rotos desde v0.12** (get_state() sin workspace lanzaba — ahora MRU fallback + mcp_error shape en JSON resources); langs sin extractor (cpp/kotlin/etc.) skipped + reportados en `languages_unsupported` en vez de filas 0-symbol silenciosas; batch INSERT..SELECT para restore de RF links manuales; watcher loggea reindex failures (`livespec.watcher`) en vez de tragar. Índices multi-col NO agregados — sin evidencia bench de necesidad. 4 tests |
+| P3 (`7e4c725`) | Robustez: **fix resources rotos desde v0.12** (get_state() sin workspace lanzaba — ahora MRU fallback + mcp_error shape en JSON resources); langs sin extractor (cpp/kotlin/etc.) skipped + reportados en `languages_unsupported` en vez de filas 0-symbol silenciosas; batch INSERT..SELECT para restore de RF links manuales; watcher loggea reindex failures (`livespec.watcher`) en vez de tragar. Índices multi-col NO agregados — sin evidencia bench de necesidad. 4 tests |
+| P4 | Closure-capture TS/JS/TSX+Rust: `_treesitter_used_nested_def_names` (mirror tree-sitter de `_used_nested_def_names`), wired al loop non-Python de find_dead_code. Go exento by design (sin nested fns nombradas). Cierra item abierto desde v0.8. 5 tests |
 
 Sesión 2026-06-12: **gitignore-aware indexing** (backlog item 5, tier P1
 "fricción uso personal"). `_iter_files` ahora carga `.gitignore` root +
