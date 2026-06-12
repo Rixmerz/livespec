@@ -79,14 +79,21 @@ def _decorator_lastseg(name: str) -> str:
     return name.rsplit(".", 1)[-1].lower()
 
 
-def _has_entry_point_decorator(decorators_json: str | None) -> bool:
+def _has_entry_point_decorator(
+    decorators_json: str | None,
+    alias_lastsegs: frozenset[str] = frozenset(),
+) -> bool:
     if not decorators_json:
         return False
     try:
         names = json.loads(decorators_json)
     except (json.JSONDecodeError, TypeError):
         return False
-    return any(_decorator_lastseg(n) in _ENTRY_POINT_DECORATOR_LASTSEG for n in names)
+    return any(
+        _decorator_lastseg(n) in _ENTRY_POINT_DECORATOR_LASTSEG
+        or _decorator_lastseg(n) in alias_lastsegs
+        for n in names
+    )
 
 
 def _decorator_matches_any(name: str, patterns: tuple[str, ...]) -> bool:
@@ -437,6 +444,62 @@ def _runtime_registered_names(file_path_abs: str) -> frozenset[str]:
             if isinstance(kw.value, ast.Name):
                 out.add(kw.value.id)
 
+    return frozenset(out)
+
+
+@lru_cache(maxsize=128)
+def _entry_point_decorator_aliases(file_path_abs: str) -> frozenset[str]:
+    """Alias names assigned to entry-point decorator factories, lowercased.
+
+    v0.13 P0: the plugin-framework pattern
+    ``agentic_tool = mcp.tool if cond else _noop_decorator`` hides the
+    real decorator from `_has_entry_point_decorator` — the stored
+    decorator name is the ALIAS (``agentic_tool``), whose last segment
+    is not in `_ENTRY_POINT_DECORATOR_LASTSEG`. Surfaced as 22 false
+    positives when force-reindexing livespec-mcp itself.
+
+    Collects assignment targets whose value — directly or through either
+    branch of a conditional expression — is a dotted name with an
+    entry-point last segment (``mcp.tool``, ``app.route``, ...).
+    Assignments anywhere in the file count: the pattern lives inside
+    ``register()`` function bodies, not at module level.
+
+    Cached. Non-Python files / parse failures return empty frozenset.
+    """
+    try:
+        source = Path(file_path_abs).read_text(encoding="utf-8", errors="replace")
+        tree = ast.parse(source)
+    except (OSError, SyntaxError, ValueError):
+        return frozenset()
+
+    def _lastseg(node: ast.AST) -> str | None:
+        if isinstance(node, ast.Attribute):
+            return node.attr.lower()
+        if isinstance(node, ast.Name):
+            return node.id.lower()
+        return None
+
+    def _hits(node: ast.AST) -> bool:
+        if isinstance(node, ast.IfExp):
+            return _hits(node.body) or _hits(node.orelse)
+        seg = _lastseg(node)
+        return seg is not None and seg in _ENTRY_POINT_DECORATOR_LASTSEG
+
+    out: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign) and _hits(node.value):
+            for tgt in node.targets:
+                if isinstance(tgt, ast.Name):
+                    out.add(tgt.id.lower())
+            # Both branches of the conditional are decorator machinery.
+            # The non-winning branch (`_noop_decorator`) is typically
+            # referenced ONLY inside this expression — without this it
+            # shows up as dead.
+            if isinstance(node.value, ast.IfExp):
+                for branch in (node.value.body, node.value.orelse):
+                    seg = _lastseg(branch)
+                    if seg:
+                        out.add(seg)
     return frozenset(out)
 
 
@@ -1516,6 +1579,10 @@ def register(mcp: FastMCP) -> None:
         # global-name false-skip risk.
         global_module_refs: set[str] = set()
         nested_uses_by_file: dict[str, frozenset[str]] = {}
+        # v0.13 P0: aliases assigned to entry-point decorator factories
+        # (`agentic_tool = mcp.tool if X else _noop`). Project-wide union —
+        # aliases may be imported into the file that uses them.
+        decorator_aliases: set[str] = set()
         workspace_path = st.settings.workspace
         for path_row in st.conn.execute(
             "SELECT f.path FROM file f WHERE f.project_id=? AND f.path LIKE '%.py'",
@@ -1524,6 +1591,7 @@ def register(mcp: FastMCP) -> None:
             try:
                 abs_path = str(workspace_path / path_row["path"])
                 global_module_refs |= _module_level_referenced_names(abs_path)
+                decorator_aliases |= _entry_point_decorator_aliases(abs_path)
                 # v0.10: explicit public-surface markers (re-exports +
                 # __all__) protect library-side classes that have no
                 # in-tree caller because their callers are user code.
@@ -1562,6 +1630,7 @@ def register(mcp: FastMCP) -> None:
             )
         }
 
+        alias_lastsegs = frozenset(decorator_aliases)
         filtered: list[dict[str, Any]] = []
         for r in rows:
             meta = dict(r)
@@ -1580,8 +1649,12 @@ def register(mcp: FastMCP) -> None:
             if not include_infrastructure and _is_implicit_entry_point(meta):
                 continue
             if not include_infrastructure and _has_entry_point_decorator(
-                meta.get("decorators")
+                meta.get("decorators"), alias_lastsegs
             ):
+                continue
+            # v0.13 P0: the symbol itself is decorator machinery (an alias
+            # target or an IfExp branch like `_noop_decorator`).
+            if not include_infrastructure and meta["name"].lower() in alias_lastsegs:
                 continue
             if not include_public and (meta.get("visibility") in _PUBLIC_VIS):
                 continue

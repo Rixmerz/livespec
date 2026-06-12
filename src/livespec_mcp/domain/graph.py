@@ -209,17 +209,3 @@ def _pagerank_pure(
         if diff < tol:
             break
     return rank
-
-
-def subgraph_edges(view: GraphView, nodes: Iterable[int]) -> list[dict]:
-    nset = set(nodes)
-    out = []
-    for u, v, data in view.g.edges(data=True):
-        if u in nset and v in nset:
-            out.append({
-                "src": view.sym_meta[u]["qualified_name"],
-                "dst": view.sym_meta[v]["qualified_name"],
-                "edge_type": data.get("edge_type", "calls"),
-                "weight": data.get("weight", 1.0),
-            })
-    return out
