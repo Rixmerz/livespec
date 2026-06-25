@@ -1,6 +1,6 @@
 [project]
 name = "livespec-mcp"
-version = "0.14.0"
+version = "0.15.0"
 description = "Code intelligence for AI agents: call graph, impact analysis, and bidirectional Functional Requirement <-> code traceability"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -45,6 +45,7 @@ packages = ["src/livespec_mcp"]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+pythonpath = ["src"]
 markers = [
     "embeddings: tests that require the [embeddings] extras (fastembed + sqlite-vec); skipped otherwise",
 ]

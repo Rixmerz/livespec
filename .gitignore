@@ -38,3 +38,6 @@ embeddings_dump.*
 *.swp
 *.swo
 Thumbs.db
+
+# the workflow runner local scratch state
+.the workflow runner/

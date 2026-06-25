@@ -495,7 +495,7 @@ def register(
 
     @agentic_tool(annotations={"readOnlyHint": True, "idempotentHint": True})
     def propose_requirements_from_codebase(
-        module_depth: int = 2,
+        module_depth: int = 3,
         min_symbols_per_group: int = 3,
         max_proposals: int = 30,
         skip_already_covered: bool = True,
@@ -504,8 +504,11 @@ def register(
         """Heuristic RF discovery for brownfield projects (v0.7 B2).
 
         The killer feature for adopting livespec on an existing codebase.
-        Groups symbols by their qname prefix at `module_depth` (e.g. depth=2
-        means `pkg.auth.*` -> group "pkg.auth"), ranks groups by total
+        Groups symbols by their qname prefix at `module_depth` (default 3;
+        e.g. depth=3 means `src.pkg.auth.*` -> group "src.pkg.auth"). A
+        deeper default avoids collapsing a whole `src.*` subtree into one
+        useless RF — pass a lower `module_depth` for shallow layouts. Ranks
+        groups by total
         PageRank score, and proposes one RF candidate per actionable group:
 
           {

@@ -35,7 +35,46 @@ Todo el stack es local-first: 0 servicios externos, 0 API keys obligatorias, 0 D
 
 ---
 
-## 3. Estado actual: v0.14.0 CORTADO — backlog 2026-06-11 cerrado completo
+## 3. Estado actual: v0.15.0 — RF Explorer + 3 fixes (workflow the workflow runner)
+
+Tests **312 default + 3 embeddings = 315**. Schema **v8**. pyproject
+**0.15.0**. Tool surface real: **33 (19 core + 10 RF + 4 docs)** — nuevo
+`export_explorer`. Ejecutado vía workflow the workflow runner `rf-explorer-v015-graph`
+(orient→fixes→dogfood→explorer→test→validate→commit), delegando waves a
+subagentes `general-purpose`/`livespec-specialist`.
+
+Lo que landeó (Epic A, F1–F6):
+- **`export_explorer`** (`tools/explorer.py` + registro en
+  `plugins/docs.py`): genera `.mcp-docs/explorer/{data.json,index.html}`
+  — viewer estático Swagger-like **organizado por RF** (spine +
+  símbolos/firmas + endpoints + topología Mermaid + gaps). Proyección
+  pura del RF graph, sin servidor, abre desde `file://`. Reusa
+  `compute_endpoints`/`compute_coverage` extraídos a nivel módulo en
+  `tools/analysis.py` (sin duplicar SQL).
+- **F4** `find_endpoints` detecta tools del plugin RF (union de
+  decorator-aliases, mismo mecanismo que `find_dead_code`).
+- **F5** `propose_requirements_from_codebase` default `module_depth` 2→3
+  (no colapsar paquetes profundos).
+- **F6** `find_orphan_tests` payload con campo `caveat` (cuenta es cota
+  superior por la indirección FastMCP `Client(mcp)`).
+- **F1 dogfood**: livespec tiene sus **12 RFs propias** (59 symbol links,
+  12 edges `requires`) — el dataset demo del explorer.
+- Portabilidad: `__init__` guarda `version()` (PackageNotFoundError →
+  `0.0.0+source`) + `pytest pythonpath=["src"]`.
+
+**Gate del workflow (nota honesta):** el validator `tests_pass` del nodo
+`validate` quedó en **falso-negativo** — corre `pytest` fuera del venv
+`uv` (sin deps networkx/fastmcp), no es regresión de código. Suite real
+`uv run pytest -m "not embeddings"` = **312 passed**, `ruff check .`
+limpio, E2E visual del `index.html` confirmado (firefox headless render
+del artefacto real: 12 RFs / 57 endpoints). Fix real del gate =
+configurar el validator the workflow runner para `uv run pytest` (fuera de este repo).
+
+**Pendiente:** `git push origin main` (sandbox bloquea — correr con `!`) +
+`git tag v0.15.0` + `gh release`. Epic B (extractores C#/Kotlin/Swift,
+PyPI publish) = workflow aparte (multi-día / creds del usuario).
+
+### v0.14.0 resumen (referencia)
 
 Tests **305 default + 3 embeddings = 308**. Schema **v8**. Tag
 **v0.14.0** (incluye batch v0.13 que nunca se taggeó). pyproject
