@@ -31,6 +31,21 @@ follows [SemVer](https://semver.org/).
   `verified` whenever an RF has any test coverage. Computed from a single
   `compute_coverage` call (no extra graph load).
 
+### Fixed — RF Explorer polish (Mermaid render + endpoints)
+- **Dependencies tab no longer errors.** Mermaid v10 rejects CSS
+  `var(...)` inside `classDef`; the topology emitted
+  `classDef … fill:var(--mm-*)` → "Syntax error in text". Colours are now
+  resolved to concrete values at build time (light/dark still tracked),
+  and node/edge labels are HTML-entity-escaped (`& < > "`) so titles like
+  "Dead-code & coverage" / "RF↔code" render.
+- **Endpoints tab cleaned up + grouped.** `pytest.fixture` entries (test
+  infrastructure, not API surface) are split into a separate collapsed
+  list and excluded from the endpoint count (57 → 50: 33 tools + 9
+  resources + 8 prompts). The tab groups by kind (Tools / Resources /
+  Prompts) Swagger-style with per-endpoint signature + RF chips, a
+  **copy-call** snippet per endpoint (MCP tool-call skeleton; static spec
+  view — no live execution without a server), and a note saying so.
+
 ### Added — reproducible self-RFs
 - `docs/requirements/livespec-rfs.md` ships livespec's own 12 requirements
   (RF-001..RF-012) in the `import_requirements_from_markdown` format, so a
