@@ -15,7 +15,10 @@ from fastmcp import Client
 
 from livespec_mcp.server import mcp
 
-_TOP_KEYS = {"meta", "dashboard", "requirements", "rf_topology", "endpoints", "coverage"}
+_TOP_KEYS = {
+    "meta", "dashboard", "requirements", "rf_topology", "endpoints",
+    "fixtures", "coverage",
+}
 
 
 def _write_flask_app(workspace: Path) -> None:
@@ -71,6 +74,15 @@ async def test_export_explorer_writes_both_files(workspace: Path):
     assert "sourceBadge" in html
     assert "auto-derived (call graph)" in html
     assert "Avg ' + TEST_COVERAGE_LABEL" in html  # dashboard KPI tile
+    # Endpoints tab: static-spec note + copy-call affordance (these are MCP
+    # tools, not HTTP routes, so no live "Try it out").
+    assert "Static spec view" in html
+    assert "copy-call" in html
+    assert "callShape" in html
+    # Endpoints grouped by MCP kind (Tools / Resources / Prompts), and the
+    # Mermaid label sanitizer for the Dependencies tab is present.
+    assert "EP_KIND_LABEL" in html
+    assert "mermaidLabel" in html
 
 
 @pytest.mark.asyncio
@@ -179,8 +191,28 @@ async def test_export_explorer_data_schema(workspace: Path):
     assert "RF-001" in login_ep["rf_ids"]
     for ep in data["endpoints"]:
         assert set(ep.keys()) == {
-            "framework", "handler", "signature", "path", "method", "rf_ids",
+            "kind", "framework", "handler", "signature", "path", "method",
+            "rf_ids",
         }
+        # Every API-surface endpoint carries a kind in the valid vocabulary,
+        # and is never a pytest fixture (those live in DATA.fixtures).
+        assert ep["kind"] in {"tool", "resource", "prompt", "other"}
+    # A plain Flask @app.route is a real endpoint but not an MCP
+    # tool/resource/prompt, so it classifies as "other" — still API surface.
+    assert login_ep["kind"] == "other"
+
+    # Fixtures are a separate collection (test infra, not API surface).
+    assert "fixtures" in data
+    assert isinstance(data["fixtures"], list)
+    for fx in data["fixtures"]:
+        assert fx["kind"] == "fixture"
+        assert set(fx.keys()) == {
+            "kind", "framework", "handler", "signature", "path", "method",
+            "rf_ids",
+        }
+    # No fixture leaks into the API-surface endpoint list or its count.
+    assert all(e["kind"] != "fixture" for e in data["endpoints"])
+    assert data["meta"]["counts"]["endpoints"] == len(data["endpoints"])
 
     # coverage section shape
     assert set(data["coverage"].keys()) == {
@@ -223,6 +255,85 @@ async def test_export_explorer_zero_rf_case(workspace: Path):
     assert data["meta"]["counts"]["endpoints"] >= 2
     assert isinstance(data["coverage"]["totals"], dict)
     assert data["coverage"]["totals"]
+
+
+def _write_fixture_module(workspace: Path) -> None:
+    """A tiny pytest test module declaring a @pytest.fixture (test infra)."""
+    (workspace / "conftest.py").write_text(
+        "import pytest\n"
+        "\n"
+        "@pytest.fixture\n"
+        "def sample_db():\n"
+        '    """A test fixture — NOT API surface."""\n'
+        "    return {}\n"
+    )
+
+
+@pytest.mark.asyncio
+async def test_export_explorer_excludes_fixtures_from_surface(workspace: Path):
+    """pytest.fixture entries are split into DATA.fixtures, not endpoints."""
+    _write_flask_app(workspace)
+    _write_fixture_module(workspace)
+    async with Client(mcp) as c:
+        await c.call_tool("index_project", {})
+        await c.call_tool("export_explorer", {})
+
+    data = json.loads(
+        (workspace / ".mcp-docs" / "explorer" / "data.json").read_text(encoding="utf-8")
+    )
+    handlers = {e["handler"] for e in data["endpoints"]}
+    fixture_handlers = {f["handler"] for f in data["fixtures"]}
+    # The fixture is recognised and routed into the separate collection.
+    assert "conftest.sample_db" in fixture_handlers
+    # It does NOT appear in the API-surface endpoints, nor inflate the count.
+    assert "conftest.sample_db" not in handlers
+    assert all(e["kind"] != "fixture" for e in data["endpoints"])
+    assert data["meta"]["counts"]["endpoints"] == len(data["endpoints"])
+    # The Flask routes are still present as API surface.
+    assert "app.routes.login" in handlers
+
+
+@pytest.mark.asyncio
+async def test_export_explorer_mermaid_labels_sanitized(workspace: Path):
+    """RF titles with &, <, >, " must be HTML-entity-encoded for Mermaid v10
+    so the Dependencies graph parses (no 'Syntax error in text')."""
+    _write_flask_app(workspace)
+    async with Client(mcp) as c:
+        await c.call_tool("index_project", {})
+        # A title loaded with Mermaid-breaking characters.
+        await c.call_tool(
+            "create_requirement",
+            {"rf_id": "RF-001", "title": 'Dead-code & coverage <x> "q" (9 langs)'},
+        )
+        await c.call_tool("export_explorer", {})
+
+    data = json.loads(
+        (workspace / ".mcp-docs" / "explorer" / "data.json").read_text(encoding="utf-8")
+    )
+    # The raw, unsanitized title is stored verbatim in the data (the viewer
+    # sanitizes at render time via mermaidLabel()). This locks in that the
+    # breaking chars reach the viewer and rely on JS encoding.
+    node = next(n for n in data["rf_topology"]["nodes"] if n["id"] == "RF-001")
+    assert "&" in node["title"] and "<" in node["title"]
+
+    # Mirror the viewer's mermaidLabel() transform in Python and assert the
+    # produced `graph TD` node label is safe: entities present, no raw
+    # ` & ` / ` < ` / ` > ` left inside the quoted ["..."] label.
+    def mermaid_label(s: str) -> str:
+        return (
+            s.replace("&", "&amp;")
+            .replace("<", "&lt;")
+            .replace(">", "&gt;")
+            .replace('"', "&quot;")
+        )
+
+    label = mermaid_label(node["id"] + ": " + node["title"])
+    assert "&amp;" in label and "&lt;" in label and "&gt;" in label
+    assert "&quot;" in label
+    # No raw breaking chars survive (the only & are entity prefixes).
+    assert "<" not in label and ">" not in label and '"' not in label
+    # Parentheses are safe inside a quoted Mermaid label — kept readable.
+    assert "(9 langs)" in label
 
 
 @pytest.mark.asyncio

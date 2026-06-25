@@ -28,11 +28,21 @@ data.json schema:
                         "tested_symbols": int, "total_symbols": int}],
       "rf_topology": {"nodes": [{"id", "title", "dev_state"}],
                       "edges": [{"from", "to", "kind"}]},
-      "endpoints": [{"framework"|null, "handler", "signature"|null,
-                     "path"|null, "method"|null, "rf_ids": [str]}],
+      "endpoints": [{"kind": str, "framework"|null, "handler",
+                     "signature"|null, "path"|null, "method"|null,
+                     "rf_ids": [str]}],
+      "fixtures": [{"kind": "fixture", ...same shape as an endpoint...}],
       "coverage": {"orphan_modules": [str], "orphan_endpoints": [str],
                    "totals": {...}}
     }
+
+``endpoints`` is the real API surface only: ``kind`` ∈ {tool, resource,
+prompt, other} (derived from the handler's decorator — mcp.tool /
+mcp.resource / mcp.prompt / the RF-plugin aliases, or a framework route).
+``pytest.fixture`` entries are test infrastructure, NOT API surface, so
+they are split into the separate ``fixtures`` collection and excluded from
+``meta.counts.endpoints``. The viewer groups endpoints by ``kind``
+Swagger-style and shows fixtures in a clearly-separate collapsed section.
 
 The ``coverage`` float per RF is the AVERAGE LINK CONFIDENCE of that RF's
 ``rf_symbol`` rows — i.e. how confident the RF↔code attributions are, NOT
@@ -102,6 +112,38 @@ def _framework_of_endpoint(ep: dict[str, Any]) -> str | None:
     if ep.get("django_cbv_base"):
         return "django"
     return None
+
+
+# Map an endpoint's decorator last-segment to a coarse "kind" for grouping.
+# MCP servers carry no HTTP framework, so the decorator (mcp.tool / mcp.resource
+# / mcp.prompt / pytest.fixture / the RF-plugin aliases) is the real signal.
+# Anything unrecognised falls back to "other" so the surface stays honest.
+_KIND_BY_DECORATOR_LASTSEG: dict[str, str] = {
+    "tool": "tool",
+    "mutation_tool": "tool",
+    "agentic_tool": "tool",
+    "resource": "resource",
+    "prompt": "prompt",
+    "fixture": "fixture",
+}
+
+
+def _kind_of_endpoint(ep: dict[str, Any]) -> str:
+    """Classify an endpoint as tool / resource / prompt / fixture / other.
+
+    Derives from the ``decorators`` list (e.g. ``["mcp.tool"]`` -> tool,
+    ``["pytest.fixture"]`` -> fixture). Framework-routed endpoints (hono /
+    TS frameworks / django CBVs) have no MCP decorator and classify as
+    "tool" — they are part of the API surface. Falls back to "other".
+    """
+    if _framework_of_endpoint(ep) is not None:
+        return "tool"
+    for dec in ep.get("decorators") or []:
+        lastseg = str(dec).rsplit(".", 1)[-1]
+        kind = _KIND_BY_DECORATOR_LASTSEG.get(lastseg)
+        if kind is not None:
+            return kind
+    return "other"
 
 
 def compute_explorer_data(
@@ -242,8 +284,14 @@ def compute_explorer_data(
         )
 
     # --- Endpoints (full surface, framework-aware) ---------------------
+    # compute_endpoints returns every decorated/route entry point INCLUDING
+    # pytest fixtures (test infra, not API surface). We classify each by
+    # `kind` (tool/resource/prompt/fixture/other) from its decorator, then
+    # split fixtures out of the API surface so the headline count reflects
+    # the real surface (tools + resources + prompts + framework routes).
     raw_endpoints = compute_endpoints(st, framework=None)
     endpoints: list[dict[str, Any]] = []
+    fixtures: list[dict[str, Any]] = []
     # qname -> signature lookup for endpoint handlers
     sig_by_qname: dict[str, str | None] = {}
     for ep in raw_endpoints:
@@ -258,16 +306,23 @@ def compute_explorer_data(
             sig_by_qname[qn] = row["signature"] if row else None
     for ep in raw_endpoints:
         handler = ep.get("qualified_name") or ""
-        endpoints.append(
-            {
-                "framework": _framework_of_endpoint(ep),
-                "handler": handler,
-                "signature": sig_by_qname.get(handler),
-                "path": ep.get("hono_path"),
-                "method": ep.get("hono_method"),
-                "rf_ids": list(qname_to_rfids.get(handler, [])),
-            }
-        )
+        kind = _kind_of_endpoint(ep)
+        entry = {
+            "kind": kind,
+            "framework": _framework_of_endpoint(ep),
+            "handler": handler,
+            "signature": sig_by_qname.get(handler),
+            "path": ep.get("hono_path"),
+            "method": ep.get("hono_method"),
+            "rf_ids": list(qname_to_rfids.get(handler, [])),
+        }
+        # pytest fixtures are test infrastructure, not API surface — they
+        # are kept in a separate, clearly-labelled collection so the
+        # endpoint count is not inflated by test scaffolding.
+        if kind == "fixture":
+            fixtures.append(entry)
+        else:
+            endpoints.append(entry)
 
     # --- Coverage / orphans --------------------------------------------
     # `cov` already computed once above (reused for per-RF test coverage).
@@ -367,6 +422,9 @@ def compute_explorer_data(
         "requirements": requirements,
         "rf_topology": topology,
         "endpoints": endpoints,
+        # pytest fixtures, kept separate from the API surface (same shape as
+        # an endpoint entry). The viewer shows these in a collapsed section.
+        "fixtures": fixtures,
         "coverage": coverage_section,
     }
 
@@ -964,6 +1022,32 @@ _HTML_TEMPLATE = """<!DOCTYPE html>
   .method.delete { background: var(--danger-weak);color: var(--danger); }
   .path { font-family: var(--mono); font-size: 12px; color: var(--fg-soft); }
 
+  /* Endpoints: static-spec note + per-handler qname + copy-call affordance */
+  .ep-note {
+    font-size: 12.5px; color: var(--fg-soft); line-height: 1.55;
+    background: var(--info-weak); border: 1px solid color-mix(in srgb, var(--info) 28%, transparent);
+    border-radius: var(--radius-sm); padding: 10px 14px; margin: 0 0 14px; max-width: 80ch;
+  }
+  .ep-note b { color: var(--info); font-weight: 700; }
+  .ep-q { font-family: var(--mono); font-size: 10.5px; color: var(--faint); margin-top: 2px; word-break: break-all; }
+  .ep-route { margin-top: 4px; }
+  button.copy-call {
+    appearance: none; cursor: pointer; font: inherit;
+    font-family: var(--mono); font-size: 11px; font-weight: 600;
+    padding: 3px 9px; border-radius: 7px; white-space: nowrap;
+    background: var(--surface-2); color: var(--accent-ink);
+    border: 1px solid var(--line);
+    transition: background .12s ease, border-color .12s ease, color .12s ease;
+  }
+  button.copy-call:hover { background: var(--accent-weak); border-color: var(--accent-line); }
+  button.copy-call.copied { background: var(--ok-weak); color: var(--ok); border-color: color-mix(in srgb, var(--ok) 35%, transparent); }
+  pre.call-shape {
+    font-family: var(--mono); font-size: 11px; color: var(--fg-soft);
+    margin: 7px 0 0; padding: 9px 11px; white-space: pre-wrap; word-break: break-word;
+    background: var(--surface-2); border: 1px solid var(--line-soft); border-radius: var(--radius-sm);
+  }
+  details.ep-fixtures { margin-top: 26px; }
+
   /* Gaps */
   .kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin-bottom: 8px; }
   .kpi {
@@ -1391,25 +1475,56 @@ if (DATA.requirements.length) selectRF(DATA.requirements[0].id);
 
 // ---- Dependencies graph (Mermaid, themed, coloured by dev_state) ----
 const safeId = s => s.replace(/[^A-Za-z0-9_]/g, '_');
+// Sanitize a node label for Mermaid v10's quoted-string ["..."] syntax.
+// RF titles routinely contain &, <, >, " which break the flowchart parser
+// ("Syntax error in text"). HTML-entity-encode exactly those four chars
+// (& FIRST so it doesn't double-encode the entities we add). Mermaid renders
+// the entities back as glyphs, so the label stays readable. Parentheses, ↔
+// and / are safe INSIDE a quoted string and pass through unchanged.
+function mermaidLabel(s) {
+  return String(s == null ? '' : s)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
 function buildMermaid() {
   const t = DATA.rf_topology;
   let src = 'graph TD\\n';
   if (!t.nodes.length) { return src + '  empty["No requirements indexed"]\\n'; }
   t.nodes.forEach(n => {
     const nid = safeId(n.id);
-    const label = (n.id + ': ' + (n.title || '')).replace(/"/g, "'");
+    const label = mermaidLabel(n.id + ': ' + (n.title || ''));
     const ds = DEV_STATES.includes(n.dev_state) ? n.dev_state : 'not_started';
     src += `  ${nid}["${label}"]\\n`;
     src += `  class ${nid} ds_${ds}\\n`;
   });
   t.edges.forEach(e => {
-    src += `  ${safeId(e.from)} -->|${(e.kind || 'requires')}| ${safeId(e.to)}\\n`;
+    // Quote + sanitize the edge label too — kinds are a controlled vocab
+    // today, but a quoted label keeps the parser safe if that ever changes.
+    src += `  ${safeId(e.from)} -->|"${mermaidLabel(e.kind || 'requires')}"| ${safeId(e.to)}\\n`;
   });
-  // classDef per dev_state — fills bridged from CSS vars (light/dark aware).
-  src += '  classDef ds_not_started fill:var(--mm-ns-fill),stroke:var(--mm-ns),stroke-width:1.2px,stroke-dasharray:4 3,color:var(--mm-ink-soft);\\n';
-  src += '  classDef ds_in_progress fill:var(--mm-ip-fill),stroke:var(--mm-ip),stroke-width:1.5px,color:var(--mm-ink);\\n';
-  src += '  classDef ds_implemented fill:var(--mm-im-fill),stroke:var(--mm-im),stroke-width:1.5px,color:var(--mm-ink);\\n';
-  src += '  classDef ds_verified fill:var(--mm-vf-fill),stroke:var(--mm-vf),stroke-width:1.8px,color:var(--mm-ink);\\n';
+  // classDef per dev_state — RESOLVED colours, not CSS var() references.
+  // Mermaid v10's classDef parser rejects `fill:var(--x)` ("Parse error …
+  // got '(-'"), which surfaced as the "Syntax error in text" on this tab.
+  // We resolve each palette var to a concrete colour at build time (the
+  // page is already themed light/dark, so this still tracks the palette)
+  // and emit literal values the parser accepts. Falls back to safe hexes
+  // if a var is empty (e.g. computed-style unavailable).
+  const C = (name, fallback) => {
+    const v = cssVar(name);
+    return v && !/var\\(/.test(v) ? v : fallback;
+  };
+  const ink = C('--fg', '#1c2130'), inkSoft = C('--muted', '#6a7488');
+  const defs = [
+    ['ds_not_started', C('--surface-2', '#f1f3f8'), C('--faint', '#9aa3b5'), '1.2px', inkSoft, ',stroke-dasharray:4 3'],
+    ['ds_in_progress', C('--info-weak', '#e4eef8'), C('--info', '#2f6fb0'), '1.5px', ink, ''],
+    ['ds_implemented', C('--accent-weak', '#ece9fb'), C('--accent', '#5848d6'), '1.5px', ink, ''],
+    ['ds_verified', C('--ok-weak', '#e3f4ec'), C('--ok', '#1f8a5b'), '1.8px', ink, ''],
+  ];
+  defs.forEach(([cls, fill, stroke, sw, color, extra]) => {
+    src += `  classDef ${cls} fill:${fill},stroke:${stroke},stroke-width:${sw},color:${color}${extra};\\n`;
+  });
   return src;
 }
 
@@ -1442,19 +1557,9 @@ async function renderTopology() {
   if (mermaidRendered) return;
   mermaidRendered = true;
 
-  // Bridge our CSS custom properties into vars Mermaid's classDef can read,
-  // so the graph matches the active (light/dark) palette and dev_state hues.
-  document.documentElement.style.setProperty('--mm-ns', cssVar('--faint'));
-  document.documentElement.style.setProperty('--mm-ns-fill', cssVar('--surface-2'));
-  document.documentElement.style.setProperty('--mm-ip', cssVar('--info'));
-  document.documentElement.style.setProperty('--mm-ip-fill', cssVar('--info-weak'));
-  document.documentElement.style.setProperty('--mm-im', cssVar('--accent'));
-  document.documentElement.style.setProperty('--mm-im-fill', cssVar('--accent-weak'));
-  document.documentElement.style.setProperty('--mm-vf', cssVar('--ok'));
-  document.documentElement.style.setProperty('--mm-vf-fill', cssVar('--ok-weak'));
-  document.documentElement.style.setProperty('--mm-ink', cssVar('--fg'));
-  document.documentElement.style.setProperty('--mm-ink-soft', cssVar('--muted'));
-
+  // dev_state classDef colours are resolved to literal values inside
+  // buildMermaid() (Mermaid v10 rejects var() in classDef) — no CSS-var
+  // bridging needed here. themeVariables below still read live palette vars.
   try {
     mermaid.initialize({
       startOnLoad: false,
@@ -1482,49 +1587,141 @@ async function renderTopology() {
   }
 }
 
-// ---- Endpoints (grouped, Swagger-like) ----
-function frameworkLabel(fw) {
-  return fw ? fw : 'Decorator / MCP tools';
+// ---- Endpoints (grouped by MCP kind, Swagger-like) ----
+// These are MCP entry points, not HTTP routes (framework is null), so we
+// group by the decorator-derived `kind` (tool / resource / prompt / other).
+// pytest fixtures are split out by compute_explorer_data into DATA.fixtures.
+const EP_KIND_ORDER = ['tool', 'resource', 'prompt', 'other'];
+const EP_KIND_LABEL = {
+  tool: 'Tools', resource: 'Resources', prompt: 'Prompts', other: 'Other',
+};
+
+// Short tool name = the last dotted segment of the handler qname.
+function shortName(qname) {
+  const s = String(qname || '');
+  const i = s.lastIndexOf('.');
+  return i === -1 ? s : s.slice(i + 1);
 }
+
+// Parse positional arg names out of a `name(a, b=1, *, c)` signature.
+// Drops *self/cls*, defaults, annotations, * and ** markers — best-effort,
+// purely for showing the call SHAPE (this is copy-to-run, not live-execute).
+function sigArgs(signature) {
+  const s = String(signature || '');
+  const open = s.indexOf('('), close = s.lastIndexOf(')');
+  if (open === -1 || close === -1 || close <= open) return [];
+  const inner = s.slice(open + 1, close).trim();
+  if (!inner) return [];
+  return inner.split(',').map(p => {
+    let name = p.trim();
+    if (!name || name === '*' || name === '/') return '';
+    name = name.replace(/^\\*+/, '');        // strip * / **
+    name = name.split('=')[0];              // drop default
+    name = name.split(':')[0];              // drop annotation
+    return name.trim();
+  }).filter(a => a && a !== 'self' && a !== 'cls');
+}
+
+// Build the call SHAPE the user copies into their MCP client. Tools get a
+// JSON tool-call skeleton; resources/prompts get a compact name(args) form.
+function callShape(ep) {
+  const name = shortName(ep.handler);
+  const args = sigArgs(ep.signature);
+  if (ep.kind === 'tool') {
+    const argObj = args.map(a => `    "${a}": null`).join(',\\n');
+    return '{\\n  "tool": "' + name + '",\\n  "arguments": {' +
+      (argObj ? '\\n' + argObj + '\\n  ' : '') + '}\\n}';
+  }
+  return name + '(' + args.join(', ') + ')';
+}
+
 function buildEndpoints() {
+  const eps = DATA.endpoints || [];
+  const fixtures = DATA.fixtures || [];
   const groups = {};
-  DATA.endpoints.forEach(ep => {
-    const k = frameworkLabel(ep.framework);
-    (groups[k] = groups[k] || []).push(ep);
-  });
-  const keys = Object.keys(groups).sort((a, b) => {
-    // Real frameworks first, the catch-all decorator group last.
-    const da = a === 'Decorator / MCP tools', db = b === 'Decorator / MCP tools';
-    return da - db || a.localeCompare(b);
-  });
-  let h = '<p class="lead">Every discovered entry point, grouped by framework. ' +
-    'Badges show which requirement(s) own each handler.</p>';
-  if (!keys.length) { el('epmain').innerHTML = h + '<div class="empty">No endpoints found.</div>'; return; }
+  eps.forEach(ep => { (groups[ep.kind] = groups[ep.kind] || []).push(ep); });
+  const keys = Object.keys(groups).sort(
+    (a, b) => EP_KIND_ORDER.indexOf(a) - EP_KIND_ORDER.indexOf(b));
+
+  // Static-spec note: these are MCP tools, not HTTP routes — no live "Try it".
+  let h = '<p class="ep-note">Static spec view — <b>copy a call</b> to run it ' +
+    'in your MCP client; live execution would require a running server.</p>';
+  h += '<p class="lead">The project\\'s MCP surface, grouped by kind. ' +
+    'Each row shows the handler, its signature and the requirement(s) that own it. ' +
+    'Test fixtures are listed separately below — they are not part of the API surface.</p>';
+
+  if (!keys.length) {
+    h += '<div class="empty">No endpoints found.</div>';
+  }
   keys.forEach(k => {
     const rows = groups[k];
+    const label = EP_KIND_LABEL[k] || k;
     h += '<section class="epgroup"><div class="epgroup-h">' +
-      `<span class="fw">${esc(k)}</span>` +
-      `<span class="fwtag">${rows.length} handler${rows.length === 1 ? '' : 's'}</span></div>`;
+      `<span class="fw">${esc(label)}</span>` +
+      `<span class="fwtag">${rows.length}</span></div>`;
     h += '<div class="card"><table><thead><tr>' +
-      '<th>Handler</th><th>Signature</th><th>Route</th><th>RFs</th></tr></thead><tbody>';
-    rows.forEach(ep => {
-      const method = ep.method
-        ? `<span class="method ${String(ep.method).toLowerCase()}">${esc(ep.method)}</span> ` : '';
+      '<th>Handler</th><th>Signature</th><th>Call</th><th>RFs</th></tr></thead><tbody>';
+    rows.forEach((ep, i) => {
       const route = (ep.method || ep.path)
-        ? `${method}<span class="path">${esc(ep.path || '')}</span>`
-        : '<span class="empty">—</span>';
+        ? `${ep.method ? `<span class="method ${String(ep.method).toLowerCase()}">${esc(ep.method)}</span> ` : ''}<span class="path">${esc(ep.path || '')}</span>`
+        : '';
+      const sigCell = ep.signature
+        ? `<span class="sig">${esc(ep.signature)}</span>`
+        : (route || '<span class="empty">—</span>');
       const rfs = ep.rf_ids.length
         ? ep.rf_ids.map(r => `<span class="chip accent" style="font-size:11px">${esc(r)}</span>`).join(' ')
         : '<span class="chip muted">unlinked</span>';
+      const shape = callShape(ep);
+      const cid = `cc-${k}-${i}`;
       h += '<tr>' +
-        `<td><span class="qname">${esc(ep.handler)}</span></td>` +
-        `<td>${ep.signature ? `<span class="sig">${esc(ep.signature)}</span>` : '<span class="empty">—</span>'}</td>` +
-        `<td>${route}</td><td>${rfs}</td></tr>`;
+        `<td><span class="qname">${esc(shortName(ep.handler))}</span>` +
+          `<div class="ep-q">${esc(ep.handler)}</div></td>` +
+        `<td>${sigCell}${route ? `<div class="ep-route">${route}</div>` : ''}</td>` +
+        `<td><button type="button" class="copy-call" data-copy="${cid}" title="Copy the call shape to your clipboard">⧉ copy call</button>` +
+          `<pre class="call-shape" id="${cid}" hidden>${esc(shape)}</pre></td>` +
+        `<td>${rfs}</td></tr>`;
     });
     h += '</tbody></table></div></section>';
   });
+
+  // Fixtures — test infrastructure, NOT API surface. Collapsed by default.
+  if (fixtures.length) {
+    h += '<details class="tech ep-fixtures"><summary>Test fixtures ' +
+      `<span class="hint">${fixtures.length} pytest fixture${fixtures.length === 1 ? '' : 's'} — test infrastructure, not API surface</span></summary>` +
+      '<div class="tech-body"><div class="card"><table><thead><tr>' +
+      '<th>Fixture</th><th>Signature</th></tr></thead><tbody>';
+    fixtures.forEach(fx => {
+      h += '<tr>' +
+        `<td><span class="qname">${esc(shortName(fx.handler))}</span>` +
+          `<div class="ep-q">${esc(fx.handler)}</div></td>` +
+        `<td>${fx.signature ? `<span class="sig">${esc(fx.signature)}</span>` : '<span class="empty">—</span>'}</td></tr>`;
+    });
+    h += '</tbody></table></div></div></details>';
+  }
+
   el('epmain').innerHTML = h;
+
+  // Wire copy-call buttons: copy the snippet text, flash confirmation.
+  el('epmain').querySelectorAll('.copy-call').forEach(btn =>
+    btn.addEventListener('click', () => {
+      const pre = el(btn.getAttribute('data-copy'));
+      const text = pre ? pre.textContent : '';
+      const done = () => {
+        const old = btn.textContent;
+        btn.textContent = '✓ copied';
+        btn.classList.add('copied');
+        setTimeout(() => { btn.textContent = old; btn.classList.remove('copied'); }, 1400);
+      };
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).then(done, () => { showSnippet(pre); });
+      } else {
+        showSnippet(pre);
+      }
+    }));
 }
+// Fallback when the Clipboard API is unavailable (file://, no permission):
+// reveal the snippet so the user can select + copy manually.
+function showSnippet(pre) { if (pre) pre.hidden = false; }
 
 // ---- Gaps ----
 const TOTAL_LABELS = {

@@ -60,6 +60,10 @@ Lo que landeó:
   cuando ratio>0. Una sola call a `compute_coverage`.
 - **Self-RFs reproducibles**: `docs/requirements/livespec-rfs.md` (12 RFs,
   import verificado 12/12) + `livespec-rf-links.md` (nota del link-seed).
+- **Explorer polish** (post-corte): fix Mermaid (classDef rechazaba
+  `var()` de CSS → colores resueltos en build-time + labels escapados);
+  endpoints 57→50 (fixtures pytest separados, agrupados Tools/Resources/
+  Prompts estilo Swagger + copy-call por endpoint). 318 tests.
 
 Dogfood en vivo (MCP recargado): export_explorer → dashboard **10 verified
 / 2 implemented, avg_test_coverage 0.48**, RF-001/002/003
