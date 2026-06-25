@@ -21,6 +21,18 @@ follows [SemVer](https://semver.org/).
   count 32 → 33. The viewer is light/dark, keyboard-navigable, and
   inlines its data so it works fully offline (except the Mermaid CDN,
   which degrades gracefully).
+- **Stakeholder / Product-Owner framing.** The view leads with a
+  project **status dashboard** (counts per development state, %
+  implemented, # verified, # exposing endpoints) and a per-RF
+  **`dev_state` derived from code evidence** — `not_started` (no
+  implementing symbols) → `in_progress` → `implemented` → `verified`
+  (has test-relation links) — rather than a hand-maintained field.
+  Each RF leads with its plain-language description and state; the
+  symbol/signature table is collapsed under "Technical detail". The
+  declared `status` is shown alongside and **flagged when stale**
+  (e.g. declared "draft" but the code shows it implemented). The
+  per-RF `coverage` number is labeled honestly as **link confidence**
+  (mean confidence of the RF↔symbol links), never as test coverage.
 
 ### Added — `find_symbol` typo suggestions
 - `find_symbol` with zero matches now includes a `did_you_mean` list

@@ -15,7 +15,7 @@ from fastmcp import Client
 
 from livespec_mcp.server import mcp
 
-_TOP_KEYS = {"meta", "requirements", "rf_topology", "endpoints", "coverage"}
+_TOP_KEYS = {"meta", "dashboard", "requirements", "rf_topology", "endpoints", "coverage"}
 
 
 def _write_flask_app(workspace: Path) -> None:
@@ -99,6 +99,25 @@ async def test_export_explorer_data_schema(workspace: Path):
     }
     assert data["meta"]["counts"]["requirements"] == 2
 
+    # dashboard rollup (PO headline) shape + correctness
+    dash = data["dashboard"]
+    assert set(dash.keys()) == {
+        "requirements", "dev_state_counts", "with_endpoints",
+        "with_dependencies", "implemented_pct", "verified", "avg_coverage",
+    }
+    assert dash["requirements"] == 2
+    assert set(dash["dev_state_counts"].keys()) == {
+        "not_started", "in_progress", "implemented", "verified",
+    }
+    # dev_state counts sum to the requirement total.
+    assert sum(dash["dev_state_counts"].values()) == 2
+    # Both RFs have a linked symbol -> both count as having implementation.
+    assert dash["implemented_pct"] == 100.0
+    # No relation='tests' links exist here, so verified is truthfully 0.
+    assert dash["verified"] == 0
+    assert dash["dev_state_counts"]["verified"] == 0
+    assert dash["avg_coverage"] is not None
+
     # RF-001 carries its implementing symbol (with signature), endpoint, dep.
     rf1 = next(r for r in data["requirements"] if r["id"] == "RF-001")
     assert any(s["qname"] == "app.routes.login" for s in rf1["symbols"])
@@ -107,6 +126,17 @@ async def test_export_explorer_data_schema(workspace: Path):
     assert "app.routes.login" in rf1["endpoints"]
     assert rf1["depends_on"] == ["RF-002"]
     assert rf1["coverage"] is not None
+
+    # Every requirement carries a derived dev_state in the valid vocabulary.
+    valid_states = {"not_started", "in_progress", "implemented", "verified"}
+    for r in data["requirements"]:
+        assert r["dev_state"] in valid_states
+    # RF-001 has a high-confidence link and no test link -> implemented.
+    assert rf1["dev_state"] == "implemented"
+
+    # Topology nodes carry dev_state too (for colour-coding the graph).
+    for n in data["rf_topology"]["nodes"]:
+        assert n["dev_state"] in valid_states
 
     # topology has the RF-001 -> RF-002 edge
     edges = {(e["from"], e["to"]) for e in data["rf_topology"]["edges"]}
@@ -145,6 +175,14 @@ async def test_export_explorer_zero_rf_case(workspace: Path):
     assert data["rf_topology"]["nodes"] == []
     assert data["rf_topology"]["edges"] == []
     assert data["meta"]["counts"]["requirements"] == 0
+
+    # Dashboard is present and truthfully empty in the 0-RF case.
+    assert "dashboard" in data
+    assert data["dashboard"]["requirements"] == 0
+    assert data["dashboard"]["verified"] == 0
+    assert data["dashboard"]["implemented_pct"] == 0.0
+    assert data["dashboard"]["avg_coverage"] is None
+    assert sum(data["dashboard"]["dev_state_counts"].values()) == 0
 
     # Endpoints + coverage are not gated on RFs existing.
     handlers = {e["handler"] for e in data["endpoints"]}
