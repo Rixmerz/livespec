@@ -16,17 +16,36 @@ data.json schema:
     {
       "meta": {"project", "generated_at"|null,
                "counts": {"requirements", "symbols", "endpoints", "files"}},
-      "requirements": [{"id", "title", "status", "description",
+      "dashboard": {"requirements", "dev_state_counts": {...},
+                    "with_endpoints", "with_dependencies",
+                    "implemented_pct", "verified", "avg_coverage"},
+      "requirements": [{"id", "title", "status", "dev_state", "description",
                         "symbols": [{"qname", "signature"|null, "file", "line"}],
                         "endpoints": [str], "depends_on": [str],
                         "coverage": float|null}],
-      "rf_topology": {"nodes": [{"id", "title"}],
+      "rf_topology": {"nodes": [{"id", "title", "dev_state"}],
                       "edges": [{"from", "to", "kind"}]},
       "endpoints": [{"framework"|null, "handler", "signature"|null,
                      "path"|null, "method"|null, "rf_ids": [str]}],
       "coverage": {"orphan_modules": [str], "orphan_endpoints": [str],
                    "totals": {...}}
     }
+
+The ``coverage`` float per RF is the AVERAGE LINK CONFIDENCE of that RF's
+``rf_symbol`` rows — i.e. how confident the RF↔code attributions are, NOT
+test coverage and NOT call-graph reachability. The UI labels it as such.
+
+``dev_state`` is DERIVED from evidence (symbol links + that confidence),
+independent of the manually-maintained ``status`` field:
+    "not_started"  — 0 implementing symbols.
+    "in_progress"  — has symbols AND coverage < 0.7.
+    "implemented"  — has symbols AND coverage >= 0.7.
+    "verified"     — implemented AND >= 1 ``relation='tests'`` link
+                     (same signal ``audit_coverage`` uses for
+                     ``rf_test_coverage``). When no test↔RF links exist,
+                     verified is never asserted — it falls back to
+                     implemented. This is truthful: in-process MCP test
+                     suites usually have no such links, so verified==0.
 
 Determinism: ``generated_at`` is the ONLY non-deterministic field and is
 injectable (arg ``generated_at``, default None) so two runs on an
@@ -41,6 +60,27 @@ from typing import Any
 
 from livespec_mcp.state import AppState
 from livespec_mcp.tools.analysis import compute_coverage, compute_endpoints
+
+_COVERAGE_THRESHOLD = 0.7
+
+
+def _derive_dev_state(
+    symbol_count: int, coverage: float | None, has_test_link: bool
+) -> str:
+    """Derive a development state from code evidence (not the manual status).
+
+    Thresholds: 0 symbols -> not_started; symbols with coverage < 0.7 ->
+    in_progress; coverage >= 0.7 -> implemented; implemented AND >= 1
+    test-relation link -> verified. ``coverage`` here is average link
+    confidence (see module docstring), the same signal the spine bar shows.
+    """
+    if symbol_count == 0:
+        return "not_started"
+    if coverage is None or coverage < _COVERAGE_THRESHOLD:
+        return "in_progress"
+    # coverage >= threshold -> implemented; promote to verified only with
+    # a real test-relation link (never fabricated).
+    return "verified" if has_test_link else "implemented"
 
 
 def _framework_of_endpoint(ep: dict[str, Any]) -> str | None:
@@ -135,14 +175,19 @@ def compute_explorer_data(
             for sr in sym_rows
         ]
         total_rf_symbols += len(symbols)
-        # Coverage signal: avg confidence of this RF's links, or None when
-        # there are no links (unimplemented).
+        # Coverage signal: avg LINK CONFIDENCE of this RF's rf_symbol rows,
+        # or None when there are no links (unimplemented). This is NOT test
+        # coverage — it is how confident the RF↔code attributions are.
         if sym_rows:
             coverage: float | None = round(
                 sum(float(sr["confidence"]) for sr in sym_rows) / len(sym_rows), 4
             )
         else:
             coverage = None
+        # Test-relation signal: >= 1 link whose relation == 'tests' (same
+        # signal audit_coverage uses for rf_test_coverage). Drives verified.
+        has_test_link = any(sr["relation"] == "tests" for sr in sym_rows)
+        dev_state = _derive_dev_state(len(symbols), coverage, has_test_link)
         # Endpoints owned by this RF: endpoint handler qnames linked to it.
         rf_id = rf["rf_id"]
         owned_endpoints = sorted(
@@ -157,6 +202,7 @@ def compute_explorer_data(
                 "id": rf_id,
                 "title": rf["title"],
                 "status": rf["status"],
+                "dev_state": dev_state,
                 "description": rf["description"] or "",
                 "symbols": symbols,
                 "endpoints": owned_endpoints,
@@ -204,10 +250,60 @@ def compute_explorer_data(
         "totals": dict(cov["counts"]),
     }
 
-    # --- Topology nodes ------------------------------------------------
+    # --- Topology nodes (colored by dev_state in the viewer) -----------
+    dev_state_by_id = {r["id"]: r["dev_state"] for r in requirements}
     topology = {
-        "nodes": [{"id": r["rf_id"], "title": r["title"]} for r in rf_rows],
+        "nodes": [
+            {
+                "id": r["rf_id"],
+                "title": r["title"],
+                "dev_state": dev_state_by_id.get(r["rf_id"], "not_started"),
+            }
+            for r in rf_rows
+        ],
         "edges": topo_edges,
+    }
+
+    # --- Dashboard rollup (PO-first headline) --------------------------
+    dev_state_counts = {
+        "not_started": 0,
+        "in_progress": 0,
+        "implemented": 0,
+        "verified": 0,
+    }
+    coverage_values: list[float] = []
+    with_endpoints = 0
+    with_dependencies = 0
+    implemented_symbol_count = 0  # RFs with >= 1 implementing symbol
+    for r in requirements:
+        dev_state_counts[r["dev_state"]] = dev_state_counts.get(r["dev_state"], 0) + 1
+        if r["coverage"] is not None:
+            coverage_values.append(r["coverage"])
+        if r["endpoints"]:
+            with_endpoints += 1
+        if r["depends_on"]:
+            with_dependencies += 1
+        if r["symbols"]:
+            implemented_symbol_count += 1
+    total_reqs = len(requirements)
+    dashboard = {
+        "requirements": total_reqs,
+        "dev_state_counts": dev_state_counts,
+        "with_endpoints": with_endpoints,
+        "with_dependencies": with_dependencies,
+        # % of RFs that have >= 1 implementing symbol (any code attributed).
+        "implemented_pct": (
+            round(implemented_symbol_count / total_reqs * 100, 1)
+            if total_reqs
+            else 0.0
+        ),
+        "verified": dev_state_counts["verified"],
+        # Mean of the per-RF average-link-confidence values (RFs with links).
+        "avg_coverage": (
+            round(sum(coverage_values) / len(coverage_values), 4)
+            if coverage_values
+            else None
+        ),
     }
 
     files_count = conn.execute(
@@ -225,6 +321,7 @@ def compute_explorer_data(
                 "files": int(files_count),
             },
         },
+        "dashboard": dashboard,
         "requirements": requirements,
         "rf_topology": topology,
         "endpoints": endpoints,
@@ -522,6 +619,151 @@ _HTML_TEMPLATE = """<!DOCTYPE html>
   .dot.st-done        { background: var(--ok); }
   .dot.st-deprecated  { background: var(--danger); }
 
+  /* ---- dev_state colour system (the PO-facing development state) ----
+     not_started=neutral, in_progress=info, implemented=accent,
+     verified=ok. Used by dots, pills, the breakdown bar and topology. */
+  .ds-not_started { --ds: var(--faint);  --ds-weak: var(--surface-3); }
+  .ds-in_progress { --ds: var(--info);   --ds-weak: var(--info-weak); }
+  .ds-implemented { --ds: var(--accent); --ds-weak: var(--accent-weak); }
+  .ds-verified    { --ds: var(--ok);     --ds-weak: var(--ok-weak); }
+  .dot.ds { background: var(--ds, var(--faint)); }
+  .state-pill {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 2px 10px 2px 8px; border-radius: 999px;
+    font-size: 11.5px; font-weight: 650; line-height: 1.7;
+    background: var(--ds-weak); color: var(--ds);
+    border: 1px solid color-mix(in srgb, var(--ds) 30%, transparent);
+    white-space: nowrap;
+  }
+  .state-pill .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--ds); flex: none; }
+  .state-pill.big { font-size: 13px; padding: 4px 13px 4px 11px; }
+  .state-pill.big .dot { width: 8px; height: 8px; }
+
+  /* ---- Project dashboard (PO headline) ---- */
+  .dash { margin: 0 0 26px; }
+  .dash-tiles {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(132px, 1fr));
+    gap: 12px; margin-bottom: 16px;
+  }
+  .dash-tile {
+    background: var(--surface); border: 1px solid var(--line);
+    border-radius: var(--radius); padding: 14px 16px; box-shadow: var(--shadow-sm);
+  }
+  .dash-tile .n {
+    font-size: 26px; font-weight: 700; letter-spacing: -.02em; line-height: 1;
+    font-variant-numeric: tabular-nums;
+  }
+  .dash-tile .n .unit { font-size: 15px; font-weight: 650; color: var(--muted); }
+  .dash-tile .k {
+    font-size: 11px; font-weight: 600; color: var(--muted);
+    text-transform: uppercase; letter-spacing: .05em; margin-top: 7px;
+  }
+  .dash-tile.good .n { color: var(--ok); }
+  .dash-tile.accent .n { color: var(--accent-ink); }
+
+  /* status breakdown bar */
+  .breakdown { margin-top: 4px; }
+  .breakdown .bar {
+    display: flex; height: 16px; border-radius: 8px; overflow: hidden;
+    border: 1px solid var(--line); background: var(--surface-2);
+  }
+  .breakdown .bar > span { height: 100%; min-width: 2px; }
+  .breakdown .seg-not_started { background: var(--faint); }
+  .breakdown .seg-in_progress { background: var(--info); }
+  .breakdown .seg-implemented { background: var(--accent); }
+  .breakdown .seg-verified    { background: var(--ok); }
+  .breakdown .keys {
+    display: flex; gap: 16px; flex-wrap: wrap; margin-top: 9px;
+    font-size: 12px; color: var(--muted);
+  }
+  .breakdown .keys .item { display: inline-flex; align-items: center; gap: 6px; }
+  .breakdown .keys .sw { width: 11px; height: 11px; border-radius: 3px; flex: none; }
+  .breakdown .keys .sw.not_started { background: var(--faint); }
+  .breakdown .keys .sw.in_progress { background: var(--info); }
+  .breakdown .keys .sw.implemented { background: var(--accent); }
+  .breakdown .keys .sw.verified    { background: var(--ok); }
+  .breakdown .keys .item b { color: var(--fg); font-variant-numeric: tabular-nums; }
+
+  /* dev_state filter chips */
+  .ds-filters { display: flex; gap: 7px; flex-wrap: wrap; padding: 11px 14px 12px; border-bottom: 1px solid var(--line-soft); }
+  .ds-chip {
+    appearance: none; border: 1px solid var(--line); cursor: pointer;
+    font: inherit; font-size: 11.5px; font-weight: 600;
+    padding: 3px 10px; border-radius: 999px;
+    background: var(--surface-2); color: var(--fg-soft);
+    display: inline-flex; align-items: center; gap: 6px;
+    transition: background .12s ease, border-color .12s ease;
+  }
+  .ds-chip .sw { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+  .ds-chip .sw.all { background: linear-gradient(135deg, var(--accent), var(--ok)); }
+  .ds-chip .sw.not_started { background: var(--faint); }
+  .ds-chip .sw.in_progress { background: var(--info); }
+  .ds-chip .sw.implemented { background: var(--accent); }
+  .ds-chip .sw.verified    { background: var(--ok); }
+  .ds-chip .ct { font-variant-numeric: tabular-nums; color: var(--muted); font-weight: 650; }
+  .ds-chip:hover { background: var(--surface-3); }
+  .ds-chip[aria-pressed="true"] {
+    background: var(--accent-weak); color: var(--accent-ink); border-color: var(--accent-line);
+  }
+  .ds-chip[aria-pressed="true"] .ct { color: var(--accent-ink); }
+
+  /* spine coverage micro-bar + summary line */
+  .spine .rf .sub { font-size: 11.5px; color: var(--muted); margin-top: 3px; line-height: 1.4; }
+  .spine .rf .covbar {
+    height: 4px; border-radius: 3px; margin-top: 6px;
+    background: color-mix(in srgb, var(--muted) 22%, transparent); overflow: hidden;
+  }
+  .spine .rf .covbar > span { display: block; height: 100%; border-radius: 3px; background: var(--ds, var(--accent)); }
+
+  /* stale-status flag + how-derived note */
+  .stale-flag {
+    display: inline-flex; align-items: center; gap: 5px;
+    font-size: 11px; font-weight: 600; padding: 2px 9px; border-radius: 999px;
+    background: var(--warn-weak); color: var(--warn);
+    border: 1px solid color-mix(in srgb, var(--warn) 30%, transparent);
+  }
+  .derive-note {
+    font-size: 12.5px; color: var(--muted); line-height: 1.6;
+    background: var(--surface-2); border: 1px solid var(--line-soft);
+    border-radius: var(--radius-sm); padding: 11px 14px; margin: 0 0 18px;
+    max-width: 78ch;
+  }
+  .derive-note b { color: var(--fg-soft); font-weight: 650; }
+  .derive-note .lbl { font-weight: 700; color: var(--ds, var(--fg)); }
+
+  /* metric row (PO detail) */
+  .metrics {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+    gap: 10px; margin: 16px 0 6px;
+  }
+  .metric {
+    background: var(--surface-2); border: 1px solid var(--line-soft);
+    border-radius: var(--radius-sm); padding: 11px 13px;
+  }
+  .metric .mv { font-size: 19px; font-weight: 700; letter-spacing: -.02em; font-variant-numeric: tabular-nums; line-height: 1; }
+  .metric .ml { font-size: 10.5px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; margin-top: 6px; }
+  .metric .hint { font-size: 10.5px; color: var(--faint); margin-top: 3px; font-weight: 500; text-transform: none; letter-spacing: 0; }
+
+  /* collapsible technical detail */
+  details.tech {
+    margin-top: 26px; border: 1px solid var(--line);
+    border-radius: var(--radius); background: var(--surface); box-shadow: var(--shadow-sm);
+    overflow: hidden;
+  }
+  details.tech > summary {
+    cursor: pointer; list-style: none; padding: 13px 16px;
+    font-size: 12.5px; font-weight: 650; color: var(--fg-soft);
+    display: flex; align-items: center; gap: 9px;
+    background: var(--surface-2);
+  }
+  details.tech > summary::-webkit-details-marker { display: none; }
+  details.tech > summary::before {
+    content: "▸"; color: var(--muted); font-size: 11px; transition: transform .15s ease;
+  }
+  details.tech[open] > summary::before { transform: rotate(90deg); }
+  details.tech > summary .hint { font-weight: 500; color: var(--muted); font-size: 11.5px; }
+  details.tech .tech-body { padding: 6px 16px 18px; }
+
   .chip {
     display: inline-flex; align-items: center; gap: 5px;
     padding: 2px 9px; border-radius: 999px;
@@ -721,16 +963,16 @@ _HTML_TEMPLATE = """<!DOCTYPE html>
   <div class="brand">
     <span class="mark" aria-hidden="true">RF</span>
     <h1>
-      <span class="kicker">RF Explorer</span>
+      <span class="kicker">Requirements Status</span>
       <span class="proj">__PROJECT__</span>
     </h1>
   </div>
   <div class="stats" id="stats" aria-label="Project totals"></div>
   <nav class="tabs" role="tablist" aria-label="Explorer views">
     <button role="tab" data-tab="requirements" aria-current="page">Requirements<span class="pill" id="pill-rf"></span></button>
-    <button role="tab" data-tab="topology">Topology<span class="pill" id="pill-topo"></span></button>
+    <button role="tab" data-tab="topology">Dependencies<span class="pill" id="pill-topo"></span></button>
     <button role="tab" data-tab="endpoints">Endpoints<span class="pill" id="pill-ep"></span></button>
-    <button role="tab" data-tab="gaps">Gaps<span class="pill" id="pill-gap"></span></button>
+    <button role="tab" data-tab="gaps">Coverage gaps<span class="pill" id="pill-gap"></span></button>
   </nav>
 </header>
 
@@ -738,21 +980,23 @@ _HTML_TEMPLATE = """<!DOCTYPE html>
   <div class="split">
     <aside class="spine" aria-label="Requirement spine">
       <div class="search">
-        <label for="rf-filter" class="sr-only" style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)">Filter requirements</label>
-        <input id="rf-filter" type="search" placeholder="Filter requirements…" autocomplete="off" spellcheck="false">
+        <label for="rf-filter" class="sr-only" style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)">Search requirements</label>
+        <input id="rf-filter" type="search" placeholder="Search requirements…" autocomplete="off" spellcheck="false">
       </div>
+      <div class="ds-filters" id="ds-filters" role="group" aria-label="Filter by development state"></div>
       <div class="list" id="rfnav"></div>
     </aside>
-    <main class="scroll pad" id="rfmain"><div class="empty">Select a requirement.</div></main>
+    <main class="scroll pad" id="rfmain">
+      <section class="dash" id="dashboard" aria-label="Project status overview"></section>
+      <div id="rfdetail"><div class="empty">Select a requirement to see what it is and where it stands.</div></div>
+    </main>
   </div>
 </section>
-<section class="panel" data-panel="topology" role="tabpanel" aria-label="Topology" hidden>
+<section class="panel" data-panel="topology" role="tabpanel" aria-label="Dependencies" hidden>
   <main class="scroll pad">
+    <p class="lead">How requirements depend on one another. Each box is colour-coded by its development state.</p>
     <div class="topo-bar">
-      <div class="legend" aria-hidden="false">
-        <span class="item"><span class="swatch linked"></span> Linked (has dependency edge)</span>
-        <span class="item"><span class="swatch indep"></span> Independent (no edges)</span>
-      </div>
+      <div class="legend" id="topo-legend" aria-hidden="false"></div>
       <span class="chip muted" id="topo-counts"></span>
     </div>
     <div class="mermaid" id="mermaid-graph"></div>
@@ -793,45 +1037,137 @@ el('pill-ep').textContent = DATA.endpoints.length;
 el('pill-gap').textContent =
   DATA.coverage.orphan_modules.length + DATA.coverage.orphan_endpoints.length;
 
-// ---- Coverage meter helper ----
-function covMeter(v) {
-  if (v == null) return '<span class="chip muted">no implementation</span>';
-  const pct = Math.round(v * 100);
-  const tier = v >= 0.9 ? 'high' : (v >= 0.7 ? 'mid' : 'low');
-  return `<span class="cov ${tier}" title="avg link confidence">` +
-    `<span class="track"><span class="fill" style="width:${pct}%"></span></span>` +
-    `<span class="v">${pct}% coverage</span></span>`;
+// ---- dev_state vocabulary (PO-facing) ----
+const DEV_STATES = ['not_started', 'in_progress', 'implemented', 'verified'];
+const DS_LABEL = {
+  not_started: 'Not started',
+  in_progress: 'In progress',
+  implemented: 'Implemented',
+  verified: 'Verified',
+};
+const DS_BLURB = {
+  not_started: 'No code is attributed to this requirement yet.',
+  in_progress: 'Code is being attributed; attribution confidence is still building.',
+  implemented: 'Code implements this requirement with high-confidence links.',
+  verified: 'Implemented and backed by tests linked to this requirement.',
+};
+const dsClass = s => 'ds-' + (DEV_STATES.includes(s) ? s : 'not_started');
+function statePill(s, big) {
+  const cls = dsClass(s);
+  return `<span class="state-pill ${big ? 'big ' : ''}${cls}">` +
+    `<span class="dot"></span>${esc(DS_LABEL[s] || s)}</span>`;
+}
+// Coverage = AVERAGE LINK CONFIDENCE of the RF's code links (not test
+// coverage, not call-graph reachability). Labelled precisely everywhere.
+const COVERAGE_LABEL = 'link confidence';
+function covPct(v) { return v == null ? null : Math.round(v * 100); }
+
+// A declared status looks stale when evidence has clearly moved past it:
+// dev_state is implemented/verified but the human still marks it draft/
+// in-review/proposed (i.e. not an "advanced" declared status).
+const ADVANCED_STATUS = new Set(['approved', 'done', 'implemented', 'verified', 'released', 'complete']);
+function statusLooksStale(rf) {
+  if (rf.dev_state !== 'implemented' && rf.dev_state !== 'verified') return false;
+  const declared = String(rf.status || '').toLowerCase();
+  return !ADVANCED_STATUS.has(declared);
 }
 const statusClass = s => 'st-' + String(s || 'draft').replace(/[^a-z_]/gi, '_').toLowerCase();
 
+// ---- Project dashboard (PO reads this first) ----
+function renderDashboard() {
+  const d = DATA.dashboard;
+  if (!d || !d.requirements) {
+    el('dashboard').innerHTML =
+      '<div class="empty">No requirements defined yet — see the Endpoints &amp; Coverage gaps tabs for what exists in code.</div>';
+    return;
+  }
+  const c = d.dev_state_counts;
+  const avgCov = d.avg_coverage == null ? '—' : Math.round(d.avg_coverage * 100) + '<span class="unit">%</span>';
+  const tiles = [
+    { n: d.requirements, k: 'Requirements', cls: '' },
+    { n: d.implemented_pct + '<span class="unit">%</span>', k: 'Have implementation', cls: 'accent' },
+    { n: d.verified, k: 'Verified by tests', cls: d.verified > 0 ? 'good' : '' },
+    { n: d.with_endpoints, k: 'Expose endpoints', cls: '' },
+    { n: d.with_dependencies, k: 'Have dependencies', cls: '' },
+    { n: avgCov, k: 'Avg ' + COVERAGE_LABEL, cls: '' },
+  ];
+  let h = '<div class="dash-tiles">' + tiles.map(t =>
+    `<div class="dash-tile ${t.cls}"><div class="n">${t.n}</div><div class="k">${esc(t.k)}</div></div>`
+  ).join('') + '</div>';
+
+  // status breakdown bar
+  const total = d.requirements || 1;
+  h += '<div class="breakdown"><div class="bar" role="img" aria-label="Development state breakdown">';
+  DEV_STATES.forEach(s => {
+    const n = c[s] || 0;
+    if (n > 0) h += `<span class="seg-${s}" style="flex:${n}" title="${esc(DS_LABEL[s])}: ${n}"></span>`;
+  });
+  h += '</div><div class="keys">';
+  DEV_STATES.forEach(s => {
+    h += `<span class="item"><span class="sw ${s}"></span>${esc(DS_LABEL[s])} <b>${c[s] || 0}</b></span>`;
+  });
+  h += '</div></div>';
+  el('dashboard').innerHTML = h;
+}
+
+// ---- dev_state filter ----
+let dsFilter = 'all';  // 'all' or one of DEV_STATES
+function renderDsFilters() {
+  const box = el('ds-filters');
+  if (!DATA.requirements.length) { box.style.display = 'none'; return; }
+  const counts = { all: DATA.requirements.length };
+  DEV_STATES.forEach(s => counts[s] = 0);
+  DATA.requirements.forEach(rf => { counts[rf.dev_state] = (counts[rf.dev_state] || 0) + 1; });
+  const chips = [['all', 'All']].concat(
+    DEV_STATES.filter(s => counts[s] > 0).map(s => [s, DS_LABEL[s]]));
+  box.innerHTML = chips.map(([k, label]) =>
+    `<button type="button" class="ds-chip" data-ds="${k}" aria-pressed="${k === dsFilter}">` +
+    `<span class="sw ${k}"></span>${esc(label)}<span class="ct">${counts[k]}</span></button>`
+  ).join('');
+  box.querySelectorAll('.ds-chip').forEach(btn =>
+    btn.addEventListener('click', () => {
+      dsFilter = btn.getAttribute('data-ds');
+      box.querySelectorAll('.ds-chip').forEach(b =>
+        b.setAttribute('aria-pressed', b === btn ? 'true' : 'false'));
+      renderSpine(el('rf-filter').value);
+    }));
+}
+
 // ---- Requirements spine + detail ----
 const nav = el('rfnav');
+const detail = el('rfdetail');
 const rfmain = el('rfmain');
 let activeRF = null;
 
 function renderSpine(filter) {
   const q = (filter || '').trim().toLowerCase();
   nav.innerHTML = '';
-  const matches = DATA.requirements.filter(rf =>
-    !q || rf.id.toLowerCase().includes(q) || (rf.title || '').toLowerCase().includes(q) ||
-    (rf.description || '').toLowerCase().includes(q));
+  const matches = DATA.requirements.filter(rf => {
+    if (dsFilter !== 'all' && rf.dev_state !== dsFilter) return false;
+    return !q || rf.id.toLowerCase().includes(q) || (rf.title || '').toLowerCase().includes(q) ||
+      (rf.description || '').toLowerCase().includes(q);
+  });
   if (!DATA.requirements.length) {
-    nav.innerHTML = '<div class="none">No requirements linked yet.<br>See the Endpoints &amp; Gaps tabs.</div>';
+    nav.innerHTML = '<div class="none">No requirements linked yet.<br>See the Endpoints &amp; Coverage gaps tabs.</div>';
     return;
   }
   if (!matches.length) {
-    nav.innerHTML = '<div class="none">No requirements match “' + esc(filter) + '”.</div>';
+    nav.innerHTML = '<div class="none">No requirements match this filter.</div>';
     return;
   }
   matches.forEach(rf => {
     const b = document.createElement('button');
-    b.className = 'rf';
+    b.className = 'rf ' + dsClass(rf.dev_state);
     b.type = 'button';
     b.setAttribute('aria-current', rf.id === activeRF ? 'true' : 'false');
+    const pct = covPct(rf.coverage);
+    const summary = DS_BLURB[rf.dev_state] || '';
     b.innerHTML =
       `<div class="top"><span class="rid">${esc(rf.id)}</span>` +
-      `<span class="dot ${statusClass(rf.status)}" title="${esc(rf.status)}"></span></div>` +
-      `<div class="ti">${esc(rf.title)}</div>`;
+      statePill(rf.dev_state, false) + '</div>' +
+      `<div class="ti">${esc(rf.title)}</div>` +
+      `<div class="sub">${esc(summary)}</div>` +
+      (pct != null ? `<div class="covbar" title="${pct}% ${COVERAGE_LABEL}"><span style="width:${pct}%"></span></div>` : '');
     b.addEventListener('click', () => selectRF(rf.id));
     nav.appendChild(b);
   });
@@ -846,22 +1182,57 @@ function selectRF(id) {
   const rf = DATA.requirements.find(r => r.id === id);
   if (!rf) return;
 
+  const pct = covPct(rf.coverage);
+
+  // --- Plain-language head: title + prominent dev_state ---
   let h = '<div class="detail-head">' +
     `<div class="eyebrow">${esc(rf.id)}</div>` +
     `<h2 class="title">${esc(rf.title)}</h2></div>`;
 
-  h += '<div class="meta-row">' +
-    `<span class="chip status ${rf.coverage != null ? 'accent' : 'muted'}"><span class="dot ${statusClass(rf.status)}"></span>${esc(rf.status)}</span>` +
-    covMeter(rf.coverage) +
-    `<span class="chip muted">${rf.symbols.length} symbol${rf.symbols.length === 1 ? '' : 's'}</span>` +
+  h += '<div class="meta-row">' + statePill(rf.dev_state, true) +
+    `<span class="chip status muted" title="Declared status (manually maintained)"><span class="dot ${statusClass(rf.status)}"></span>declared: ${esc(rf.status || 'none')}</span>` +
+    (statusLooksStale(rf) ? '<span class="stale-flag" title="The declared status has not caught up with the code evidence">⚠ declared status not updated</span>' : '') +
     '</div>';
 
+  // Description leads the content.
   h += rf.description
     ? `<p class="desc">${esc(rf.description)}</p>`
-    : '<p class="desc"><span class="empty">No description.</span></p>';
+    : '<p class="desc"><span class="empty">No description provided for this requirement.</span></p>';
 
-  // Implementing symbols → table
-  h += '<div class="sec"><h3 class="sec-h">Implementing symbols' +
+  // --- How this state was derived (transparency) ---
+  h += `<p class="derive-note ${dsClass(rf.dev_state)}">` +
+    `<span class="lbl">${esc(DS_LABEL[rf.dev_state])}</span> — ${esc(DS_BLURB[rf.dev_state])} ` +
+    'States are derived from <b>code evidence</b> (implementation links + their attribution confidence), not a manually-maintained field. ' +
+    '“Verified” additionally needs test↔requirement links, which may be absent for in-process test suites.</p>';
+
+  // --- Metrics row ---
+  h += '<div class="metrics">' +
+    `<div class="metric"><div class="mv">${pct == null ? '—' : pct + '%'}</div>` +
+      `<div class="ml">${esc(COVERAGE_LABEL)}</div><div class="hint">avg confidence of code links</div></div>` +
+    `<div class="metric"><div class="mv">${rf.endpoints.length}</div><div class="ml">Endpoints exposed</div></div>` +
+    `<div class="metric"><div class="mv">${rf.depends_on.length}</div><div class="ml">Dependencies</div></div>` +
+    `<div class="metric"><div class="mv">${rf.symbols.length}</div><div class="ml">Implementing symbols</div></div>` +
+    '</div>';
+
+  // --- Dependencies as clickable chips ---
+  h += '<div class="sec"><h3 class="sec-h">Depends on' +
+    `<span class="ct">${rf.depends_on.length}</span></h3>`;
+  if (rf.depends_on.length) {
+    h += '<div class="clusterbox">' +
+      rf.depends_on.map(d =>
+        `<button type="button" class="chip dep" data-goto="${esc(d)}">${esc(d)}</button>`
+      ).join('') + '</div>';
+  } else {
+    h += '<div class="empty">No dependencies — this requirement stands on its own.</div>';
+  }
+  h += '</div>';
+
+  // --- Technical detail (collapsed by default) ---
+  h += '<details class="tech"><summary>Technical detail ' +
+    `<span class="hint">${rf.symbols.length} symbol${rf.symbols.length === 1 ? '' : 's'} · ${rf.endpoints.length} endpoint${rf.endpoints.length === 1 ? '' : 's'} (for developers)</span></summary>` +
+    '<div class="tech-body">';
+
+  h += '<div class="sec" style="margin-top:8px"><h3 class="sec-h">Implementing symbols' +
     `<span class="ct">${rf.symbols.length}</span></h3>`;
   if (rf.symbols.length) {
     h += '<div class="card"><table><thead><tr>' +
@@ -879,66 +1250,56 @@ function selectRF(id) {
   }
   h += '</div>';
 
-  // Owned endpoints
   h += '<div class="sec"><h3 class="sec-h">Owned endpoints' +
     `<span class="ct">${rf.endpoints.length}</span></h3>`;
   h += rf.endpoints.length
     ? '<div class="clusterbox">' +
       rf.endpoints.map(e => `<span class="chip mono accent">${esc(e)}</span>`).join('') + '</div>'
     : '<div class="empty">None.</div>';
-  h += '</div>';
+  h += '</div></div></details>';
 
-  // Depends on → clickable chips
-  h += '<div class="sec"><h3 class="sec-h">Depends on' +
-    `<span class="ct">${rf.depends_on.length}</span></h3>`;
-  if (rf.depends_on.length) {
-    h += '<div class="clusterbox">' +
-      rf.depends_on.map(d =>
-        `<button type="button" class="chip dep" data-goto="${esc(d)}">${esc(d)}</button>`
-      ).join('') + '</div>';
-  } else {
-    h += '<div class="empty">No dependencies — this requirement is independent.</div>';
-  }
-  h += '</div>';
-
-  rfmain.innerHTML = h;
+  detail.innerHTML = h;
   rfmain.scrollTop = 0;
-  rfmain.querySelectorAll('[data-goto]').forEach(btn =>
+  detail.querySelectorAll('[data-goto]').forEach(btn =>
     btn.addEventListener('click', () => {
       const target = btn.getAttribute('data-goto');
       if (DATA.requirements.some(r => r.id === target)) {
         el('rf-filter').value = '';
+        dsFilter = 'all';
+        renderDsFilters();
         renderSpine('');
         selectRF(target);
       }
     }));
 }
 
+renderDashboard();
+renderDsFilters();
 el('rf-filter').addEventListener('input', e => renderSpine(e.target.value));
 renderSpine('');
 if (DATA.requirements.length) selectRF(DATA.requirements[0].id);
 
-// ---- Topology (Mermaid, themed) ----
+// ---- Dependencies graph (Mermaid, themed, coloured by dev_state) ----
 const safeId = s => s.replace(/[^A-Za-z0-9_]/g, '_');
 function buildMermaid() {
   const t = DATA.rf_topology;
-  // Which nodes touch an edge (linked) vs sit alone (independent).
-  const linked = new Set();
-  t.edges.forEach(e => { linked.add(e.from); linked.add(e.to); });
   let src = 'graph TD\\n';
   if (!t.nodes.length) { return src + '  empty["No requirements indexed"]\\n'; }
   t.nodes.forEach(n => {
     const nid = safeId(n.id);
     const label = (n.id + ': ' + (n.title || '')).replace(/"/g, "'");
+    const ds = DEV_STATES.includes(n.dev_state) ? n.dev_state : 'not_started';
     src += `  ${nid}["${label}"]\\n`;
-    src += linked.has(n.id) ? `  class ${nid} linked\\n` : `  class ${nid} indep\\n`;
+    src += `  class ${nid} ds_${ds}\\n`;
   });
   t.edges.forEach(e => {
     src += `  ${safeId(e.from)} -->|${(e.kind || 'requires')}| ${safeId(e.to)}\\n`;
   });
-  // classDef: linked = accent-filled; independent = dashed/secondary.
-  src += '  classDef linked fill:var(--mm-linked-fill),stroke:var(--mm-accent),stroke-width:1.5px,color:var(--mm-ink);\\n';
-  src += '  classDef indep fill:var(--mm-indep-fill),stroke:var(--mm-faint),stroke-width:1.2px,stroke-dasharray:4 3,color:var(--mm-ink-soft);\\n';
+  // classDef per dev_state — fills bridged from CSS vars (light/dark aware).
+  src += '  classDef ds_not_started fill:var(--mm-ns-fill),stroke:var(--mm-ns),stroke-width:1.2px,stroke-dasharray:4 3,color:var(--mm-ink-soft);\\n';
+  src += '  classDef ds_in_progress fill:var(--mm-ip-fill),stroke:var(--mm-ip),stroke-width:1.5px,color:var(--mm-ink);\\n';
+  src += '  classDef ds_implemented fill:var(--mm-im-fill),stroke:var(--mm-im),stroke-width:1.5px,color:var(--mm-ink);\\n';
+  src += '  classDef ds_verified fill:var(--mm-vf-fill),stroke:var(--mm-vf),stroke-width:1.8px,color:var(--mm-ink);\\n';
   return src;
 }
 
@@ -946,22 +1307,41 @@ function cssVar(name) {
   return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
 }
 let mermaidRendered = false;
+// dev_state legend for the Dependencies tab.
+function renderTopoLegend() {
+  const leg = el('topo-legend');
+  if (!leg) return;
+  leg.innerHTML = DEV_STATES.map(s =>
+    `<span class="item"><span class="swatch ${s}" style="background:var(--legend-${s})"></span> ${esc(DS_LABEL[s])}</span>`
+  ).join('');
+  // colour the swatches from the live palette
+  leg.querySelectorAll('.swatch').forEach((sw, i) => {
+    const map = { not_started: '--faint', in_progress: '--info', implemented: '--accent', verified: '--ok' };
+    sw.style.background = cssVar(map[DEV_STATES[i]]);
+    sw.style.border = 'none';
+  });
+}
 async function renderTopology() {
   const t = DATA.rf_topology;
   const linkedCount = new Set();
   t.edges.forEach(e => { linkedCount.add(e.from); linkedCount.add(e.to); });
   const indep = t.nodes.length - linkedCount.size;
   el('topo-counts').textContent =
-    `${t.nodes.length} requirements · ${edgeCount} edges · ${indep} independent`;
+    `${t.nodes.length} requirements · ${edgeCount} dependency edges · ${indep} independent`;
+  renderTopoLegend();
   if (mermaidRendered) return;
   mermaidRendered = true;
 
   // Bridge our CSS custom properties into vars Mermaid's classDef can read,
-  // so the graph matches the active (light/dark) palette.
-  document.documentElement.style.setProperty('--mm-linked-fill', cssVar('--accent-weak'));
-  document.documentElement.style.setProperty('--mm-indep-fill', cssVar('--surface-2'));
-  document.documentElement.style.setProperty('--mm-accent', cssVar('--accent'));
-  document.documentElement.style.setProperty('--mm-faint', cssVar('--faint'));
+  // so the graph matches the active (light/dark) palette and dev_state hues.
+  document.documentElement.style.setProperty('--mm-ns', cssVar('--faint'));
+  document.documentElement.style.setProperty('--mm-ns-fill', cssVar('--surface-2'));
+  document.documentElement.style.setProperty('--mm-ip', cssVar('--info'));
+  document.documentElement.style.setProperty('--mm-ip-fill', cssVar('--info-weak'));
+  document.documentElement.style.setProperty('--mm-im', cssVar('--accent'));
+  document.documentElement.style.setProperty('--mm-im-fill', cssVar('--accent-weak'));
+  document.documentElement.style.setProperty('--mm-vf', cssVar('--ok'));
+  document.documentElement.style.setProperty('--mm-vf-fill', cssVar('--ok-weak'));
   document.documentElement.style.setProperty('--mm-ink', cssVar('--fg'));
   document.documentElement.style.setProperty('--mm-ink-soft', cssVar('--muted'));
 
@@ -1048,8 +1428,9 @@ const TOTAL_LABELS = {
 };
 function buildGaps() {
   const g = DATA.coverage;
-  let h = '<p class="lead">Coverage gaps — code the requirement graph does not yet reach. ' +
-    'Orphan modules and endpoints are candidates for new RF links.</p>';
+  let h = '<p class="lead">Code not yet attributed to any requirement. ' +
+    'Orphan modules and endpoints are candidates for a new requirement link — ' +
+    'they represent functionality the requirement map does not yet account for.</p>';
 
   // KPI row from totals
   h += '<div class="kpis">';

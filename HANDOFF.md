@@ -50,7 +50,13 @@ Lo que landeó (Epic A, F1–F6):
   símbolos/firmas + endpoints + topología Mermaid + gaps). Proyección
   pura del RF graph, sin servidor, abre desde `file://`. Reusa
   `compute_endpoints`/`compute_coverage` extraídos a nivel módulo en
-  `tools/analysis.py` (sin duplicar SQL).
+  `tools/analysis.py` (sin duplicar SQL). **Reframe PO-first**
+  (post-corte, mismo release): dashboard de estado + `dev_state`
+  derivado de evidencia (not_started→in_progress→implemented→verified)
+  + lenguaje llano con detalle técnico colapsado + flag declarado-vs-
+  evidencia. `coverage` etiquetado honesto como "link confidence" (no
+  es cobertura de tests). "Verified" sale 0 hasta linkear tests↔RF
+  (mismo gap que el caveat F6). data.json gana `dashboard` + `dev_state`.
 - **F4** `find_endpoints` detecta tools del plugin RF (union de
   decorator-aliases, mismo mecanismo que `find_dead_code`).
 - **F5** `propose_requirements_from_codebase` default `module_depth` 2→3
