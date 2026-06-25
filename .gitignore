@@ -38,3 +38,6 @@ embeddings_dump.*
 *.swp
 *.swo
 Thumbs.db
+
+# jig local scratch state
+.jig/

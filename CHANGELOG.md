@@ -6,12 +6,53 @@ follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.15.0] - 2026-06-25
+
+### Added — RF Explorer (`export_explorer`): auto-generated web view
+- New **`export_explorer`** tool (in the `livespec-docs` plugin) writes
+  a self-contained static bundle to `.mcp-docs/explorer/`: `data.json`
+  (the machine-readable "spec") + `index.html` (a zero-dependency,
+  no-server viewer opened straight from `file://`). It is
+  Swagger-for-your-codebase but **organised by Requirement** — an RF
+  spine with each RF's implementing symbols (+ signatures), owned
+  endpoints, RF→RF dependency topology (Mermaid), a framework-aware
+  endpoint lens, and a coverage-gaps view. Pure projection of the RF
+  graph: re-run to refresh, no daemon, local-first preserved. Tool
+  count 32 → 33. The viewer is light/dark, keyboard-navigable, and
+  inlines its data so it works fully offline (except the Mermaid CDN,
+  which degrades gracefully).
+
 ### Added — `find_symbol` typo suggestions
 - `find_symbol` with zero matches now includes a `did_you_mean` list
   (same suggester as the not-found errors) instead of a bare empty
   result — found dogfooding v0.14.0 through the jig proxy: a typoed
   query left the agent at a dead end. Key absent when there are
   matches or no close candidates.
+
+### Fixed — `find_endpoints` now detects plugin-registered tools
+- `find_endpoints` missed tools registered through the `livespec-rf`
+  plugin (decorated via `mutation_tool`/`agentic_tool` aliases of
+  `mcp.tool`). It now unions the decorator-alias set — the same
+  mechanism `find_dead_code` already used — so the full tool surface
+  is reported, not just direct `@mcp.tool` decorations.
+
+### Changed — `propose_requirements_from_codebase` default depth 2 → 3
+- The default `module_depth` was 2, which collapsed deep packages
+  (e.g. an entire `src/<pkg>` subtree, hundreds of symbols) into one
+  giant, auto-mislabeled RF. The default is now **3** for sub-module
+  granularity; the parameter remains fully overridable.
+
+### Added — `find_orphan_tests` caveat for in-process MCP suites
+- The payload now carries a `caveat` field flagging that the count is
+  an upper bound: tests that exercise code through FastMCP
+  `Client(mcp)` indirection reach zero production symbols in the
+  static call graph and therefore look orphaned when they are not.
+
+### Fixed — package imports cleanly from source
+- `livespec_mcp.__version__` no longer raises when the distribution
+  metadata is absent (running straight from `src/`); it falls back to
+  `0.0.0+source`. `pytest` config gained `pythonpath = ["src"]` so the
+  suite is runnable without an editable install (CI/from-source).
 
 ## [0.14.0] - 2026-06-12
 

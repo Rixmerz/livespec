@@ -227,3 +227,66 @@ async def test_propose_requirements_skips_test_modules(workspace):
     assert not any("test" in k.lower() for k in keys), (
         f"tests/ should not generate proposals: keys={keys}, titles={titles}"
     )
+
+
+@pytest.mark.asyncio
+async def test_default_module_depth_does_not_collapse_deep_tree(workspace):
+    """F5: default module_depth=3 must not collapse a deep `src.pkg.*`
+    subtree into a single useless RF. The default call (no module_depth)
+    yields more than one proposal with sub-module granularity.
+
+    With the old default of 2, `src.pkg.auth` and `src.pkg.payments` both
+    collapsed to group "src.pkg" -> one RF absorbing the whole tree.
+    """
+    src = workspace / "src"
+    src.mkdir()
+    (src / "__init__.py").write_text("")
+    pkg = src / "pkg"
+    pkg.mkdir()
+    (pkg / "__init__.py").write_text("")
+
+    auth = pkg / "auth"
+    auth.mkdir()
+    (auth / "__init__.py").write_text("")
+    (auth / "login.py").write_text(
+        '"""Auth login flow."""\n'
+        "def login(u, p):\n    return verify(u, p)\n"
+        "\n"
+        "def verify(u, p):\n    return True\n"
+        "\n"
+        "def logout(token):\n    return True\n"
+    )
+
+    payments = pkg / "payments"
+    payments.mkdir()
+    (payments / "__init__.py").write_text("")
+    (payments / "charge.py").write_text(
+        '"""Payment processing."""\n'
+        "def charge(amount):\n    return submit(amount)\n"
+        "\n"
+        "def submit(amount):\n    return {'ok': True}\n"
+        "\n"
+        "def refund(receipt_id):\n    return True\n"
+    )
+
+    async with Client(mcp) as c:
+        await c.call_tool("index_project", {})
+        # No module_depth -> uses the new default (3).
+        out = (
+            await c.call_tool(
+                "propose_requirements_from_codebase",
+                {"min_symbols_per_group": 2},
+            )
+        ).data
+
+    assert out["module_depth"] == 3, "default module_depth must be 3"
+    proposals = out["proposals"]
+    assert len(proposals) > 1, (
+        f"deep tree collapsed into a single RF: {proposals}"
+    )
+    keys = {p["module_key"] for p in proposals}
+    # No proposal should be the shallow `src.pkg` that absorbs the whole tree.
+    assert "src.pkg" not in keys, f"deep tree absorbed by src.pkg: {keys}"
+    assert "src.pkg.auth" in keys and "src.pkg.payments" in keys, (
+        f"expected sub-module granularity: {keys}"
+    )

@@ -70,7 +70,7 @@ one round-trip. RF agentic tools ship in the default surface;
 RF mutation/management tools live in the `livespec-rf` plugin. Since
 multi-tenant v0.12 all plugins register at startup (there is no single
 DB to auto-detect against when every call carries its own `workspace`),
-so the full 32-tool surface is always visible.
+so the full 33-tool surface is always visible.
 
 ### What "living" actually means here
 
@@ -191,7 +191,7 @@ every file edit (hash-skip makes no-op runs cheap):
 The trailing `&` keeps the hook non-blocking; the next tool call sees a
 fresh index.
 
-## Tools (32: 19 core + 10 RF plugin + 3 docs plugin)
+## Tools (33: 19 core + 10 RF plugin + 4 docs plugin)
 
 Every tool requires `workspace` (absolute project root). Pass it on each call;
 omitting it is an error (no env fallback). LRU cache (8 workspaces) — one MCP
@@ -304,7 +304,7 @@ reach (configs, SQL, YAML).
 - `import_requirements_from_markdown(path)` — bulk-create RFs from
   `## RF-NNN: Title` Markdown specs. Idempotent.
 
-### `livespec-docs` plugin — doc generation (3)
+### `livespec-docs` plugin — doc generation (4)
 
 Auto-loads when the workspace DB has doc rows, or when `LIVESPEC_PLUGINS`
 includes `docs`. Human-tier ceremony for managing generated docs.
@@ -315,6 +315,13 @@ includes `docs`. Human-tier ceremony for managing generated docs.
 - `list_docs(target_type, only_stale=False)` — list or surface drifted
   docs (drift triggers on body_hash OR signature_hash mismatch).
 - `export_documentation(format, out_subdir)` — markdown or JSON.
+- `export_explorer(generated_at?)` — **RF Explorer** (v0.15): writes a
+  self-contained static bundle to `.mcp-docs/explorer/` (`data.json` +
+  `index.html`). A Swagger-style web view **organised by Requirement** —
+  RF spine with implementing symbols (+ signatures), owned endpoints,
+  RF→RF dependency topology (Mermaid), a framework-aware endpoint lens,
+  and a coverage-gaps view. Pure projection of the RF graph: no server,
+  no build step, opens from `file://`. Re-run to refresh.
 
 ### Migrating from older versions
 

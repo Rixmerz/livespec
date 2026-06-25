@@ -546,3 +546,73 @@ async def test_find_orphan_tests(workspace):
     assert not any(
         "test_real" in q for q in qnames
     ), f"connected test wrongly flagged: {out}"
+
+
+@pytest.mark.asyncio
+async def test_find_endpoints_detects_plugin_decorator_alias(workspace):
+    """v0.14 (F4): a tool decorated via an alias factory
+    (`mutation_tool = mcp.tool if X else _noop`) — the pattern the RF
+    plugin uses for `@mutation_tool`/`@agentic_tool` — must be surfaced by
+    `find_endpoints` (framework=None) even though the stored decorator name
+    (`mutation_tool`) isn't a known entry-point last segment."""
+    pkg = workspace / "app"
+    pkg.mkdir()
+    (pkg / "__init__.py").write_text("")
+    (pkg / "plugin.py").write_text(
+        "def register(mcp, mutation=True):\n"
+        "    def _noop_decorator(**_kwargs):\n"
+        "        def _wrap(fn):\n"
+        "            return fn\n"
+        "        return _wrap\n"
+        "\n"
+        "    mutation_tool = mcp.tool if mutation else _noop_decorator\n"
+        "\n"
+        "    @mutation_tool(annotations={'readOnlyHint': False})\n"
+        "    def link_rf_symbol():\n"
+        "        return None\n"
+        "\n"
+        "    @mcp.tool()\n"
+        "    def plain_tool():\n"
+        "        return None\n"
+    )
+
+    async with Client(mcp) as c:
+        await c.call_tool("index_project", {})
+        all_eps = (await c.call_tool("find_endpoints", {})).data
+
+    qnames = {e["qualified_name"] for e in all_eps["endpoints"]}
+    assert "app.plugin.register.link_rf_symbol" in qnames, (
+        f"alias-decorated plugin tool must be reported as endpoint: {qnames}"
+    )
+    # The plain @mcp.tool one is detected by the existing last-segment path.
+    assert "app.plugin.register.plain_tool" in qnames, (
+        f"plain @mcp.tool must still be reported: {qnames}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_find_orphan_tests_payload_carries_caveat(workspace):
+    """v0.14 (F6): find_orphan_tests payload includes a `caveat` field
+    explaining the count may over-report tests that drive production code
+    through an indirection the static call graph can't follow (e.g. an
+    in-process MCP `Client(mcp)` harness). Present in both modes."""
+    (workspace / "tests").mkdir()
+    (workspace / "tests" / "test_solo.py").write_text(
+        "def test_solo():\n"
+        "    assert True\n"
+    )
+
+    async with Client(mcp) as c:
+        await c.call_tool("index_project", {})
+        full = (await c.call_tool("find_orphan_tests", {})).data
+        summ = (
+            await c.call_tool("find_orphan_tests", {"summary_only": True})
+        ).data
+
+    assert full.get("caveat"), f"caveat missing in full payload: {full}"
+    assert "Client(mcp)" in full["caveat"], (
+        f"caveat should name the MCP Client indirection: {full['caveat']}"
+    )
+    assert summ.get("caveat"), (
+        f"caveat missing in summary payload: {summ}"
+    )

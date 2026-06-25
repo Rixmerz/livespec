@@ -21,6 +21,7 @@ from typing import Any, Literal
 from fastmcp import Context, FastMCP
 
 from livespec_mcp.state import get_state
+from livespec_mcp.tools import explorer as _explorer
 from livespec_mcp.tools._errors import mcp_error
 from livespec_mcp.tools.analysis import symbol_not_found_error
 from livespec_mcp.workspace_param import Workspace
@@ -310,3 +311,45 @@ def register(mcp: FastMCP) -> None:
             safe = r["target_key"].replace("/", "_")
             (d / f"{safe}.md").write_text(r["content"], encoding="utf-8")
         return {"exported": len(rows), "path": str(out_root)}
+
+    @mcp.tool(annotations={"readOnlyHint": False, "idempotentHint": True})
+    def export_explorer(
+        generated_at: str | None = None,
+        workspace: Workspace | None = None,
+    ) -> dict[str, Any]:
+        """Emit a static, self-contained "RF Explorer" bundle.
+
+        Like Swagger UI, but auto-generated from the project's Requirements +
+        call graph + endpoints + coverage. Writes two files under
+        ``<workspace>/.mcp-docs/explorer/``:
+
+        - ``data.json`` — machine-readable bundle (requirements with their
+          implementing symbols+signatures, owned endpoints, RF-RF
+          dependencies & coverage; full endpoint surface with the RFs each
+          belongs to; RF topology; coverage orphans).
+        - ``index.html`` — a single self-contained viewer (data inlined, so
+          it opens over ``file://`` with no server, no build step). Renders
+          an RF spine, per-RF detail, a Mermaid topology diagram, an
+          endpoints tab grouped by framework, and a gaps tab.
+
+        Reuses the compute logic behind ``find_endpoints`` and
+        ``audit_coverage`` — no duplicated SQL.
+
+        Determinism: ``generated_at`` (default None) is the only
+        non-deterministic field; pass an ISO timestamp to stamp the bundle,
+        or leave it None so two runs on an unchanged project produce
+        byte-identical ``data.json``.
+        """
+        try:
+            st = get_state(workspace)
+            result = _explorer.write_explorer_bundle(st, generated_at=generated_at)
+        except Exception as e:  # surface as the standard error shape
+            return mcp_error(
+                f"export_explorer failed: {e}",
+                hint="run index_project first so the call graph + symbols exist",
+            )
+        return {
+            "ok": True,
+            "files_written": result["files_written"],
+            "counts": result["data"]["meta"]["counts"],
+        }

@@ -5,13 +5,11 @@ from __future__ import annotations
 
 import asyncio
 import json
-import sys
 from pathlib import Path
 
 from fastmcp import Client
 
 from livespec_mcp.server import mcp
-from livespec_mcp.workspace_param import WORKSPACE_DESCRIPTION
 
 OVER = Path("/Users/juanpablodiaz/my/over-validator")
 LIVESPEC = Path("/Users/juanpablodiaz/my/livespec-mcp")
@@ -86,10 +84,9 @@ async def main() -> int:
             if data.get("error"):
                 errors.append(f"{label} overview error: {data}")
             else:
-                langs = data.get("languages") or data.get("language_counts")
                 syms = data.get("symbol_count") or data.get("top_symbols")
                 print(
-                    f"  overview OK — keys sample:",
+                    "  overview OK — keys sample:",
                     list(data.keys())[:8],
                     f"symbols/top: {bool(syms)}",
                 )

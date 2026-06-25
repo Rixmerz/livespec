@@ -891,6 +891,372 @@ def _structural_pattern_names(conn, project_id: int, threshold: int) -> set[str]
     return {r["name"] for r in rows if r["name"]}
 
 
+def compute_endpoints(
+    st: AppState,
+    framework: str | None = None,
+) -> list[dict[str, Any]]:
+    """Module-level shared computation: the full unpaginated endpoint list.
+
+    Both ``find_endpoints`` (the paginated tool wrapper) and
+    ``export_explorer`` consume this. Returns the same per-endpoint dicts
+    the tool emits (``qualified_name``, ``kind``, ``file_path``,
+    ``start_line``, ``end_line``, ``decorators``, plus optional
+    framework-specific keys: ``ts_framework`` / ``django_cbv_base`` /
+    ``hono_method`` / ``hono_path``), sorted by ``(file_path, start_line)``.
+    """
+    pid = st.project_id
+
+    rows = st.conn.execute(
+        """SELECT s.qualified_name, s.kind, s.decorators, s.start_line, s.end_line,
+                  f.path AS file_path
+           FROM symbol s JOIN file f ON f.id=s.file_id
+           WHERE f.project_id=? AND s.decorators IS NOT NULL
+           ORDER BY f.path, s.start_line""",
+        (pid,),
+    ).fetchall()
+
+    if framework is not None:
+        patterns = _FRAMEWORK_DECORATOR_PATTERNS.get(framework, ())
+
+        def keep(decs: list[str]) -> list[str]:
+            return [d for d in decs if _decorator_matches_any(d, patterns)]
+    else:
+        # v0.14: mirror find_dead_code's alias detection so plugin-
+        # registered tools decorated via an alias factory
+        # (`mutation_tool = mcp.tool if X else _noop`, used by the
+        # RF plugin's `@mutation_tool`/`@agentic_tool`) are surfaced
+        # too — without this they read as plain decorators whose last
+        # segment isn't in _ENTRY_POINT_DECORATOR_LASTSEG and get missed.
+        workspace_path = st.settings.workspace
+        alias_lastsegs: set[str] = set()
+        for path_row in st.conn.execute(
+            "SELECT f.path FROM file f WHERE f.project_id=? AND f.path LIKE '%.py'",
+            (pid,),
+        ):
+            try:
+                abs_path = str(workspace_path / path_row["path"])
+                alias_lastsegs |= _entry_point_decorator_aliases(abs_path)
+            except Exception:
+                continue
+
+        def keep(decs: list[str]) -> list[str]:
+            return [
+                d
+                for d in decs
+                if _decorator_lastseg(d) in _ENTRY_POINT_DECORATOR_LASTSEG
+                or _decorator_lastseg(d) in alias_lastsegs
+            ]
+
+    endpoints: list[dict[str, Any]] = []
+    seen_qnames: set[Any] = set()
+    for r in rows:
+        try:
+            decs = json.loads(r["decorators"] or "[]")
+        except (json.JSONDecodeError, TypeError):
+            continue
+        matching = keep(decs)
+        if not matching:
+            continue
+        endpoints.append({
+            "qualified_name": r["qualified_name"],
+            "kind": r["kind"],
+            "file_path": r["file_path"],
+            "start_line": r["start_line"],
+            "end_line": r["end_line"],
+            "decorators": matching,
+        })
+        seen_qnames.add(r["qualified_name"])
+
+    # v0.11 P1: TS framework filesystem-routing detection (bug #19).
+    # Fresh islands, Next.js pages/app, SvelteKit routes, and Remix routes
+    # are reachable via path conventions — no decorators needed.
+    # Run when framework is one of the TS framework names or None.
+    _TS_FRAMEWORKS = {"nextjs", "fresh", "sveltekit", "remix"}
+    if framework in _TS_FRAMEWORKS or framework is None:
+        ts_rows = st.conn.execute(
+            """SELECT s.qualified_name, s.kind, s.start_line, s.end_line,
+                      f.path AS file_path
+               FROM symbol s JOIN file f ON f.id=s.file_id
+               WHERE f.project_id=? AND s.kind IN ('function', 'class')
+               ORDER BY f.path, s.start_line""",
+            (pid,),
+        ).fetchall()
+        for r in ts_rows:
+            if r["qualified_name"] in seen_qnames:
+                continue
+            fp = r["file_path"]
+            fw_kind = _ts_framework_entry_point_kind(fp)
+            if fw_kind is None:
+                continue
+            # When a specific TS framework is requested, filter to it
+            if framework is not None and framework != fw_kind and not (
+                framework == "nextjs" and fw_kind in ("nextjs_pages", "nextjs_app")
+            ):
+                continue
+            endpoints.append({
+                "qualified_name": r["qualified_name"],
+                "kind": r["kind"],
+                "file_path": fp,
+                "start_line": r["start_line"],
+                "end_line": r["end_line"],
+                "decorators": [],
+                "ts_framework": fw_kind,
+            })
+            seen_qnames.add(r["qualified_name"])
+
+    # v0.9 P5: Django class-based view detection. Classes that
+    # inherit from a Django CBV / mixin base are entry points without
+    # decorators — the framework dispatches them via URL routing or
+    # MIDDLEWARE setting. Run only when the requested framework is
+    # 'django' or None (no filter).
+    if framework in ("django", None):
+        cbv_rows = st.conn.execute(
+            """SELECT s.qualified_name, s.kind, s.signature, s.start_line,
+                      s.end_line, f.path AS file_path
+               FROM symbol s JOIN file f ON f.id=s.file_id
+               WHERE f.project_id=? AND s.kind='class' AND s.signature IS NOT NULL
+               ORDER BY f.path, s.start_line""",
+            (pid,),
+        ).fetchall()
+        for r in cbv_rows:
+            if r["qualified_name"] in seen_qnames:
+                continue
+            cbv_base = _django_cbv_base_from_signature(r["signature"])
+            if cbv_base is None:
+                continue
+            endpoints.append({
+                "qualified_name": r["qualified_name"],
+                "kind": r["kind"],
+                "file_path": r["file_path"],
+                "start_line": r["start_line"],
+                "end_line": r["end_line"],
+                "decorators": [],
+                "django_cbv_base": cbv_base,
+            })
+            seen_qnames.add(r["qualified_name"])
+
+    # v0.13 P3: Hono call-style routes. Opt-in (reads files on demand).
+    if framework == "hono":
+        workspace_path = st.settings.workspace
+        for fr in st.conn.execute(
+            """SELECT id, path, language FROM file
+               WHERE project_id=? AND language IN
+                 ('typescript', 'javascript', 'tsx')
+               ORDER BY path""",
+            (pid,),
+        ).fetchall():
+            try:
+                src = (workspace_path / fr["path"]).read_text(
+                    encoding="utf-8", errors="replace"
+                )
+            except OSError:
+                continue
+            if "hono" not in src.lower():
+                continue
+            for rt in scan_hono_routes(src, fr["language"]):
+                qname = None
+                kind = "route"
+                start_line = end_line = rt["line"]
+                if rt["handler_name"]:
+                    sym = st.conn.execute(
+                        """SELECT s.qualified_name, s.kind, s.start_line,
+                                  s.end_line
+                           FROM symbol s JOIN file f ON f.id=s.file_id
+                           WHERE f.project_id=? AND s.name=?
+                           ORDER BY (s.file_id=?) DESC LIMIT 1""",
+                        (pid, rt["handler_name"], fr["id"]),
+                    ).fetchone()
+                    if sym is not None:
+                        qname = sym["qualified_name"]
+                        kind = sym["kind"]
+                        start_line = sym["start_line"]
+                        end_line = sym["end_line"]
+                entry_qname = qname or f"{fr['path']}:{rt['line']}"
+                route_key = (rt["method"], rt["path"], entry_qname)
+                if route_key in seen_qnames:
+                    continue
+                endpoints.append({
+                    "qualified_name": entry_qname,
+                    "kind": kind,
+                    "file_path": fr["path"],
+                    "start_line": start_line,
+                    "end_line": end_line,
+                    "decorators": [],
+                    "hono_method": rt["method"],
+                    "hono_path": rt["path"],
+                })
+                seen_qnames.add(route_key)
+
+    endpoints.sort(key=lambda e: (e["file_path"], e["start_line"]))
+    return endpoints
+
+
+def compute_coverage(st: AppState) -> dict[str, Any]:
+    """Module-level shared computation: the full unpaginated coverage audit.
+
+    Both ``audit_coverage`` (the paginated tool wrapper) and
+    ``export_explorer`` consume this. Returns the complete lists plus an
+    exact ``counts`` dict — pagination is applied by the tool wrapper, not
+    here.
+    """
+    pid = st.project_id
+
+    # v0.8 P2 fix #8: filter package-marker basenames out of the
+    # "modules without RF" candidate set. They are import infrastructure,
+    # never the right home for a `@rf:` annotation.
+    _PACKAGE_MARKER_BASENAMES = frozenset({
+        "__init__.py",
+        "package-info.java",
+        "mod.rs",
+        "lib.rs",
+        "index.ts",  # only when content-empty / re-export only — kept here for the common case
+        "index.js",
+    })
+
+    def _is_package_marker(path: str) -> bool:
+        return path.rsplit("/", 1)[-1] in _PACKAGE_MARKER_BASENAMES
+
+    from pathlib import Path as _Path
+
+    from livespec_mcp.domain.languages import (
+        ANNOTATION_SUPPORTED_LANGUAGES,
+        detect_language,
+    )
+
+    def _annotation_supported(path: str) -> bool:
+        lang = detect_language(_Path(path))
+        return lang in ANNOTATION_SUPPORTED_LANGUAGES
+
+    all_no_rf = [
+        r["path"]
+        for r in st.conn.execute(
+            """SELECT f.path FROM file f
+               WHERE f.project_id=?
+                 AND NOT EXISTS (
+                   SELECT 1 FROM symbol s
+                   JOIN rf_symbol rs ON rs.symbol_id=s.id
+                   WHERE s.file_id=f.id
+                 )
+               ORDER BY f.path""",
+            (pid,),
+        )
+        if not _is_package_marker(r["path"])
+    ]
+    # Split off files whose language has no annotation extractor —
+    # these are not "truly orphan", just outside what we can scan.
+    modules_unsupported_language = [p for p in all_no_rf if not _annotation_supported(p)]
+    modules_no_rf = [p for p in all_no_rf if _annotation_supported(p)]
+
+    # Split direct-orphan into implicitly-covered vs truly-orphan via the
+    # call graph: a file is implicitly covered if any of its symbols has
+    # an rf-linked symbol in its ancestor cone (someone calls in here from
+    # an annotated entry point).
+    modules_implicit: list[str] = []
+    modules_truly_orphan: list[str] = []
+    if modules_no_rf:
+        view = load_graph(st.conn, pid)
+        rf_linked_sids: set[int] = {
+            int(r["symbol_id"])
+            for r in st.conn.execute(
+                """SELECT DISTINCT rs.symbol_id FROM rf_symbol rs
+                   JOIN symbol s ON s.id=rs.symbol_id
+                   JOIN file f ON f.id=s.file_id
+                   WHERE f.project_id=?""",
+                (pid,),
+            )
+        }
+        for path in modules_no_rf:
+            file_sids = {
+                int(r["id"])
+                for r in st.conn.execute(
+                    """SELECT s.id FROM symbol s
+                       JOIN file f ON f.id=s.file_id
+                       WHERE f.project_id=? AND f.path=?""",
+                    (pid, path),
+                )
+            }
+            covered = False
+            if rf_linked_sids and file_sids:
+                for sid in file_sids:
+                    if sid not in view.g:
+                        continue
+                    if ancestors_within(view.g, sid, 10) & rf_linked_sids:
+                        covered = True
+                        break
+            (modules_implicit if covered else modules_truly_orphan).append(path)
+
+    rfs_no_impl = [
+        dict(r)
+        for r in st.conn.execute(
+            """SELECT r.rf_id, r.title, r.status, r.priority FROM rf r
+               WHERE r.project_id=?
+                 AND NOT EXISTS (
+                   SELECT 1 FROM rf_symbol rs WHERE rs.rf_id=r.id
+                 )
+               ORDER BY r.rf_id""",
+            (pid,),
+        )
+    ]
+
+    rfs_low_conf = [
+        {
+            "rf_id": r["rf_id"],
+            "title": r["title"],
+            "avg_confidence": round(float(r["avg_confidence"]), 3),
+            "link_count": int(r["link_count"]),
+        }
+        for r in st.conn.execute(
+            """SELECT r.rf_id, r.title,
+                      AVG(rs.confidence) AS avg_confidence,
+                      COUNT(rs.id) AS link_count
+               FROM rf r JOIN rf_symbol rs ON rs.rf_id=r.id
+               WHERE r.project_id=?
+               GROUP BY r.id
+               HAVING avg_confidence < 0.7
+               ORDER BY avg_confidence ASC""",
+            (pid,),
+        )
+    ]
+
+    # v0.8 P2 fix #9: RFs with at least one rf_symbol row whose
+    # relation is 'tests'. Schema already supports this; surface it.
+    rf_test_coverage = [
+        {
+            "rf_id": r["rf_id"],
+            "title": r["title"],
+            "test_count": int(r["test_count"]),
+        }
+        for r in st.conn.execute(
+            """SELECT r.rf_id, r.title, COUNT(rs.id) AS test_count
+               FROM rf r JOIN rf_symbol rs ON rs.rf_id=r.id
+               WHERE r.project_id=? AND rs.relation='tests'
+               GROUP BY r.id
+               ORDER BY test_count DESC, r.rf_id""",
+            (pid,),
+        )
+    ]
+
+    counts = {
+        "modules_without_rf": len(modules_no_rf),
+        "modules_implicitly_covered": len(modules_implicit),
+        "modules_truly_orphan": len(modules_truly_orphan),
+        "modules_unsupported_language": len(modules_unsupported_language),
+        "rfs_without_implementation": len(rfs_no_impl),
+        "rfs_low_confidence": len(rfs_low_conf),
+        "rfs_with_test_coverage": len(rf_test_coverage),
+    }
+    return {
+        "counts": counts,
+        "modules_without_rf": modules_no_rf,
+        "modules_implicitly_covered": modules_implicit,
+        "modules_truly_orphan": modules_truly_orphan,
+        "modules_unsupported_language": modules_unsupported_language,
+        "rfs_without_implementation": rfs_no_impl,
+        "rfs_low_confidence": rfs_low_conf,
+        "rf_test_coverage": rf_test_coverage,
+    }
+
+
 def compute_project_overview(
     st: AppState,
     include_infrastructure: bool = False,
@@ -1965,167 +2331,8 @@ def register(mcp: FastMCP) -> None:
         part of the ``framework=None`` sweep — it reads files on demand).
         """
         st = get_state(workspace)
-        pid = st.project_id
 
-        rows = st.conn.execute(
-            """SELECT s.qualified_name, s.kind, s.decorators, s.start_line, s.end_line,
-                      f.path AS file_path
-               FROM symbol s JOIN file f ON f.id=s.file_id
-               WHERE f.project_id=? AND s.decorators IS NOT NULL
-               ORDER BY f.path, s.start_line""",
-            (pid,),
-        ).fetchall()
-
-        if framework is not None:
-            patterns = _FRAMEWORK_DECORATOR_PATTERNS.get(framework, ())
-
-            def keep(decs: list[str]) -> list[str]:
-                return [d for d in decs if _decorator_matches_any(d, patterns)]
-        else:
-            def keep(decs: list[str]) -> list[str]:
-                return [d for d in decs if _decorator_lastseg(d) in _ENTRY_POINT_DECORATOR_LASTSEG]
-
-        endpoints: list[dict[str, Any]] = []
-        seen_qnames: set[str] = set()
-        for r in rows:
-            try:
-                decs = json.loads(r["decorators"] or "[]")
-            except (json.JSONDecodeError, TypeError):
-                continue
-            matching = keep(decs)
-            if not matching:
-                continue
-            endpoints.append({
-                "qualified_name": r["qualified_name"],
-                "kind": r["kind"],
-                "file_path": r["file_path"],
-                "start_line": r["start_line"],
-                "end_line": r["end_line"],
-                "decorators": matching,
-            })
-            seen_qnames.add(r["qualified_name"])
-
-        # v0.11 P1: TS framework filesystem-routing detection (bug #19).
-        # Fresh islands, Next.js pages/app, SvelteKit routes, and Remix routes
-        # are reachable via path conventions — no decorators needed.
-        # Run when framework is one of the TS framework names or None.
-        _TS_FRAMEWORKS = {"nextjs", "fresh", "sveltekit", "remix"}
-        if framework in _TS_FRAMEWORKS or framework is None:
-            ts_rows = st.conn.execute(
-                """SELECT s.qualified_name, s.kind, s.start_line, s.end_line,
-                          f.path AS file_path
-                   FROM symbol s JOIN file f ON f.id=s.file_id
-                   WHERE f.project_id=? AND s.kind IN ('function', 'class')
-                   ORDER BY f.path, s.start_line""",
-                (pid,),
-            ).fetchall()
-            for r in ts_rows:
-                if r["qualified_name"] in seen_qnames:
-                    continue
-                fp = r["file_path"]
-                fw_kind = _ts_framework_entry_point_kind(fp)
-                if fw_kind is None:
-                    continue
-                # When a specific TS framework is requested, filter to it
-                if framework is not None and framework != fw_kind and not (
-                    framework == "nextjs" and fw_kind in ("nextjs_pages", "nextjs_app")
-                ):
-                    continue
-                endpoints.append({
-                    "qualified_name": r["qualified_name"],
-                    "kind": r["kind"],
-                    "file_path": fp,
-                    "start_line": r["start_line"],
-                    "end_line": r["end_line"],
-                    "decorators": [],
-                    "ts_framework": fw_kind,
-                })
-                seen_qnames.add(r["qualified_name"])
-
-        # v0.9 P5: Django class-based view detection. Classes that
-        # inherit from a Django CBV / mixin base are entry points without
-        # decorators — the framework dispatches them via URL routing or
-        # MIDDLEWARE setting. Run only when the requested framework is
-        # 'django' or None (no filter).
-        if framework in ("django", None):
-            cbv_rows = st.conn.execute(
-                """SELECT s.qualified_name, s.kind, s.signature, s.start_line,
-                          s.end_line, f.path AS file_path
-                   FROM symbol s JOIN file f ON f.id=s.file_id
-                   WHERE f.project_id=? AND s.kind='class' AND s.signature IS NOT NULL
-                   ORDER BY f.path, s.start_line""",
-                (pid,),
-            ).fetchall()
-            for r in cbv_rows:
-                if r["qualified_name"] in seen_qnames:
-                    continue
-                cbv_base = _django_cbv_base_from_signature(r["signature"])
-                if cbv_base is None:
-                    continue
-                endpoints.append({
-                    "qualified_name": r["qualified_name"],
-                    "kind": r["kind"],
-                    "file_path": r["file_path"],
-                    "start_line": r["start_line"],
-                    "end_line": r["end_line"],
-                    "decorators": [],
-                    "django_cbv_base": cbv_base,
-                })
-                seen_qnames.add(r["qualified_name"])
-
-        # v0.13 P3: Hono call-style routes. Opt-in (reads files on demand).
-        if framework == "hono":
-            workspace_path = st.settings.workspace
-            for fr in st.conn.execute(
-                """SELECT id, path, language FROM file
-                   WHERE project_id=? AND language IN
-                     ('typescript', 'javascript', 'tsx')
-                   ORDER BY path""",
-                (pid,),
-            ).fetchall():
-                try:
-                    src = (workspace_path / fr["path"]).read_text(
-                        encoding="utf-8", errors="replace"
-                    )
-                except OSError:
-                    continue
-                if "hono" not in src.lower():
-                    continue
-                for rt in scan_hono_routes(src, fr["language"]):
-                    qname = None
-                    kind = "route"
-                    start_line = end_line = rt["line"]
-                    if rt["handler_name"]:
-                        sym = st.conn.execute(
-                            """SELECT s.qualified_name, s.kind, s.start_line,
-                                      s.end_line
-                               FROM symbol s JOIN file f ON f.id=s.file_id
-                               WHERE f.project_id=? AND s.name=?
-                               ORDER BY (s.file_id=?) DESC LIMIT 1""",
-                            (pid, rt["handler_name"], fr["id"]),
-                        ).fetchone()
-                        if sym is not None:
-                            qname = sym["qualified_name"]
-                            kind = sym["kind"]
-                            start_line = sym["start_line"]
-                            end_line = sym["end_line"]
-                    entry_qname = qname or f"{fr['path']}:{rt['line']}"
-                    route_key = (rt["method"], rt["path"], entry_qname)
-                    if route_key in seen_qnames:
-                        continue
-                    endpoints.append({
-                        "qualified_name": entry_qname,
-                        "kind": kind,
-                        "file_path": fr["path"],
-                        "start_line": start_line,
-                        "end_line": end_line,
-                        "decorators": [],
-                        "hono_method": rt["method"],
-                        "hono_path": rt["path"],
-                    })
-                    seen_qnames.add(route_key)
-
-        endpoints.sort(key=lambda e: (e["file_path"], e["start_line"]))
+        endpoints = compute_endpoints(st, framework)
         total = len(endpoints)
         if summary_only:
             return {"framework": framework, "count": total}
@@ -2176,153 +2383,17 @@ def register(mcp: FastMCP) -> None:
         marker would never be the right place anyway.
         """
         st = get_state(workspace)
-        pid = st.project_id
 
-        # v0.8 P2 fix #8: filter package-marker basenames out of the
-        # "modules without RF" candidate set. They are import infrastructure,
-        # never the right home for a `@rf:` annotation.
-        _PACKAGE_MARKER_BASENAMES = frozenset({
-            "__init__.py",
-            "package-info.java",
-            "mod.rs",
-            "lib.rs",
-            "index.ts",  # only when content-empty / re-export only — kept here for the common case
-            "index.js",
-        })
-
-        def _is_package_marker(path: str) -> bool:
-            return path.rsplit("/", 1)[-1] in _PACKAGE_MARKER_BASENAMES
-
-        from pathlib import Path as _Path
-
-        from livespec_mcp.domain.languages import (
-            ANNOTATION_SUPPORTED_LANGUAGES,
-            detect_language,
-        )
-
-        def _annotation_supported(path: str) -> bool:
-            lang = detect_language(_Path(path))
-            return lang in ANNOTATION_SUPPORTED_LANGUAGES
-
-        all_no_rf = [
-            r["path"]
-            for r in st.conn.execute(
-                """SELECT f.path FROM file f
-                   WHERE f.project_id=?
-                     AND NOT EXISTS (
-                       SELECT 1 FROM symbol s
-                       JOIN rf_symbol rs ON rs.symbol_id=s.id
-                       WHERE s.file_id=f.id
-                     )
-                   ORDER BY f.path""",
-                (pid,),
-            )
-            if not _is_package_marker(r["path"])
-        ]
-        # Split off files whose language has no annotation extractor —
-        # these are not "truly orphan", just outside what we can scan.
-        modules_unsupported_language = [p for p in all_no_rf if not _annotation_supported(p)]
-        modules_no_rf = [p for p in all_no_rf if _annotation_supported(p)]
-
-        # Split direct-orphan into implicitly-covered vs truly-orphan via the
-        # call graph: a file is implicitly covered if any of its symbols has
-        # an rf-linked symbol in its ancestor cone (someone calls in here from
-        # an annotated entry point).
-        modules_implicit: list[str] = []
-        modules_truly_orphan: list[str] = []
-        if modules_no_rf:
-            view = load_graph(st.conn, pid)
-            rf_linked_sids: set[int] = {
-                int(r["symbol_id"])
-                for r in st.conn.execute(
-                    """SELECT DISTINCT rs.symbol_id FROM rf_symbol rs
-                       JOIN symbol s ON s.id=rs.symbol_id
-                       JOIN file f ON f.id=s.file_id
-                       WHERE f.project_id=?""",
-                    (pid,),
-                )
-            }
-            for path in modules_no_rf:
-                file_sids = {
-                    int(r["id"])
-                    for r in st.conn.execute(
-                        """SELECT s.id FROM symbol s
-                           JOIN file f ON f.id=s.file_id
-                           WHERE f.project_id=? AND f.path=?""",
-                        (pid, path),
-                    )
-                }
-                covered = False
-                if rf_linked_sids and file_sids:
-                    for sid in file_sids:
-                        if sid not in view.g:
-                            continue
-                        if ancestors_within(view.g, sid, 10) & rf_linked_sids:
-                            covered = True
-                            break
-                (modules_implicit if covered else modules_truly_orphan).append(path)
-
-        rfs_no_impl = [
-            dict(r)
-            for r in st.conn.execute(
-                """SELECT r.rf_id, r.title, r.status, r.priority FROM rf r
-                   WHERE r.project_id=?
-                     AND NOT EXISTS (
-                       SELECT 1 FROM rf_symbol rs WHERE rs.rf_id=r.id
-                     )
-                   ORDER BY r.rf_id""",
-                (pid,),
-            )
-        ]
-
-        rfs_low_conf = [
-            {
-                "rf_id": r["rf_id"],
-                "title": r["title"],
-                "avg_confidence": round(float(r["avg_confidence"]), 3),
-                "link_count": int(r["link_count"]),
-            }
-            for r in st.conn.execute(
-                """SELECT r.rf_id, r.title,
-                          AVG(rs.confidence) AS avg_confidence,
-                          COUNT(rs.id) AS link_count
-                   FROM rf r JOIN rf_symbol rs ON rs.rf_id=r.id
-                   WHERE r.project_id=?
-                   GROUP BY r.id
-                   HAVING avg_confidence < 0.7
-                   ORDER BY avg_confidence ASC""",
-                (pid,),
-            )
-        ]
-
-        # v0.8 P2 fix #9: RFs with at least one rf_symbol row whose
-        # relation is 'tests'. Schema already supports this; surface it.
-        rf_test_coverage = [
-            {
-                "rf_id": r["rf_id"],
-                "title": r["title"],
-                "test_count": int(r["test_count"]),
-            }
-            for r in st.conn.execute(
-                """SELECT r.rf_id, r.title, COUNT(rs.id) AS test_count
-                   FROM rf r JOIN rf_symbol rs ON rs.rf_id=r.id
-                   WHERE r.project_id=? AND rs.relation='tests'
-                   GROUP BY r.id
-                   ORDER BY test_count DESC, r.rf_id""",
-                (pid,),
-            )
-        ]
-
-        # v0.7 B3: pagination
-        counts = {
-            "modules_without_rf": len(modules_no_rf),
-            "modules_implicitly_covered": len(modules_implicit),
-            "modules_truly_orphan": len(modules_truly_orphan),
-            "modules_unsupported_language": len(modules_unsupported_language),
-            "rfs_without_implementation": len(rfs_no_impl),
-            "rfs_low_confidence": len(rfs_low_conf),
-            "rfs_with_test_coverage": len(rf_test_coverage),
-        }
+        # v0.7 B3: pagination over the shared compute helper.
+        cov = compute_coverage(st)
+        counts = cov["counts"]
+        modules_no_rf = cov["modules_without_rf"]
+        modules_implicit = cov["modules_implicitly_covered"]
+        modules_truly_orphan = cov["modules_truly_orphan"]
+        modules_unsupported_language = cov["modules_unsupported_language"]
+        rfs_no_impl = cov["rfs_without_implementation"]
+        rfs_low_conf = cov["rfs_low_confidence"]
+        rf_test_coverage = cov["rf_test_coverage"]
         if summary_only:
             return {"counts": counts}
 
@@ -2375,10 +2446,26 @@ def register(mcp: FastMCP) -> None:
 
         v0.7 (B3): paginated. `limit`/`cursor`/`summary_only` work as in
         find_dead_code.
+
+        v0.14: the payload carries a ``caveat`` field. The forward call
+        graph is static; tests that drive production code through an
+        indirection the analyzer can't see — most commonly an in-process
+        MCP/RPC harness like FastMCP ``Client(mcp)`` that dispatches tool
+        handlers by string name — have a descendant cone that never
+        reaches production symbols and are over-reported here. Treat the
+        count as an upper bound, not a verdict.
         """
         st = get_state(workspace)
         pid = st.project_id
         view = load_graph(st.conn, pid)
+        _ORPHAN_CAVEAT = (
+            "Count may include false positives: tests that exercise "
+            "production code through an indirection the static call graph "
+            "can't follow (e.g. an in-process MCP/RPC harness like FastMCP "
+            "Client(mcp) that dispatches handlers by string name) reach zero "
+            "production symbols in the cone and are reported as orphan. "
+            "Treat this as an upper bound."
+        )
 
         def is_test_path(p: str) -> bool:
             base = p.rsplit("/", 1)[-1]
@@ -2423,13 +2510,14 @@ def register(mcp: FastMCP) -> None:
                 })
         total = len(orphans)
         if summary_only:
-            return {"count": total}
+            return {"count": total, "caveat": _ORPHAN_CAVEAT}
         page = orphans[cursor : cursor + limit]
         next_cursor = cursor + limit if cursor + limit < total else None
         return {
             "orphan_tests": page,
             "count": total,
             "next_cursor": next_cursor,
+            "caveat": _ORPHAN_CAVEAT,
         }
 
     @mcp.tool(annotations={"readOnlyHint": True, "idempotentHint": True})
