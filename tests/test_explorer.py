@@ -17,7 +17,7 @@ from livespec_mcp.server import mcp
 
 _TOP_KEYS = {
     "meta", "dashboard", "requirements", "rf_topology", "endpoints",
-    "fixtures", "coverage",
+    "fixtures", "coverage", "trend", "changes",
 }
 
 
@@ -83,6 +83,23 @@ async def test_export_explorer_writes_both_files(workspace: Path):
     # Mermaid label sanitizer for the Dependencies tab is present.
     assert "EP_KIND_LABEL" in html
     assert "mermaidLabel" in html
+    # v0.16 B: the per-RF uncovered-symbols drill-down (the actionable gap).
+    assert "Uncovered symbols" in html
+    assert "uncovered_symbols_count" in html
+    # v0.16 A: a Changes tab driven by the git diff RF impact section.
+    assert 'data-tab="changes"' in html
+    assert "buildChanges" in html
+    assert "requirements_touched" in html
+    # v0.16 D: a coverage trend view (sparkline + per-snapshot bars).
+    assert "buildTrend" in html
+    assert "Coverage trend" in html
+    assert "History starts accumulating" in html
+    # FIXED Mermaid (preserved): classDef colours are resolved to concrete
+    # values via the C(...) palette resolver and emitted as a template literal
+    # (`fill:${fill}`), NEVER a literal `fill:var(--x)` (Mermaid v10's classDef
+    # parser rejects var()). The build emits the template form, not the var().
+    assert "classDef ${cls} fill:${fill}" in html
+    assert "const C = (name, fallback)" in html
 
 
 @pytest.mark.asyncio
@@ -169,6 +186,11 @@ async def test_export_explorer_data_schema(workspace: Path):
             assert r["dev_state"] == "verified"
         # link confidence and test coverage are distinct fields.
         assert "coverage" in r and "test_coverage_ratio" in r
+        # v0.16 B: every RF carries the uncovered-symbol drill-down (a list +
+        # an exact count), sourced from compute_rf_test_coverage — no recompute.
+        assert isinstance(r["uncovered_symbols"], list)
+        assert isinstance(r["uncovered_symbols_count"], int)
+        assert r["uncovered_symbols_count"] >= len(r["uncovered_symbols"])
     # RF-001 has a high-confidence link but no test coverage -> implemented.
     assert rf1["dev_state"] == "implemented"
     assert rf1["test_coverage_ratio"] == 0.0
@@ -219,6 +241,32 @@ async def test_export_explorer_data_schema(workspace: Path):
         "orphan_modules", "orphan_endpoints", "totals",
     }
 
+    # v0.16 D: top-level coverage trend — a chronological list of rollup
+    # snapshots. audit_coverage (run inside compute_coverage) records one each
+    # time, so after an export there is at least one snapshot. Each row carries
+    # ts / avg_test_coverage / verified_count.
+    assert isinstance(data["trend"], list)
+    for snap in data["trend"]:
+        assert set(snap.keys()) == {"ts", "avg_test_coverage", "verified_count"}
+        assert isinstance(snap["verified_count"], int)
+        assert snap["avg_test_coverage"] is None or isinstance(
+            snap["avg_test_coverage"], (int, float)
+        )
+
+    # v0.16 A: top-level changes — RF-centric git diff impact. The workspace
+    # fixture is not a git repo, so the range is omitted (base/head None) and
+    # the lists are empty — but the keyed shape is always present.
+    assert isinstance(data["changes"], dict)
+    assert set(data["changes"].keys()) == {
+        "base", "head", "files_changed", "requirements_touched",
+    }
+    assert isinstance(data["changes"]["files_changed"], list)
+    assert isinstance(data["changes"]["requirements_touched"], list)
+    for rt in data["changes"]["requirements_touched"]:
+        assert set(rt.keys()) == {
+            "rf_id", "title", "files", "test_coverage_ratio",
+        }
+
 
 @pytest.mark.asyncio
 async def test_export_explorer_zero_rf_case(workspace: Path):
@@ -255,6 +303,15 @@ async def test_export_explorer_zero_rf_case(workspace: Path):
     assert data["meta"]["counts"]["endpoints"] >= 2
     assert isinstance(data["coverage"]["totals"], dict)
     assert data["coverage"]["totals"]
+
+    # trend + changes stay truthful in the 0-RF case: trend is a list (no RFs
+    # means each snapshot's avg is None), changes is the keyed-empty shape.
+    assert isinstance(data["trend"], list)
+    assert isinstance(data["changes"], dict)
+    assert data["changes"]["requirements_touched"] == []
+    assert set(data["changes"].keys()) == {
+        "base", "head", "files_changed", "requirements_touched",
+    }
 
 
 def _write_fixture_module(workspace: Path) -> None:
@@ -336,10 +393,26 @@ async def test_export_explorer_mermaid_labels_sanitized(workspace: Path):
     assert "(9 langs)" in label
 
 
+def _strip_volatile(d: dict) -> dict:
+    """Drop the fields that are non-deterministic BY DESIGN before comparing.
+
+    - ``meta.generated_at`` — the injectable timestamp.
+    - ``trend`` — every audit records a wall-clock snapshot (and the series
+      grows between two export calls), so it is inherently per-run.
+    - ``changes`` — RF-centric git diff impact for the resolved range; depends
+      on the workspace's git state, so it is range-dependent, not content-pure.
+    """
+    d = dict(d)
+    d["meta"] = {**d["meta"], "generated_at": None}
+    d.pop("trend", None)
+    d.pop("changes", None)
+    return d
+
+
 @pytest.mark.asyncio
 async def test_export_explorer_idempotent(workspace: Path):
     """Two runs on an unchanged project yield identical data.json modulo
-    meta.generated_at."""
+    meta.generated_at, the recorded coverage trend, and the diff range."""
     _write_flask_app(workspace)
     data_path = workspace / ".mcp-docs" / "explorer" / "data.json"
     async with Client(mcp) as c:
@@ -355,19 +428,43 @@ async def test_export_explorer_idempotent(workspace: Path):
         await c.call_tool("export_explorer", {"generated_at": "2099-12-31T23:59:59Z"})
         second = data_path.read_text(encoding="utf-8")
 
-    # Strip the only non-deterministic field and compare the rest verbatim.
+    # Strip the non-deterministic fields and compare the rest verbatim.
     fd = json.loads(first)
     sd = json.loads(second)
     assert fd["meta"]["generated_at"] == "2026-01-01T00:00:00Z"
     assert sd["meta"]["generated_at"] == "2099-12-31T23:59:59Z"
-    fd["meta"]["generated_at"] = None
-    sd["meta"]["generated_at"] = None
-    assert fd == sd
+    assert _strip_volatile(fd) == _strip_volatile(sd)
 
-    # And with the default (None) timestamp, two runs are byte-identical.
+    # With the default (None) timestamp, two runs match modulo the volatile
+    # fields (generated_at, the accumulating trend, the range-bound changes).
     async with Client(mcp) as c:
         await c.call_tool("export_explorer", {})
         run_a = data_path.read_text(encoding="utf-8")
         await c.call_tool("export_explorer", {})
         run_b = data_path.read_text(encoding="utf-8")
-    assert run_a == run_b
+    assert _strip_volatile(json.loads(run_a)) == _strip_volatile(json.loads(run_b))
+
+
+@pytest.mark.asyncio
+async def test_write_explorer_bundle_no_args_backward_compat(workspace: Path):
+    """write_explorer_bundle(st) — the no-arg call indexing.py's freshness
+    hook makes — must still work after the base/head params were added."""
+    from livespec_mcp.state import get_state
+    from livespec_mcp.tools.explorer import write_explorer_bundle
+
+    _write_flask_app(workspace)
+    async with Client(mcp) as c:
+        await c.call_tool("index_project", {})
+
+    st = get_state(str(workspace))
+    # No base/head passed — defaults must keep the call working unchanged.
+    result = write_explorer_bundle(st)
+    assert set(result["data"].keys()) == _TOP_KEYS
+    assert isinstance(result["data"]["trend"], list)
+    assert isinstance(result["data"]["changes"], dict)
+    assert {"base", "head", "files_changed", "requirements_touched"} == set(
+        result["data"]["changes"].keys()
+    )
+    # Both files land on disk.
+    for p in result["files_written"]:
+        assert Path(p).exists()

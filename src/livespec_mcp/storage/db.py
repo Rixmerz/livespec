@@ -140,6 +140,31 @@ def _m008_ts_java_decorators(conn: sqlite3.Connection) -> None:
     _flag_reextract(conn)
 
 
+def _m009_rf_coverage_snapshot(conn: sqlite3.Connection) -> None:
+    """v0.16 P D: RF test-coverage trend table.
+
+    Each ``audit_coverage`` run appends one row per RF (its
+    ``test_coverage_ratio``) plus one rollup row (``rf_id='__rollup__'``)
+    carrying the snapshot avg in ``ratio`` and the verified-RF count in
+    ``verified_count``. Read back chronologically via
+    ``storage/trends.py:read_trend``. New empty table — no re-extract needed.
+    """
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS rf_coverage_snapshot (
+            id INTEGER PRIMARY KEY,
+            project_id INTEGER NOT NULL REFERENCES project(id) ON DELETE CASCADE,
+            ts TEXT NOT NULL,
+            rf_id TEXT NOT NULL,
+            ratio REAL,
+            verified_count INTEGER
+        )"""
+    )
+    conn.execute(
+        """CREATE INDEX IF NOT EXISTS idx_rf_cov_snap
+           ON rf_coverage_snapshot(project_id, rf_id, ts)"""
+    )
+
+
 def _m006_legacy_v02_recover(conn: sqlite3.Connection) -> None:
     """P0.2: detect a v0.2-era DB whose symbol_ref is empty even though edges
     exist. That happens when the project was indexed before the persistent
@@ -162,6 +187,7 @@ MIGRATIONS: list[Migration] = [
     (6, "legacy_v02_recover", _m006_legacy_v02_recover),
     (7, "visibility", _m007_visibility),
     (8, "ts_java_decorators_reextract", _m008_ts_java_decorators),
+    (9, "rf_coverage_snapshot", _m009_rf_coverage_snapshot),
 ]
 
 

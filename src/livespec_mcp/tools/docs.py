@@ -315,6 +315,8 @@ def register(mcp: FastMCP) -> None:
     @mcp.tool(annotations={"readOnlyHint": False, "idempotentHint": True})
     def export_explorer(
         generated_at: str | None = None,
+        base: str | None = None,
+        head: str | None = None,
         workspace: Workspace | None = None,
     ) -> dict[str, Any]:
         """Emit a static, self-contained "RF Explorer" bundle.
@@ -325,24 +327,35 @@ def register(mcp: FastMCP) -> None:
 
         - ``data.json`` — machine-readable bundle (requirements with their
           implementing symbols+signatures, owned endpoints, RF-RF
-          dependencies & coverage; full endpoint surface with the RFs each
-          belongs to; RF topology; coverage orphans).
+          dependencies, link confidence & real test coverage incl. the
+          per-RF uncovered-symbol drill-down; full endpoint surface with the
+          RFs each belongs to; RF topology; coverage orphans; a coverage
+          trend over recorded audits; and the RF-centric impact of a git
+          range).
         - ``index.html`` — a single self-contained viewer (data inlined, so
           it opens over ``file://`` with no server, no build step). Renders
-          an RF spine, per-RF detail, a Mermaid topology diagram, an
-          endpoints tab grouped by framework, and a gaps tab.
+          an RF spine, per-RF detail (with an uncovered-symbols drill-down),
+          a Mermaid topology diagram, an endpoints tab grouped by kind, a
+          gaps tab, a Changes tab (git diff RF impact), and a coverage trend.
 
-        Reuses the compute logic behind ``find_endpoints`` and
-        ``audit_coverage`` — no duplicated SQL.
+        Reuses the compute logic behind ``find_endpoints``,
+        ``audit_coverage`` and ``git_diff_impact`` — no duplicated SQL.
+
+        ``base``/``head`` scope the "Changes" section to a git range. Both
+        default to None: the range resolves to ``main``..``HEAD`` (falling
+        back to ``HEAD~1``..``HEAD`` when ``main`` is absent or equal to
+        ``HEAD``), and the section is omitted entirely off-git.
 
         Determinism: ``generated_at`` (default None) is the only
         non-deterministic field; pass an ISO timestamp to stamp the bundle,
         or leave it None so two runs on an unchanged project produce
-        byte-identical ``data.json``.
+        byte-identical ``data.json`` (modulo the resolved diff range).
         """
         try:
             st = get_state(workspace)
-            result = _explorer.write_explorer_bundle(st, generated_at=generated_at)
+            result = _explorer.write_explorer_bundle(
+                st, generated_at=generated_at, base=base, head=head
+            )
         except Exception as e:  # surface as the standard error shape
             return mcp_error(
                 f"export_explorer failed: {e}",

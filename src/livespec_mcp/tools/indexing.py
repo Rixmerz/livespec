@@ -10,6 +10,7 @@ v0.9 P6: `get_index_status` removed (deprecated in v0.8 P3.2). Read the
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from fastmcp import FastMCP
@@ -18,6 +19,8 @@ from livespec_mcp.domain.indexer import index_project as run_index
 from livespec_mcp.domain.rag import embed_pending, rebuild_chunks
 from livespec_mcp.state import AppState, get_state
 from livespec_mcp.workspace_param import WORKSPACE_DOCSTRING_NOTE, Workspace
+
+_log = logging.getLogger("livespec.indexing")
 
 
 def compute_index_status(st: AppState) -> dict[str, Any]:
@@ -90,12 +93,37 @@ def run_index_pipeline(st: AppState, *, force: bool = False, embed: bool = False
     }
 
 
+def _maybe_regenerate_explorer(st: AppState, explorer: bool) -> bool:
+    """Refresh the static RF Explorer bundle to keep it from going stale.
+
+    Regenerates when the bundle already exists under ``.mcp-docs/explorer/``
+    OR when ``explorer=True`` forces a first build. Skips silently when the
+    bundle is absent and not forced. Any failure is logged and swallowed —
+    a bad explorer build must never break the index pipeline. Returns
+    whether the bundle was (re)written.
+    """
+    explorer_dir = st.settings.state_dir / "explorer"
+    if not (explorer or explorer_dir.exists()):
+        return False
+    try:
+        # Imported here (not at module top) so explorer.py — owned by another
+        # surface — is only loaded when a bundle refresh is actually needed.
+        from livespec_mcp.tools.explorer import write_explorer_bundle
+
+        write_explorer_bundle(st)
+        return True
+    except Exception:
+        _log.exception("RF Explorer bundle regeneration failed; skipping")
+        return False
+
+
 def register(mcp: FastMCP) -> None:
     @mcp.tool(annotations={"readOnlyHint": False, "idempotentHint": True, "destructiveHint": False})
     def index_project(
         force: bool = False,
         watch: bool = False,
         embed: bool = False,
+        explorer: bool = False,
         workspace: Workspace | None = None,
     ) -> dict[str, Any]:
         """Walk the workspace, parse code, persist symbols + call edges.
@@ -109,10 +137,16 @@ def register(mcp: FastMCP) -> None:
         Pass embed=True to populate vector embeddings after chunking
         (requires the [embeddings] extra: fastembed + sqlite-vec). First
         run downloads ~200MB of model weights; FTS5 lane works without it.
+        Pass explorer=True to (re)generate the static RF Explorer bundle
+        (.mcp-docs/explorer/) after indexing; it is also auto-refreshed
+        whenever that bundle already exists, so the viewer never goes stale.
+        A bundle-regeneration failure never breaks indexing — it is logged
+        and skipped. The payload reports `explorer_regenerated`.
         Use after pulling new commits or when documentation feels stale.
         """
         st = get_state(workspace)
         result = run_index_pipeline(st, force=force, embed=embed)
+        result["explorer_regenerated"] = _maybe_regenerate_explorer(st, explorer)
         if watch:
             from livespec_mcp.domain.watcher import Watcher, register_watcher
 

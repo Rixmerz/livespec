@@ -1192,6 +1192,9 @@ def compute_rf_test_coverage(
         elif relation == "tests":
             bucket["explicit"].add(sid)
 
+    # v0.16 B: cap on the per-RF uncovered drill-down list.
+    _UNCOVERED_CAP = 50
+
     out: dict[str, dict[str, Any]] = {}
     for rf_id, bucket in agg.items():
         impl: set[int] = bucket["impl"]
@@ -1200,6 +1203,7 @@ def compute_rf_test_coverage(
         derived_hit = False
         explicit_hit = False
         tested_count = 0
+        uncovered_sids: list[int] = []
         for sid in impl:
             in_derived = sid in tested_symbols
             in_explicit = sid in explicit
@@ -1209,6 +1213,8 @@ def compute_rf_test_coverage(
                 explicit_hit = True
             if in_derived or in_explicit:
                 tested_count += 1
+            else:
+                uncovered_sids.append(sid)
         ratio = (tested_count / total) if total else 0.0
         if derived_hit and explicit_hit:
             source = "both"
@@ -1218,6 +1224,16 @@ def compute_rf_test_coverage(
             source = "explicit"
         else:
             source = "none"
+        # v0.16 B: drill-down — qnames of `implements` symbols that are
+        # neither test-reached (derived) nor explicitly `tests`-linked.
+        # Resolve sids -> qnames via the cached graph meta; sort for a
+        # stable payload and cap at _UNCOVERED_CAP with an exact count.
+        uncovered_qnames = sorted(
+            view.sym_meta[sid]["qualified_name"]
+            for sid in uncovered_sids
+            if sid in view.sym_meta and view.sym_meta[sid].get("qualified_name")
+        )
+        uncovered_total = len(uncovered_qnames)
         out[rf_id] = {
             "rf_id": rf_id,
             "title": bucket["title"],
@@ -1225,6 +1241,8 @@ def compute_rf_test_coverage(
             "tested_symbols": tested_count,
             "total_symbols": total,
             "coverage_source": source,
+            "uncovered_symbols": uncovered_qnames[:_UNCOVERED_CAP],
+            "uncovered_symbols_count": uncovered_total,
         }
     return out
 
@@ -1398,6 +1416,26 @@ def compute_coverage(st: AppState) -> dict[str, Any]:
         else 0.0
     )
 
+    # v0.16 D: record one coverage trend snapshot per audit. The avg +
+    # verified-RF count + per-RF ratios are appended to rf_coverage_snapshot
+    # so the explorer can plot coverage over time. Best-effort: a recording
+    # failure must never break the audit itself.
+    try:
+        from datetime import UTC, datetime
+
+        from livespec_mcp.storage import trends
+
+        trends.record_snapshot(
+            st.conn,
+            pid,
+            per_rf={d["rf_id"]: d["test_coverage_ratio"] for d in rf_coverage},
+            avg=avg_test_coverage if rf_coverage else None,
+            verified_count=rfs_with_any_test_coverage,
+            ts=datetime.now(UTC).isoformat(),
+        )
+    except Exception:
+        pass
+
     counts = {
         "modules_without_rf": len(modules_no_rf),
         "modules_implicitly_covered": len(modules_implicit),
@@ -1421,6 +1459,195 @@ def compute_coverage(st: AppState) -> dict[str, Any]:
         "avg_test_coverage": avg_test_coverage,
         "rfs_with_any_test_coverage": rfs_with_any_test_coverage,
         "rf_test_coverage": rf_test_coverage,
+    }
+
+
+def _git_diff_changed_files(
+    ws_root: str, base_ref: str, head_ref: str
+) -> tuple[list[str] | None, dict[str, Any] | None]:
+    """Run ``git diff --name-only base..head`` for ``ws_root``.
+
+    Shared core for ``git_diff_impact`` (the paginated tool) and
+    ``compute_diff_rf_impact`` (the explorer helper). Returns
+    ``(changed_paths, None)`` on success or ``(None, error_dict)`` when git
+    is missing / the range is unknown / the workspace has no history — the
+    error dict is already shaped by ``mcp_error`` so callers can return it
+    verbatim or treat its presence as "git unavailable".
+    """
+    try:
+        proc = subprocess.run(
+            ["git", "-C", ws_root, "diff", "--name-only", f"{base_ref}..{head_ref}"],
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=10,
+        )
+    except FileNotFoundError:
+        return None, mcp_error(
+            "git not found on PATH",
+            hint="install git and ensure it is on PATH for this MCP server process",
+        )
+    except subprocess.CalledProcessError as e:
+        stderr = (e.stderr or "").strip()
+        stdout = (e.stdout or "").strip()
+        stderr_lower = stderr.lower()
+        if "not a git repository" in stderr_lower:
+            msg = (
+                f"workspace is not a git repository: {ws_root}. "
+                "git_diff_impact requires git history; run `git init` "
+                "and at least one commit first."
+            )
+        elif "unknown revision" in stderr_lower or "bad revision" in stderr_lower:
+            msg = (
+                f"unknown git ref(s): base_ref='{base_ref}', "
+                f"head_ref='{head_ref}'. Check `git rev-parse` for both."
+            )
+        elif "ambiguous argument" in stderr_lower:
+            msg = (
+                f"ambiguous ref: '{base_ref}..{head_ref}'. "
+                "Use full SHAs or branch names that exist locally."
+            )
+        else:
+            first_line = next(
+                (ln for ln in (stderr or stdout).splitlines() if ln.strip()),
+                "",
+            )
+            msg = (
+                f"git diff failed: {first_line[:200]}"
+                if first_line
+                else "git diff failed (no diagnostic output)"
+            )
+        return None, mcp_error(msg)
+    except subprocess.TimeoutExpired:
+        return None, mcp_error(
+            "git diff timed out after 10s",
+            hint="narrow the ref range or check for a runaway git hook",
+        )
+
+    return [p for p in proc.stdout.splitlines() if p.strip()], None
+
+
+def compute_diff_rf_impact(
+    st: AppState,
+    base: str,
+    head: str,
+    max_depth: int = 5,
+) -> dict[str, Any]:
+    """RF-centric impact of a git range, for the explorer export (v0.16 A).
+
+    Walks the diff the same way ``git_diff_impact`` does (changed files →
+    indexed symbols → backward caller cone → touched RFs), then folds each
+    touched RF down to ``{rf_id, title, files, test_coverage_ratio}``:
+
+    * ``files`` — the CHANGED files that contribute symbols to that RF
+      (either directly linked or whose change reaches the RF's symbols
+      through the caller cone), sorted.
+    * ``test_coverage_ratio`` — pulled from ``compute_rf_test_coverage`` so
+      the explorer can flag "touched but under-tested" RFs.
+
+    Returns ``{base, head, files_changed, requirements_touched}``. When git
+    or the range is unavailable, returns the same keys with empty lists so
+    the caller can simply omit the section.
+    """
+    empty: dict[str, Any] = {
+        "base": base,
+        "head": head,
+        "files_changed": [],
+        "requirements_touched": [],
+    }
+
+    changed_paths, err = _git_diff_changed_files(
+        str(st.settings.workspace), base, head
+    )
+    if err is not None or not changed_paths:
+        return empty
+
+    pid = st.project_id
+    view = load_graph(st.conn, pid)
+
+    # changed file -> set of symbol ids defined in it
+    sids_by_file: dict[str, set[int]] = {}
+    changed_sym_ids: set[int] = set()
+    for path in changed_paths:
+        rows = st.conn.execute(
+            """SELECT s.id FROM symbol s JOIN file f ON f.id = s.file_id
+               WHERE f.project_id=? AND f.path=?""",
+            (pid, path),
+        ).fetchall()
+        if not rows:
+            continue
+        ids = {int(r["id"]) for r in rows}
+        sids_by_file[path] = ids
+        changed_sym_ids |= ids
+
+    if not changed_sym_ids:
+        return empty
+
+    # For each changed file, the cone of symbols its change touches
+    # (the file's own symbols + their backward callers). Used to map a
+    # touched RF back to the changed file(s) responsible.
+    cone_by_file: dict[str, set[int]] = {}
+    for path, ids in sids_by_file.items():
+        cone: set[int] = set(ids)
+        for sid in ids:
+            if sid in view.g:
+                cone |= ancestors_within(view.g, sid, max_depth)
+        cone_by_file[path] = cone
+
+    all_touched: set[int] = set()
+    for cone in cone_by_file.values():
+        all_touched |= cone
+    if not all_touched:
+        return empty
+
+    # Map every touched symbol id -> the RFs that link it.
+    placeholders = ",".join("?" * len(all_touched))
+    sym_to_rfs: dict[int, list[str]] = {}
+    rf_titles: dict[str, str] = {}
+    for r in st.conn.execute(
+        f"""SELECT rs.symbol_id, r.rf_id, r.title
+            FROM rf_symbol rs JOIN rf r ON r.id = rs.rf_id
+            WHERE r.project_id=? AND rs.symbol_id IN ({placeholders})""",
+        [pid, *list(all_touched)],
+    ):
+        sym_to_rfs.setdefault(int(r["symbol_id"]), []).append(r["rf_id"])
+        rf_titles[r["rf_id"]] = r["title"]
+
+    if not rf_titles:
+        return {
+            "base": base,
+            "head": head,
+            "files_changed": sorted(sids_by_file.keys()),
+            "requirements_touched": [],
+        }
+
+    # Per-RF: which CHANGED files reach it (via that file's cone).
+    files_by_rf: dict[str, set[str]] = {}
+    for path, cone in cone_by_file.items():
+        for sid in cone:
+            for rf_id in sym_to_rfs.get(sid, ()):
+                files_by_rf.setdefault(rf_id, set()).add(path)
+
+    coverage_map = compute_rf_test_coverage(st, view)
+    requirements_touched = [
+        {
+            "rf_id": rf_id,
+            "title": rf_titles[rf_id],
+            "files": sorted(files_by_rf.get(rf_id, set())),
+            "test_coverage_ratio": (
+                coverage_map[rf_id]["test_coverage_ratio"]
+                if rf_id in coverage_map
+                else 0.0
+            ),
+        }
+        for rf_id in sorted(rf_titles)
+    ]
+
+    return {
+        "base": base,
+        "head": head,
+        "files_changed": sorted(sids_by_file.keys()),
+        "requirements_touched": requirements_touched,
     }
 
 
@@ -2736,58 +2963,10 @@ def register(mcp: FastMCP) -> None:
         pid = st.project_id
         ws_root = str(st.settings.workspace)
 
-        try:
-            proc = subprocess.run(
-                ["git", "-C", ws_root, "diff", "--name-only", f"{base_ref}..{head_ref}"],
-                capture_output=True,
-                text=True,
-                check=True,
-                timeout=10,
-            )
-        except FileNotFoundError:
-            return mcp_error(
-                "git not found on PATH",
-                hint="install git and ensure it is on PATH for this MCP server process",
-            )
-        except subprocess.CalledProcessError as e:
-            stderr = (e.stderr or "").strip()
-            stdout = (e.stdout or "").strip()
-            # Boil down common git failure modes to a one-line summary so the
-            # agent (and the user) don't get drowned in `git diff --help`.
-            stderr_lower = stderr.lower()
-            if "not a git repository" in stderr_lower:
-                msg = (
-                    f"workspace is not a git repository: {ws_root}. "
-                    "git_diff_impact requires git history; run `git init` "
-                    "and at least one commit first."
-                )
-            elif "unknown revision" in stderr_lower or "bad revision" in stderr_lower:
-                msg = (
-                    f"unknown git ref(s): base_ref='{base_ref}', "
-                    f"head_ref='{head_ref}'. Check `git rev-parse` for both."
-                )
-            elif "ambiguous argument" in stderr_lower:
-                msg = (
-                    f"ambiguous ref: '{base_ref}..{head_ref}'. "
-                    "Use full SHAs or branch names that exist locally."
-                )
-            else:
-                # Truncate to keep payloads agent-friendly. First non-empty
-                # line of stderr (or stdout) is almost always the real cause;
-                # the rest is git's --help dump.
-                first_line = next(
-                    (ln for ln in (stderr or stdout).splitlines() if ln.strip()),
-                    "",
-                )
-                msg = f"git diff failed: {first_line[:200]}" if first_line else "git diff failed (no diagnostic output)"
-            return mcp_error(msg)
-        except subprocess.TimeoutExpired:
-            return mcp_error(
-                "git diff timed out after 10s",
-                hint="narrow the ref range or check for a runaway git hook",
-            )
-
-        changed_paths = [p for p in proc.stdout.splitlines() if p.strip()]
+        # v0.16 A: shared git-diff core (also feeds compute_diff_rf_impact).
+        changed_paths, err = _git_diff_changed_files(ws_root, base_ref, head_ref)
+        if err is not None:
+            return err
         if not changed_paths:
             empty: dict[str, Any] = {
                 "base_ref": base_ref,

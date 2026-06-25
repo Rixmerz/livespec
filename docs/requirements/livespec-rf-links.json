@@ -1,0 +1,547 @@
+[
+  {
+    "rf_id": "RF-001",
+    "qname": "src.livespec_mcp.domain.indexer._gitignored",
+    "relation": "implements"
+  },
+  {
+    "rf_id": "RF-001",
+    "qname": "src.livespec_mcp.domain.indexer._iter_files",
+    "relation": "implements"
+  },
+  {
+    "rf_id": "RF-001",
+    "qname": "src.livespec_mcp.domain.indexer._load_gitignore",
+    "relation": "implements"
+  },
+  {
+    "rf_id": "RF-001",
+    "qname": "src.livespec_mcp.domain.indexer._upsert_file",
+    "relation": "implements"
+  },
+  {
+    "rf_id": "RF-001",
+    "qname": "src.livespec_mcp.domain.indexer.index_project",
+    "relation": "implements"
+  },
+  {
+    "rf_id": "RF-001",
+    "qname": "src.livespec_mcp.domain.matcher.parse_annotations",
+    "relation": "implements"
+  },
+  {
+    "rf_id": "RF-001",
+    "qname": "src.livespec_mcp.tools.indexing.register.index_project",
+    "relation": "implements"
+  },
+  {
+    "rf_id": "RF-001",
+    "qname": "src.livespec_mcp.tools.indexing.run_index_pipeline",
+    "relation": "implements"
+  },
+  {
+    "rf_id": "RF-001",
+    "qname": "src.livespec_mcp.tools.requirements.register.scan_rf_annotations",
+    "relation": "implements"
+  },
+  {
+    "rf_id": "RF-001",
+    "qname": "tests.test_gitignore.test_index_project_respects_gitignore",
+    "relation": "tests"
+  },
+  {
+    "rf_id": "RF-001",
+    "qname": "tests.test_indexing.test_index_and_overview",
+    "relation": "tests"
+  },
+  {
+    "rf_id": "RF-001",
+    "qname": "tests.test_indexing.test_overview_filters_structural_pattern_names",
+    "relation": "tests"
+  },
+  {
+    "rf_id": "RF-001",
+    "qname": "tests.test_targeted_resolver.test_targeted_walk_refreshes_cross_file_edges_to_changed_target",
+    "relation": "tests"
+  },
+  {
+    "rf_id": "RF-002",
+    "qname": "src.livespec_mcp.domain.extractors._py_decorator_names",
+    "relation": "implements"
+  },
+  {
+    "rf_id": "RF-002",
+    "qname": "src.livespec_mcp.domain.extractors._py_extract",
+    "relation": "implements"
+  },
+  {
+    "rf_id": "RF-002",
+    "qname": "src.livespec_mcp.domain.extractors._py_signature",
+    "relation": "implements"
+  },
+  {
+    "rf_id": "RF-002",
+    "qname": "src.livespec_mcp.domain.extractors._ts_extract",
+    "relation": "implements"
+  },
+  {
+    "rf_id": "RF-002",
+    "qname": "src.livespec_mcp.domain.extractors._ts_node_decorators",
+    "relation": "implements"
+  },
+  {
+    "rf_id": "RF-002",
+    "qname": "src.livespec_mcp.domain.extractors.extract",
+    "relation": "implements"
+  },
+  {
+    "rf_id": "RF-002",
+    "qname": "src.livespec_mcp.domain.languages.get_parser",
+    "relation": "implements"
+  },
+  {
+    "rf_id": "RF-002",
+    "qname": "tests.test_body_hash_stability.test_python_body_hash_stable_against_whitespace",
+    "relation": "tests"
+  },
+  {
+    "rf_id": "RF-002",
+    "qname": "tests.test_body_hash_stability.test_typescript_body_hash_stable_against_reformat",
+    "relation": "tests"
+  },
+  {
+    "rf_id": "RF-002",
+    "qname": "tests.test_extractors.test_extractor_basic",
+    "relation": "tests"
+  },
+  {
+    "rf_id": "RF-002",
+    "qname": "tests.test_extractors.test_rust_impl_block_methods",
+    "relation": "tests"
+  },
+  {
+    "rf_id": "RF-003",
+    "qname": "src.livespec_mcp.domain.extractors._go_collect_imports",
+    "relation": "implements"
+  },
+  {
+    "rf_id": "RF-003",
+    "qname": "src.livespec_mcp.domain.extractors._rb_collect_imports",
+    "relation": "implements"
+  },
+  {
+    "rf_id": "RF-003",
+    "qname": "src.livespec_mcp.domain.extractors._rs_collect_imports",
+    "relation": "implements"
+  },
+  {
+    "rf_id": "RF-003",
+    "qname": "src.livespec_mcp.domain.extractors._ts_collect_calls",
+    "relation": "implements"
+  },
+  {
+    "rf_id": "RF-003",
+    "qname": "src.livespec_mcp.domain.extractors._ts_collect_imports",
+    "relation": "implements"
+  },
+  {
+    "rf_id": "RF-003",
+    "qname": "src.livespec_mcp.domain.indexer._replace_symbols",
+    "relation": "implements"
+  },
+  {
+    "rf_id": "RF-003",
+    "qname": "src.livespec_mcp.domain.indexer._resolve_refs",
+    "relation": "implements"
+  },
+  {
+    "rf_id": "RF-003",
+    "qname": "tests.test_properties.test_partial_reindex_does_not_lose_edges",
+    "relation": "tests"
+  },
+  {
+    "rf_id": "RF-003",
+    "qname": "tests.test_scoped_resolution.test_go_cross_package_edges_weight_1",
+    "relation": "tests"
+  },
+  {
+    "rf_id": "RF-003",
+    "qname": "tests.test_scoped_resolution.test_python_cross_module_edges_weight_1",
+    "relation": "tests"
+  },
+  {
+    "rf_id": "RF-003",
+    "qname": "tests.test_scoped_resolution.test_ts_js_cross_module_edges_weight_1",
+    "relation": "tests"
+  },
+  {
+    "rf_id": "RF-004",
+    "qname": "src.livespec_mcp.domain.graph._pagerank_pure",
+    "relation": "implements"
+  },
+  {
+    "rf_id": "RF-004",
+    "qname": "src.livespec_mcp.domain.graph.ancestors_within",
+    "relation": "implements"
+  },
+  {
+    "rf_id": "RF-004",
+    "qname": "src.livespec_mcp.domain.graph.descendants_within",
+    "relation": "implements"
+  },
+  {
+    "rf_id": "RF-004",
+    "qname": "src.livespec_mcp.domain.graph.load_graph",
+    "relation": "implements"
+  },
+  {
+    "rf_id": "RF-004",
+    "qname": "src.livespec_mcp.domain.graph.page_rank",
+    "relation": "implements"
+  },
+  {
+    "rf_id": "RF-004",
+    "qname": "tests.test_graph_cache.test_graph_cache_hits_on_repeated_call",
+    "relation": "tests"
+  },
+  {
+    "rf_id": "RF-004",
+    "qname": "tests.test_graph_cache.test_graph_cache_invalidates_after_new_index_run",
+    "relation": "tests"
+  },
+  {
+    "rf_id": "RF-004",
+    "qname": "tests.test_quick_wins.test_who_calls_returns_caller_set",
+    "relation": "tests"
+  },
+  {
+    "rf_id": "RF-005",
+    "qname": "src.livespec_mcp.domain.matcher.parse_annotations",
+    "relation": "implements"
+  },
+  {
+    "rf_id": "RF-005",
+    "qname": "src.livespec_mcp.tools.requirements.register.bulk_link_rf_symbols",
+    "relation": "implements"
+  },
+  {
+    "rf_id": "RF-005",
+    "qname": "src.livespec_mcp.tools.requirements.register.create_requirement",
+    "relation": "implements"
+  },
+  {
+    "rf_id": "RF-005",
+    "qname": "src.livespec_mcp.tools.requirements.register.get_requirement_implementation",
+    "relation": "implements"
+  },
+  {
+    "rf_id": "RF-005",
+    "qname": "src.livespec_mcp.tools.requirements.register.get_rf_dependency_graph",
+    "relation": "implements"
+  },
+  {
+    "rf_id": "RF-005",
+    "qname": "src.livespec_mcp.tools.requirements.register.link_rf_symbol",
+    "relation": "implements"
+  },
+  {
+    "rf_id": "RF-005",
+    "qname": "src.livespec_mcp.tools.requirements.register.list_requirements",
+    "relation": "implements"
+  },
+  {
+    "rf_id": "RF-005",
+    "qname": "tests.test_bulk_link.test_bulk_link_happy_path",
+    "relation": "tests"
+  },
+  {
+    "rf_id": "RF-005",
+    "qname": "tests.test_bulk_link.test_manual_links_survive_force_reindex",
+    "relation": "tests"
+  },
+  {
+    "rf_id": "RF-005",
+    "qname": "tests.test_matcher.test_level1_prefix_high_confidence",
+    "relation": "tests"
+  },
+  {
+    "rf_id": "RF-005",
+    "qname": "tests.test_propose_requirements.test_propose_requirements_basic",
+    "relation": "tests"
+  },
+  {
+    "rf_id": "RF-005",
+    "qname": "tests.test_rf_deps.test_cycle_is_rejected",
+    "relation": "tests"
+  },
+  {
+    "rf_id": "RF-005",
+    "qname": "tests.test_rf_deps.test_link_and_walk_dependencies",
+    "relation": "tests"
+  },
+  {
+    "rf_id": "RF-006",
+    "qname": "src.livespec_mcp.domain.rag.chunk_symbol",
+    "relation": "implements"
+  },
+  {
+    "rf_id": "RF-006",
+    "qname": "src.livespec_mcp.domain.rag.fts_search",
+    "relation": "implements"
+  },
+  {
+    "rf_id": "RF-006",
+    "qname": "src.livespec_mcp.domain.rag.hybrid_search",
+    "relation": "implements"
+  },
+  {
+    "rf_id": "RF-006",
+    "qname": "src.livespec_mcp.domain.rag.rebuild_chunks",
+    "relation": "implements"
+  },
+  {
+    "rf_id": "RF-006",
+    "qname": "src.livespec_mcp.domain.rag.vec_search",
+    "relation": "implements"
+  },
+  {
+    "rf_id": "RF-006",
+    "qname": "src.livespec_mcp.tools.search.register.embed_chunks",
+    "relation": "implements"
+  },
+  {
+    "rf_id": "RF-006",
+    "qname": "src.livespec_mcp.tools.search.register.search",
+    "relation": "implements"
+  },
+  {
+    "rf_id": "RF-006",
+    "qname": "tests.test_search.test_hybrid_search_uses_vector_lane",
+    "relation": "tests"
+  },
+  {
+    "rf_id": "RF-006",
+    "qname": "tests.test_search.test_index_populates_chunks",
+    "relation": "tests"
+  },
+  {
+    "rf_id": "RF-006",
+    "qname": "tests.test_search.test_search_fts_finds_symbol_by_keyword",
+    "relation": "tests"
+  },
+  {
+    "rf_id": "RF-007",
+    "qname": "src.livespec_mcp.tools.analysis.register.audit_coverage",
+    "relation": "implements"
+  },
+  {
+    "rf_id": "RF-007",
+    "qname": "src.livespec_mcp.tools.analysis.register.find_dead_code",
+    "relation": "implements"
+  },
+  {
+    "rf_id": "RF-007",
+    "qname": "src.livespec_mcp.tools.analysis.register.find_orphan_tests",
+    "relation": "implements"
+  },
+  {
+    "rf_id": "RF-007",
+    "qname": "tests.test_aggregator_tools.test_audit_coverage_credits_test_coverage",
+    "relation": "tests"
+  },
+  {
+    "rf_id": "RF-007",
+    "qname": "tests.test_aggregator_tools.test_audit_coverage_signals",
+    "relation": "tests"
+  },
+  {
+    "rf_id": "RF-007",
+    "qname": "tests.test_aggregator_tools.test_find_dead_code_basic",
+    "relation": "tests"
+  },
+  {
+    "rf_id": "RF-007",
+    "qname": "tests.test_aggregator_tools.test_find_orphan_tests",
+    "relation": "tests"
+  },
+  {
+    "rf_id": "RF-008",
+    "qname": "src.livespec_mcp.domain.extractors.scan_hono_routes",
+    "relation": "implements"
+  },
+  {
+    "rf_id": "RF-008",
+    "qname": "src.livespec_mcp.tools.analysis._has_entry_point_decorator",
+    "relation": "implements"
+  },
+  {
+    "rf_id": "RF-008",
+    "qname": "src.livespec_mcp.tools.analysis._ts_framework_entry_point_kind",
+    "relation": "implements"
+  },
+  {
+    "rf_id": "RF-008",
+    "qname": "src.livespec_mcp.tools.analysis.register.find_endpoints",
+    "relation": "implements"
+  },
+  {
+    "rf_id": "RF-008",
+    "qname": "tests.test_aggregator_tools.test_find_endpoints_all_and_per_framework",
+    "relation": "tests"
+  },
+  {
+    "rf_id": "RF-008",
+    "qname": "tests.test_aggregator_tools.test_find_endpoints_detects_plugin_decorator_alias",
+    "relation": "tests"
+  },
+  {
+    "rf_id": "RF-009",
+    "qname": "src.livespec_mcp.domain.graph.ancestors_within",
+    "relation": "implements"
+  },
+  {
+    "rf_id": "RF-009",
+    "qname": "src.livespec_mcp.domain.graph.descendants_within",
+    "relation": "implements"
+  },
+  {
+    "rf_id": "RF-009",
+    "qname": "src.livespec_mcp.tools.analysis.register.analyze_impact",
+    "relation": "implements"
+  },
+  {
+    "rf_id": "RF-009",
+    "qname": "src.livespec_mcp.tools.analysis.register.git_diff_impact",
+    "relation": "implements"
+  },
+  {
+    "rf_id": "RF-009",
+    "qname": "src.livespec_mcp.tools.analysis.register.who_calls",
+    "relation": "implements"
+  },
+  {
+    "rf_id": "RF-009",
+    "qname": "src.livespec_mcp.tools.analysis.register.who_does_this_call",
+    "relation": "implements"
+  },
+  {
+    "rf_id": "RF-009",
+    "qname": "tests.test_git_diff.test_git_diff_impact_basic",
+    "relation": "tests"
+  },
+  {
+    "rf_id": "RF-009",
+    "qname": "tests.test_git_diff.test_git_diff_impact_excludes_test_fixtures",
+    "relation": "tests"
+  },
+  {
+    "rf_id": "RF-009",
+    "qname": "tests.test_quick_wins.test_quick_orient_composite",
+    "relation": "tests"
+  },
+  {
+    "rf_id": "RF-010",
+    "qname": "src.livespec_mcp.tools.docs.register.export_documentation",
+    "relation": "implements"
+  },
+  {
+    "rf_id": "RF-010",
+    "qname": "src.livespec_mcp.tools.docs.register.generate_docs",
+    "relation": "implements"
+  },
+  {
+    "rf_id": "RF-010",
+    "qname": "src.livespec_mcp.tools.docs.register.list_docs",
+    "relation": "implements"
+  },
+  {
+    "rf_id": "RF-010",
+    "qname": "tests.test_explorer.test_export_explorer_data_schema",
+    "relation": "tests"
+  },
+  {
+    "rf_id": "RF-010",
+    "qname": "tests.test_explorer.test_export_explorer_idempotent",
+    "relation": "tests"
+  },
+  {
+    "rf_id": "RF-010",
+    "qname": "tests.test_explorer.test_export_explorer_writes_both_files",
+    "relation": "tests"
+  },
+  {
+    "rf_id": "RF-011",
+    "qname": "src.livespec_mcp.storage.db._ensure_migrations_table",
+    "relation": "implements"
+  },
+  {
+    "rf_id": "RF-011",
+    "qname": "src.livespec_mcp.storage.db._flag_reextract",
+    "relation": "implements"
+  },
+  {
+    "rf_id": "RF-011",
+    "qname": "src.livespec_mcp.storage.db._run_migrations",
+    "relation": "implements"
+  },
+  {
+    "rf_id": "RF-011",
+    "qname": "src.livespec_mcp.storage.db.connect",
+    "relation": "implements"
+  },
+  {
+    "rf_id": "RF-011",
+    "qname": "src.livespec_mcp.storage.db.consume_reextract_flag",
+    "relation": "implements"
+  },
+  {
+    "rf_id": "RF-011",
+    "qname": "tests.test_migrations.test_legacy_db_picks_up_missing_migrations",
+    "relation": "tests"
+  },
+  {
+    "rf_id": "RF-011",
+    "qname": "tests.test_migrations.test_migration_order_is_monotonic",
+    "relation": "tests"
+  },
+  {
+    "rf_id": "RF-011",
+    "qname": "tests.test_migrations.test_migrations_are_idempotent",
+    "relation": "tests"
+  },
+  {
+    "rf_id": "RF-011",
+    "qname": "tests.test_migrations.test_migrations_recorded_on_first_connect",
+    "relation": "tests"
+  },
+  {
+    "rf_id": "RF-012",
+    "qname": "src.livespec_mcp.cli.main",
+    "relation": "implements"
+  },
+  {
+    "rf_id": "RF-012",
+    "qname": "src.livespec_mcp.server.main",
+    "relation": "implements"
+  },
+  {
+    "rf_id": "RF-012",
+    "qname": "src.livespec_mcp.tools.indexing.run_index_pipeline",
+    "relation": "implements"
+  },
+  {
+    "rf_id": "RF-012",
+    "qname": "tests.test_cli.test_index_force_flag",
+    "relation": "tests"
+  },
+  {
+    "rf_id": "RF-012",
+    "qname": "tests.test_cli.test_index_then_status",
+    "relation": "tests"
+  },
+  {
+    "rf_id": "RF-012",
+    "qname": "tests.test_cli.test_missing_workspace_is_clean_error",
+    "relation": "tests"
+  }
+]
