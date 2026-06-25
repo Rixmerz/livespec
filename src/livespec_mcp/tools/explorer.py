@@ -18,11 +18,14 @@ data.json schema:
                "counts": {"requirements", "symbols", "endpoints", "files"}},
       "dashboard": {"requirements", "dev_state_counts": {...},
                     "with_endpoints", "with_dependencies",
-                    "implemented_pct", "verified", "avg_coverage"},
+                    "implemented_pct", "verified", "avg_coverage",
+                    "avg_test_coverage"},
       "requirements": [{"id", "title", "status", "dev_state", "description",
                         "symbols": [{"qname", "signature"|null, "file", "line"}],
                         "endpoints": [str], "depends_on": [str],
-                        "coverage": float|null}],
+                        "coverage": float|null,
+                        "test_coverage_ratio": float, "coverage_source": str,
+                        "tested_symbols": int, "total_symbols": int}],
       "rf_topology": {"nodes": [{"id", "title", "dev_state"}],
                       "edges": [{"from", "to", "kind"}]},
       "endpoints": [{"framework"|null, "handler", "signature"|null,
@@ -34,18 +37,21 @@ data.json schema:
 The ``coverage`` float per RF is the AVERAGE LINK CONFIDENCE of that RF's
 ``rf_symbol`` rows — i.e. how confident the RF↔code attributions are, NOT
 test coverage and NOT call-graph reachability. The UI labels it as such.
+SEPARATE from it, ``test_coverage_ratio`` (0..1) is REAL test coverage
+(v0.15): the fraction of the RF's implementing symbols reached by a test
+symbol's depth-3 call cone UNIONED with explicit ``relation='tests'``
+links — sourced from ``compute_rf_test_coverage`` / ``compute_coverage``'s
+``rf_coverage`` list. ``coverage_source`` ∈ {derived, explicit, both, none}
+records HOW that coverage is known. Both meters are shown, each labelled.
 
-``dev_state`` is DERIVED from evidence (symbol links + that confidence),
-independent of the manually-maintained ``status`` field:
+``dev_state`` is DERIVED from evidence (symbol links + that confidence +
+real test coverage), independent of the manually-maintained ``status``:
     "not_started"  — 0 implementing symbols.
-    "in_progress"  — has symbols AND coverage < 0.7.
-    "implemented"  — has symbols AND coverage >= 0.7.
-    "verified"     — implemented AND >= 1 ``relation='tests'`` link
-                     (same signal ``audit_coverage`` uses for
-                     ``rf_test_coverage``). When no test↔RF links exist,
-                     verified is never asserted — it falls back to
-                     implemented. This is truthful: in-process MCP test
-                     suites usually have no such links, so verified==0.
+    "verified"     — has symbols AND ``test_coverage_ratio > 0`` (REAL test
+                     coverage exists, derived + explicit). v0.15 supersedes
+                     the old explicit-test-link-only rule.
+    "in_progress"  — has symbols, no test coverage, AND coverage < 0.7.
+    "implemented"  — has symbols, no test coverage, AND coverage >= 0.7.
 
 Determinism: ``generated_at`` is the ONLY non-deterministic field and is
 injectable (arg ``generated_at``, default None) so two runs on an
@@ -65,22 +71,26 @@ _COVERAGE_THRESHOLD = 0.7
 
 
 def _derive_dev_state(
-    symbol_count: int, coverage: float | None, has_test_link: bool
+    symbol_count: int, coverage: float | None, test_coverage_ratio: float
 ) -> str:
     """Derive a development state from code evidence (not the manual status).
 
     Thresholds: 0 symbols -> not_started; symbols with coverage < 0.7 ->
-    in_progress; coverage >= 0.7 -> implemented; implemented AND >= 1
-    test-relation link -> verified. ``coverage`` here is average link
-    confidence (see module docstring), the same signal the spine bar shows.
+    in_progress; coverage >= 0.7 -> implemented. ``verified`` supersedes the
+    others whenever REAL test coverage exists (``test_coverage_ratio > 0``) —
+    the v0.15 call-graph-derived + explicit-test-link signal from
+    ``compute_rf_test_coverage``. ``coverage`` here is average link confidence
+    (see module docstring), the same signal the spine bar shows.
     """
     if symbol_count == 0:
         return "not_started"
+    # Real test coverage (derived from the call graph and/or explicit test
+    # links) is the strongest signal — it promotes to verified directly.
+    if test_coverage_ratio > 0:
+        return "verified"
     if coverage is None or coverage < _COVERAGE_THRESHOLD:
         return "in_progress"
-    # coverage >= threshold -> implemented; promote to verified only with
-    # a real test-relation link (never fabricated).
-    return "verified" if has_test_link else "implemented"
+    return "implemented"
 
 
 def _framework_of_endpoint(ep: dict[str, Any]) -> str | None:
@@ -117,6 +127,16 @@ def compute_explorer_data(
 
     # rf.id (internal pk) -> rf_id string, for topology edge resolution
     rfid_by_pk: dict[int, str] = {int(r["id"]): r["rf_id"] for r in rf_rows}
+
+    # Coverage audit (single load): reused for the per-RF REAL test coverage
+    # (v0.15) below AND the orphan/gaps section later. This is the ONLY
+    # graph-backed coverage computation in this builder — no second load.
+    cov = compute_coverage(st)
+    # rf_id -> {test_coverage_ratio, coverage_source, tested_symbols,
+    # total_symbols} from compute_coverage's rf_coverage list.
+    rf_cov_by_id: dict[str, dict[str, Any]] = {
+        c["rf_id"]: c for c in cov.get("rf_coverage", [])
+    }
 
     # symbol qname -> set of rf_ids (for endpoint -> RF mapping). Built
     # from every rf_symbol link, regardless of relation.
@@ -184,12 +204,18 @@ def compute_explorer_data(
             )
         else:
             coverage = None
-        # Test-relation signal: >= 1 link whose relation == 'tests' (same
-        # signal audit_coverage uses for rf_test_coverage). Drives verified.
-        has_test_link = any(sr["relation"] == "tests" for sr in sym_rows)
-        dev_state = _derive_dev_state(len(symbols), coverage, has_test_link)
-        # Endpoints owned by this RF: endpoint handler qnames linked to it.
+        # REAL test coverage (v0.15): call-graph-derived + explicit test
+        # links, from compute_rf_test_coverage. This SUPERSEDES the old
+        # explicit-link-only verified rule. `coverage_source` ∈
+        # {derived, explicit, both, none}.
         rf_id = rf["rf_id"]
+        rc = rf_cov_by_id.get(rf_id)
+        test_coverage_ratio = float(rc["test_coverage_ratio"]) if rc else 0.0
+        coverage_source = rc["coverage_source"] if rc else "none"
+        tested_symbols = int(rc["tested_symbols"]) if rc else 0
+        total_symbols = int(rc["total_symbols"]) if rc else len(symbols)
+        dev_state = _derive_dev_state(len(symbols), coverage, test_coverage_ratio)
+        # Endpoints owned by this RF: endpoint handler qnames linked to it.
         owned_endpoints = sorted(
             {
                 sr["qname"]
@@ -208,6 +234,10 @@ def compute_explorer_data(
                 "endpoints": owned_endpoints,
                 "depends_on": sorted(depends_on.get(rf_id, [])),
                 "coverage": coverage,
+                "test_coverage_ratio": test_coverage_ratio,
+                "coverage_source": coverage_source,
+                "tested_symbols": tested_symbols,
+                "total_symbols": total_symbols,
             }
         )
 
@@ -240,7 +270,7 @@ def compute_explorer_data(
         )
 
     # --- Coverage / orphans --------------------------------------------
-    cov = compute_coverage(st)
+    # `cov` already computed once above (reused for per-RF test coverage).
     orphan_endpoints = sorted(
         {ep["handler"] for ep in endpoints if not ep["rf_ids"] and ep["handler"]}
     )
@@ -272,13 +302,18 @@ def compute_explorer_data(
         "verified": 0,
     }
     coverage_values: list[float] = []
+    test_coverage_values: list[float] = []
     with_endpoints = 0
     with_dependencies = 0
     implemented_symbol_count = 0  # RFs with >= 1 implementing symbol
+    verified_count = 0  # RFs with REAL test coverage (test_coverage_ratio > 0)
     for r in requirements:
         dev_state_counts[r["dev_state"]] = dev_state_counts.get(r["dev_state"], 0) + 1
         if r["coverage"] is not None:
             coverage_values.append(r["coverage"])
+        test_coverage_values.append(r["test_coverage_ratio"])
+        if r["test_coverage_ratio"] > 0:
+            verified_count += 1
         if r["endpoints"]:
             with_endpoints += 1
         if r["depends_on"]:
@@ -297,11 +332,18 @@ def compute_explorer_data(
             if total_reqs
             else 0.0
         ),
-        "verified": dev_state_counts["verified"],
+        # RFs backed by REAL test coverage (call-graph-derived + explicit).
+        "verified": verified_count,
         # Mean of the per-RF average-link-confidence values (RFs with links).
         "avg_coverage": (
             round(sum(coverage_values) / len(coverage_values), 4)
             if coverage_values
+            else None
+        ),
+        # Mean of the per-RF REAL test-coverage ratios (all RFs; None if no RFs).
+        "avg_test_coverage": (
+            round(sum(test_coverage_values) / len(test_coverage_values), 4)
+            if test_coverage_values
             else None
         ),
     }
@@ -825,6 +867,30 @@ _HTML_TEMPLATE = """<!DOCTYPE html>
   .cov.low  .fill { background: var(--danger); }
   .cov .v { font-size: 12px; font-weight: 650; font-variant-numeric: tabular-nums; color: var(--fg-soft); }
 
+  /* Two distinct coverage meters (real test coverage + link confidence) */
+  .cov-meters {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    gap: 14px; margin: 16px 0 4px;
+  }
+  .cov-meter {
+    background: var(--surface-2); border: 1px solid var(--line-soft);
+    border-radius: var(--radius-sm); padding: 12px 14px;
+  }
+  .cov-meter-h { display: flex; align-items: center; gap: 9px; flex-wrap: wrap; margin-bottom: 9px; }
+  .cov-meter-l {
+    font-size: 11px; font-weight: 700; text-transform: uppercase;
+    letter-spacing: .06em; color: var(--muted);
+  }
+  .cov-meter .cov {
+    width: 100%; padding: 4px 12px 4px 4px;
+    background: var(--surface); border-color: var(--line-soft);
+  }
+  .cov-meter .cov .track { flex: 1; width: auto; height: 8px; }
+  .cov-meter-hint {
+    font-size: 10.5px; color: var(--faint); margin-top: 7px;
+    font-weight: 500; line-height: 1.45;
+  }
+
   /* Section headings */
   .sec { margin-top: 28px; }
   .sec-h {
@@ -1049,7 +1115,7 @@ const DS_BLURB = {
   not_started: 'No code is attributed to this requirement yet.',
   in_progress: 'Code is being attributed; attribution confidence is still building.',
   implemented: 'Code implements this requirement with high-confidence links.',
-  verified: 'Implemented and backed by tests linked to this requirement.',
+  verified: 'Backed by real test coverage — tests reach the implementing code (call-graph-derived) or are explicitly linked.',
 };
 const dsClass = s => 'ds-' + (DEV_STATES.includes(s) ? s : 'not_started');
 function statePill(s, big) {
@@ -1061,6 +1127,21 @@ function statePill(s, big) {
 // coverage, not call-graph reachability). Labelled precisely everywhere.
 const COVERAGE_LABEL = 'link confidence';
 function covPct(v) { return v == null ? null : Math.round(v * 100); }
+
+// test_coverage_ratio = REAL test coverage (call-graph-derived + explicit
+// test links), DISTINCT from link confidence above. coverage_source records
+// HOW that coverage is known — the transparency a PO/stakeholder needs.
+const TEST_COVERAGE_LABEL = 'test coverage';
+const SOURCE_BADGE = {
+  derived:  { label: 'auto-derived (call graph)', cls: 'info' },
+  explicit: { label: 'explicit test links',       cls: 'accent' },
+  both:     { label: 'derived + explicit',        cls: 'ok' },
+  none:     { label: 'no test coverage',          cls: 'muted' },
+};
+function sourceBadge(src) {
+  const b = SOURCE_BADGE[src] || SOURCE_BADGE.none;
+  return `<span class="chip ${b.cls}" title="How test coverage is known">${esc(b.label)}</span>`;
+}
 
 // A declared status looks stale when evidence has clearly moved past it:
 // dev_state is implemented/verified but the human still marks it draft/
@@ -1083,10 +1164,12 @@ function renderDashboard() {
   }
   const c = d.dev_state_counts;
   const avgCov = d.avg_coverage == null ? '—' : Math.round(d.avg_coverage * 100) + '<span class="unit">%</span>';
+  const avgTestCov = d.avg_test_coverage == null ? '—' : Math.round(d.avg_test_coverage * 100) + '<span class="unit">%</span>';
   const tiles = [
     { n: d.requirements, k: 'Requirements', cls: '' },
     { n: d.implemented_pct + '<span class="unit">%</span>', k: 'Have implementation', cls: 'accent' },
     { n: d.verified, k: 'Verified by tests', cls: d.verified > 0 ? 'good' : '' },
+    { n: avgTestCov, k: 'Avg ' + TEST_COVERAGE_LABEL, cls: (d.avg_test_coverage || 0) > 0 ? 'good' : '' },
     { n: d.with_endpoints, k: 'Expose endpoints', cls: '' },
     { n: d.with_dependencies, k: 'Have dependencies', cls: '' },
     { n: avgCov, k: 'Avg ' + COVERAGE_LABEL, cls: '' },
@@ -1183,6 +1266,8 @@ function selectRF(id) {
   if (!rf) return;
 
   const pct = covPct(rf.coverage);
+  const testPct = Math.round((rf.test_coverage_ratio || 0) * 100);
+  const covSrc = rf.coverage_source || 'none';
 
   // --- Plain-language head: title + prominent dev_state ---
   let h = '<div class="detail-head">' +
@@ -1203,10 +1288,35 @@ function selectRF(id) {
   h += `<p class="derive-note ${dsClass(rf.dev_state)}">` +
     `<span class="lbl">${esc(DS_LABEL[rf.dev_state])}</span> — ${esc(DS_BLURB[rf.dev_state])} ` +
     'States are derived from <b>code evidence</b> (implementation links + their attribution confidence), not a manually-maintained field. ' +
-    '“Verified” additionally needs test↔requirement links, which may be absent for in-process test suites.</p>';
+    '“Verified” means <b>real test coverage</b> exists — a test reaches the implementing code (auto-derived from the call graph) or an explicit test↔requirement link is present.</p>';
+
+  // --- Two DISTINCT coverage meters: real test coverage + link confidence ---
+  const testCovCls = testPct >= 70 ? 'high' : (testPct >= 30 ? 'mid' : 'low');
+  const linkCovCls = pct == null ? '' : (pct >= 70 ? 'high' : (pct >= 30 ? 'mid' : 'low'));
+  h += '<div class="cov-meters">' +
+    // REAL test coverage (call-graph-derived + explicit) — the headline meter.
+    '<div class="cov-meter">' +
+      `<div class="cov-meter-h"><span class="cov-meter-l">${esc(TEST_COVERAGE_LABEL)}</span>` +
+      sourceBadge(covSrc) + '</div>' +
+      `<div class="cov ${testCovCls}" title="${rf.tested_symbols}/${rf.total_symbols} implementing symbols reached by tests">` +
+      `<span class="track"><span class="fill" style="width:${testPct}%"></span></span>` +
+      `<span class="v">${testPct}%</span></div>` +
+      `<div class="cov-meter-hint">${rf.tested_symbols}/${rf.total_symbols} symbols reached by tests · auto-derived from the call graph, unioned with explicit test links</div>` +
+    '</div>' +
+    // LINK CONFIDENCE — separate signal, distinctly labelled.
+    '<div class="cov-meter">' +
+      `<div class="cov-meter-h"><span class="cov-meter-l">${esc(COVERAGE_LABEL)}</span></div>` +
+      (pct == null
+        ? '<div class="cov"><span class="track"><span class="fill" style="width:0%"></span></span><span class="v">—</span></div>'
+        : `<div class="cov ${linkCovCls}"><span class="track"><span class="fill" style="width:${pct}%"></span></span><span class="v">${pct}%</span></div>`) +
+      '<div class="cov-meter-hint">how confident the RF↔code attribution links are — NOT test coverage</div>' +
+    '</div>' +
+    '</div>';
 
   // --- Metrics row ---
   h += '<div class="metrics">' +
+    `<div class="metric"><div class="mv">${testPct}%</div>` +
+      `<div class="ml">${esc(TEST_COVERAGE_LABEL)}</div><div class="hint">real coverage (derived + explicit)</div></div>` +
     `<div class="metric"><div class="mv">${pct == null ? '—' : pct + '%'}</div>` +
       `<div class="ml">${esc(COVERAGE_LABEL)}</div><div class="hint">avg confidence of code links</div></div>` +
     `<div class="metric"><div class="mv">${rf.endpoints.length}</div><div class="ml">Endpoints exposed</div></div>` +

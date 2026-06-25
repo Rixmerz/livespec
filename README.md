@@ -263,7 +263,13 @@ Always registered.
   modules implicitly covered (transitively reached), modules truly orphan,
   modules in languages whose annotation extractor isn't wired yet
   (`modules_unsupported_language`), RFs without implementation, RFs with
-  low avg confidence.
+  low avg confidence. **(v0.16)** Also reports auto-derived per-RF **test
+  coverage** (`rf_coverage`, `avg_test_coverage`, `rfs_with_any_test_coverage`):
+  an implementing symbol counts as tested when a test's forward call-cone
+  reaches it (depth 3) or an explicit `relation='tests'` link exists — so
+  RF test-coverage works with no hand-linking for projects whose tests
+  call the code directly. The RF Explorer renders this as a per-RF test
+  coverage meter with a `coverage_source` badge.
 
 #### RF agentic — query, don't mutate (4)
 - `bulk_link_rf_symbols(mappings)` — batch-link N (rf_id, symbol_qname)

@@ -23,6 +23,7 @@ from livespec_mcp.domain.extractors import (
     ts_registered_callback_names,
 )
 from livespec_mcp.domain.graph import (
+    GraphView,
     ancestors_within,
     descendants_within,
     load_graph,
@@ -1091,6 +1092,143 @@ def compute_endpoints(
     return endpoints
 
 
+# v0.15: forward-BFS depth bound for auto-derived RF test coverage. A test
+# reaches an implementation through at most: test → helper/fixture → impl
+# (two indirections). Depth-LIMITED, not a full transitive closure, so the
+# multi-source BFS stays cheap on big repos (Django ~40K symbols). Computed
+# ONCE per audit, not per-RF.
+_TEST_REACH_DEPTH = 3
+
+
+def _is_test_file_path(path: str) -> bool:
+    """True if `path` is a test file. Same heuristic as the nested
+    ``is_test_path`` in ``find_orphan_tests`` (lifted to module scope so the
+    RF-test-coverage derivation reuses it instead of reinventing detection):
+    anything under a ``tests/`` tree or matching ``test_*`` / ``*_test.*``
+    naming. Path is project-relative (no leading slash)."""
+    base = path.rsplit("/", 1)[-1]
+    return (
+        path.startswith("tests/")
+        or "/tests/" in path
+        or base.startswith("test_")
+        or base.endswith("_test.py")
+        or base.endswith("_test.go")
+        or "_test." in base
+    )
+
+
+def compute_rf_test_coverage(
+    st: AppState,
+    view: GraphView,
+) -> dict[str, dict[str, Any]]:
+    """Auto-derive per-RF test coverage from the call graph (v0.15).
+
+    Reuses the already-loaded cached ``view`` (do NOT reload the graph).
+
+    Algorithm:
+    1. TEST symbols = symbols whose file is a test file (``_is_test_file_path``).
+    2. ``tested_symbols`` = multi-source forward BFS from ALL test symbols
+       over the call graph, bounded ``_TEST_REACH_DEPTH``. Computed once.
+    3. For each RF: an ``implements`` symbol S counts as TESTED if it is in
+       ``tested_symbols`` (derived) OR carries an explicit ``relation='tests'``
+       link (explicit). ``coverage_source`` ∈ {derived, explicit, both, none}
+       records which kinds contributed.
+
+    Returns a mapping ``rf_id -> {rf_id, title, test_coverage_ratio,
+    tested_symbols, total_symbols, coverage_source}``. ``test_coverage_ratio``
+    is 0.0 when the RF has no ``implements`` symbols.
+    """
+    pid = st.project_id
+    g = view.g
+
+    # Step 1: collect TEST symbol ids (those whose file is a test file).
+    test_sids: set[int] = {
+        sid
+        for sid, meta in view.sym_meta.items()
+        if _is_test_file_path(meta.get("file_path") or "")
+    }
+
+    # Step 2: multi-source forward BFS, bounded depth, computed ONCE.
+    tested_symbols: set[int] = set()
+    frontier: list[tuple[int, int]] = [
+        (sid, 0) for sid in test_sids if sid in g
+    ]
+    # Seed: a test symbol is itself "covered" trivially, but we only care
+    # about what tests REACH — production impl symbols downstream. We still
+    # add the seeds so an impl symbol that is *itself* a test symbol (rare)
+    # is counted. Forward edges expand from there up to _TEST_REACH_DEPTH.
+    tested_symbols.update(sid for sid, _ in frontier)
+    while frontier:
+        node, depth = frontier.pop()
+        if depth >= _TEST_REACH_DEPTH:
+            continue
+        for succ in g.successors(node):
+            if succ in tested_symbols:
+                continue
+            tested_symbols.add(succ)
+            frontier.append((succ, depth + 1))
+
+    # Step 3: per-RF rollup. One pass over the rf/rf_symbol join.
+    rows = st.conn.execute(
+        """SELECT r.rf_id, r.title, rs.symbol_id, rs.relation
+           FROM rf r JOIN rf_symbol rs ON rs.rf_id=r.id
+           WHERE r.project_id=?
+           ORDER BY r.rf_id""",
+        (pid,),
+    ).fetchall()
+
+    # rf_id -> {"title", "impl": set[int], "explicit": set[int]}
+    agg: dict[str, dict[str, Any]] = {}
+    for r in rows:
+        rf_id = r["rf_id"]
+        bucket = agg.get(rf_id)
+        if bucket is None:
+            bucket = {"title": r["title"], "impl": set(), "explicit": set()}
+            agg[rf_id] = bucket
+        sid = int(r["symbol_id"])
+        relation = r["relation"]
+        if relation == "implements":
+            bucket["impl"].add(sid)
+        elif relation == "tests":
+            bucket["explicit"].add(sid)
+
+    out: dict[str, dict[str, Any]] = {}
+    for rf_id, bucket in agg.items():
+        impl: set[int] = bucket["impl"]
+        explicit: set[int] = bucket["explicit"]
+        total = len(impl)
+        derived_hit = False
+        explicit_hit = False
+        tested_count = 0
+        for sid in impl:
+            in_derived = sid in tested_symbols
+            in_explicit = sid in explicit
+            if in_derived:
+                derived_hit = True
+            if in_explicit:
+                explicit_hit = True
+            if in_derived or in_explicit:
+                tested_count += 1
+        ratio = (tested_count / total) if total else 0.0
+        if derived_hit and explicit_hit:
+            source = "both"
+        elif derived_hit:
+            source = "derived"
+        elif explicit_hit:
+            source = "explicit"
+        else:
+            source = "none"
+        out[rf_id] = {
+            "rf_id": rf_id,
+            "title": bucket["title"],
+            "test_coverage_ratio": round(ratio, 4),
+            "tested_symbols": tested_count,
+            "total_symbols": total,
+            "coverage_source": source,
+        }
+    return out
+
+
 def compute_coverage(st: AppState) -> dict[str, Any]:
     """Module-level shared computation: the full unpaginated coverage audit.
 
@@ -1151,10 +1289,14 @@ def compute_coverage(st: AppState) -> dict[str, Any]:
     # call graph: a file is implicitly covered if any of its symbols has
     # an rf-linked symbol in its ancestor cone (someone calls in here from
     # an annotated entry point).
+    # Load the cached call graph once and reuse it for both the
+    # implicit-coverage split below and the per-RF test-coverage derivation
+    # (v0.15). load_graph is cached by (db, project, run_id) — cheap.
+    view = load_graph(st.conn, pid)
+
     modules_implicit: list[str] = []
     modules_truly_orphan: list[str] = []
     if modules_no_rf:
-        view = load_graph(st.conn, pid)
         rf_linked_sids: set[int] = {
             int(r["symbol_id"])
             for r in st.conn.execute(
@@ -1236,6 +1378,26 @@ def compute_coverage(st: AppState) -> dict[str, Any]:
         )
     ]
 
+    # v0.15: auto-derived per-RF test coverage from the call graph. Reuses
+    # the cached `view` (no reload). Additive — leaves the explicit-link
+    # `rf_test_coverage` / `rfs_with_test_coverage` above untouched.
+    rf_coverage_map = compute_rf_test_coverage(st, view)
+    rf_coverage = sorted(
+        rf_coverage_map.values(),
+        key=lambda d: (-d["test_coverage_ratio"], d["rf_id"]),
+    )
+    rfs_with_any_test_coverage = sum(
+        1 for d in rf_coverage if d["test_coverage_ratio"] > 0
+    )
+    avg_test_coverage = (
+        round(
+            sum(d["test_coverage_ratio"] for d in rf_coverage) / len(rf_coverage),
+            4,
+        )
+        if rf_coverage
+        else 0.0
+    )
+
     counts = {
         "modules_without_rf": len(modules_no_rf),
         "modules_implicitly_covered": len(modules_implicit),
@@ -1244,6 +1406,8 @@ def compute_coverage(st: AppState) -> dict[str, Any]:
         "rfs_without_implementation": len(rfs_no_impl),
         "rfs_low_confidence": len(rfs_low_conf),
         "rfs_with_test_coverage": len(rf_test_coverage),
+        "rfs_with_any_test_coverage": rfs_with_any_test_coverage,
+        "avg_test_coverage": avg_test_coverage,
     }
     return {
         "counts": counts,
@@ -1253,6 +1417,9 @@ def compute_coverage(st: AppState) -> dict[str, Any]:
         "modules_unsupported_language": modules_unsupported_language,
         "rfs_without_implementation": rfs_no_impl,
         "rfs_low_confidence": rfs_low_conf,
+        "rf_coverage": rf_coverage,
+        "avg_test_coverage": avg_test_coverage,
+        "rfs_with_any_test_coverage": rfs_with_any_test_coverage,
         "rf_test_coverage": rf_test_coverage,
     }
 
@@ -2372,6 +2539,16 @@ def register(mcp: FastMCP) -> None:
         - `rf_test_coverage` (v0.8 P2 fix #9): RFs that have ≥1 `relation='tests'`
           link, with the count. Use this to spot RFs implemented but not
           tested (RF in this list with low test_count → coverage gap).
+        - `rf_coverage` (v0.15): per-RF AUTO-DERIVED test coverage from the
+          call graph. Each entry is `{rf_id, title, test_coverage_ratio,
+          tested_symbols, total_symbols, coverage_source}`. An RF's
+          `implements` symbol counts as tested when a test symbol reaches it
+          within 3 call-graph hops (derived) OR it carries an explicit
+          `relation='tests'` link (explicit); `coverage_source`
+          ∈ {derived, explicit, both, none}. No hand-linking required —
+          this is the differentiator over the explicit-only `rf_test_coverage`
+          above. Rollups `avg_test_coverage` and `rfs_with_any_test_coverage`
+          (RFs with ratio>0) are also in `counts`.
 
         v0.7 (B3): paginated. `limit` (default 200) caps each list per
         call; `cursor` resumes; `summary_only=True` returns only the
@@ -2394,6 +2571,7 @@ def register(mcp: FastMCP) -> None:
         rfs_no_impl = cov["rfs_without_implementation"]
         rfs_low_conf = cov["rfs_low_confidence"]
         rf_test_coverage = cov["rf_test_coverage"]
+        rf_coverage = cov["rf_coverage"]
         if summary_only:
             return {"counts": counts}
 
@@ -2409,6 +2587,7 @@ def register(mcp: FastMCP) -> None:
         rfn_p, rfn_next = _page(rfs_no_impl)
         rfl_p, rfl_next = _page(rfs_low_conf)
         rftc_p, rftc_next = _page(rf_test_coverage)
+        rfcov_p, rfcov_next = _page(rf_coverage)
         return {
             "counts": counts,
             "modules_without_rf": mw_p,
@@ -2418,6 +2597,9 @@ def register(mcp: FastMCP) -> None:
             "rfs_without_implementation": rfn_p,
             "rfs_low_confidence": rfl_p,
             "rf_test_coverage": rftc_p,
+            "rf_coverage": rfcov_p,
+            "avg_test_coverage": cov["avg_test_coverage"],
+            "rfs_with_any_test_coverage": cov["rfs_with_any_test_coverage"],
             "next_cursor": {
                 "modules_without_rf": mw_next,
                 "modules_implicitly_covered": mi_next,
@@ -2426,6 +2608,7 @@ def register(mcp: FastMCP) -> None:
                 "rfs_without_implementation": rfn_next,
                 "rfs_low_confidence": rfl_next,
                 "rf_test_coverage": rftc_next,
+                "rf_coverage": rfcov_next,
             },
         }
 

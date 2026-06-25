@@ -6,6 +6,40 @@ follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.16.0] - 2026-06-25
+
+### Added — automatic RF test coverage (call-graph derived)
+- `audit_coverage` now **derives** per-RF test coverage from the call
+  graph: a requirement's implementing symbol counts as tested when a
+  test symbol's forward call-cone reaches it (bounded depth 3), unioned
+  with explicit `relation='tests'` links. New additive payload — a
+  per-RF `rf_coverage` list `{rf_id, title, test_coverage_ratio,
+  tested_symbols, total_symbols, coverage_source}` (`coverage_source` ∈
+  derived / explicit / both / none) plus rollups `avg_test_coverage`
+  and `rfs_with_any_test_coverage`. The legacy explicit-link fields
+  (`rf_test_coverage`, `rfs_with_test_coverage`) are unchanged. RF
+  test-coverage now works automatically for any project whose tests
+  call the code directly — no hand-linking required; explicit links
+  remain the fallback for in-process MCP/RPC suites the call graph
+  cannot follow.
+
+### Changed — RF Explorer surfaces real test coverage
+- The explorer's per-RF view shows a **Test coverage %** meter (distinct
+  from the existing **Link confidence %** meter) with a `coverage_source`
+  badge ("auto-derived (call graph)" vs "explicit test links"); the
+  dashboard gains an **Avg test coverage** KPI; `dev_state` flips to
+  `verified` whenever an RF has any test coverage. Computed from a single
+  `compute_coverage` call (no extra graph load).
+
+### Added — reproducible self-RFs
+- `docs/requirements/livespec-rfs.md` ships livespec's own 12 requirements
+  (RF-001..RF-012) in the `import_requirements_from_markdown` format, so a
+  fresh clone can regenerate the RF definitions deterministically
+  (`index_project` → `import_requirements_from_markdown`).
+  `docs/requirements/livespec-rf-links.md` documents the symbol-link seed
+  honestly (links are bulk-seeded / `@rf:`-annotatable, not committed
+  per-symbol).
+
 ## [0.15.0] - 2026-06-25
 
 ### Added — RF Explorer (`export_explorer`): auto-generated web view
