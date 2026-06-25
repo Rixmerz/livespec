@@ -203,7 +203,7 @@ These tools answer the questions an agent ASKS on an unfamiliar codebase.
 Always registered.
 
 #### Indexing (1)
-- `index_project(force=False, watch=False, embed=False)` — walk, parse,
+- `index_project(force=False, watch=False, embed=False, explorer=False)` — walk, parse,
   persist. Also rebuilds search chunks idempotently. Respects
   `.gitignore` (root + nested, negations included) on top of the
   built-in ignore list (v0.14). Pass `embed=True` to populate vector
@@ -321,13 +321,18 @@ includes `docs`. Human-tier ceremony for managing generated docs.
 - `list_docs(target_type, only_stale=False)` — list or surface drifted
   docs (drift triggers on body_hash OR signature_hash mismatch).
 - `export_documentation(format, out_subdir)` — markdown or JSON.
-- `export_explorer(generated_at?)` — **RF Explorer** (v0.15): writes a
-  self-contained static bundle to `.mcp-docs/explorer/` (`data.json` +
-  `index.html`). A Swagger-style web view **organised by Requirement** —
-  RF spine with implementing symbols (+ signatures), owned endpoints,
-  RF→RF dependency topology (Mermaid), a framework-aware endpoint lens,
-  and a coverage-gaps view. Pure projection of the RF graph: no server,
-  no build step, opens from `file://`. Re-run to refresh.
+- `export_explorer(base?, head?, generated_at?)` — **RF Explorer**
+  (v0.15+): writes a self-contained static bundle to `.mcp-docs/explorer/`
+  (`data.json` + `index.html`). A Swagger-style, stakeholder/PO-first web
+  view **organised by Requirement** — RF spine with a dev-state pill,
+  plain-language description, implementing symbols (+ signatures), a real
+  **test-coverage % meter** with a derived/explicit source badge, owned
+  endpoints (grouped Tools/Resources/Prompts + copy-call), RF→RF
+  dependency topology (Mermaid), and a coverage-gaps view. **v0.17** adds a
+  **Changes** view (pass `base`/`head` → which RFs a diff touches +
+  coverage), a per-RF **uncovered-symbols** drill-down, and a **coverage
+  trend** sparkline. Pure projection of the RF graph: no server, no build
+  step, opens from `file://`. Re-run to refresh (or `index_project(explorer=True)`).
 
 ### Migrating from older versions
 

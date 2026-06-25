@@ -6,6 +6,45 @@ follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.17.0] - 2026-06-25
+
+### Added — Diff→RF "Changes" view
+- `export_explorer(base?, head?)` bakes a **Changes** section: which RFs a
+  diff touches + their test coverage, via a new
+  `compute_diff_rf_impact(st, base, head)` (reuses the existing
+  `git_diff_impact` walk — factored into a shared `_git_diff_changed_files`
+  helper). Default range: `main..HEAD`, falling back to `HEAD~1..HEAD`;
+  omitted when not a git repo. The PO/reviewer's "what does this branch
+  touch" view.
+
+### Added — coverage drill-down (uncovered symbols)
+- `audit_coverage`'s per-RF `rf_coverage` now includes `uncovered_symbols`
+  (+ `uncovered_symbols_count`): the implementing symbols with no test
+  (derived or explicit), capped at 50. The explorer renders it as a
+  collapsible "Uncovered symbols" block per RF — actionable "write a test
+  for these".
+
+### Added — coverage trend over time
+- New `rf_coverage_snapshot` table (migration v9) + `storage/trends.py`
+  (`record_snapshot` / `read_trend`). `audit_coverage` records a snapshot,
+  **deduped on change** (an identical avg + verified_count since the last
+  snapshot is a no-op, so repeated explorer exports don't spam the series).
+  The explorer shows a coverage sparkline + per-snapshot strip (`trend` in
+  data.json).
+
+### Added — explorer freshness on index
+- `index_project(explorer=False)` auto-regenerates the explorer bundle when
+  `.mcp-docs/explorer/` already exists (or `explorer=True`), best-effort (a
+  failure never breaks indexing). Payload gains `explorer_regenerated`.
+  Keeps the static page current without a manual `export_explorer`.
+
+### Added — reproducible RF links
+- `docs/requirements/livespec-rf-links.json` (the implements/tests links) +
+  `scripts/apply_rf_links.py` make the self-RF *links* reproducible from a
+  clone, completing the RF-definition reproducibility from v0.16:
+  `index_project` → `import_requirements_from_markdown` →
+  `python scripts/apply_rf_links.py`.
+
 ## [0.16.0] - 2026-06-25
 
 ### Added — automatic RF test coverage (call-graph derived)

@@ -25,7 +25,9 @@ data.json schema:
                         "endpoints": [str], "depends_on": [str],
                         "coverage": float|null,
                         "test_coverage_ratio": float, "coverage_source": str,
-                        "tested_symbols": int, "total_symbols": int}],
+                        "tested_symbols": int, "total_symbols": int,
+                        "uncovered_symbols": [str],
+                        "uncovered_symbols_count": int}],
       "rf_topology": {"nodes": [{"id", "title", "dev_state"}],
                       "edges": [{"from", "to", "kind"}]},
       "endpoints": [{"kind": str, "framework"|null, "handler",
@@ -33,7 +35,12 @@ data.json schema:
                      "rf_ids": [str]}],
       "fixtures": [{"kind": "fixture", ...same shape as an endpoint...}],
       "coverage": {"orphan_modules": [str], "orphan_endpoints": [str],
-                   "totals": {...}}
+                   "totals": {...}},
+      "trend": [{"ts": str, "avg_test_coverage": float|null,
+                 "verified_count": int}],
+      "changes": {"base": str|null, "head": str|null, "files_changed": [str],
+                  "requirements_touched": [{"rf_id", "title", "files": [str],
+                                            "test_coverage_ratio": float}]}
     }
 
 ``endpoints`` is the real API surface only: ``kind`` ∈ {tool, resource,
@@ -71,13 +78,69 @@ unchanged project produce byte-identical ``data.json`` except for it.
 from __future__ import annotations
 
 import json
+import subprocess
 from pathlib import Path
 from typing import Any
 
 from livespec_mcp.state import AppState
-from livespec_mcp.tools.analysis import compute_coverage, compute_endpoints
+from livespec_mcp.storage.trends import read_trend
+from livespec_mcp.tools.analysis import (
+    compute_coverage,
+    compute_diff_rf_impact,
+    compute_endpoints,
+)
 
 _COVERAGE_THRESHOLD = 0.7
+
+
+def _resolve_diff_range(
+    ws_root: str, base: str | None, head: str | None
+) -> tuple[str, str] | None:
+    """Resolve the git range for the explorer's "Changes" section.
+
+    Defaulting (when ``base``/``head`` are omitted): prefer ``main``..``HEAD``;
+    if ``main`` is absent OR it resolves to the same commit as ``HEAD`` (no
+    delta to show), fall back to ``HEAD~1``..``HEAD``. Returns ``None`` when
+    the workspace is not a git repo / git is unavailable (the caller then
+    omits the section). Explicit ``base``/``head`` are passed through verbatim
+    and are NOT validated here — ``compute_diff_rf_impact`` already degrades to
+    an empty shape on an unknown range.
+    """
+    if base is not None and head is not None:
+        return base, head
+
+    def _rev(ref: str) -> str | None:
+        try:
+            proc = subprocess.run(
+                ["git", "-C", ws_root, "rev-parse", "--verify", "--quiet", ref],
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+        except (FileNotFoundError, subprocess.TimeoutExpired):
+            return None
+        out = proc.stdout.strip()
+        return out or None
+
+    # No git / no HEAD (empty repo) -> omit the section entirely.
+    head_sha = _rev("HEAD")
+    if head_sha is None:
+        return None
+
+    eff_base = base
+    eff_head = head or "HEAD"
+    if eff_base is None:
+        main_sha = _rev("main")
+        # Prefer main..HEAD, but only if main exists AND differs from HEAD.
+        if main_sha is not None and main_sha != head_sha:
+            eff_base = "main"
+        else:
+            # Fall back to the previous commit; if HEAD has no parent
+            # (single-commit repo), there is no range to show.
+            if _rev("HEAD~1") is None:
+                return None
+            eff_base = "HEAD~1"
+    return eff_base, eff_head
 
 
 def _derive_dev_state(
@@ -149,13 +212,22 @@ def _kind_of_endpoint(ep: dict[str, Any]) -> str:
 def compute_explorer_data(
     st: AppState,
     generated_at: str | None = None,
+    base: str | None = None,
+    head: str | None = None,
 ) -> dict[str, Any]:
     """Build the full RF Explorer data bundle for ``st``'s workspace.
 
-    Pure read; reuses ``compute_endpoints`` + ``compute_coverage``. The
-    returned dict matches the data.json schema documented in the module
-    docstring. ``generated_at`` is passed through verbatim (default None)
-    so callers control determinism.
+    Pure read; reuses ``compute_endpoints`` + ``compute_coverage`` +
+    ``compute_diff_rf_impact`` + ``read_trend``. The returned dict matches the
+    data.json schema documented in the module docstring. ``generated_at`` is
+    passed through verbatim (default None) so callers control determinism.
+
+    ``base``/``head`` scope the top-level ``changes`` section (RF-centric git
+    diff impact). Both default to None — see ``_resolve_diff_range`` for the
+    defaulting (``main``..``HEAD`` with a ``HEAD~1``..``HEAD`` fallback, omitted
+    entirely when the workspace is not a git repo). Defaulting keeps the
+    no-arg ``compute_explorer_data(st)`` call (used by indexing.py's freshness
+    hook via ``write_explorer_bundle(st)``) working unchanged.
     """
     conn = st.conn
     pid = st.project_id
@@ -256,6 +328,12 @@ def compute_explorer_data(
         coverage_source = rc["coverage_source"] if rc else "none"
         tested_symbols = int(rc["tested_symbols"]) if rc else 0
         total_symbols = int(rc["total_symbols"]) if rc else len(symbols)
+        # v0.16 B: drill-down list of `implements` symbols with NO test
+        # coverage (neither call-graph-reached nor explicitly tests-linked).
+        # Sourced verbatim from compute_rf_test_coverage's rf_coverage entry
+        # — already capped + counted there, NO recompute here.
+        uncovered_symbols = list(rc["uncovered_symbols"]) if rc else []
+        uncovered_symbols_count = int(rc["uncovered_symbols_count"]) if rc else 0
         dev_state = _derive_dev_state(len(symbols), coverage, test_coverage_ratio)
         # Endpoints owned by this RF: endpoint handler qnames linked to it.
         owned_endpoints = sorted(
@@ -280,6 +358,8 @@ def compute_explorer_data(
                 "coverage_source": coverage_source,
                 "tested_symbols": tested_symbols,
                 "total_symbols": total_symbols,
+                "uncovered_symbols": uncovered_symbols,
+                "uncovered_symbols_count": uncovered_symbols_count,
             }
         )
 
@@ -407,6 +487,26 @@ def compute_explorer_data(
         "SELECT COUNT(*) c FROM file WHERE project_id=?", (pid,)
     ).fetchone()["c"]
 
+    # --- Coverage trend (top-level) ------------------------------------
+    # Chronological rollup snapshots recorded by each audit_coverage run.
+    # Sourced verbatim from storage.trends.read_trend — NO recompute.
+    trend = read_trend(conn, pid)
+
+    # --- Git diff RF impact (top-level "changes") ----------------------
+    # Resolve the range (main..HEAD, HEAD~1..HEAD fallback, omitted off-git),
+    # then delegate to compute_diff_rf_impact — NO diff logic recomputed here.
+    ws_root = str(st.settings.workspace)
+    rng = _resolve_diff_range(ws_root, base, head)
+    if rng is None:
+        changes: dict[str, Any] = {
+            "base": None,
+            "head": None,
+            "files_changed": [],
+            "requirements_touched": [],
+        }
+    else:
+        changes = compute_diff_rf_impact(st, rng[0], rng[1])
+
     return {
         "meta": {
             "project": st.settings.workspace.name,
@@ -426,6 +526,10 @@ def compute_explorer_data(
         # an endpoint entry). The viewer shows these in a collapsed section.
         "fixtures": fixtures,
         "coverage": coverage_section,
+        # Coverage trend over recorded audit snapshots (chronological).
+        "trend": trend,
+        # RF-centric git diff impact for the resolved range (empty off-git).
+        "changes": changes,
     }
 
 
@@ -458,12 +562,20 @@ def _html_escape(s: str) -> str:
 def write_explorer_bundle(
     st: AppState,
     generated_at: str | None = None,
+    base: str | None = None,
+    head: str | None = None,
 ) -> dict[str, Any]:
     """Compute + write data.json and index.html under .mcp-docs/explorer/.
 
     Returns ``{"data": <bundle>, "files_written": [<abs paths>]}``.
+
+    ``base``/``head`` default to None and are threaded into
+    ``compute_explorer_data`` for the "Changes" section. The no-arg call
+    ``write_explorer_bundle(st)`` (indexing.py's freshness hook) therefore
+    keeps working unchanged — the range defaults to ``main``..``HEAD`` (or is
+    omitted off-git).
     """
-    data = compute_explorer_data(st, generated_at=generated_at)
+    data = compute_explorer_data(st, generated_at=generated_at, base=base, head=head)
     out_dir: Path = st.settings.state_dir / "explorer"
     out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -1094,6 +1206,90 @@ _HTML_TEMPLATE = """<!DOCTYPE html>
 
   .empty { color: var(--muted); font-style: italic; padding: 10px 0; font-size: 13px; }
 
+  /* ---- Uncovered symbols drill-down (RF detail) ---- */
+  details.uncovered {
+    margin-top: 16px; border: 1px solid color-mix(in srgb, var(--warn) 32%, var(--line));
+    border-radius: var(--radius); background: var(--surface); box-shadow: var(--shadow-sm);
+    overflow: hidden;
+  }
+  details.uncovered > summary {
+    cursor: pointer; list-style: none; padding: 12px 15px;
+    font-size: 12.5px; font-weight: 700; color: var(--warn);
+    display: flex; align-items: center; gap: 9px; background: var(--warn-weak);
+  }
+  details.uncovered > summary::-webkit-details-marker { display: none; }
+  details.uncovered > summary::before {
+    content: "▸"; color: var(--warn); font-size: 11px; transition: transform .15s ease;
+  }
+  details.uncovered[open] > summary::before { transform: rotate(90deg); }
+  details.uncovered > summary .hint { font-weight: 500; color: var(--muted); font-size: 11.5px; }
+  .uncovered-body { padding: 6px 15px 14px; }
+  ul.uncovered-list {
+    list-style: none; margin: 8px 0 0; padding: 0; columns: 2; column-gap: 10px;
+  }
+  @media (max-width: 760px) { ul.uncovered-list { columns: 1; } }
+  ul.uncovered-list li {
+    break-inside: avoid; font-family: var(--mono); font-size: 11.5px;
+    color: var(--fg-soft); padding: 5px 9px; border-radius: 7px;
+    border-left: 2px solid var(--warn); background: var(--surface-2);
+    margin-bottom: 5px; word-break: break-all;
+  }
+  .uncovered-more { font-size: 11.5px; color: var(--muted); margin-top: 8px; font-style: italic; }
+
+  /* ---- Changes (git diff RF impact) ---- */
+  .chg-head {
+    display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 14px;
+  }
+  .chg-range {
+    font-family: var(--mono); font-size: 13px; font-weight: 650;
+    padding: 4px 12px; border-radius: 999px;
+    background: var(--accent-weak); color: var(--accent-ink); border: 1px solid var(--accent-line);
+  }
+  .chg-range .sep { color: var(--muted); margin: 0 4px; }
+  .ratio-bar {
+    display: inline-flex; align-items: center; gap: 7px;
+  }
+  .ratio-bar .track {
+    width: 70px; height: 6px; border-radius: 4px; overflow: hidden;
+    background: color-mix(in srgb, var(--muted) 24%, transparent);
+  }
+  .ratio-bar .fill { height: 100%; border-radius: 4px; background: var(--accent); }
+  .ratio-bar.high .fill { background: var(--ok); }
+  .ratio-bar.mid  .fill { background: var(--warn); }
+  .ratio-bar.low  .fill { background: var(--danger); }
+  .ratio-bar .v { font-size: 12px; font-weight: 650; font-variant-numeric: tabular-nums; color: var(--fg-soft); }
+  td .files-list { display: flex; flex-direction: column; gap: 3px; }
+  td .files-list .f { font-family: var(--mono); font-size: 11px; color: var(--muted); word-break: break-all; }
+
+  /* ---- Coverage trend (sparkline + snapshot bars) ---- */
+  .trend-panel {
+    background: var(--surface); border: 1px solid var(--line);
+    border-radius: var(--radius); padding: 16px 18px; box-shadow: var(--shadow-sm);
+    margin: 4px 0 8px;
+  }
+  .trend-h { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; margin-bottom: 12px; }
+  .trend-h .t { font-size: 13px; font-weight: 650; color: var(--fg-soft); }
+  .trend-h .sub { font-size: 11.5px; color: var(--muted); }
+  .spark { display: block; width: 100%; max-width: 560px; height: 60px; }
+  .spark .area { fill: var(--accent-weak); }
+  .spark .line { fill: none; stroke: var(--accent); stroke-width: 2; }
+  .spark .dot  { fill: var(--accent); }
+  .trend-bars { display: flex; align-items: flex-end; gap: 6px; height: 80px; margin-top: 6px; }
+  .trend-bars .col { display: flex; flex-direction: column; align-items: center; gap: 4px; flex: 1; min-width: 0; }
+  .trend-bars .col .bar {
+    width: 100%; max-width: 34px; border-radius: 4px 4px 0 0; background: var(--accent);
+    min-height: 2px; transition: none;
+  }
+  .trend-bars .col .lbl { font-size: 9.5px; color: var(--faint); font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .trend-meta {
+    display: flex; gap: 18px; flex-wrap: wrap; margin-top: 12px;
+    font-size: 12px; color: var(--muted);
+  }
+  .trend-meta b { color: var(--fg); font-variant-numeric: tabular-nums; }
+  .trend-single {
+    font-size: 12.5px; color: var(--muted); font-style: italic; margin-top: 8px;
+  }
+
   /* ---- Motion: opt-out ---- */
   @media (prefers-reduced-motion: reduce) {
     *, *::before, *::after {
@@ -1122,6 +1318,7 @@ _HTML_TEMPLATE = """<!DOCTYPE html>
     <button role="tab" data-tab="requirements" aria-current="page">Requirements<span class="pill" id="pill-rf"></span></button>
     <button role="tab" data-tab="topology">Dependencies<span class="pill" id="pill-topo"></span></button>
     <button role="tab" data-tab="endpoints">Endpoints<span class="pill" id="pill-ep"></span></button>
+    <button role="tab" data-tab="changes">Changes<span class="pill" id="pill-chg"></span></button>
     <button role="tab" data-tab="gaps">Coverage gaps<span class="pill" id="pill-gap"></span></button>
   </nav>
 </header>
@@ -1155,6 +1352,9 @@ _HTML_TEMPLATE = """<!DOCTYPE html>
 <section class="panel" data-panel="endpoints" role="tabpanel" aria-label="Endpoints" hidden>
   <main class="scroll pad" id="epmain"></main>
 </section>
+<section class="panel" data-panel="changes" role="tabpanel" aria-label="Changes" hidden>
+  <main class="scroll pad" id="chgmain"></main>
+</section>
 <section class="panel" data-panel="gaps" role="tabpanel" aria-label="Coverage gaps" hidden>
   <main class="scroll pad" id="gapmain"></main>
 </section>
@@ -1181,9 +1381,12 @@ el('stats').innerHTML = [
 ).join('');
 
 const edgeCount = DATA.rf_topology.edges.length;
+const CHANGES = DATA.changes || { base: null, head: null, files_changed: [], requirements_touched: [] };
+const TREND = DATA.trend || [];
 el('pill-rf').textContent = DATA.requirements.length;
 el('pill-topo').textContent = DATA.rf_topology.nodes.length;
 el('pill-ep').textContent = DATA.endpoints.length;
+el('pill-chg').textContent = (CHANGES.requirements_touched || []).length;
 el('pill-gap').textContent =
   DATA.coverage.orphan_modules.length + DATA.coverage.orphan_endpoints.length;
 
@@ -1396,6 +1599,24 @@ function selectRF(id) {
       '<div class="cov-meter-hint">how confident the RF↔code attribution links are — NOT test coverage</div>' +
     '</div>' +
     '</div>';
+
+  // --- Uncovered symbols drill-down (the actionable gap) ---
+  // Lists implementing symbols that no test reaches (call-graph) and that
+  // carry no explicit test link. Shown only when there is a gap to act on.
+  const uncovered = rf.uncovered_symbols || [];
+  const uncoveredCount = rf.uncovered_symbols_count || 0;
+  if (uncoveredCount > 0) {
+    h += '<details class="uncovered"><summary>Uncovered symbols ' +
+      `<span class="ct" style="font-family:var(--mono)">${uncoveredCount}</span>` +
+      '<span class="hint">implementing code no test reaches — the gap to close</span></summary>' +
+      '<div class="uncovered-body">';
+    h += '<ul class="uncovered-list">' +
+      uncovered.map(q => `<li>${esc(q)}</li>`).join('') + '</ul>';
+    if (uncovered.length < uncoveredCount) {
+      h += `<div class="uncovered-more">… and ${uncoveredCount - uncovered.length} more (list capped at ${uncovered.length}).</div>`;
+    }
+    h += '</div></details>';
+  }
 
   // --- Metrics row ---
   h += '<div class="metrics">' +
@@ -1770,6 +1991,134 @@ function buildGaps() {
   el('gapmain').innerHTML = h;
 }
 
+// ---- Coverage trend (sparkline over recorded audit snapshots) ----
+// Renders the chronological avg_test_coverage series as a tiny SVG
+// sparkline + a per-snapshot bar strip. Degrades gracefully: 0 snapshots ->
+// a note; 1 snapshot -> a single bar + "history starts accumulating".
+function ratioCls(pct) { return pct >= 70 ? 'high' : (pct >= 30 ? 'mid' : 'low'); }
+function shortTs(ts) {
+  // ISO-ish ts -> compact "MM-DD HH:MM" for the bar label, best-effort.
+  const s = String(ts || '');
+  const m = s.match(/(\\d{4})-(\\d{2})-(\\d{2})[T ](\\d{2}):(\\d{2})/);
+  return m ? `${m[2]}-${m[3]} ${m[4]}:${m[5]}` : s.slice(0, 16);
+}
+function buildTrend() {
+  const series = TREND;
+  if (!series.length) {
+    return '<div class="trend-panel"><div class="trend-h">' +
+      '<span class="t">Coverage trend</span></div>' +
+      '<div class="empty">No coverage snapshots recorded yet — run an audit to start the history.</div></div>';
+  }
+  // y values in [0,1]; null avg (no RFs at that snapshot) treated as 0.
+  const pts = series.map(s => (s.avg_test_coverage == null ? 0 : s.avg_test_coverage));
+  const last = series[series.length - 1];
+  const lastPct = Math.round((last.avg_test_coverage == null ? 0 : last.avg_test_coverage) * 100);
+
+  let h = '<div class="trend-panel"><div class="trend-h">' +
+    '<span class="t">Coverage trend</span>' +
+    `<span class="sub">${series.length} snapshot${series.length === 1 ? '' : 's'} · avg ${esc(TEST_COVERAGE_LABEL)}</span></div>`;
+
+  if (series.length === 1) {
+    // Single snapshot: one bar, friendly note, no sparkline (no line to draw).
+    h += '<div class="trend-bars"><div class="col">' +
+      `<div class="bar" style="height:${Math.max(2, lastPct)}%"></div>` +
+      `<div class="lbl">${esc(shortTs(last.ts))}</div></div></div>`;
+    h += '<div class="trend-single">History starts accumulating — one snapshot so far ' +
+      `(${lastPct}% avg ${esc(TEST_COVERAGE_LABEL)}, ${last.verified_count} verified). ` +
+      'Each audit adds a point.</div>';
+    h += '</div>';
+    return h;
+  }
+
+  // Sparkline: map points across a 0..W viewBox; W tracks point count.
+  const W = 100, H = 30, n = pts.length;
+  const xs = pts.map((_, i) => (n === 1 ? 0 : (i / (n - 1)) * W));
+  const ys = pts.map(v => H - v * H);
+  const linePts = xs.map((x, i) => `${x.toFixed(2)},${ys[i].toFixed(2)}`).join(' ');
+  const areaPts = `0,${H} ` + linePts + ` ${W},${H}`;
+  h += `<svg class="spark" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" role="img" aria-label="Coverage trend over ${n} snapshots">` +
+    `<polygon class="area" points="${areaPts}"></polygon>` +
+    `<polyline class="line" points="${linePts}"></polyline>` +
+    `<circle class="dot" cx="${xs[n - 1].toFixed(2)}" cy="${ys[n - 1].toFixed(2)}" r="1.8"></circle></svg>`;
+
+  // Per-snapshot bar strip (cap the rendered bars to keep it compact).
+  const MAX_BARS = 24;
+  const shown = series.slice(-MAX_BARS);
+  h += '<div class="trend-bars">';
+  shown.forEach(s => {
+    const pct = Math.round((s.avg_test_coverage == null ? 0 : s.avg_test_coverage) * 100);
+    h += '<div class="col" title="' +
+      `${esc(shortTs(s.ts))} · ${pct}% avg · ${s.verified_count} verified">` +
+      `<div class="bar" style="height:${Math.max(2, pct)}%"></div>` +
+      `<div class="lbl">${esc(shortTs(s.ts))}</div></div>`;
+  });
+  h += '</div>';
+
+  const first = series[0];
+  const firstPct = Math.round((first.avg_test_coverage == null ? 0 : first.avg_test_coverage) * 100);
+  const delta = lastPct - firstPct;
+  const deltaStr = (delta >= 0 ? '+' : '') + delta + '%';
+  h += '<div class="trend-meta">' +
+    `<span>Latest: <b>${lastPct}%</b> avg ${esc(TEST_COVERAGE_LABEL)}</span>` +
+    `<span>Verified RFs: <b>${last.verified_count}</b></span>` +
+    `<span>Since first snapshot: <b>${esc(deltaStr)}</b></span></div>`;
+  h += '</div>';
+  return h;
+}
+
+// ---- Changes (RF-centric git diff impact for the resolved range) ----
+function buildChanges() {
+  const c = CHANGES;
+  const touched = c.requirements_touched || [];
+  const filesChanged = c.files_changed || [];
+  const hasRange = c.base != null && c.head != null;
+
+  // The coverage trend leads (movement over time), then this range's impact.
+  let h = buildTrend();
+
+  h += '<div class="sec"><h3 class="sec-h">Changes in range' +
+    `<span class="ct">${touched.length}</span></h3>`;
+
+  if (!hasRange) {
+    h += '<div class="empty">No git range available — this workspace is not a git ' +
+      'repository (or has no history), so there are no changes to attribute to requirements.</div>';
+    h += '</div>';
+    el('chgmain').innerHTML = h;
+    return;
+  }
+
+  h += '<div class="chg-head">' +
+    `<span class="chg-range">${esc(c.base)}<span class="sep">..</span>${esc(c.head)}</span>` +
+    `<span class="chip muted">${filesChanged.length} file${filesChanged.length === 1 ? '' : 's'} changed</span>` +
+    `<span class="chip muted">${touched.length} requirement${touched.length === 1 ? '' : 's'} touched</span></div>`;
+
+  if (!filesChanged.length) {
+    h += '<div class="empty">No changes in this range — base and head point to the same code.</div>';
+  } else if (!touched.length) {
+    h += '<div class="empty">Files changed, but none of them map to a tracked requirement ' +
+      '(no RF links reach the changed code). See the Coverage gaps tab for unattributed code.</div>';
+  } else {
+    h += '<div class="card"><table><thead><tr>' +
+      '<th>Requirement</th><th>Title</th><th>Changed files</th><th>Test coverage</th></tr></thead><tbody>';
+    touched.forEach(r => {
+      const pct = Math.round((r.test_coverage_ratio || 0) * 100);
+      const cls = ratioCls(pct);
+      const files = (r.files || []).length
+        ? '<div class="files-list">' + r.files.map(f => `<span class="f">${esc(f)}</span>`).join('') + '</div>'
+        : '<span class="empty">—</span>';
+      h += '<tr>' +
+        `<td><span class="qname">${esc(r.rf_id)}</span></td>` +
+        `<td>${esc(r.title || '')}</td>` +
+        `<td>${files}</td>` +
+        `<td><span class="ratio-bar ${cls}"><span class="track"><span class="fill" style="width:${pct}%"></span></span>` +
+          `<span class="v">${pct}%</span></span></td></tr>`;
+    });
+    h += '</tbody></table></div>';
+  }
+  h += '</div>';
+  el('chgmain').innerHTML = h;
+}
+
 // ---- Tab switching ----
 document.querySelectorAll('nav.tabs button').forEach(btn => {
   btn.addEventListener('click', () => {
@@ -1786,6 +2135,7 @@ document.querySelectorAll('nav.tabs button').forEach(btn => {
 });
 
 buildEndpoints();
+buildChanges();
 buildGaps();
 </script>
 </body>

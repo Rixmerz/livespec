@@ -22,11 +22,20 @@ exists locally.
    This re-parses RF-001..RF-012 (id, title, description) and upserts them
    into the local `docs.db`. Idempotent — safe to re-run.
 
-3. **Symbol implements/tests LINKS are a SEPARATE seed.** The
-   RF↔symbol links (which functions implement / test each RF) are NOT
-   encoded in this file. They were seeded via `bulk_link_rf_symbols`.
-   See `docs/requirements/livespec-rf-links.md` for how to reproduce
-   them. The steps above recreate the RF definitions only.
+3. **Recreate the implements/tests LINKS** from the committed seed
+   `docs/requirements/livespec-rf-links.json`:
+
+   ```
+   python scripts/apply_rf_links.py --workspace /abs/path/to/livespec-mcp
+   ```
+
+   The RF↔symbol links (which functions implement / test each RF) are
+   NOT encoded in the RF definitions above — they live in the JSON seed
+   as a sorted list of `{"rf_id", "qname", "relation"}` objects. The
+   script replays them through `bulk_link_rf_symbols` (one transaction,
+   `INSERT OR IGNORE` — idempotent, safe to re-run). After this step a
+   fresh clone reproduces both the RF definitions AND their code links
+   exactly.
 
 ---
 

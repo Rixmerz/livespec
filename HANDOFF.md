@@ -35,7 +35,42 @@ Todo el stack es local-first: 0 servicios externos, 0 API keys obligatorias, 0 D
 
 ---
 
-## 3. Estado actual: v0.16.0 — RF Coverage Intelligence (auto-derived)
+## 3. Estado actual: v0.17.0 — RF Explorer dinámico + profundo
+
+Tests **330 default + 3 embeddings = 333**. Schema **v9** (migración
+`rf_coverage_snapshot`). pyproject **0.17.0**. Tool surface **33** (sin
+tools nuevos; `audit_coverage`/`export_explorer`/`index_project` ganan
+campos/params). Ejecutado vía super-workflow jig
+`rf-explorer-dynamic-v017-graph` con **wave de 3 agentes en paralelo**
+(file-disjoint) + cola serial del explorer.
+
+Lo que landeó (5 features):
+- **A Diff→RF "Changes"**: `export_explorer(base?,head?)` + nuevo
+  `compute_diff_rf_impact` (reusa `git_diff_impact` vía helper compartido).
+  Vista "qué toca esta rama" + cobertura de los RFs tocados.
+- **B drill-down**: `rf_coverage` gana `uncovered_symbols[]` (símbolos sin
+  test); explorer los lista por RF.
+- **D trend**: tabla `rf_coverage_snapshot` (mig v9) + `storage/trends.py`;
+  `audit_coverage` graba snapshot **deduped-on-change** (abrir el explorer
+  N veces NO infla la serie); explorer dibuja sparkline.
+- **E freshness**: `index_project(explorer=)` auto-regenera el bundle si
+  existe; `explorer_regenerated` en payload.
+- **F links reproducibles**: `docs/requirements/livespec-rf-links.json` +
+  `scripts/apply_rf_links.py`.
+
+Paralelización: 3 agentes disjuntos (analysis+trends+db / indexing /
+docs+scripts) + 1 serial (explorer.py es un solo archivo, no se parte).
+
+**Gate:** `validate` usa solo `lint_pass`; `tests_pass` de jig falsea fuera
+del venv `uv` (corrido manual: 330 passed). E2E: data.json con
+changes/trend/uncovered, trend deduped a 1 pt, sin `var()` leak.
+
+**Pendiente:** push acumulado (commits v0.15/v0.16/v0.17 + tags) —
+`! git push origin main && git push origin v0.15.0 v0.16.0 v0.17.0`.
+Epic B (extractores C#/Kotlin/Swift, PyPI) = workflow aparte. Recomendado:
+battle-test en repos reales antes de v1.0.
+
+### v0.16.0 resumen (referencia)
 
 Tests **316 default + 3 embeddings = 319**. Schema **v8**. pyproject
 **0.16.0**. Tool surface **33** (sin tools nuevos; `audit_coverage` y el
