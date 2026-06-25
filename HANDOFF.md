@@ -35,7 +35,45 @@ Todo el stack es local-first: 0 servicios externos, 0 API keys obligatorias, 0 D
 
 ---
 
-## 3. Estado actual: v0.15.0 — RF Explorer + 3 fixes (workflow the workflow runner)
+## 3. Estado actual: v0.16.0 — RF Coverage Intelligence (auto-derived)
+
+Tests **316 default + 3 embeddings = 319**. Schema **v8**. pyproject
+**0.16.0**. Tool surface **33** (sin tools nuevos; `audit_coverage` y el
+explorer ganan cobertura derivada). Ejecutado vía super-workflow the workflow runner
+`rf-coverage-v016-graph` (orient→design→implement-coverage→
+implement-explorer→reproducible-rfs→test→validate→commit), waves a
+subagentes `general-purpose`.
+
+Lo que landeó:
+- **Cobertura de tests por RF DERIVADA del call-graph**
+  (`compute_rf_test_coverage` en `tools/analysis.py`): un símbolo
+  `implements` cuenta como testeado si el cono forward de un símbolo-test
+  lo alcanza (depth 3) ∪ link explícito `relation='tests'`.
+  `audit_coverage` gana `rf_coverage[]` + `avg_test_coverage` +
+  `rfs_with_any_test_coverage` (additive; legacy
+  `rf_test_coverage`/`rfs_with_test_coverage` intactos). Hace que la
+  cobertura RF funcione **automática** en cualquier proyecto cuyos tests
+  llamen al código directo; links explícitos = fallback para indirección
+  (MCP `Client`).
+- **Explorer**: meter "Test coverage %" (distinto de "Link confidence %")
+  + badge `coverage_source` + KPI Avg test coverage; `dev_state=verified`
+  cuando ratio>0. Una sola call a `compute_coverage`.
+- **Self-RFs reproducibles**: `docs/requirements/livespec-rfs.md` (12 RFs,
+  import verificado 12/12) + `livespec-rf-links.md` (nota del link-seed).
+
+Dogfood en vivo (MCP recargado): export_explorer → dashboard **10 verified
+/ 2 implemented, avg_test_coverage 0.48**, RF-001/002/003
+`coverage_source: derived` (el call-graph detecta cobertura real de
+extractors/resolver/indexing). Spread honesto: 2 RFs sin cobertura.
+
+**Gate:** `validate` usa solo `lint_pass` (ruff `.`); el `tests_pass` de
+the workflow runner falsea fuera del venv `uv` (corrido manual: 316 passed).
+
+**Pendiente:** `git push origin main && git push origin v0.16.0` (sandbox
+bloquea) + release. Epic B (extractores C#/Kotlin/Swift, PyPI) = workflow
+aparte.
+
+### v0.15.0 resumen (referencia)
 
 Tests **312 default + 3 embeddings = 315**. Schema **v8**. pyproject
 **0.15.0**. Tool surface real: **33 (19 core + 10 RF + 4 docs)** — nuevo

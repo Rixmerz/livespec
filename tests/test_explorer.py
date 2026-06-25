@@ -63,6 +63,14 @@ async def test_export_explorer_writes_both_files(workspace: Path):
     html = html_path.read_text(encoding="utf-8")
     assert 'id="explorer-data"' in html
     assert "mermaid" in html.lower()
+    # v0.15 viewer: a real test-coverage meter + coverage_source badge,
+    # DISTINCT from the existing link-confidence meter.
+    assert "TEST_COVERAGE_LABEL" in html
+    assert "test coverage" in html
+    assert "cov-meters" in html
+    assert "sourceBadge" in html
+    assert "auto-derived (call graph)" in html
+    assert "Avg ' + TEST_COVERAGE_LABEL" in html  # dashboard KPI tile
 
 
 @pytest.mark.asyncio
@@ -104,6 +112,7 @@ async def test_export_explorer_data_schema(workspace: Path):
     assert set(dash.keys()) == {
         "requirements", "dev_state_counts", "with_endpoints",
         "with_dependencies", "implemented_pct", "verified", "avg_coverage",
+        "avg_test_coverage",
     }
     assert dash["requirements"] == 2
     assert set(dash["dev_state_counts"].keys()) == {
@@ -113,10 +122,17 @@ async def test_export_explorer_data_schema(workspace: Path):
     assert sum(dash["dev_state_counts"].values()) == 2
     # Both RFs have a linked symbol -> both count as having implementation.
     assert dash["implemented_pct"] == 100.0
-    # No relation='tests' links exist here, so verified is truthfully 0.
+    # No test coverage exists here (no test symbols reach the impl, no
+    # explicit test links), so verified is truthfully 0.
     assert dash["verified"] == 0
     assert dash["dev_state_counts"]["verified"] == 0
     assert dash["avg_coverage"] is not None
+    # avg_test_coverage present; 0.0 here (no real test coverage).
+    assert dash["avg_test_coverage"] == 0.0
+    # verified count == #RFs with real test coverage > 0.
+    assert dash["verified"] == sum(
+        1 for r in data["requirements"] if r["test_coverage_ratio"] > 0
+    )
 
     # RF-001 carries its implementing symbol (with signature), endpoint, dep.
     rf1 = next(r for r in data["requirements"] if r["id"] == "RF-001")
@@ -129,10 +145,22 @@ async def test_export_explorer_data_schema(workspace: Path):
 
     # Every requirement carries a derived dev_state in the valid vocabulary.
     valid_states = {"not_started", "in_progress", "implemented", "verified"}
+    valid_sources = {"derived", "explicit", "both", "none"}
     for r in data["requirements"]:
         assert r["dev_state"] in valid_states
-    # RF-001 has a high-confidence link and no test link -> implemented.
+        # v0.15: REAL test-coverage fields on every requirement.
+        assert isinstance(r["test_coverage_ratio"], (int, float))
+        assert 0.0 <= r["test_coverage_ratio"] <= 1.0
+        assert r["coverage_source"] in valid_sources
+        # verified iff real test coverage exists (supersedes link-only rule).
+        if r["test_coverage_ratio"] > 0:
+            assert r["dev_state"] == "verified"
+        # link confidence and test coverage are distinct fields.
+        assert "coverage" in r and "test_coverage_ratio" in r
+    # RF-001 has a high-confidence link but no test coverage -> implemented.
     assert rf1["dev_state"] == "implemented"
+    assert rf1["test_coverage_ratio"] == 0.0
+    assert rf1["coverage_source"] == "none"
 
     # Topology nodes carry dev_state too (for colour-coding the graph).
     for n in data["rf_topology"]["nodes"]:
@@ -182,6 +210,8 @@ async def test_export_explorer_zero_rf_case(workspace: Path):
     assert data["dashboard"]["verified"] == 0
     assert data["dashboard"]["implemented_pct"] == 0.0
     assert data["dashboard"]["avg_coverage"] is None
+    # avg_test_coverage present and None (no RFs to average).
+    assert data["dashboard"]["avg_test_coverage"] is None
     assert sum(data["dashboard"]["dev_state_counts"].values()) == 0
 
     # Endpoints + coverage are not gated on RFs existing.
