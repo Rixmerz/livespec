@@ -172,6 +172,8 @@ def _framework_of_endpoint(ep: dict[str, Any]) -> str | None:
     """Derive a human framework label from a compute_endpoints entry."""
     if ep.get("hono_method") is not None or ep.get("hono_path") is not None:
         return "hono"
+    if ep.get("http_method") is not None or ep.get("http_path") is not None:
+        return str(ep.get("http_framework") or "fastapi")
     if ep.get("ts_framework"):
         return str(ep["ts_framework"])
     if ep.get("django_cbv_base"):
@@ -394,8 +396,8 @@ def compute_explorer_data(
             "framework": _framework_of_endpoint(ep),
             "handler": handler,
             "signature": sig_by_qname.get(handler),
-            "path": ep.get("hono_path"),
-            "method": ep.get("hono_method"),
+            "path": ep.get("hono_path") or ep.get("http_path"),
+            "method": ep.get("hono_method") or ep.get("http_method"),
             "rf_ids": list(qname_to_rfids.get(handler, [])),
         }
         # pytest fixtures are test infrastructure, not API surface — they
@@ -1303,6 +1305,42 @@ _HTML_TEMPLATE = """<!DOCTYPE html>
     display: flex; align-items: flex-start; gap: 10px; flex-wrap: wrap;
   }
   .op-try pre.call-shape { flex: 1; min-width: 200px; margin: 0; }
+  .http-try {
+    display: flex; flex-direction: column; gap: 8px; width: 100%;
+  }
+  .http-try-row {
+    display: flex; flex-wrap: wrap; gap: 8px; align-items: center;
+  }
+  .http-cors-note {
+    font-size: 11.5px; color: var(--muted); line-height: 1.45; max-width: 72ch; margin: 0;
+  }
+  button.http-exec {
+    appearance: none; cursor: pointer; font: inherit;
+    font-size: 12px; font-weight: 650; padding: 6px 14px; border-radius: 7px;
+    background: var(--accent); color: var(--accent-fg); border: 0;
+    transition: opacity .12s ease;
+  }
+  button.http-exec:hover { opacity: .92; }
+  button.http-exec:disabled { opacity: .55; cursor: wait; }
+  .http-response {
+    font-family: var(--mono); font-size: 11px; color: var(--fg-soft);
+    margin: 0; padding: 9px 11px; white-space: pre-wrap; word-break: break-word;
+    background: var(--surface-2); border: 1px solid var(--line-soft); border-radius: var(--radius-sm);
+    max-height: 220px; overflow: auto;
+  }
+  .http-response.ok { border-color: color-mix(in srgb, var(--ok) 35%, transparent); }
+  .http-response.err { border-color: color-mix(in srgb, var(--danger) 35%, transparent); }
+  .swagger-toolbar .base-url-wrap {
+    display: flex; align-items: center; gap: 8px; flex: 1; min-width: 240px;
+  }
+  .swagger-toolbar .base-url-wrap label {
+    font-size: 11px; font-weight: 650; color: var(--muted); white-space: nowrap;
+  }
+  .swagger-toolbar .base-url-wrap input {
+    flex: 1; min-width: 160px; font-family: var(--mono); font-size: 12px;
+    padding: 9px 12px; border-radius: 9px;
+    border: 1px solid var(--line); background: var(--surface);
+  }
 
   /* Gaps */
   .kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin-bottom: 8px; }
@@ -1433,6 +1471,15 @@ _HTML_TEMPLATE = """<!DOCTYPE html>
   .trend-single {
     font-size: 12.5px; color: var(--muted); font-style: italic; margin-top: 8px;
   }
+  .trend-table {
+    width: 100%; max-width: 480px; border-collapse: collapse; margin-top: 8px;
+    font-size: 12px;
+  }
+  .trend-table th, .trend-table td {
+    text-align: left; padding: 6px 10px; border-bottom: 1px solid var(--line-soft);
+  }
+  .trend-table th { color: var(--muted); font-weight: 600; font-size: 11px; }
+  .trend-table td b { font-variant-numeric: tabular-nums; }
 
   /* ---- Motion: opt-out ---- */
   @media (prefers-reduced-motion: reduce) {
@@ -1656,7 +1703,11 @@ const SOURCE_BADGE = {
 };
 function sourceBadge(src) {
   const b = SOURCE_BADGE[src] || SOURCE_BADGE.none;
-  return `<span class="chip ${b.cls}" title="How test coverage is known">${esc(b.label)}</span>`;
+  let html = `<span class="chip ${b.cls}" title="How test coverage is known">${esc(b.label)}</span>`;
+  if (src === 'derived') {
+    html += '<span class="chip warn" title="Covered via call-graph reachability only — no explicit test link">integration-only</span>';
+  }
+  return html;
 }
 
 // A declared status looks stale when evidence has clearly moved past it:
@@ -1933,6 +1984,7 @@ function buildLanding() {
     '<p class="sub">Live map of requirements, API surface, dependencies and coverage — ' +
     'auto-generated from the indexed codebase.</p></div>';
   h += '<div id="landing-dash"></div>';
+  if (TREND.length) h += buildTrendOverview();
   h += '<div class="nav-cards">';
   const cards = [
     ['requirements', 'Requirements', 'Browse RFs, implementation evidence and test coverage.', d.requirements || c.requirements],
@@ -2148,6 +2200,25 @@ function opDisplayPath(ep) {
   return shortName(ep.handler);
 }
 
+const HTTP_TRY_METHODS = new Set(['GET', 'POST', 'PUT', 'PATCH', 'DELETE']);
+
+function isHttpTryIt(ep) {
+  if (!ep.method || !ep.path) return false;
+  return HTTP_TRY_METHODS.has(String(ep.method).toUpperCase());
+}
+
+function defaultApiBaseUrl() {
+  if (location.protocol === 'file:') return 'http://127.0.0.1:8000';
+  return location.origin || 'http://127.0.0.1:8000';
+}
+
+function joinBasePath(base, path) {
+  const b = String(base || '').replace(/\\/+$/, '');
+  const p = String(path || '');
+  if (!p.startsWith('/')) return b + '/' + p;
+  return b + p;
+}
+
 function buildEndpoints() {
   const eps = DATA.endpoints || [];
   const fixtures = DATA.fixtures || [];
@@ -2156,9 +2227,13 @@ function buildEndpoints() {
   const keys = Object.keys(groups).sort(
     (a, b) => EP_KIND_ORDER.indexOf(a) - EP_KIND_ORDER.indexOf(b));
 
-  let h = '<p class="ep-note">Static spec — <b>expand an operation</b> to see parameters and copy a call shape for your MCP client. Live execution needs a running server.</p>';
+  let h = '<p class="ep-note">Static spec — <b>expand an operation</b> to see parameters. ' +
+    'MCP tools: copy a call shape. HTTP routes (GET/POST/PUT/PATCH/DELETE): use <b>Try it</b> ' +
+    'to call your API (requires CORS or same origin).</p>';
   h += '<div class="swagger-toolbar">' +
     '<input type="search" id="ep-filter" placeholder="Filter by name, path or handler…" autocomplete="off" spellcheck="false">' +
+    '<div class="base-url-wrap"><label for="ep-base-url">Base URL</label>' +
+    `<input type="url" id="ep-base-url" placeholder="http://127.0.0.1:8000" value="${esc(defaultApiBaseUrl())}"></div>` +
     `<span class="chip muted">${eps.length} operation${eps.length === 1 ? '' : 's'}</span></div>`;
   h += '<div id="swagger-root">';
 
@@ -2205,11 +2280,25 @@ function buildEndpoints() {
         });
         h += '</tbody></table></div></div>';
       }
-      h += '<div class="op-section"><div class="op-section-h">Try it out</div>' +
-        '<div class="op-try">' +
-        `<button type="button" class="copy-call" data-copy="${cid}">Copy call</button>` +
-        `<pre class="call-shape" id="${cid}">${esc(shape)}</pre></div></div>` +
-        '<div class="op-section"><div class="op-section-h">Requirements</div>' +
+      const mcpKinds = new Set(['tool', 'resource', 'prompt']);
+      if (mcpKinds.has(ep.kind)) {
+        h += '<div class="op-section"><div class="op-section-h">Try it out (MCP)</div>' +
+          '<div class="op-try">' +
+          `<button type="button" class="copy-call" data-copy="${cid}">Copy call</button>` +
+          `<pre class="call-shape" id="${cid}">${esc(shape)}</pre></div></div>';
+      } else if (isHttpTryIt(ep)) {
+        const eid = `http-${k}-${i}`;
+        const method = String(ep.method).toUpperCase();
+        h += '<div class="op-section"><div class="op-section-h">Try it (HTTP)</div>' +
+          '<div class="http-try">' +
+          `<p class="http-cors-note">Calls <code class="mono">${esc(method)} ${esc(path)}</code> against the base URL above. ` +
+          'Cross-origin requests fail unless your API sends CORS headers; same-origin works when Explorer is mounted on the app.</p>' +
+          `<div class="http-try-row">` +
+          `<button type="button" class="http-exec" data-http-exec="${eid}" data-method="${esc(method)}" data-path="${esc(path)}">Execute</button>` +
+          `<span class="chip muted">${esc(method)}</span></div>` +
+          `<pre class="http-response" id="${eid}" hidden aria-live="polite"></pre></div></div>`;
+      }
+      h += '<div class="op-section"><div class="op-section-h">Requirements</div>' +
         `<div class="clusterbox">${rfs}</div></div>` +
         '</div></details>';
     });
@@ -2264,6 +2353,51 @@ function buildEndpoints() {
       };
       if (navigator.clipboard && navigator.clipboard.writeText) {
         navigator.clipboard.writeText(text).then(done, () => {});
+      }
+    }));
+
+  el('epmain').querySelectorAll('.http-exec').forEach(btn =>
+    btn.addEventListener('click', async () => {
+      const rid = btn.getAttribute('data-http-exec');
+      const pre = rid ? el(rid) : null;
+      const method = (btn.getAttribute('data-method') || 'GET').toUpperCase();
+      const path = btn.getAttribute('data-path') || '/';
+      const baseInput = el('ep-base-url');
+      const base = baseInput ? baseInput.value.trim() : defaultApiBaseUrl();
+      const url = joinBasePath(base, path);
+      btn.disabled = true;
+      if (pre) {
+        pre.hidden = false;
+        pre.className = 'http-response';
+        pre.textContent = `${method} ${url}\\n…`;
+      }
+      try {
+        const opts = { method, headers: { Accept: 'application/json, text/plain, */*' } };
+        if (method !== 'GET' && method !== 'HEAD') {
+          opts.headers['Content-Type'] = 'application/json';
+          opts.body = '{}';
+        }
+        const res = await fetch(url, opts);
+        const ct = res.headers.get('content-type') || '';
+        let body = '';
+        try {
+          body = ct.includes('json') ? JSON.stringify(await res.json(), null, 2) : await res.text();
+        } catch (_) {
+          body = '(could not read response body)';
+        }
+        const snippet = body.length > 4000 ? body.slice(0, 4000) + '\\n… (truncated)' : body;
+        if (pre) {
+          pre.className = 'http-response ' + (res.ok ? 'ok' : 'err');
+          pre.textContent = `${method} ${url}\\nHTTP ${res.status} ${res.statusText}\\n\\n${snippet}`;
+        }
+      } catch (err) {
+        if (pre) {
+          pre.className = 'http-response err';
+          const msg = err && err.message ? err.message : String(err);
+          pre.textContent = `${method} ${url}\\nFailed: ${msg}\\n\\nTip: CORS blocks browser calls from another origin — mount Explorer on the same app or enable CORS on the API.`;
+        }
+      } finally {
+        btn.disabled = false;
       }
     }));
 }
@@ -2326,6 +2460,45 @@ function shortTs(ts) {
   const m = s.match(/(\\d{4})-(\\d{2})-(\\d{2})[T ](\\d{2}):(\\d{2})/);
   return m ? `${m[2]}-${m[3]} ${m[4]}:${m[5]}` : s.slice(0, 16);
 }
+// Compact trend block for the Overview landing (sparkline + last 3 snapshots).
+function buildTrendOverview() {
+  const series = TREND;
+  if (!series.length) return '';
+  const pts = series.map(s => (s.avg_test_coverage == null ? 0 : s.avg_test_coverage));
+  const last = series[series.length - 1];
+  const lastPct = Math.round((last.avg_test_coverage == null ? 0 : last.avg_test_coverage) * 100);
+  let h = '<div class="trend-panel"><div class="trend-h">' +
+    '<span class="t">Coverage trend</span>' +
+    `<span class="sub">${series.length} snapshot${series.length === 1 ? '' : 's'} · avg ${esc(TEST_COVERAGE_LABEL)}</span></div>`;
+  if (series.length >= 2) {
+    const W = 100, H = 28, n = pts.length;
+    const xs = pts.map((_, i) => (n === 1 ? 0 : (i / (n - 1)) * W));
+    const ys = pts.map(v => H - v * H);
+    const linePts = xs.map((x, i) => `${x.toFixed(2)},${ys[i].toFixed(2)}`).join(' ');
+    const areaPts = `0,${H} ` + linePts + ` ${W},${H}`;
+    h += `<svg class="spark" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" role="img" aria-label="Coverage trend over ${n} snapshots">` +
+      `<polygon class="area" points="${areaPts}"></polygon>` +
+      `<polyline class="line" points="${linePts}"></polyline>` +
+      `<circle class="dot" cx="${xs[n - 1].toFixed(2)}" cy="${ys[n - 1].toFixed(2)}" r="1.8"></circle></svg>`;
+  }
+  const tail = series.slice(-3);
+  h += '<table class="trend-table"><thead><tr>' +
+    '<th>When</th><th>Avg test coverage</th><th>Verified RFs</th></tr></thead><tbody>';
+  tail.forEach(s => {
+    const pct = Math.round((s.avg_test_coverage == null ? 0 : s.avg_test_coverage) * 100);
+    h += '<tr>' +
+      `<td>${esc(shortTs(s.ts))}</td>` +
+      `<td><b>${pct}%</b></td>` +
+      `<td>${esc(s.verified_count)}</td></tr>`;
+  });
+  h += '</tbody></table>';
+  h += '<div class="trend-meta">' +
+    `<span>Latest: <b>${lastPct}%</b> avg ${esc(TEST_COVERAGE_LABEL)}</span>` +
+    `<span>Verified RFs: <b>${last.verified_count}</b></span></div>';
+  h += '</div>';
+  return h;
+}
+
 function buildTrend() {
   const series = TREND;
   if (!series.length) {

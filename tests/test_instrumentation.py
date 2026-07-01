@@ -11,6 +11,15 @@ from fastmcp import Client
 from livespec_mcp.server import mcp
 
 
+@pytest.fixture(autouse=True)
+def _enable_agent_log(sample_repo, monkeypatch):
+    """Instrumentation is opt-in per repo; most tests force it on via env."""
+    monkeypatch.setenv("LIVESPEC_AGENT_LOG", "1")
+    log = sample_repo / ".mcp-docs" / "agent_log.jsonl"
+    if log.exists():
+        log.unlink()
+
+
 def _read_log(workspace: Path) -> list[dict]:
     log = workspace / ".mcp-docs" / "agent_log.jsonl"
     if not log.exists():
@@ -32,6 +41,7 @@ async def test_every_dispatch_logs_one_line(sample_repo):
     # Schema fields present on every line
     for e in entries:
         assert set(e.keys()) >= {
+            "timestamp",
             "ts",
             "tool_name",
             "args_redacted",
@@ -89,6 +99,26 @@ async def test_logging_disabled_via_env(sample_repo, monkeypatch):
     async with Client(mcp) as c:
         await c.call_tool("list_requirements", {"workspace": ws})
 
+    log = sample_repo / ".mcp-docs" / "agent_log.jsonl"
+    assert not log.exists()
+
+
+@pytest.mark.asyncio
+async def test_log_respects_repo_config_log_calls(sample_repo, monkeypatch):
+    monkeypatch.delenv("LIVESPEC_AGENT_LOG", raising=False)
+    (sample_repo / ".livespec.toml").write_text("[agent]\nlog_calls = true\n")
+    ws = str(sample_repo)
+    async with Client(mcp) as c:
+        await c.call_tool("list_requirements", {"workspace": ws})
+    assert _read_log(sample_repo)
+
+
+@pytest.mark.asyncio
+async def test_log_off_by_default_without_config(sample_repo, monkeypatch):
+    monkeypatch.delenv("LIVESPEC_AGENT_LOG", raising=False)
+    ws = str(sample_repo)
+    async with Client(mcp) as c:
+        await c.call_tool("list_requirements", {"workspace": ws})
     log = sample_repo / ".mcp-docs" / "agent_log.jsonl"
     assert not log.exists()
 

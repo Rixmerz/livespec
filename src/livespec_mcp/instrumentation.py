@@ -1,34 +1,37 @@
-"""Agent dispatch logging middleware (v0.8 P1).
+"""Agent dispatch logging middleware (v0.8 P1, v0.18 agent config).
 
-Writes one JSONL line per `tools/call` to `<workspace>/.mcp-docs/agent_log.jsonl`.
-The schema is intentionally agent-shaped — `args_redacted` strips absolute
-paths so logs are shareable, `result_chars` measures payload size for
-the v0.8 P3 curation pass, `latency_ms` flags slow tools.
+Writes one JSONL line per `tools/call` to `<workspace>/.mcp-docs/agent_log.jsonl`
+when enabled. Opt-in per repo via ``.livespec.toml``::
+
+    [agent]
+    log_calls = true
+
+Default is **off** (no surprise writes). Global overrides:
+
+- ``LIVESPEC_AGENT_LOG=1`` — force logging for every workspace
+- ``LIVESPEC_AGENT_LOG=0`` — force off (wins over config)
 
 Output schema (per line):
     {
-        "ts":            ISO8601 UTC,
+        "timestamp":     ISO8601 UTC (alias ``ts`` kept for compat),
         "tool_name":     str,
-        "args_redacted": dict,   # absolute paths stripped to <workspace>/...
+        "args_redacted": dict,   # paths stripped; secret-like keys redacted
         "latency_ms":    int,
-        "result_chars":  int,    # len(json.dumps(result)) — exact payload size
-        "error":         str | None,  # ExceptionType: short-message
-        "session_id":    str | None,  # FastMCP session id when available
-        "workspace":     str,    # absolute path
+        "result_chars":  int,
+        "error":         str | None,
+        "session_id":    str | None,
+        "workspace":     str,
     }
 
-Disable globally with `LIVESPEC_AGENT_LOG=0` in the env. Failures writing
-the log file are swallowed — instrumentation must never break dispatch.
-
-The `result_cited_in_final_answer` field mentioned in the v0.8 plan is
-NOT filled here; it's a post-session annotation done by hand or by a
-heuristic over the agent's text output.
+Failures writing the log file are swallowed — instrumentation must never
+break dispatch.
 """
 
 from __future__ import annotations
 
 import json
 import os
+import re
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -36,24 +39,31 @@ from typing import Any
 
 from fastmcp.server.middleware import Middleware
 
+from livespec_mcp.config import load_repo_config
 from livespec_mcp.state import _resolve_workspace
 from livespec_mcp.workspace_param import WorkspaceRequiredError
 
 _LOG_FILENAME = "agent_log.jsonl"
+_SECRET_KEY_RE = re.compile(
+    r"(password|secret|token|api[_-]?key|authorization|credential)",
+    re.IGNORECASE,
+)
 
 
 def _redact(value: Any, ws_root: str) -> Any:
-    """Recursively replace `ws_root` prefix in any string with `<workspace>`.
-
-    Keeps tool args useful for analysis while making the log shareable
-    without leaking the user's home directory layout.
-    """
+    """Recursively replace ``ws_root`` in strings and redact secret-like keys."""
     if isinstance(value, str):
         if ws_root and ws_root in value:
             return value.replace(ws_root, "<workspace>")
         return value
     if isinstance(value, dict):
-        return {k: _redact(v, ws_root) for k, v in value.items()}
+        out: dict[str, Any] = {}
+        for k, v in value.items():
+            if _SECRET_KEY_RE.search(k):
+                out[k] = "<redacted>"
+            else:
+                out[k] = _redact(v, ws_root)
+        return out
     if isinstance(value, (list, tuple)):
         return [_redact(v, ws_root) for v in value]
     return value
@@ -72,38 +82,47 @@ def _result_size(result: Any) -> int:
             return 0
 
 
+def _logging_enabled(workspace_path: Path) -> bool:
+    env = os.environ.get("LIVESPEC_AGENT_LOG")
+    if env == "0":
+        return False
+    if env == "1":
+        return True
+    return load_repo_config(workspace_path).agent_log_calls
+
+
 class AgentLogMiddleware(Middleware):
     """FastMCP middleware that appends one JSONL line per tool dispatch."""
 
     def __init__(self, log_filename: str = _LOG_FILENAME) -> None:
         self._log_filename = log_filename
 
-    def _log_path(self, workspace_arg: Any) -> Path:
-        """Resolve the log file path for a tool call.
-
-        Uses the call's `workspace` arg when present; otherwise the same
-        ``_resolve_workspace(None)`` policy as tools (pytest autouse binds a
-        tmp path; production without workspace uses a cwd fallback).
-        """
+    def _workspace_root(self, workspace_arg: Any) -> Path:
+        """Resolve workspace root for config + log path."""
         arg = workspace_arg if isinstance(workspace_arg, str) and workspace_arg.strip() else None
         try:
-            ws = _resolve_workspace(arg)
+            return _resolve_workspace(arg)
         except WorkspaceRequiredError:
-            ws = Path.cwd() / ".mcp-docs-agent-log-fallback"
-            ws.mkdir(parents=True, exist_ok=True)
-        return ws / ".mcp-docs" / self._log_filename
+            fallback = Path.cwd() / ".mcp-docs-agent-log-fallback"
+            fallback.mkdir(parents=True, exist_ok=True)
+            return fallback
+
+    def _log_path(self, ws_root: Path) -> Path:
+        return ws_root / ".mcp-docs" / self._log_filename
 
     async def on_call_tool(self, context, call_next):  # type: ignore[override]
-        if os.environ.get("LIVESPEC_AGENT_LOG", "1") == "0":
-            return await call_next(context)
-
         msg = context.message
         tool_name = getattr(msg, "name", "<unknown>")
         args: dict[str, Any] = dict(getattr(msg, "arguments", None) or {})
         ws_arg = args.get("workspace")
-        log_path = self._log_path(ws_arg)
-        ws_root = str(log_path.parent.parent)
-        args_red = _redact(args, ws_root)
+        ws_root = self._workspace_root(ws_arg)
+
+        if not _logging_enabled(ws_root):
+            return await call_next(context)
+
+        log_path = self._log_path(ws_root)
+        ws_root_str = str(ws_root)
+        args_red = _redact(args, ws_root_str)
 
         ts = datetime.now(timezone.utc).isoformat()
         start = time.monotonic()
@@ -123,6 +142,7 @@ class AgentLogMiddleware(Middleware):
                     context.fastmcp_context, "session_id", None
                 )
             entry = {
+                "timestamp": ts,
                 "ts": ts,
                 "tool_name": tool_name,
                 "args_redacted": args_red,
@@ -130,12 +150,11 @@ class AgentLogMiddleware(Middleware):
                 "result_chars": _result_size(result),
                 "error": error,
                 "session_id": session_id,
-                "workspace": ws_root,
+                "workspace": ws_root_str,
             }
             try:
                 log_path.parent.mkdir(parents=True, exist_ok=True)
                 with log_path.open("a", encoding="utf-8") as f:
                     f.write(json.dumps(entry, default=str) + "\n")
             except OSError:
-                # Never fail dispatch on a log-write failure
                 pass

@@ -10,7 +10,9 @@ from __future__ import annotations
 
 import ast
 import difflib
+import fnmatch
 import json
+import re
 import subprocess
 from functools import lru_cache
 from pathlib import Path
@@ -19,6 +21,9 @@ from typing import Any, Literal
 from fastmcp import FastMCP
 
 from livespec_mcp.domain.extractors import (
+    HTTP_ROUTE_DECORATOR_LASTSEGS,
+    infer_python_http_framework,
+    parse_python_http_route,
     scan_hono_routes,
     ts_registered_callback_names,
 )
@@ -34,6 +39,100 @@ from livespec_mcp.tools._errors import mcp_error
 from livespec_mcp.workspace_param import WORKSPACE_DOCSTRING_NOTE, Workspace
 
 _INFRA_NAME_SUFFIXES = ("_state", "_settings", "_config", "_session")
+
+_PAYLOAD_WARN_BYTES = 500 * 1024
+_DEFAULT_META_BYTES = 400
+
+
+def _payload_warning(
+    total_count: int,
+    *,
+    limit: int,
+    summary_only: bool,
+    bytes_per_item: int = _DEFAULT_META_BYTES,
+) -> str | None:
+    """Pre-flight hint when an unpaginated result would be large."""
+    if summary_only or total_count == 0:
+        return None
+    est_bytes = total_count * bytes_per_item
+    if total_count <= limit and est_bytes <= _PAYLOAD_WARN_BYTES:
+        return None
+    kb = max(1, est_bytes // 1024)
+    return (
+        f"Estimated full payload ~{kb}KB ({total_count} items). "
+        "Use summary_only=True for counts only, or paginate with limit/cursor."
+    )
+
+
+def _attach_payload_warning(
+    payload: dict[str, Any],
+    warning: str | None,
+) -> dict[str, Any]:
+    if warning:
+        payload["payload_warning"] = warning
+    return payload
+
+
+def _grep_indexed_files_core(
+    st: AppState,
+    pattern: str,
+    path_glob: str | None,
+    kind: str | None,
+    limit: int,
+    cursor: int,
+) -> dict[str, Any]:
+    """Search indexed file contents on disk (substring or regex)."""
+    pid = st.project_id
+    sql = "SELECT path, language FROM file WHERE project_id=?"
+    params: list[Any] = [pid]
+    if kind:
+        sql += " AND language=?"
+        params.append(kind)
+    file_rows = st.conn.execute(sql, params).fetchall()
+
+    try:
+        regex = re.compile(pattern)
+        use_regex = True
+    except re.error:
+        regex = None
+        use_regex = False
+        needle = pattern
+
+    matches: list[dict[str, Any]] = []
+    ws = st.settings.workspace
+    for row in file_rows:
+        path = row["path"]
+        if path_glob and not fnmatch.fnmatch(path, path_glob):
+            continue
+        fp = ws / path
+        if not fp.is_file():
+            continue
+        try:
+            lines = fp.read_text(encoding="utf-8", errors="replace").splitlines()
+        except OSError:
+            continue
+        for line_no, line in enumerate(lines, start=1):
+            if use_regex:
+                if regex is None or not regex.search(line):
+                    continue
+            elif needle not in line:
+                continue
+            matches.append({
+                "file_path": path,
+                "language": row["language"],
+                "line": line_no,
+                "text": line[:240],
+            })
+
+    total = len(matches)
+    page = matches[cursor : cursor + limit]
+    next_cursor = cursor + limit if cursor + limit < total else None
+    return {
+        "pattern": pattern,
+        "matches": page,
+        "count": total,
+        "next_cursor": next_cursor,
+    }
 
 # v0.5 P1: framework decorator names that imply hidden callers (HTTP routers,
 # CLI dispatchers, test frameworks, plugin systems, message brokers, MCP).
@@ -903,7 +1002,8 @@ def compute_endpoints(
     the tool emits (``qualified_name``, ``kind``, ``file_path``,
     ``start_line``, ``end_line``, ``decorators``, plus optional
     framework-specific keys: ``ts_framework`` / ``django_cbv_base`` /
-    ``hono_method`` / ``hono_path``), sorted by ``(file_path, start_line)``.
+    ``hono_method`` / ``hono_path`` / ``http_method`` / ``http_path``),
+    sorted by ``(file_path, start_line)``.
     """
     pid = st.project_id
 
@@ -950,6 +1050,37 @@ def compute_endpoints(
 
     endpoints: list[dict[str, Any]] = []
     seen_qnames: set[Any] = set()
+    workspace_path = st.settings.workspace
+    py_source_cache: dict[str, str] = {}
+
+    def _py_source(rel_path: str) -> str:
+        if rel_path not in py_source_cache:
+            try:
+                py_source_cache[rel_path] = (
+                    workspace_path / rel_path
+                ).read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                py_source_cache[rel_path] = ""
+        return py_source_cache[rel_path]
+
+    def _attach_python_http_route(entry: dict[str, Any], matching_decs: list[str]) -> None:
+        if not any(
+            _decorator_lastseg(d) in HTTP_ROUTE_DECORATOR_LASTSEGS for d in matching_decs
+        ):
+            return
+        fp = entry["file_path"]
+        if not fp.endswith(".py"):
+            return
+        source = _py_source(fp)
+        if not source:
+            return
+        route = parse_python_http_route(source, int(entry["start_line"]))
+        if route["http_method"] is not None:
+            entry["http_method"] = route["http_method"]
+        if route["http_path"] is not None:
+            entry["http_path"] = route["http_path"]
+            entry["http_framework"] = infer_python_http_framework(source)
+
     for r in rows:
         try:
             decs = json.loads(r["decorators"] or "[]")
@@ -958,14 +1089,16 @@ def compute_endpoints(
         matching = keep(decs)
         if not matching:
             continue
-        endpoints.append({
+        entry = {
             "qualified_name": r["qualified_name"],
             "kind": r["kind"],
             "file_path": r["file_path"],
             "start_line": r["start_line"],
             "end_line": r["end_line"],
             "decorators": matching,
-        })
+        }
+        _attach_python_http_route(entry, matching)
+        endpoints.append(entry)
         seen_qnames.add(r["qualified_name"])
 
     # v0.11 P1: TS framework filesystem-routing detection (bug #19).
@@ -1090,6 +1223,46 @@ def compute_endpoints(
 
     endpoints.sort(key=lambda e: (e["file_path"], e["start_line"]))
     return endpoints
+
+
+def _is_test_scaffold_path(file_path: str) -> bool:
+    """True for tests/, conftest.py, and pytest fixture helper dirs."""
+    fp = file_path.replace("\\", "/").lstrip("/")
+    if fp.startswith("tests/") or "/tests/" in f"/{fp}":
+        return True
+    base = fp.rsplit("/", 1)[-1]
+    if base == "conftest.py" or base.startswith("conftest_"):
+        return True
+    for seg in ("/fixtures/", "/__fixtures__/", "/test_utils/", "/test_helpers/"):
+        if seg in f"/{fp}":
+            return True
+    return False
+
+
+def _endpoint_is_pytest_fixture(ep: dict[str, Any]) -> bool:
+    for dec in ep.get("decorators") or []:
+        if _decorator_lastseg(str(dec)) == "fixture":
+            return True
+    return False
+
+
+def filter_api_endpoints(
+    endpoints: list[dict[str, Any]],
+    framework: str | None,
+    *,
+    exclude_tests: bool = True,
+) -> list[dict[str, Any]]:
+    """Drop pytest fixtures and test-scaffold paths unless ``framework='pytest'``."""
+    if framework == "pytest" or not exclude_tests:
+        return endpoints
+    out: list[dict[str, Any]] = []
+    for ep in endpoints:
+        if _endpoint_is_pytest_fixture(ep):
+            continue
+        if _is_test_scaffold_path(ep.get("file_path") or ""):
+            continue
+        out.append(ep)
+    return out
 
 
 # v0.15: forward-BFS depth bound for auto-derived RF test coverage. A test
@@ -1975,13 +2148,16 @@ def register(mcp: FastMCP) -> None:
         )
         page = meta_sorted[cursor : cursor + limit]
         next_cursor = cursor + limit if cursor + limit < len(meta_sorted) else None
-        return {
-            "root": sym["qualified_name"],
-            "max_depth": max_depth,
-            "callers": page,
-            "count": total,
-            "next_cursor": next_cursor,
-        }
+        return _attach_payload_warning(
+            {
+                "root": sym["qualified_name"],
+                "max_depth": max_depth,
+                "callers": page,
+                "count": total,
+                "next_cursor": next_cursor,
+            },
+            _payload_warning(total, limit=limit, summary_only=summary_only),
+        )
 
     @mcp.tool(annotations={"readOnlyHint": True, "idempotentHint": True})
     def who_does_this_call(
@@ -2224,17 +2400,25 @@ def register(mcp: FastMCP) -> None:
                 }
             callers_page, callers_total, callers_next = _paginate_meta(impacted)
             calls_page, calls_total, calls_next = _paginate_meta(forward)
-            return {
-                "root": sym["qualified_name"],
-                "impacted_callers": callers_page,
-                "calls_into": calls_page,
-                "affected_requirements": rfs_for_symbols(impacted | {sid}),
-                "counts": {
-                    "impacted_callers": callers_total,
-                    "calls_into": calls_total,
+            warn = _payload_warning(
+                max(callers_total, calls_total),
+                limit=limit,
+                summary_only=summary_only,
+            )
+            return _attach_payload_warning(
+                {
+                    "root": sym["qualified_name"],
+                    "impacted_callers": callers_page,
+                    "calls_into": calls_page,
+                    "affected_requirements": rfs_for_symbols(impacted | {sid}),
+                    "counts": {
+                        "impacted_callers": callers_total,
+                        "calls_into": calls_total,
+                    },
+                    "next_cursor": callers_next if callers_next is not None else calls_next,
                 },
-                "next_cursor": callers_next if callers_next is not None else calls_next,
-            }
+                warn,
+            )
         if target_type == "file":
             sids = [
                 int(r["id"])
@@ -2268,14 +2452,19 @@ def register(mcp: FastMCP) -> None:
                     },
                 }
             callers_page, callers_total, callers_next = _paginate_meta(impacted)
-            return {
-                "file": target,
-                "symbols_in_file": len(sids),
-                "impacted_callers": callers_page,
-                "affected_requirements": rfs_for_symbols(impacted | set(sids)),
-                "counts": {"impacted_callers": callers_total},
-                "next_cursor": callers_next,
-            }
+            return _attach_payload_warning(
+                {
+                    "file": target,
+                    "symbols_in_file": len(sids),
+                    "impacted_callers": callers_page,
+                    "affected_requirements": rfs_for_symbols(impacted | set(sids)),
+                    "counts": {"impacted_callers": callers_total},
+                    "next_cursor": callers_next,
+                },
+                _payload_warning(
+                    callers_total, limit=limit, summary_only=summary_only
+                ),
+            )
         if target_type == "requirement":
             rf = st.conn.execute(
                 "SELECT id, rf_id FROM rf WHERE project_id=? AND rf_id=?", (pid, target)
@@ -2726,7 +2915,11 @@ def register(mcp: FastMCP) -> None:
         """
         st = get_state(workspace)
 
-        endpoints = compute_endpoints(st, framework)
+        endpoints = filter_api_endpoints(
+            compute_endpoints(st, framework),
+            framework,
+            exclude_tests=True,
+        )
         total = len(endpoints)
         if summary_only:
             return {"framework": framework, "count": total}
@@ -3100,4 +3293,76 @@ def register(mcp: FastMCP) -> None:
         base["changed_symbols"] = changed_symbol_meta
         base["impacted_callers"] = page
         base["next_cursor"] = next_cursor
-        return base
+        return _attach_payload_warning(
+            base,
+            _payload_warning(
+                len(impacted_meta),
+                limit=impacted_limit,
+                summary_only=summary_only,
+            ),
+        )
+
+    @mcp.tool(annotations={"readOnlyHint": True, "idempotentHint": True})
+    def grep_in_indexed_files(
+        pattern: str,
+        path_glob: str | None = None,
+        kind: str | None = None,
+        limit: int = 50,
+        cursor: int = 0,
+        workspace: Workspace | None = None,
+    ) -> dict[str, Any]:
+        """Search only indexed files (SQLite ``file`` table) on disk.
+
+        ``pattern`` is tried as a regex first; invalid regex falls back to
+        literal substring match. ``path_glob`` uses shell-style globs on the
+        indexed relative path (e.g. ``src/**/*.py``). ``kind`` filters the
+        indexed ``language`` column (e.g. ``python``). Results are paginated
+        with ``limit`` (default 50) and ``cursor``.
+        """
+        st = get_state(workspace)
+        return _grep_indexed_files_core(
+            st, pattern, path_glob, kind, limit, cursor
+        )
+
+    @mcp.tool(annotations={"readOnlyHint": False, "idempotentHint": True})
+    def agent_scratch(
+        qname: str,
+        note: str,
+        workspace: Workspace | None = None,
+    ) -> dict[str, Any]:
+        """Store or update a short agent note keyed by symbol qualified name."""
+        st = get_state(workspace)
+        st.conn.execute(
+            """INSERT INTO agent_scratch (project_id, qname, note, updated_at)
+               VALUES (?, ?, ?, datetime('now'))
+               ON CONFLICT(project_id, qname) DO UPDATE SET
+                 note=excluded.note,
+                 updated_at=datetime('now')""",
+            (st.project_id, qname, note),
+        )
+        st.conn.commit()
+        return {"qname": qname, "note": note, "saved": True}
+
+    @mcp.tool(annotations={"readOnlyHint": False, "idempotentHint": True})
+    def agent_scratch_clear(
+        qname: str | None = None,
+        workspace: Workspace | None = None,
+    ) -> dict[str, Any]:
+        """Delete agent scratch notes for the active project.
+
+        Pass ``qname`` to clear one note; omit to clear all notes for the project.
+        """
+        st = get_state(workspace)
+        if qname:
+            cur = st.conn.execute(
+                "DELETE FROM agent_scratch WHERE project_id=? AND qname=?",
+                (st.project_id, qname),
+            )
+        else:
+            cur = st.conn.execute(
+                "DELETE FROM agent_scratch WHERE project_id=?",
+                (st.project_id,),
+            )
+        st.conn.commit()
+        return {"cleared": cur.rowcount, "qname": qname}
+

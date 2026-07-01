@@ -228,6 +228,98 @@ def _decorator_dotted(node: ast.AST) -> str | None:
     return None
 
 
+# Flask / FastAPI / Starlette HTTP route decorators (last dotted segment).
+_HTTP_VERB_DECORATOR_LASTSEGS = frozenset({
+    "get", "post", "put", "delete", "patch", "head", "options",
+})
+HTTP_ROUTE_DECORATOR_LASTSEGS = _HTTP_VERB_DECORATOR_LASTSEGS | frozenset({
+    "route", "api_route", "websocket",
+})
+
+
+def _ast_str_constant(node: ast.AST) -> str | None:
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return node.value
+    return None
+
+
+def _ast_http_methods(node: ast.AST) -> list[str]:
+    """Extract HTTP method strings from ``methods=[...]`` / ``methods=(...)``."""
+    if isinstance(node, (ast.List, ast.Tuple)):
+        out: list[str] = []
+        for elt in node.elts:
+            s = _ast_str_constant(elt)
+            if s:
+                out.append(s.upper())
+        return out
+    s = _ast_str_constant(node)
+    return [s.upper()] if s else []
+
+
+def _http_route_from_decorator_call(dec: ast.AST) -> tuple[str | None, str | None]:
+    """Parse one ``@app.get('/x')`` / ``@app.route('/x', methods=[...])`` call."""
+    if not isinstance(dec, ast.Call):
+        return None, None
+    name = _decorator_dotted(dec.func)
+    if not name:
+        return None, None
+    last = name.rsplit(".", 1)[-1].lower()
+    if last not in HTTP_ROUTE_DECORATOR_LASTSEGS:
+        return None, None
+    path = _ast_str_constant(dec.args[0]) if dec.args else None
+    method: str | None
+    if last in _HTTP_VERB_DECORATOR_LASTSEGS:
+        method = last.upper()
+    elif last == "websocket":
+        method = "WEBSOCKET"
+    else:
+        method = None
+        for kw in dec.keywords:
+            if kw.arg == "methods" and kw.value is not None:
+                methods = _ast_http_methods(kw.value)
+                if methods:
+                    method = methods[0]
+                    break
+        if method is None:
+            method = "GET"
+    return method, path
+
+
+def parse_python_http_route(source: str, start_line: int) -> dict[str, str | None]:
+    """Return ``http_method`` / ``http_path`` for a Python handler at ``start_line``.
+
+    Reads Flask/FastAPI/Starlette-style decorator calls on the function or
+    async function whose ``lineno`` equals ``start_line``. When several HTTP
+    decorators are stacked, the first with a string path wins.
+    """
+    empty: dict[str, str | None] = {"http_method": None, "http_path": None}
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return empty
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        if node.lineno != start_line:
+            continue
+        for dec in node.decorator_list:
+            method, path = _http_route_from_decorator_call(dec)
+            if path is not None:
+                return {"http_method": method, "http_path": path}
+        return empty
+    return empty
+
+
+def infer_python_http_framework(source: str) -> str:
+    """Guess flask vs fastapi from bounded import scan of module source."""
+    head = source[:8192].lower()
+    if "fastapi" in head or "starlette" in head:
+        return "fastapi"
+    if "flask" in head:
+        return "flask"
+    return "fastapi"
+
+
 # ---------- Generic tree-sitter ----------
 
 

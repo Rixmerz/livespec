@@ -105,7 +105,7 @@ populates new fields.
 ### Layered stack
 
 ```
-tools/          MCP-exposed surface (32 tools: 19 core + 10 RF + 3 docs)
+tools/          MCP-exposed surface (36 tools: 24 core + 9 RF + 3 docs)
   analysis.py     find_symbol, quick_orient, get_symbol_source, who_calls,
                   who_does_this_call, analyze_impact, audit_coverage,
                   find_dead_code, find_orphan_tests, find_endpoints,
@@ -188,17 +188,19 @@ produce duplicate symbols at the same line. Keep the first occurrence
 The v0.8 curation pass shipped: battle-test data (3 sessions, 40 calls,
 11 bug fixes) drove the tier split. Current state:
 
-- **19 core tools** always registered: code intel (find_symbol,
+- **24 core tools** always registered: code intel (find_symbol,
   quick_orient, get_symbol_source, who_calls, who_does_this_call,
   analyze_impact, git_diff_impact, find_dead_code, find_orphan_tests,
   find_endpoints, get_project_overview, index_project, search,
-  embed_chunks) + RF agentic queries (audit_coverage, list_requirements,
-  get_requirement_implementation, propose_requirements_from_codebase)
-  + bulk_link_rf_symbols (escape hatch, promoted v0.12).
-- **Plugin `livespec-rf` (10 tools)** — RF mutation ceremony: CRUD,
-  link/unlink, RF-RF graph, scans, markdown import.
-- **Plugin `livespec-docs` (4 tools)** — generate_docs, list_docs,
-  export_documentation, export_explorer.
+  embed_chunks, grep_in_indexed_files, agent_scratch, agent_scratch_clear)
+  + RF agentic (audit_coverage, list_requirements,
+  get_requirement_implementation, propose_requirements_from_codebase,
+  bulk_link_rf_symbols, import_requirements_from_markdown)
+  + export_explorer (always visible, v0.19).
+- **Plugin `livespec-rf` (9 tools)** — RF mutation ceremony: CRUD,
+  link/unlink, RF-RF graph, scans (import moved to core v0.19).
+- **Plugin `livespec-docs` (3 tools)** — generate_docs, list_docs,
+  export_documentation.
 - **Dropped (v0.8-v0.9)**: list_files, get_index_status (resource
   `project://index/status`), get_symbol_info, get_call_graph,
   rebuild_chunks (runs inside index_project), watcher trio

@@ -79,7 +79,7 @@ def wire_explorer_mount(
         f"{mount_path} (auto-wired by export_explorer / index_project)\n"
         "try:\n"
         "    from livespec_mcp.explorer import mount_explorer\n"
-        f"    mount_explorer({app_var})\n"
+        f'    mount_explorer({app_var}, prefix="{mount_path}")\n'
         "except ImportError:\n"
         "    pass  # livespec-mcp not installed in this runtime\n"
         "except FileNotFoundError:\n"

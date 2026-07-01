@@ -93,17 +93,35 @@ def run_index_pipeline(st: AppState, *, force: bool = False, embed: bool = False
     }
 
 
+def _should_build_explorer(st: AppState, explorer: bool) -> bool:
+    """Return whether ``index_project`` should (re)generate the RF Explorer bundle.
+
+    True when any of:
+
+    * ``explorer=True`` (explicit opt-in),
+    * the bundle already exists (freshness — keep it from going stale),
+    * the workspace looks like a FastAPI app (``main.py`` / ``app.py`` with
+      ``app = FastAPI(...)``) and no bundle exists yet (first-index autodetect).
+    """
+    if explorer:
+        return True
+    explorer_dir = st.settings.state_dir / "explorer"
+    if explorer_dir.exists():
+        return True
+    from livespec_mcp.explorer.autowire import find_fastapi_entrypoints
+
+    return bool(find_fastapi_entrypoints(st.settings.workspace))
+
+
 def _maybe_regenerate_explorer(st: AppState, explorer: bool) -> bool:
     """Refresh the static RF Explorer bundle to keep it from going stale.
 
-    Regenerates when the bundle already exists under ``.mcp-docs/explorer/``
-    OR when ``explorer=True`` forces a first build. Skips silently when the
-    bundle is absent and not forced. Any failure is logged and swallowed —
-    a bad explorer build must never break the index pipeline. Returns
-    whether the bundle was (re)written.
+    Regenerates when :func:`_should_build_explorer` is true (explicit flag,
+    existing bundle, or FastAPI entry autodetect on first index). Any failure
+    is logged and swallowed — a bad explorer build must never break the index
+    pipeline. Returns whether the bundle was (re)written.
     """
-    explorer_dir = st.settings.state_dir / "explorer"
-    if not (explorer or explorer_dir.exists()):
+    if not _should_build_explorer(st, explorer):
         return False
     try:
         # Imported here (not at module top) so explorer.py — owned by another
@@ -140,6 +158,12 @@ def register(mcp: FastMCP) -> None:
         Pass explorer=True to (re)generate the static RF Explorer bundle
         (.mcp-docs/explorer/) after indexing; it is also auto-refreshed
         whenever that bundle already exists, so the viewer never goes stale.
+        When ``[requirements].sync_from`` is set in ``.livespec.toml``, markdown
+        RF specs are re-imported after each index (idempotent). Optional
+        ``[requirements].links_seed`` replays ``bulk_link_rf_symbols`` from JSON.
+        On a first index, a FastAPI workspace (``app = FastAPI(...)`` in
+        ``main.py`` / ``app.py``) auto-builds the bundle and autowires
+        ``mount_explorer(app)`` when ``[explorer] auto_mount = true``.
         A bundle-regeneration failure never breaks indexing — it is logged
         and skipped. The payload reports `explorer_regenerated`.
         Use after pulling new commits or when documentation feels stale.
@@ -147,6 +171,14 @@ def register(mcp: FastMCP) -> None:
         st = get_state(workspace)
         result = run_index_pipeline(st, force=force, embed=embed)
         result["explorer_regenerated"] = _maybe_regenerate_explorer(st, explorer)
+        try:
+            from livespec_mcp.domain.requirements_sync import sync_requirements_from_config
+
+            req_sync = sync_requirements_from_config(st)
+            if req_sync is not None:
+                result["requirements_sync"] = req_sync
+        except Exception:
+            _log.exception("requirements sync failed; skipping")
         if watch:
             from livespec_mcp.domain.watcher import Watcher, register_watcher
 

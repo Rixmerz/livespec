@@ -192,30 +192,85 @@ every file edit (hash-skip makes no-op runs cheap):
 The trailing `&` keeps the hook non-blocking; the next tool call sees a
 fresh index.
 
-## Tools (33: 19 core + 10 RF plugin + 4 docs plugin)
+### FastAPI integration
+
+Three steps to serve the RF Explorer from your API — no manual wiring unless
+you disable autowire:
+
+1. **Install** livespec-mcp in the same environment as your app
+   (`pip install livespec-mcp` or `uv add livespec-mcp`).
+
+2. **Index once** (MCP tool or CLI). If the repo has `app = FastAPI(...)` in
+   `main.py` or `app.py`, `index_project` auto-builds `.mcp-docs/explorer/`
+   and appends `mount_explorer(app)` when `[explorer] auto_mount = true`
+   (default in `.livespec.toml`).
+
+3. **Open** `http://localhost:<port>/explorer/` — the Overview tab shows
+   requirement status, coverage trend, and navigation into API / Changes /
+   Coverage gaps. For a quick try without your app:
+
+   ```bash
+   livespec-mcp index /path/to/your/repo
+   livespec-mcp explorer serve /path/to/your/repo
+   # → http://127.0.0.1:8765/explorer/
+   ```
+
+Set `[explorer] auto_mount = false` in `.livespec.toml` if you prefer runtime mount:
+
+```python
+from livespec_mcp.explorer import enable_explorer
+enable_explorer(app)  # no main.py patch
+```
+
+The API tab **Try it** sends `fetch` to your base URL (CORS must allow the Explorer origin).
+
+### One-shot install (rule + skill + index + autowire)
+
+```bash
+livespec-mcp fastapi init /path/to/your/fastapi-repo
+```
+
+Writes:
+
+| Path | Purpose |
+|------|---------|
+| `.livespec.toml` | `[explorer]` defaults |
+| `.mcp-docs/explorer/` | RF Explorer bundle |
+| `.cursor/rules/livespec-fastapi.mdc` | Agent rule (FastAPI globs) |
+| `.cursor/skills/livespec-fastapi/SKILL.md` | Session workflow skill |
+| `.livespec/SESSION_PROMPT.md` | Copy-paste chat opener |
+
+Appends `mount_explorer(app, prefix="/explorer")` to `main.py`/`app.py` when found.
+Flags: `--no-index`, `--no-wire`, `--no-cursor`.
+
+## Tools (36 total: 24 core + 9 RF plugin + 3 docs plugin)
 
 Every tool requires `workspace` (absolute project root). Pass it on each call;
 omitting it is an error (no env fallback). LRU cache (8 workspaces) — one MCP
 server, many projects, no restart.
 
-**Menu (v0.18):** plugins register at boot but `PluginVisibilityMiddleware`
-hides mutation/doc tools from `tools/list` until the workspace has `rf` rows,
-a `.mcp-docs/explorer/` bundle (docs plugin), or you set `LIVESPEC_PLUGINS`.
-After the first tool call with `workspace=`, the session menu reflects that
-repo (~19 tools on a fresh repo → up to 33 when RFs + explorer exist). Reconnect
-the MCP host if your client cached an old tool list.
+**Menu (v0.19):** plugins register at boot but `PluginVisibilityMiddleware`
+hides RF mutation / doc tools from `tools/list` until the workspace has `rf`
+rows, a `.mcp-docs/explorer/` bundle (docs plugin), or you set
+`LIVESPEC_PLUGINS`. **`import_requirements_from_markdown`** and
+**`export_explorer`** are always visible (brownfield bootstrap — no
+chicken-and-egg). After the first `workspace=` call on a repo with RFs +
+explorer, the menu grows to **36** tools. Reconnect the MCP host if your
+client cached an old tool list.
 
-### Default surface — code intel + RF agentic (19)
+### Default surface — code intel + RF agentic (24)
 
 These tools answer the questions an agent ASKS on an unfamiliar codebase.
-Always registered.
+Always registered (including markdown RF import + Explorer export).
 
 #### Indexing (1)
 - `index_project(force=False, watch=False, embed=False, explorer=False)` — walk, parse,
   persist. Also rebuilds search chunks idempotently. Respects
   `.gitignore` (root + nested, negations included) on top of the
   built-in ignore list (v0.14). Pass `embed=True` to populate vector
-  embeddings (requires `[embeddings]` extra). Read the
+  embeddings (requires `[embeddings]` extra). Auto-builds the RF Explorer
+  bundle when `.mcp-docs/explorer/` already exists, `explorer=True`, or a
+  FastAPI entry is detected (see **FastAPI integration** above). Read the
   `project://index/status` resource for current status (the legacy
   `get_index_status` tool was dropped in v0.9).
 
@@ -227,6 +282,13 @@ Always registered.
   ignore = ["assets/", "*.min.js"]      # gitignore syntax, "!" re-includes
   languages = ["python", "typescript"]  # allow-list; absent = all 9
   max_file_bytes = 2000000              # skip files larger than this
+
+  [requirements]
+  sync_from = ["docs/REQUISITOS_FUNCIONALES.md"]  # re-import after every index_project
+  links_seed = "docs/requirements/livespec-rf-links.json"  # optional bulk_link seed
+
+  [explorer]
+  mount_path = "/explorer"              # FastAPI mount prefix for autowire
   ```
 
 #### Search (1, v0.12)
@@ -243,7 +305,7 @@ Always registered.
   The download shows no progress under MCP — run
   `livespec-mcp index <repo> --embed` in a terminal to watch it.
 
-#### Code intelligence (12)
+#### Code intelligence (14)
 - `find_symbol(query, kind, limit)` — separator-agnostic name lookup.
 - `get_symbol_source(qname)` — body slice only (lighter than full info).
 - `who_calls(qname, max_depth=1)` — backward cone, slim agentic alias.
@@ -268,6 +330,14 @@ Always registered.
   django, spring, angular}), filesystem routing ({nextjs, fresh, sveltekit,
   remix}), Django CBV bases, and call-style routing (`hono`:
   `app.get('/users', handler)` with method + path per route).
+  **(v0.19)** FastAPI/Flask decorators also yield `http_method` +
+  `http_path` in Explorer and MCP payloads. Default sweep **excludes**
+  `tests/**` and `@pytest.fixture` handlers (use `framework='pytest'` for
+  fixtures).
+- `grep_in_indexed_files(pattern, path_glob?, kind?, limit=50)` — search
+  only files present in the index (avoids `node_modules` / `.venv`).
+- `agent_scratch(qname, note)` / `agent_scratch_clear(qname?)` — ephemeral
+  agent notes per project (SQLite, not RFs). Omit `qname` on clear to wipe all.
 - `audit_coverage()` — RF coverage report: modules without direct RF,
   modules implicitly covered (transitively reached), modules truly orphan,
   modules in languages whose annotation extractor isn't wired yet
@@ -280,11 +350,15 @@ Always registered.
   call the code directly. The RF Explorer renders this as a per-RF test
   coverage meter with a `coverage_source` badge.
 
-#### RF agentic — query, don't mutate (4)
+#### RF agentic — query + bootstrap (5)
 - `bulk_link_rf_symbols(mappings)` — batch-link N (rf_id, symbol_qname)
   pairs in one transaction. Escape hatch for files/languages where the
   in-source annotation extractor doesn't reach (configs, SQL, YAML).
-  Idempotent: re-linking an existing pair is a no-op.
+  Idempotent: re-linking an existing pair is a no-op. Test symbols must be
+  **functions** (`tests.pkg.test_mod.test_fn`), not modules (`tests.pkg.test_mod`).
+- `import_requirements_from_markdown(path)` — bulk-create/update RFs from
+  `## RF-NNN: Title` Markdown specs. Always visible; warns on duplicate RF
+  headings across different markdown files. Idempotent.
 - `list_requirements(status, module, priority, has_implementation)` —
   RF discovery surface.
 - `get_requirement_implementation(rf_id)` — answers
@@ -294,15 +368,21 @@ Always registered.
   on an RF-empty repo. Groups symbols by module + PageRank, proposes
   RF candidates with humanized title + suggested_symbols.
 
-### `livespec-rf` plugin — RF mutation (10)
+#### RF Explorer (1, always visible)
+- `export_explorer(base?, head?, generated_at?)` — writes
+  `.mcp-docs/explorer/` (`data.json` + `index.html`). Swagger-style view by
+  Requirement; **v0.19** HTTP Try-it for routes with method/path; FastAPI
+  autowire on export/index. Preview: `livespec-mcp explorer serve` →
+  `http://127.0.0.1:8765/explorer/`.
+
+### `livespec-rf` plugin — RF mutation (9)
 
 Visible in `tools/list` when the workspace DB has `rf` rows, or when
 `LIVESPEC_PLUGINS` includes `rf`. Tools an *operator* runs to mutate RF state.
 
-`bulk_link_rf_symbols` — previously in this plugin — was promoted to the
-default agentic surface so agents always have an escape hatch for
-languages/file types where the in-source annotation extractor can't
-reach (configs, SQL, YAML).
+`bulk_link_rf_symbols` and `import_requirements_from_markdown` live in the
+**default surface** (always visible) so brownfield repos can bootstrap without
+setting `LIVESPEC_PLUGINS`.
 
 - `create_requirement(title, ...)`, `update_requirement(rf_id, ...)`,
   `delete_requirement(rf_id)` — cascade-removes rf_symbol links.
@@ -316,10 +396,20 @@ reach (configs, SQL, YAML).
 - `scan_docstrings_for_rf_hints()` — surfaces RF candidates from existing
   docstrings (first sentence, leading verb). Returns
   `verb_histogram_top` for noticing dominant action verbs.
-- `import_requirements_from_markdown(path)` — bulk-create RFs from
-  `## RF-NNN: Title` Markdown specs. Idempotent.
 
-### `livespec-docs` plugin — doc generation (4)
+### Brownfield bootstrap (no Python one-liner)
+
+```text
+index_project(workspace=..., explorer=True)
+  → import_requirements_from_markdown(path="docs/REQUISITOS_FUNCIONALES.md")
+  → bulk_link_rf_symbols(mappings=[...])
+```
+
+Or add `[requirements].sync_from` to `.livespec.toml` and run
+`uv run python scripts/sync_livespec_rfs.py /path/to/repo` after editing the
+spec without a full re-index.
+
+### `livespec-docs` plugin — doc generation (3)
 
 Visible when the workspace has `doc` rows, a `.mcp-docs/explorer/` bundle, or
 `LIVESPEC_PLUGINS` includes `docs`. Human-tier ceremony for managing generated docs.
@@ -330,20 +420,6 @@ Visible when the workspace has `doc` rows, a `.mcp-docs/explorer/` bundle, or
 - `list_docs(target_type, only_stale=False)` — list or surface drifted
   docs (drift triggers on body_hash OR signature_hash mismatch).
 - `export_documentation(format, out_subdir)` — markdown or JSON.
-- `export_explorer(base?, head?, generated_at?)` — **RF Explorer**
-  (v0.15+): writes a self-contained static bundle to `.mcp-docs/explorer/`
-  (`data.json` + `index.html`). A Swagger-style, stakeholder/PO-first web
-  view **organised by Requirement** — RF spine with a dev-state pill,
-  plain-language description, implementing symbols (+ signatures), a real
-  **test-coverage % meter** with a derived/explicit source badge, owned
-  endpoints (grouped Tools/Resources/Prompts + copy-call), RF→RF
-  dependency topology (Mermaid), and a coverage-gaps view. **v0.17** adds a
-  **Changes** view (pass `base`/`head` → which RFs a diff touches +
-  coverage), a per-RF **uncovered-symbols** drill-down, and a **coverage
-  trend** sparkline. Pure projection of the RF graph: no server, no build
-  step, opens from `file://`. Re-run to refresh (or `index_project(explorer=True)`).
-  **Local preview:** `livespec-mcp explorer serve` → `http://127.0.0.1:8765/explorer/`
-  (`/` and `/index.html` redirect there).
 
 ### Migrating from older versions
 
@@ -370,6 +446,7 @@ Visible when the workspace has `doc` rows, a `.mcp-docs/explorer/` bundle, or
 - `project://symbols/{qname*}`
 - `doc://symbol/{qname*}`
 - `doc://requirement/{rf_id}`
+- `code://symbol/{qname*}` — raw symbol source slice
 
 ## Prompts (slash commands)
 
@@ -467,3 +544,4 @@ data trumped the prior intuition.
 | 19 — v0.14 | ✅ | Personal-fit sprint: gitignore-aware indexing (root + nested + negations via `pathspec`), `.livespec.toml` per-repo config (ignore/languages/max_file_bytes, outranks .gitignore), headless CLI (`livespec-mcp index|status` — cron/systemd/pre-commit sin host MCP), fix resources rotos bajo multi-tenant (MRU binding + `mcp_error` shape), `languages_unsupported` reporting, closure-capture TS/JS/Rust, embed cache persistente XDG, Django re-validation: dead-code **344** (serie 824→514→348→344), partial reindex **1.4s** |
 | 20 — v0.15–0.17 | ✅ | RF Explorer static bundle (`export_explorer`), derived RF test coverage + explorer meters, Changes/drill-down/trend/freshness, reproducible self-RFs (`livespec-rf-links.json`) |
 | 21 — v0.18 | ✅ | `PluginVisibilityMiddleware` (per-workspace tool menu, 19→33 after index). `livespec-mcp explorer serve` + FastAPI `mount_explorer` autowire. Explorer landing + Swagger API tab. Search: FTS snake_case + offline vector fallback. **342** default tests |
+| 22 — v0.19 | ✅ | FastAPI HTTP paths + Explorer Try-it; `fastapi init`; brownfield RF bootstrap (`import_requirements_from_markdown` always visible, `[requirements].sync_from`, duplicate-spec warnings); agent tools + PR RF comment CI. **368** default tests |

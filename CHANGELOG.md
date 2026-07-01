@@ -6,6 +6,81 @@ follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.19.0] - 2026-06-30
+
+### Changed — brownfield RF bootstrap
+- **`import_requirements_from_markdown`** always visible in core menu (no
+  chicken-and-egg: RF rows no longer required to see the import tool).
+- **`[requirements].sync_from`** + **`links_seed`** in `.livespec.toml` — post-
+  `index_project` hook re-imports markdown specs and optional
+  `bulk_link_rf_symbols` seed (`domain/requirements_sync.py`).
+- **`scripts/sync_livespec_rfs.py`** — run sync without full re-index.
+- **`find_endpoints`**: pytest fixtures and `tests/**` scaffolds excluded from
+  default sweep (`framework='pytest'` still lists fixtures).
+- **`import_requirements_from_markdown`**: warns on duplicate `## RF-*` headings
+  across different markdown paths.
+- **`bulk_link_rf_symbols`**: actionable `hint` when qname looks like a test
+  module (`tests.pkg.mod`) instead of a test function.
+- **`embed_chunks`**: install hint (`uv pip install -e ".[embeddings]"` + MCP
+  reconnect) when extras missing.
+- **Explorer**: `coverage_source === 'derived'` shows **integration-only** badge.
+- **`agent_scratch_clear(qname=...)`** — clear one note; omit to clear all.
+- **Resource URIs** documented in `resources.py` (`project://`, `doc://`,
+  `code://`; no `livespec://` alias).
+
+### Added — FastAPI onboarding installer
+- **`livespec-mcp fastapi init [path]`** — index + Explorer bundle + autowire +
+  installs `.cursor/rules/livespec-fastapi.mdc`, `.cursor/skills/livespec-fastapi/`,
+  and `.livespec/SESSION_PROMPT.md` from shipped templates.
+- Templates live under `src/livespec_mcp/templates/fastapi/`.
+
+### Added — FastAPI HTTP routes in Explorer
+- **Python HTTP route extraction** (`domain/extractors.py`): AST parse of
+  `@app.get("/path")`, `@router.post(...)`, `api_route`, Flask `route` →
+  `http_method` / `http_path` on `compute_endpoints` entries (Explorer + MCP).
+- **Explorer HTTP Try-it**: base URL input + **Execute** (`fetch`) for
+  GET/POST/PUT/PATCH/DELETE when `method` + `path` are known; CORS note in UI.
+- **`livespec_mcp.explorer.fastapi`**: `enable_explorer(app)`,
+  `explorer_lifespan`, `LivespecExplorerMiddleware` — mount at runtime without
+  patching `main.py`.
+- **Autowire** emits `mount_explorer(app, prefix="<mount_path>")` from
+  `[explorer].mount_path` in `.livespec.toml`.
+
+### Added — FastAPI explorer autodetect
+- **`index_project` FastAPI autodetect**: `_should_build_explorer` builds the
+  RF Explorer bundle on first index when `find_fastapi_entrypoints` finds
+  `app = FastAPI(...)` in `main.py` / `app.py` (in addition to
+  `explorer=True` or an existing `.mcp-docs/explorer/` bundle).
+
+### Added — agent tooling
+- **`grep_in_indexed_files`**: pattern search limited to indexed workspace
+  files (paginated).
+- **`agent_scratch` / `agent_scratch_clear`**: per-project agent notes in SQLite
+  (schema migration v10).
+- **Optional agent call log**: `[agent] log_calls = true` in `.livespec.toml`
+  → `.mcp-docs/agent_log.jsonl` (`instrumentation.py`).
+- **`payload_warning`** on `who_calls`, `analyze_impact`, `git_diff_impact`
+  when estimated payload is large and `summary_only` was not used.
+
+### Changed — tool surface
+- **`export_explorer`** promoted to always-visible core (not gated by docs
+  plugin). Default core menu **24** tools (+ plugins when workspace qualifies).
+
+### Added — CI PR RF impact comment
+- **`.github/workflows/livespec-pr-comment.yml`**: on `pull_request`, runs
+  `scripts/pr_diff_impact.py` (indexes + `compute_diff_rf_impact`) and posts
+  a markdown table of touched RFs via `gh pr comment` when `GITHUB_TOKEN` is
+  available; skips posting gracefully when the token is absent.
+
+### Changed — Explorer Overview trend UX
+- **Overview landing** shows a compact coverage trend (SVG sparkline + last-3
+  snapshot table for `avg_test_coverage`) when `DATA.trend` has snapshots;
+  the Changes tab keeps the full bar strip.
+
+### Added — docs
+- **README** "FastAPI integration" section (install → index → `/explorer` +
+  Try-it HTTP).
+
 ## [0.18.0] - 2026-07-01
 
 ### Added — per-workspace plugin menu

@@ -82,8 +82,8 @@ def _plugin_blocked_payload(tool_name: str, workspace: str | None) -> dict[str, 
         return mcp_error(
             f"RF mutation tool {tool_name!r} is not active{ws_hint}.",
             hint=(
-                "Seed RFs in this repo (import_requirements_from_markdown) or set "
-                "LIVESPEC_PLUGINS=rf (or =all) in MCP config until rf rows exist."
+                "import_requirements_from_markdown is always visible (bootstrap). "
+                "Other RF tools need rf rows or LIVESPEC_PLUGINS=rf (or =all)."
             ),
         )
     return mcp_error(

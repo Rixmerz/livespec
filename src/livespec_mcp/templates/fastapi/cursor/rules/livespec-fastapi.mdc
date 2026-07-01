@@ -1,0 +1,44 @@
+---
+description: Livespec MCP + RF Explorer at /explorer for this FastAPI service
+globs: main.py,app.py,**/routers/**/*.py,**/routes/**/*.py
+alwaysApply: false
+---
+
+# Livespec + FastAPI (this repo)
+
+## Workspace
+
+Every **livespec** MCP tool call MUST pass:
+
+```
+workspace="<absolute path to THIS repo root>"
+```
+
+Never index a parent folder. Reconnect MCP (`/mcp`) after upgrading livespec-mcp.
+
+## RF Explorer at `/explorer`
+
+- Bundle: `.mcp-docs/explorer/` (from `index_project(explorer=True)` or `export_explorer`).
+- Mount (pick one):
+  - **Autowire** (default): `[explorer] auto_mount = true` in `.livespec.toml` — livespec appends `mount_explorer(app, prefix="/explorer")` to `main.py`/`app.py` on export/index.
+  - **Runtime (no patch):** `from livespec_mcp.explorer import enable_explorer` then `enable_explorer(app)` after `FastAPI()`.
+- Open: `http://localhost:<port>/explorer/` — Overview, API tab (Try-it HTTP), Changes, gaps.
+
+## Cold-open flow (agent)
+
+1. `get_project_overview(workspace=...)` → if stale/empty: `index_project(workspace=..., explorer=True)`.
+2. `find_endpoints(workspace=..., framework="fastapi")` — expect `http_method` + `http_path`.
+3. `export_explorer(workspace=...)` — refresh bundle; check `autowire.wired`.
+4. Before code changes: `analyze_impact` / `git_diff_impact(summary_only=True)` on touched symbols.
+
+## CORS for Explorer Try-it
+
+If Execute fails in the browser, allow the app origin in FastAPI CORS middleware for dev.
+
+## One-shot setup CLI
+
+```bash
+livespec-mcp fastapi init .
+```
+
+Installs `.livespec.toml`, index+explorer bundle, Cursor rule/skill, and autowire when applicable.

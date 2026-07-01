@@ -486,13 +486,13 @@ async def test_find_endpoints_all_and_per_framework(workspace):
     async with Client(mcp) as c:
         await c.call_tool("index_project", {})
 
-        # No framework filter -> all entry-point decorators
+        # No framework filter -> HTTP/CLI entry points (pytest fixtures excluded)
         all_eps = (await c.call_tool("find_endpoints", {})).data
         all_qnames = {e["qualified_name"] for e in all_eps["endpoints"]}
         assert "app.main.list_users" in all_qnames
         assert "app.main.get_items" in all_qnames
         assert "app.main.cli_run" in all_qnames
-        assert "app.main.db" in all_qnames
+        assert "app.main.db" not in all_qnames
         assert "app.main.plain" not in all_qnames
 
         # framework='click' -> only the click command
