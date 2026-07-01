@@ -6,6 +6,34 @@ follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.18.0] - 2026-07-01
+
+### Added — per-workspace plugin menu
+- **`PluginVisibilityMiddleware`**: RF mutation (10) and docs plugin (4) tools
+  stay registered at boot but are **hidden from `tools/list`** and **blocked on
+  `tools/call`** until the workspace has `rf`/`doc` rows (or an explorer bundle
+  on disk for docs) or ``LIVESPEC_PLUGINS`` includes the plugin. Session caches
+  the last ``workspace=`` from tool calls so the menu updates after the first index.
+- **`livespec-mcp explorer serve [path]`**: local preview at
+  `http://127.0.0.1:8765/explorer/` (`/` and `/index.html` redirect there).
+- **`src/livespec_mcp/explorer/`** package: `mount_explorer`, `serve_explorer`,
+  `create_explorer_host_app`, FastAPI autowire (`autowire.py`).
+
+### Changed — RF Explorer UX
+- **FastAPI `/explorer` mount**: `from livespec_mcp.explorer import mount_explorer;
+  mount_explorer(app)` serves the static bundle at `/explorer` (SPA fallback for
+  sub-routes). On `export_explorer` / `index_project(explorer=True)`, livespec
+  **auto-wires** `mount_explorer(app)` into the first ``app = FastAPI(...)``
+  module (`main.py` / `app.py`) when `[explorer] auto_mount = true` (default).
+- **Landing at `/explorer`**: client-side router + Overview home; API tab uses
+  Swagger-style collapsible operations. Hash routing when the bundle is opened
+  from `file://` or a plain static server at bundle root (no `/explorer` prefix
+  in the URL path).
+
+### Fixed — search
+- Vector lane falls back to FTS-only when the embedder is offline.
+- Snake_case queries (`index_project`) tokenize correctly for FTS5 (`index OR project`).
+
 ## [0.17.0] - 2026-06-25
 
 ### Added — Diff→RF "Changes" view

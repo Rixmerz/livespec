@@ -74,9 +74,13 @@ async def test_export_explorer_writes_both_files(workspace: Path):
     assert "sourceBadge" in html
     assert "auto-derived (call graph)" in html
     assert "Avg ' + TEST_COVERAGE_LABEL" in html  # dashboard KPI tile
-    # Endpoints tab: static-spec note + copy-call affordance (these are MCP
-    # tools, not HTTP routes, so no live "Try it out").
-    assert "Static spec view" in html
+    # Endpoints tab: Swagger-style operations + client router at /explorer.
+    assert "swagger-op" in html
+    assert "swagger-toolbar" in html
+    assert "buildLanding" in html
+    assert "navigateTo" in html
+    assert '"base_path": "/explorer"' in html or "base_path" in html
+    assert 'data-route="changes"' in html
     assert "copy-call" in html
     assert "callShape" in html
     # Endpoints grouped by MCP kind (Tools / Resources / Prompts), and the
@@ -87,7 +91,6 @@ async def test_export_explorer_writes_both_files(workspace: Path):
     assert "Uncovered symbols" in html
     assert "uncovered_symbols_count" in html
     # v0.16 A: a Changes tab driven by the git diff RF impact section.
-    assert 'data-tab="changes"' in html
     assert "buildChanges" in html
     assert "requirements_touched" in html
     # v0.16 D: a coverage trend view (sparkline + per-snapshot bars).
@@ -130,7 +133,7 @@ async def test_export_explorer_data_schema(workspace: Path):
     assert set(data.keys()) == _TOP_KEYS
 
     # meta + counts shape
-    assert set(data["meta"].keys()) == {"project", "generated_at", "counts"}
+    assert set(data["meta"].keys()) == {"project", "generated_at", "base_path", "counts"}
     assert set(data["meta"]["counts"].keys()) == {
         "requirements", "symbols", "endpoints", "files",
     }
@@ -460,6 +463,7 @@ async def test_write_explorer_bundle_no_args_backward_compat(workspace: Path):
     # No base/head passed — defaults must keep the call working unchanged.
     result = write_explorer_bundle(st)
     assert set(result["data"].keys()) == _TOP_KEYS
+    assert "autowire" in result
     assert isinstance(result["data"]["trend"], list)
     assert isinstance(result["data"]["changes"], dict)
     assert {"base", "head", "files_changed", "requirements_touched"} == set(

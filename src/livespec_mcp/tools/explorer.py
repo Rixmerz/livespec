@@ -14,7 +14,7 @@ no MCP round-trips, no duplicated SQL beyond the per-RF symbol join.
 
 data.json schema:
     {
-      "meta": {"project", "generated_at"|null,
+      "meta": {"project", "generated_at"|null, "base_path": "/explorer",
                "counts": {"requirements", "symbols", "endpoints", "files"}},
       "dashboard": {"requirements", "dev_state_counts": {...},
                     "with_endpoints", "with_dependencies",
@@ -82,6 +82,8 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
+from livespec_mcp.config import load_repo_config
+from livespec_mcp.explorer.autowire import autowire_fastapi_explorer
 from livespec_mcp.state import AppState
 from livespec_mcp.storage.trends import read_trend
 from livespec_mcp.tools.analysis import (
@@ -511,6 +513,8 @@ def compute_explorer_data(
         "meta": {
             "project": st.settings.workspace.name,
             "generated_at": generated_at,
+            # Overwritten in write_explorer_bundle from .livespec.toml [explorer].mount_path
+            "base_path": "/explorer",
             "counts": {
                 "requirements": len(rf_rows),
                 "symbols": total_rf_symbols,
@@ -576,6 +580,8 @@ def write_explorer_bundle(
     omitted off-git).
     """
     data = compute_explorer_data(st, generated_at=generated_at, base=base, head=head)
+    repo_cfg = load_repo_config(st.settings.workspace)
+    data["meta"]["base_path"] = repo_cfg.explorer_mount_path
     out_dir: Path = st.settings.state_dir / "explorer"
     out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -584,9 +590,23 @@ def write_explorer_bundle(
     data_path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
     html_path.write_text(_render_index_html(data), encoding="utf-8")
 
+    repo_cfg = load_repo_config(st.settings.workspace)
+    autowire = autowire_fastapi_explorer(
+        st.settings.workspace,
+        auto_mount=repo_cfg.explorer_auto_mount,
+        mount_path=repo_cfg.explorer_mount_path,
+    )
+
     return {
         "data": data,
         "files_written": [str(data_path), str(html_path)],
+        "autowire": {
+            "wired": autowire.wired,
+            "file": autowire.file,
+            "app_var": autowire.app_var,
+            "reason": autowire.reason,
+            "mount_path": repo_cfg.explorer_mount_path,
+        },
     }
 
 
@@ -1160,6 +1180,130 @@ _HTML_TEMPLATE = """<!DOCTYPE html>
   }
   details.ep-fixtures { margin-top: 26px; }
 
+  /* ---- Landing (/) ---- */
+  .landing-hero { margin-bottom: 28px; }
+  .landing-hero h2 {
+    font-size: 28px; font-weight: 750; letter-spacing: -.03em;
+    margin: 0 0 8px; line-height: 1.15;
+  }
+  .landing-hero .sub { font-size: 15px; color: var(--muted); max-width: 62ch; margin: 0; }
+  .nav-cards {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 14px; margin-top: 22px;
+  }
+  .nav-card {
+    display: block; text-decoration: none; color: inherit;
+    background: var(--surface); border: 1px solid var(--line);
+    border-radius: var(--radius); padding: 16px 18px; box-shadow: var(--shadow-sm);
+    transition: border-color .14s ease, box-shadow .14s ease, transform .14s ease;
+  }
+  .nav-card:hover {
+    border-color: var(--accent-line); box-shadow: var(--shadow);
+    transform: translateY(-1px); text-decoration: none;
+  }
+  .nav-card .nc-title { font-size: 15px; font-weight: 650; margin: 0 0 4px; }
+  .nav-card .nc-desc { font-size: 12.5px; color: var(--muted); margin: 0; line-height: 1.45; }
+  .nav-card .nc-count {
+    display: inline-block; margin-top: 10px;
+    font-family: var(--mono); font-size: 11px; font-weight: 650;
+    padding: 2px 8px; border-radius: 999px;
+    background: var(--accent-weak); color: var(--accent-ink);
+  }
+
+  /* ---- Swagger-style endpoints ---- */
+  .swagger-toolbar {
+    display: flex; gap: 12px; flex-wrap: wrap; align-items: center;
+    margin: 0 0 18px;
+  }
+  .swagger-toolbar input {
+    flex: 1; min-width: 200px; font: inherit; font-size: 13px;
+    padding: 9px 12px 9px 34px; border-radius: 9px;
+    border: 1px solid var(--line); background: var(--surface);
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='15' height='15' viewBox='0 0 24 24' fill='none' stroke='%236a7488' stroke-width='2.2' stroke-linecap='round'%3E%3Ccircle cx='11' cy='11' r='7'/%3E%3Cpath d='m21 21-4.3-4.3'/%3E%3C/svg%3E");
+    background-repeat: no-repeat; background-position: 10px center;
+  }
+  .swagger-toolbar input:focus {
+    border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-weak); outline: none;
+  }
+  .swagger-tag { margin-bottom: 28px; }
+  .swagger-tag-h {
+    display: flex; align-items: baseline; gap: 10px;
+    margin: 0 0 10px; padding-bottom: 8px;
+    border-bottom: 1px solid var(--line);
+  }
+  .swagger-tag-h .name { font-size: 18px; font-weight: 700; letter-spacing: -.02em; }
+  .swagger-tag-h .ct {
+    font-family: var(--mono); font-size: 11px; font-weight: 650;
+    padding: 2px 8px; border-radius: 999px;
+    background: var(--surface-3); color: var(--muted);
+  }
+  .swagger-tag-h .desc { font-size: 13px; color: var(--muted); margin-left: auto; }
+  .swagger-ops { display: flex; flex-direction: column; gap: 8px; }
+  details.swagger-op {
+    border: 1px solid var(--line); border-radius: var(--radius-sm);
+    background: var(--surface); overflow: hidden;
+    box-shadow: var(--shadow-sm);
+  }
+  details.swagger-op[open] { border-color: var(--accent-line); }
+  .swagger-op-summary {
+    list-style: none; cursor: pointer; display: flex; align-items: stretch;
+    gap: 0; min-height: 44px;
+  }
+  .swagger-op-summary::-webkit-details-marker { display: none; }
+  .op-method {
+    display: flex; align-items: center; justify-content: center;
+    min-width: 72px; padding: 0 12px;
+    font-family: var(--mono); font-size: 11px; font-weight: 800;
+    letter-spacing: .04em; text-transform: uppercase; color: #fff;
+    flex: none;
+  }
+  .op-method.get     { background: #49cc90; }
+  .op-method.post    { background: #61affe; }
+  .op-method.put     { background: #fca130; color: #1c2130; }
+  .op-method.patch   { background: #50e3c2; color: #1c2130; }
+  .op-method.delete  { background: #f93e3e; }
+  .op-method.head,
+  .op-method.options { background: #9012fe; }
+  .op-method.tool      { background: #5848d6; }
+  .op-method.resource  { background: #2f6fb0; }
+  .op-method.prompt    { background: #b06a00; }
+  .op-method.other     { background: #6a7488; }
+  .op-main {
+    flex: 1; display: flex; align-items: center; gap: 12px;
+    padding: 8px 14px; min-width: 0;
+  }
+  .op-path {
+    font-family: var(--mono); font-size: 14px; font-weight: 600;
+    color: var(--fg); word-break: break-all;
+  }
+  .op-sub {
+    font-family: var(--mono); font-size: 11px; color: var(--muted);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    max-width: 280px;
+  }
+  .op-chevron {
+    display: flex; align-items: center; padding: 0 14px;
+    color: var(--muted); font-size: 12px; flex: none;
+  }
+  details[open] .op-chevron { transform: rotate(90deg); }
+  .swagger-op-body {
+    border-top: 1px solid var(--line-soft);
+    padding: 14px 16px 16px; background: var(--surface-2);
+  }
+  .op-section { margin-bottom: 14px; }
+  .op-section:last-child { margin-bottom: 0; }
+  .op-section-h {
+    font-size: 11px; font-weight: 700; text-transform: uppercase;
+    letter-spacing: .07em; color: var(--muted); margin: 0 0 8px;
+  }
+  table.op-params { font-size: 12.5px; }
+  table.op-params td:first-child { font-family: var(--mono); font-weight: 600; width: 28%; }
+  table.op-params td:nth-child(2) { font-family: var(--mono); color: var(--muted); width: 18%; }
+  .op-try {
+    display: flex; align-items: flex-start; gap: 10px; flex-wrap: wrap;
+  }
+  .op-try pre.call-shape { flex: 1; min-width: 200px; margin: 0; }
+
   /* Gaps */
   .kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin-bottom: 8px; }
   .kpi {
@@ -1315,15 +1459,19 @@ _HTML_TEMPLATE = """<!DOCTYPE html>
   </div>
   <div class="stats" id="stats" aria-label="Project totals"></div>
   <nav class="tabs" role="tablist" aria-label="Explorer views">
-    <button role="tab" data-tab="requirements" aria-current="page">Requirements<span class="pill" id="pill-rf"></span></button>
-    <button role="tab" data-tab="topology">Dependencies<span class="pill" id="pill-topo"></span></button>
-    <button role="tab" data-tab="endpoints">Endpoints<span class="pill" id="pill-ep"></span></button>
-    <button role="tab" data-tab="changes">Changes<span class="pill" id="pill-chg"></span></button>
-    <button role="tab" data-tab="gaps">Coverage gaps<span class="pill" id="pill-gap"></span></button>
+    <button role="tab" data-route="landing" aria-current="page">Overview</button>
+    <button role="tab" data-route="requirements">Requirements<span class="pill" id="pill-rf"></span></button>
+    <button role="tab" data-route="topology">Dependencies<span class="pill" id="pill-topo"></span></button>
+    <button role="tab" data-route="endpoints">API<span class="pill" id="pill-ep"></span></button>
+    <button role="tab" data-route="changes">Changes<span class="pill" id="pill-chg"></span></button>
+    <button role="tab" data-route="gaps">Coverage gaps<span class="pill" id="pill-gap"></span></button>
   </nav>
 </header>
 
-<section class="panel active" data-panel="requirements" role="tabpanel" aria-label="Requirements">
+<section class="panel active" data-panel="landing" role="tabpanel" aria-label="Overview">
+  <main class="scroll pad" id="landing-main"></main>
+</section>
+<section class="panel" data-panel="requirements" role="tabpanel" aria-label="Requirements" hidden>
   <div class="split">
     <aside class="spine" aria-label="Requirement spine">
       <div class="search">
@@ -1368,6 +1516,87 @@ const DATA = JSON.parse(document.getElementById('explorer-data').textContent);
 const esc = s => String(s ?? '').replace(/[&<>"]/g, c =>
   ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const el = id => document.getElementById(id);
+
+// ---- Client-side router (/explorer, /explorer/endpoints, …) ----
+// Served over HTTP: History API paths under meta.base_path (default /explorer).
+// file:// fallback: hash routes (#/endpoints) so local opens still work.
+const ROUTES = ['landing', 'requirements', 'topology', 'endpoints', 'changes', 'gaps'];
+const ROUTE_LABEL = {
+  landing: 'Overview', requirements: 'Requirements', topology: 'Dependencies',
+  endpoints: 'API', changes: 'Changes', gaps: 'Coverage gaps',
+};
+function routerBase() {
+  const configured = (DATA.meta.base_path || '/explorer').replace(/\\/+$/, '');
+  if (location.protocol === 'file:') return { mode: 'hash', base: configured };
+  const idx = location.pathname.indexOf('/explorer');
+  if (idx >= 0) return { mode: 'history', base: location.pathname.slice(0, idx + 9) };
+  // python -m http.server at bundle root: / or /index.html — no /explorer prefix
+  if (/^\\/(index\\.html)?$/.test(location.pathname)) {
+    return { mode: 'hash', base: configured };
+  }
+  return { mode: 'history', base: configured };
+}
+const ROUTER = routerBase();
+function routeFromPath(pathOrHash) {
+  let p = String(pathOrHash || '');
+  if (ROUTER.mode === 'hash') {
+    p = p.replace(/^#\\/?/, '').replace(/^\\//, '');
+    const base = ROUTER.base.replace(/^\\//, '').replace(/\\/+$/, '');
+    if (!p || p === base) return 'landing';
+    if (p.startsWith(base + '/')) p = p.slice(base.length + 1);
+    const seg = (p.split('/')[0] || 'landing').toLowerCase();
+    return ROUTES.includes(seg) ? seg : 'landing';
+  }
+  const base = ROUTER.base.replace(/\\/+$/, '');
+  if (p.endsWith('/index.html')) p = p.replace(/\\/index\\.html$/, '');
+  if (!p || p === base || p === base + '/') return 'landing';
+  if (p.startsWith(base + '/')) p = p.slice(base.length + 1);
+  else p = p.replace(/^\\/+/, '');
+  const seg = (p.split('/')[0] || 'landing').toLowerCase();
+  return ROUTES.includes(seg) ? seg : 'landing';
+}
+function hrefForRoute(route) {
+  const base = ROUTER.base.replace(/\\/+$/, '');
+  const suffix = route === 'landing' ? '' : '/' + route;
+  if (ROUTER.mode === 'hash') return '#' + base + suffix;
+  return base + suffix;
+}
+function currentRoute() {
+  if (ROUTER.mode === 'hash') return routeFromPath(location.hash || hrefForRoute('landing'));
+  return routeFromPath(location.pathname);
+}
+let activeRoute = currentRoute();
+function navigateTo(route, replace) {
+  if (!ROUTES.includes(route)) route = 'landing';
+  activeRoute = route;
+  const href = hrefForRoute(route);
+  if (ROUTER.mode === 'hash') {
+    if (replace) history.replaceState({ route }, '', href);
+    else history.pushState({ route }, '', href);
+  } else {
+    if (replace) history.replaceState({ route }, '', href);
+    else history.pushState({ route }, '', href);
+  }
+  showRoute(route);
+}
+function showRoute(route) {
+  document.querySelectorAll('nav.tabs button').forEach(b => {
+    const on = b.dataset.route === route;
+    b.setAttribute('aria-current', on ? 'page' : 'false');
+  });
+  document.querySelectorAll('.panel').forEach(p => {
+    const on = p.dataset.panel === route;
+    p.classList.toggle('active', on);
+    p.hidden = !on;
+  });
+  if (route === 'topology') renderTopology();
+  if (route === 'requirements' && DATA.requirements.length && !activeRF) {
+    selectRF(DATA.requirements[0].id);
+  }
+  if (route === 'landing') buildLanding();
+}
+window.addEventListener('popstate', () => showRoute(currentRoute()));
+window.addEventListener('hashchange', () => showRoute(currentRoute()));
 
 // ---- Header stats + tab count pills ----
 const counts = DATA.meta.counts;
@@ -1692,7 +1921,46 @@ renderDashboard();
 renderDsFilters();
 el('rf-filter').addEventListener('input', e => renderSpine(e.target.value));
 renderSpine('');
-if (DATA.requirements.length) selectRF(DATA.requirements[0].id);
+
+// ---- Landing (/explorer) ----
+function buildLanding() {
+  const box = el('landing-main');
+  if (!box) return;
+  const d = DATA.dashboard || {};
+  const c = counts;
+  let h = '<div class="landing-hero">' +
+    `<h2>${esc(DATA.meta.project)}</h2>` +
+    '<p class="sub">Live map of requirements, API surface, dependencies and coverage — ' +
+    'auto-generated from the indexed codebase.</p></div>';
+  h += '<div id="landing-dash"></div>';
+  h += '<div class="nav-cards">';
+  const cards = [
+    ['requirements', 'Requirements', 'Browse RFs, implementation evidence and test coverage.', d.requirements || c.requirements],
+    ['endpoints', 'API', 'Swagger-style view of tools, routes and MCP entry points.', c.endpoints],
+    ['topology', 'Dependencies', 'How requirements depend on each other.', DATA.rf_topology.nodes.length],
+    ['changes', 'Changes', 'Git diff impact on requirements in the current range.', (CHANGES.requirements_touched || []).length],
+    ['gaps', 'Coverage gaps', 'Orphan modules and endpoints without an RF link.',
+      DATA.coverage.orphan_modules.length + DATA.coverage.orphan_endpoints.length],
+  ];
+  cards.forEach(([route, title, desc, n]) => {
+    h += `<a class="nav-card" href="${esc(hrefForRoute(route))}" data-goto-route="${route}">` +
+      `<div class="nc-title">${esc(title)}</div>` +
+      `<p class="nc-desc">${esc(desc)}</p>` +
+      `<span class="nc-count">${n}</span></a>`;
+  });
+  h += '</div>';
+  box.innerHTML = h;
+  // Reuse the dashboard tiles inside the landing hero area.
+  const dashSlot = el('landing-dash');
+  renderDashboard();
+  if (dashSlot) dashSlot.innerHTML = el('dashboard').innerHTML;
+  box.querySelectorAll('[data-goto-route]').forEach(a => {
+    a.addEventListener('click', ev => {
+      ev.preventDefault();
+      navigateTo(a.getAttribute('data-goto-route'));
+    });
+  });
+}
 
 // ---- Dependencies graph (Mermaid, themed, coloured by dev_state) ----
 const safeId = s => s.replace(/[^A-Za-z0-9_]/g, '_');
@@ -1808,25 +2076,24 @@ async function renderTopology() {
   }
 }
 
-// ---- Endpoints (grouped by MCP kind, Swagger-like) ----
-// These are MCP entry points, not HTTP routes (framework is null), so we
-// group by the decorator-derived `kind` (tool / resource / prompt / other).
-// pytest fixtures are split out by compute_explorer_data into DATA.fixtures.
+// ---- API surface (Swagger UI-style) ----
 const EP_KIND_ORDER = ['tool', 'resource', 'prompt', 'other'];
 const EP_KIND_LABEL = {
-  tool: 'Tools', resource: 'Resources', prompt: 'Prompts', other: 'Other',
+  tool: 'Tools', resource: 'Resources', prompt: 'Prompts', other: 'HTTP & other',
+};
+const EP_KIND_DESC = {
+  tool: 'MCP tools and framework route handlers',
+  resource: 'MCP resources',
+  prompt: 'MCP prompts',
+  other: 'HTTP routes and unclassified entry points',
 };
 
-// Short tool name = the last dotted segment of the handler qname.
 function shortName(qname) {
   const s = String(qname || '');
   const i = s.lastIndexOf('.');
   return i === -1 ? s : s.slice(i + 1);
 }
 
-// Parse positional arg names out of a `name(a, b=1, *, c)` signature.
-// Drops *self/cls*, defaults, annotations, * and ** markers — best-effort,
-// purely for showing the call SHAPE (this is copy-to-run, not live-execute).
 function sigArgs(signature) {
   const s = String(signature || '');
   const open = s.indexOf('('), close = s.lastIndexOf(')');
@@ -1836,15 +2103,30 @@ function sigArgs(signature) {
   return inner.split(',').map(p => {
     let name = p.trim();
     if (!name || name === '*' || name === '/') return '';
-    name = name.replace(/^\\*+/, '');        // strip * / **
-    name = name.split('=')[0];              // drop default
-    name = name.split(':')[0];              // drop annotation
+    name = name.replace(/^\\*+/, '');
+    name = name.split('=')[0];
+    name = name.split(':')[0];
     return name.trim();
   }).filter(a => a && a !== 'self' && a !== 'cls');
 }
 
-// Build the call SHAPE the user copies into their MCP client. Tools get a
-// JSON tool-call skeleton; resources/prompts get a compact name(args) form.
+function sigArgTypes(signature) {
+  const s = String(signature || '');
+  const open = s.indexOf('('), close = s.lastIndexOf(')');
+  if (open === -1 || close === -1 || close <= open) return [];
+  const inner = s.slice(open + 1, close).trim();
+  if (!inner) return [];
+  return inner.split(',').map(p => {
+    let part = p.trim();
+    if (!part || part === '*' || part === '/') return null;
+    part = part.replace(/^\\*+/, '');
+    const name = part.split('=')[0].split(':')[0].trim();
+    if (!name || name === 'self' || name === 'cls') return null;
+    const ann = part.includes(':') ? part.split(':').slice(1).join(':').split('=')[0].trim() : 'any';
+    return { name, type: ann || 'any' };
+  }).filter(Boolean);
+}
+
 function callShape(ep) {
   const name = shortName(ep.handler);
   const args = sigArgs(ep.signature);
@@ -1856,6 +2138,16 @@ function callShape(ep) {
   return name + '(' + args.join(', ') + ')';
 }
 
+function opMethodClass(ep) {
+  if (ep.method) return String(ep.method).toLowerCase();
+  return ep.kind || 'other';
+}
+
+function opDisplayPath(ep) {
+  if (ep.path) return ep.path;
+  return shortName(ep.handler);
+}
+
 function buildEndpoints() {
   const eps = DATA.endpoints || [];
   const fixtures = DATA.fixtures || [];
@@ -1864,85 +2156,117 @@ function buildEndpoints() {
   const keys = Object.keys(groups).sort(
     (a, b) => EP_KIND_ORDER.indexOf(a) - EP_KIND_ORDER.indexOf(b));
 
-  // Static-spec note: these are MCP tools, not HTTP routes — no live "Try it".
-  let h = '<p class="ep-note">Static spec view — <b>copy a call</b> to run it ' +
-    'in your MCP client; live execution would require a running server.</p>';
-  h += '<p class="lead">The project\\'s MCP surface, grouped by kind. ' +
-    'Each row shows the handler, its signature and the requirement(s) that own it. ' +
-    'Test fixtures are listed separately below — they are not part of the API surface.</p>';
+  let h = '<p class="ep-note">Static spec — <b>expand an operation</b> to see parameters and copy a call shape for your MCP client. Live execution needs a running server.</p>';
+  h += '<div class="swagger-toolbar">' +
+    '<input type="search" id="ep-filter" placeholder="Filter by name, path or handler…" autocomplete="off" spellcheck="false">' +
+    `<span class="chip muted">${eps.length} operation${eps.length === 1 ? '' : 's'}</span></div>`;
+  h += '<div id="swagger-root">';
 
   if (!keys.length) {
-    h += '<div class="empty">No endpoints found.</div>';
+    h += '<div class="empty">No API entry points found.</div>';
   }
   keys.forEach(k => {
     const rows = groups[k];
     const label = EP_KIND_LABEL[k] || k;
-    h += '<section class="epgroup"><div class="epgroup-h">' +
-      `<span class="fw">${esc(label)}</span>` +
-      `<span class="fwtag">${rows.length}</span></div>`;
-    h += '<div class="card"><table><thead><tr>' +
-      '<th>Handler</th><th>Signature</th><th>Call</th><th>RFs</th></tr></thead><tbody>';
+    h += `<section class="swagger-tag" data-tag="${esc(k)}">` +
+      `<div class="swagger-tag-h"><span class="name">${esc(label)}</span>` +
+      `<span class="ct">${rows.length}</span>` +
+      `<span class="desc">${esc(EP_KIND_DESC[k] || '')}</span></div>` +
+      '<div class="swagger-ops">';
     rows.forEach((ep, i) => {
-      const route = (ep.method || ep.path)
-        ? `${ep.method ? `<span class="method ${String(ep.method).toLowerCase()}">${esc(ep.method)}</span> ` : ''}<span class="path">${esc(ep.path || '')}</span>`
-        : '';
-      const sigCell = ep.signature
-        ? `<span class="sig">${esc(ep.signature)}</span>`
-        : (route || '<span class="empty">—</span>');
+      const mcls = opMethodClass(ep);
+      const path = opDisplayPath(ep);
+      const args = sigArgTypes(ep.signature);
+      const shape = callShape(ep);
+      const cid = `cc-${k}-${i}`;
       const rfs = ep.rf_ids.length
         ? ep.rf_ids.map(r => `<span class="chip accent" style="font-size:11px">${esc(r)}</span>`).join(' ')
         : '<span class="chip muted">unlinked</span>';
-      const shape = callShape(ep);
-      const cid = `cc-${k}-${i}`;
-      h += '<tr>' +
-        `<td><span class="qname">${esc(shortName(ep.handler))}</span>` +
-          `<div class="ep-q">${esc(ep.handler)}</div></td>` +
-        `<td>${sigCell}${route ? `<div class="ep-route">${route}</div>` : ''}</td>` +
-        `<td><button type="button" class="copy-call" data-copy="${cid}" title="Copy the call shape to your clipboard">⧉ copy call</button>` +
-          `<pre class="call-shape" id="${cid}" hidden>${esc(shape)}</pre></td>` +
-        `<td>${rfs}</td></tr>`;
+      const searchHay = [ep.handler, path, ep.method, ep.kind, shortName(ep.handler)].join(' ').toLowerCase();
+      h += `<details class="swagger-op" data-search="${esc(searchHay)}">` +
+        '<summary class="swagger-op-summary">' +
+        `<span class="op-method ${esc(mcls)}">${esc(ep.method || ep.kind || 'other')}</span>` +
+        '<span class="op-main">' +
+        `<span class="op-path">${esc(path)}</span>` +
+        `<span class="op-sub">${esc(ep.handler)}</span></span>` +
+        '<span class="op-chevron" aria-hidden="true">▸</span></summary>' +
+        '<div class="swagger-op-body">' +
+        '<div class="op-section"><div class="op-section-h">Handler</div>' +
+        `<code class="mono">${esc(ep.handler)}</code></div>`;
+      if (ep.signature) {
+        h += '<div class="op-section"><div class="op-section-h">Signature</div>' +
+          `<code class="mono sig">${esc(ep.signature)}</code></div>`;
+      }
+      if (args.length) {
+        h += '<div class="op-section"><div class="op-section-h">Parameters</div>' +
+          '<div class="card"><table class="op-params"><thead><tr><th>Name</th><th>Type</th><th>Description</th></tr></thead><tbody>';
+        args.forEach(a => {
+          h += `<tr><td>${esc(a.name)}</td><td>${esc(a.type)}</td><td class="muted">—</td></tr>`;
+        });
+        h += '</tbody></table></div></div>';
+      }
+      h += '<div class="op-section"><div class="op-section-h">Try it out</div>' +
+        '<div class="op-try">' +
+        `<button type="button" class="copy-call" data-copy="${cid}">Copy call</button>` +
+        `<pre class="call-shape" id="${cid}">${esc(shape)}</pre></div></div>` +
+        '<div class="op-section"><div class="op-section-h">Requirements</div>' +
+        `<div class="clusterbox">${rfs}</div></div>` +
+        '</div></details>';
     });
-    h += '</tbody></table></div></section>';
+    h += '</div></section>';
   });
+  h += '</div>';
 
-  // Fixtures — test infrastructure, NOT API surface. Collapsed by default.
   if (fixtures.length) {
     h += '<details class="tech ep-fixtures"><summary>Test fixtures ' +
-      `<span class="hint">${fixtures.length} pytest fixture${fixtures.length === 1 ? '' : 's'} — test infrastructure, not API surface</span></summary>` +
-      '<div class="tech-body"><div class="card"><table><thead><tr>' +
-      '<th>Fixture</th><th>Signature</th></tr></thead><tbody>';
+      `<span class="hint">${fixtures.length} pytest fixture${fixtures.length === 1 ? '' : 's'} — not API surface</span></summary>` +
+      '<div class="tech-body"><div class="swagger-ops">';
     fixtures.forEach(fx => {
-      h += '<tr>' +
-        `<td><span class="qname">${esc(shortName(fx.handler))}</span>` +
-          `<div class="ep-q">${esc(fx.handler)}</div></td>` +
-        `<td>${fx.signature ? `<span class="sig">${esc(fx.signature)}</span>` : '<span class="empty">—</span>'}</td></tr>`;
+      h += `<details class="swagger-op"><summary class="swagger-op-summary">` +
+        '<span class="op-method other">FIXTURE</span><span class="op-main">' +
+        `<span class="op-path">${esc(shortName(fx.handler))}</span>` +
+        `<span class="op-sub">${esc(fx.handler)}</span></span>` +
+        '<span class="op-chevron">▸</span></summary>' +
+        '<div class="swagger-op-body">' +
+        (fx.signature ? `<code class="mono sig">${esc(fx.signature)}</code>` : '<span class="empty">—</span>') +
+        '</div></details>';
     });
-    h += '</tbody></table></div></div></details>';
+    h += '</div></div></details>';
   }
 
   el('epmain').innerHTML = h;
 
-  // Wire copy-call buttons: copy the snippet text, flash confirmation.
+  const filter = el('ep-filter');
+  if (filter) {
+    filter.addEventListener('input', () => {
+      const q = filter.value.trim().toLowerCase();
+      el('epmain').querySelectorAll('details.swagger-op[data-search]').forEach(op => {
+        const hay = op.getAttribute('data-search') || '';
+        op.style.display = !q || hay.includes(q) ? '' : 'none';
+      });
+      el('epmain').querySelectorAll('.swagger-tag').forEach(tag => {
+        const visible = [...tag.querySelectorAll('details.swagger-op[data-search]')]
+          .some(op => op.style.display !== 'none');
+        tag.style.display = visible ? '' : 'none';
+      });
+    });
+  }
+
   el('epmain').querySelectorAll('.copy-call').forEach(btn =>
     btn.addEventListener('click', () => {
       const pre = el(btn.getAttribute('data-copy'));
       const text = pre ? pre.textContent : '';
       const done = () => {
         const old = btn.textContent;
-        btn.textContent = '✓ copied';
+        btn.textContent = 'Copied';
         btn.classList.add('copied');
         setTimeout(() => { btn.textContent = old; btn.classList.remove('copied'); }, 1400);
       };
       if (navigator.clipboard && navigator.clipboard.writeText) {
-        navigator.clipboard.writeText(text).then(done, () => { showSnippet(pre); });
-      } else {
-        showSnippet(pre);
+        navigator.clipboard.writeText(text).then(done, () => {});
       }
     }));
 }
-// Fallback when the Clipboard API is unavailable (file://, no permission):
-// reveal the snippet so the user can select + copy manually.
-function showSnippet(pre) { if (pre) pre.hidden = false; }
 
 // ---- Gaps ----
 const TOTAL_LABELS = {
@@ -2119,24 +2443,15 @@ function buildChanges() {
   el('chgmain').innerHTML = h;
 }
 
-// ---- Tab switching ----
+// ---- Navigation (routes under /explorer) ----
 document.querySelectorAll('nav.tabs button').forEach(btn => {
-  btn.addEventListener('click', () => {
-    const tab = btn.dataset.tab;
-    document.querySelectorAll('nav.tabs button').forEach(b =>
-      b.setAttribute('aria-current', b === btn ? 'page' : 'false'));
-    document.querySelectorAll('.panel').forEach(p => {
-      const on = p.dataset.panel === tab;
-      p.classList.toggle('active', on);
-      p.hidden = !on;
-    });
-    if (tab === 'topology') renderTopology();
-  });
+  btn.addEventListener('click', () => navigateTo(btn.dataset.route));
 });
 
 buildEndpoints();
 buildChanges();
 buildGaps();
+navigateTo(activeRoute, true);
 </script>
 </body>
 </html>

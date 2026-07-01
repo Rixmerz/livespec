@@ -50,6 +50,13 @@ async def test_search_scope_code(sample_repo):
             assert r["text_kind"] == "code"
 
 
+def test_fts_query_tokens_splits_snake_case():
+    from livespec_mcp.domain.rag import _fts_query_tokens
+
+    assert _fts_query_tokens("index_project") == ["index", "project"]
+    assert _fts_query_tokens("login user") == ["login", "user"]
+
+
 @pytest.mark.asyncio
 async def test_search_empty_query_is_error(sample_repo):
     async with Client(mcp) as c:

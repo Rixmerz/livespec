@@ -1,0 +1,162 @@
+"""Mount the static RF Explorer bundle on any Starlette/FastAPI app at ``/explorer``.
+
+Typical use (manual)::
+
+    from fastapi import FastAPI
+    from livespec_mcp.explorer import mount_explorer
+
+    app = FastAPI()
+    mount_explorer(app)  # -> GET /explorer/, /explorer/endpoints, …
+
+``export_explorer`` / ``index_project(explorer=True)`` can auto-append the
+``mount_explorer(app)`` call when a FastAPI ``app = FastAPI(...)`` module is
+found (see ``autowire.py``).
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+from typing import Any
+
+from starlette.applications import Starlette
+from starlette.requests import Request
+from starlette.responses import FileResponse, RedirectResponse, Response
+from starlette.routing import Mount, Route
+
+_DEFAULT_PREFIX = "/explorer"
+_BUNDLE_SUBDIR = Path(".mcp-docs") / "explorer"
+
+
+def explorer_bundle_dir(workspace: Path | str | None = None) -> Path:
+    """Absolute path to ``<workspace>/.mcp-docs/explorer/``."""
+    root = Path.cwd() if workspace is None else Path(workspace).resolve()
+    return root / _BUNDLE_SUBDIR
+
+
+def _ensure_bundle(bundle_dir: Path) -> None:
+    if not (bundle_dir / "index.html").is_file():
+        raise FileNotFoundError(
+            f"RF Explorer bundle missing at {bundle_dir} — "
+            "run export_explorer or index_project(explorer=True) first"
+        )
+
+
+def create_explorer_app(bundle_dir: Path) -> Starlette:
+    """Starlette sub-app: SPA fallback + ``data.json``."""
+    _ensure_bundle(bundle_dir)
+
+    async def index(_request: Request) -> Response:
+        return FileResponse(bundle_dir / "index.html")
+
+    async def data_json(_request: Request) -> Response:
+        return FileResponse(
+            bundle_dir / "data.json",
+            media_type="application/json",
+        )
+
+    async def spa(request: Request) -> Response:
+        rel = request.path_params.get("path") or ""
+        if rel:
+            candidate = (bundle_dir / rel).resolve()
+            try:
+                candidate.relative_to(bundle_dir.resolve())
+            except ValueError:
+                return FileResponse(bundle_dir / "index.html")
+            if candidate.is_file():
+                return FileResponse(candidate)
+        return FileResponse(bundle_dir / "index.html")
+
+    return Starlette(
+        routes=[
+            Route("/", index, methods=["GET", "HEAD"]),
+            Route("/data.json", data_json, methods=["GET", "HEAD"]),
+            Route("/{path:path}", spa, methods=["GET", "HEAD"]),
+        ]
+    )
+
+
+def create_explorer_host_app(
+    workspace: Path | str | None = None,
+    prefix: str = _DEFAULT_PREFIX,
+) -> Starlette:
+    """Standalone Starlette app for local preview.
+
+    Serves the bundle at ``prefix`` (default ``/explorer``). Root ``/`` and
+    ``/index.html`` redirect there so ``http://127.0.0.1:8765/explorer/`` works.
+    """
+    bundle_dir = explorer_bundle_dir(workspace)
+    _ensure_bundle(bundle_dir)
+    mount_path = prefix.rstrip("/") or _DEFAULT_PREFIX
+    sub = create_explorer_app(bundle_dir)
+
+    async def redirect_to_explorer(_request: Request) -> Response:
+        return RedirectResponse(url=mount_path + "/", status_code=307)
+
+    return Starlette(
+        routes=[
+            Route("/", redirect_to_explorer, methods=["GET", "HEAD"]),
+            Route("/index.html", redirect_to_explorer, methods=["GET", "HEAD"]),
+            Route(mount_path, redirect_to_explorer, methods=["GET", "HEAD"]),
+            Mount(mount_path, sub),
+        ]
+    )
+
+
+def serve_explorer(
+    workspace: Path | str | None = None,
+    *,
+    host: str = "127.0.0.1",
+    port: int = 8765,
+    prefix: str = _DEFAULT_PREFIX,
+) -> None:
+    """Run a local HTTP server for the RF Explorer bundle."""
+    import uvicorn
+
+    app = create_explorer_host_app(workspace, prefix=prefix)
+    mount_path = prefix.rstrip("/") or _DEFAULT_PREFIX
+    print(f"RF Explorer: http://{host}:{port}{mount_path}/", flush=True)
+    uvicorn.run(app, host=host, port=port, log_level="info")
+
+
+def mount_explorer(
+    app: Any,
+    *,
+    workspace: Path | str | None = None,
+    prefix: str = _DEFAULT_PREFIX,
+) -> str:
+    """Mount the RF Explorer under ``prefix`` (default ``/explorer``).
+
+    Works with FastAPI and plain Starlette apps (``app.mount``). Returns the
+    mount prefix actually used.
+    """
+    bundle_dir = explorer_bundle_dir(workspace)
+    _ensure_bundle(bundle_dir)
+    mount_path = prefix.rstrip("/") or _DEFAULT_PREFIX
+    sub = create_explorer_app(bundle_dir)
+
+    # Redirect bare prefix -> trailing slash so relative assets resolve.
+    async def redirect_to_slash(_request: Request) -> Response:
+        return RedirectResponse(url=mount_path + "/", status_code=307)
+
+    if hasattr(app, "mount"):
+        app.mount(mount_path, sub)
+    else:
+        raise TypeError("app must expose .mount() (Starlette or FastAPI)")
+
+    # Prepend a redirect route on the parent app (Starlette matches in order).
+    redirect = Route(mount_path, redirect_to_slash, methods=["GET", "HEAD"])
+    app.router.routes.insert(0, redirect)
+    return mount_path
+
+
+def try_mount_explorer(
+    app: Any,
+    *,
+    workspace: Path | str | None = None,
+    prefix: str = _DEFAULT_PREFIX,
+) -> str | None:
+    """Like ``mount_explorer`` but returns ``None`` when the bundle is missing."""
+    try:
+        return mount_explorer(app, workspace=workspace, prefix=prefix)
+    except FileNotFoundError:
+        return None

@@ -41,3 +41,6 @@ Thumbs.db
 
 # the workflow runner local scratch state
 .the workflow runner/
+
+# Playwright MCP debug output
+.playwright-mcp/

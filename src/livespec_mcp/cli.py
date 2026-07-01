@@ -7,6 +7,7 @@ pre-commit hooks, CI) without an MCP host in the middle:
 
     livespec-mcp index <path> [--force] [--embed]   # index + chunks, JSON out
     livespec-mcp status <path>                      # index status, JSON out
+    livespec-mcp explorer serve [path] [--port 8765]  # RF Explorer at /explorer/
     livespec-mcp serve                              # explicit server form
 
 JSON goes to stdout, errors to stderr with exit code 1.
@@ -64,10 +65,44 @@ def main(argv: list[str] | None = None) -> int:
     p_status = sub.add_parser("status", help="print index status JSON for a repo")
     p_status.add_argument("path", help="absolute or relative path to the repo root")
 
+    p_explorer = sub.add_parser("explorer", help="RF Explorer local preview")
+    p_explorer_sub = p_explorer.add_subparsers(dest="explorer_cmd", required=True)
+    p_explorer_serve = p_explorer_sub.add_parser(
+        "serve", help="HTTP server at /explorer (default port 8765)"
+    )
+    p_explorer_serve.add_argument(
+        "path",
+        nargs="?",
+        default=".",
+        help="repo root (default: current directory)",
+    )
+    p_explorer_serve.add_argument("--host", default="127.0.0.1")
+    p_explorer_serve.add_argument("--port", type=int, default=8765)
+    p_explorer_serve.add_argument(
+        "--mount-path",
+        default="/explorer",
+        help="URL prefix (default: /explorer)",
+    )
+
     args = parser.parse_args(argv)
 
     if args.cmd == "serve":
         _serve()
+        return 0
+    if args.cmd == "explorer":
+        if args.explorer_cmd == "serve":
+            from livespec_mcp.explorer.asgi import serve_explorer
+
+            try:
+                serve_explorer(
+                    args.path,
+                    host=args.host,
+                    port=args.port,
+                    prefix=args.mount_path,
+                )
+            except FileNotFoundError as e:
+                print(f"error: {e}", file=sys.stderr)
+                return 1
         return 0
     try:
         if args.cmd == "index":

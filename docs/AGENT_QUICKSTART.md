@@ -109,10 +109,10 @@ Heuristic discovery: groups symbols by qname prefix (configurable
 `module_depth`), ranks by PageRank-weighted score, and proposes RF
 candidates with humanized title + description + suggested_symbols.
 
-To accept a proposal you need the **`livespec-rf` plugin loaded**. If
-your workspace has no RFs yet, set `LIVESPEC_PLUGINS=rf` (or `=all`)
-in the MCP server config to force-load it. Once any RF exists in the
-DB, the plugin auto-loads on subsequent server starts.
+To accept a proposal you need the **`livespec-rf` plugin** visible in your
+tool list. After `index_project(workspace=...)`, mutation tools appear when the
+DB has RFs; on a **fresh** repo use `LIVESPEC_PLUGINS=rf` (or `=all`) or
+reconnect MCP if the host cached ~19 core tools only.
 
 ```
 create_requirement(title=..., description=..., rf_id=...)        # plugin

@@ -31,6 +31,41 @@ from livespec_mcp.state import AppState
 
 KNOWN_PLUGINS = ("rf", "docs")
 
+# Registered by plugins but hidden unless detect_active_plugins says so.
+RF_MUTATION_TOOL_NAMES = frozenset(
+    {
+        "create_requirement",
+        "update_requirement",
+        "delete_requirement",
+        "link_rf_symbol",
+        "link_rf_dependency",
+        "unlink_rf_dependency",
+        "get_rf_dependency_graph",
+        "scan_rf_annotations",
+        "scan_docstrings_for_rf_hints",
+        "import_requirements_from_markdown",
+    }
+)
+
+DOCS_PLUGIN_TOOL_NAMES = frozenset(
+    {
+        "generate_docs",
+        "list_docs",
+        "export_documentation",
+        "export_explorer",
+    }
+)
+
+PLUGIN_TOOL_NAMES = RF_MUTATION_TOOL_NAMES | DOCS_PLUGIN_TOOL_NAMES
+
+
+def plugin_name_for_tool(tool_name: str) -> str | None:
+    if tool_name in RF_MUTATION_TOOL_NAMES:
+        return "rf"
+    if tool_name in DOCS_PLUGIN_TOOL_NAMES:
+        return "docs"
+    return None
+
 
 def _project_table_has_rows(state: AppState, table: str) -> bool:
     try:
@@ -41,6 +76,13 @@ def _project_table_has_rows(state: AppState, table: str) -> bool:
     except Exception:
         return False
     return row is not None
+
+
+def _project_has_explorer_bundle(state: AppState) -> bool:
+    """Explorer bundle on disk → docs plugin tools (export_explorer) are relevant."""
+    return (
+        state.settings.workspace / ".mcp-docs" / "explorer" / "index.html"
+    ).is_file()
 
 
 def _parse_override(raw: str) -> set[str] | None:
@@ -69,7 +111,7 @@ def detect_active_plugins(state: AppState) -> set[str]:
     active: set[str] = set()
     if _project_table_has_rows(state, "rf"):
         active.add("rf")
-    if _project_table_has_rows(state, "doc"):
+    if _project_table_has_rows(state, "doc") or _project_has_explorer_bundle(state):
         active.add("docs")
     return active
 
@@ -93,10 +135,12 @@ def register_active(mcp: FastMCP, state: AppState) -> set[str]:
 
 
 def register_all_plugins(mcp: FastMCP) -> set[str]:
-    """Register rf + docs plugins unconditionally (multi-tenant MCP servers).
+    """Register rf + docs plugins at server boot (multi-tenant MCP servers).
 
-    Use at server boot so mutation/doc tools are available for any
-    ``workspace=`` path without restarting or setting LIVESPEC_WORKSPACE.
+    Tools are always registered so they can run when a workspace opts in.
+    ``PluginVisibilityMiddleware`` hides them from ``tools/list`` and blocks
+    ``tools/call`` until the workspace has rf/doc rows or ``LIVESPEC_PLUGINS``
+    includes the plugin.
     """
     from livespec_mcp.tools.plugins import docs as docs_plugin
     from livespec_mcp.tools.plugins import rf as rf_plugin
@@ -107,8 +151,12 @@ def register_all_plugins(mcp: FastMCP) -> set[str]:
 
 
 __all__ = [
+    "DOCS_PLUGIN_TOOL_NAMES",
     "KNOWN_PLUGINS",
+    "PLUGIN_TOOL_NAMES",
+    "RF_MUTATION_TOOL_NAMES",
     "detect_active_plugins",
+    "plugin_name_for_tool",
     "register_active",
     "register_all_plugins",
 ]
