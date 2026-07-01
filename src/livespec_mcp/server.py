@@ -6,6 +6,7 @@ from fastmcp import FastMCP
 
 from livespec_mcp import prompts, resources
 from livespec_mcp.instrumentation import AgentLogMiddleware
+from livespec_mcp.plugin_visibility import PluginVisibilityMiddleware
 from livespec_mcp.tools import analysis, indexing, requirements, search
 from livespec_mcp.tools.plugins import register_all_plugins
 
@@ -24,6 +25,7 @@ mcp = FastMCP(
 )
 
 mcp.add_middleware(AgentLogMiddleware())
+mcp.add_middleware(PluginVisibilityMiddleware())
 
 indexing.register(mcp)
 analysis.register(mcp)
@@ -32,8 +34,8 @@ search.register(mcp)
 resources.register(mcp)
 prompts.register(mcp)
 
-# Multi-tenant: RF + docs plugins always registered; each tool selects DB via
-# workspace= on the call (LRU cache in get_state).
+# Multi-tenant: plugins registered at boot; PluginVisibilityMiddleware gates
+# list/call per workspace (LRU session cache + LIVESPEC_PLUGINS override).
 register_all_plugins(mcp)
 
 

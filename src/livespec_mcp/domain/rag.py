@@ -11,6 +11,7 @@ Models when enabled (via `pip install -e .[embeddings]`):
 
 from __future__ import annotations
 
+import re
 import sqlite3
 from collections.abc import Iterable
 from dataclasses import dataclass
@@ -401,6 +402,22 @@ def _floats_blob(vec: list[float]) -> bytes:
 
 # ---------- Hybrid search ----------
 
+_FTS_TOKEN_SPLIT = re.compile(r"[_\-.]+")
+
+
+def _fts_query_tokens(query: str) -> list[str]:
+    """Turn a user query into FTS5 OR tokens (snake_case → separate terms)."""
+    out: list[str] = []
+    for raw in query.split():
+        t = raw.replace('"', "").replace("*", "").strip()
+        if not t:
+            continue
+        parts = _FTS_TOKEN_SPLIT.split(t) if _FTS_TOKEN_SPLIT.search(t) else [t]
+        for p in parts:
+            if p and p.isalnum():
+                out.append(p)
+    return out
+
 
 def fts_search(
     conn: sqlite3.Connection, project_id: int, query: str, limit: int, scope: str
@@ -411,10 +428,7 @@ def fts_search(
     """
     if not query.strip():
         return []
-    # FTS5 defaults to AND between bare tokens. Use explicit OR so natural-language
-    # queries return useful results when not every term matches every chunk.
-    tokens = [t.replace('"', "").replace("*", "").strip() for t in query.split()]
-    tokens = [t for t in tokens if t and t.isalnum()]
+    tokens = _fts_query_tokens(query)
     if not tokens:
         return []
     fts_query = " OR ".join(tokens)
@@ -434,7 +448,7 @@ def fts_search(
     out: list[tuple[int, float, dict]] = []
     try:
         rows = conn.execute(" ".join(sql), args).fetchall()
-    except sqlite3.OperationalError:
+    except (sqlite3.OperationalError, sqlite3.IntegrityError):
         return []
     # FTS5 bm25() returns negative values where smaller = better. Invert so the
     # downstream contract (larger score = better) holds without overflow risk.
@@ -452,8 +466,18 @@ def vec_search(
     if not have_embeddings() or not have_sqlite_vec(conn):
         return []
     ensure_vec_tables(conn)
-    code_q = list(embed_texts([query], "code")[0]) if scope in ("all", "code") else None
-    text_q = list(embed_texts([query], "text")[0]) if scope in ("all", "requirements") else None
+    try:
+        code_q = (
+            list(embed_texts([query], "code")[0]) if scope in ("all", "code") else None
+        )
+        text_q = (
+            list(embed_texts([query], "text")[0])
+            if scope in ("all", "requirements")
+            else None
+        )
+    except Exception:
+        # ponytail: embedder offline (hub/onnx) — FTS-only hybrid_search still works
+        return []
     out: list[tuple[int, float, dict]] = []
     if code_q:
         rows = conn.execute(

@@ -36,7 +36,11 @@ list_requirements(workspace="PROJECT")
 
 Report: file/symbol/edge counts, languages, top symbols, RF totals.
 
-**Plugins:** RF mutation tools (`create_requirement`, `link_rf_symbol`, …) auto-load when the DB already has RFs. On a **fresh** repo set `LIVESPEC_PLUGINS=rf` (or `all`) in MCP config until the first RF exists.
+**Plugins (v0.18):** RF/docs mutation tools appear in `tools/list` after a
+`workspace=` call when that repo has `rf` rows and/or a `.mcp-docs/explorer/`
+bundle. On a **fresh** repo with no index yet, set `LIVESPEC_PLUGINS=rf` or
+`=all` in MCP config, or run `index_project` first and reconnect MCP if the
+client cached the short tool list.
 
 ---
 

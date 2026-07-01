@@ -35,7 +35,38 @@ Todo el stack es local-first: 0 servicios externos, 0 API keys obligatorias, 0 D
 
 ---
 
-## 3. Estado actual: v0.17.0 — RF Explorer dinámico + profundo
+## 3. Estado actual: v0.18.0 — plugin menu per-workspace + explorer serve
+
+Tests **342 default + 3 embeddings = 345**. Schema **v9** (sin migración nueva).
+pyproject **0.18.0**. Tool surface **33** (19 core + 10 RF plugin + 4 docs) —
+**menú dinámico**: ~19 visibles en `tools/list` hasta el primer `workspace=`;
+tras index en repo con RFs + bundle explorer → 33 en la sesión MCP.
+
+Lo que landeó (batch post-v0.17, sin tag previo en remoto):
+- **A Plugin visibility** (`plugin_visibility.py` + `PluginVisibilityMiddleware`):
+  plugins registrados al boot; `on_list_tools` / `on_call_tool` filtran por
+  `detect_active_plugins` (filas `rf`/`doc`, bundle `.mcp-docs/explorer/`, o
+  `LIVESPEC_PLUGINS`). Session cache del último `workspace=`.
+- **B Explorer serve + FastAPI mount** (`src/livespec_mcp/explorer/`):
+  `mount_explorer(app)`, `create_explorer_host_app`, autowire en `main.py`;
+  CLI `livespec-mcp explorer serve` → `http://127.0.0.1:8765/explorer/`
+  (`/` y `/index.html` → redirect). Router: landing Overview, tab API Swagger,
+  hash fallback para `file://` y `python -m http.server` en raíz del bundle.
+- **C Search hardening** (`domain/rag.py`): vector lane → FTS-only si embedder
+  cae; snake_case (`index_project` → `index OR project`); `IntegrityError` en
+  bm25 absorbido.
+
+**Gate:** `uv run pytest -q -m "not embeddings"` → **342 passed**. Dogfood
+livespec-mcp: explorer UI OK en `:8765/explorer/`; plugin menu 19→33 in-process;
+`search("index_project")` 15 hits tras fix FTS.
+
+**HEAD:** (see `git log -1` after push — v0.18.0 batch)
+
+**Pendiente:** battle-test en repos ajenos; Cursor no refresca `tools/list` sin
+reconectar MCP; tests `embeddings` dependen de ONNX/hub en esta máquina.
+Epic B (C#/Kotlin/Swift, PyPI) sin cambios.
+
+### v0.17.0 resumen (referencia)
 
 Tests **330 default + 3 embeddings = 333**. Schema **v9** (migración
 `rf_coverage_snapshot`). pyproject **0.17.0**. Tool surface **33** (sin
@@ -65,10 +96,8 @@ docs+scripts) + 1 serial (explorer.py es un solo archivo, no se parte).
 del venv `uv` (corrido manual: 330 passed). E2E: data.json con
 changes/trend/uncovered, trend deduped a 1 pt, sin `var()` leak.
 
-**Pendiente:** push acumulado (commits v0.15/v0.16/v0.17 + tags) —
-`! git push origin main && git push origin v0.15.0 v0.16.0 v0.17.0`.
-Epic B (extractores C#/Kotlin/Swift, PyPI) = workflow aparte. Recomendado:
-battle-test en repos reales antes de v1.0.
+**Pendiente (histórico):** push acumulado v0.15–v0.17 — superseded por v0.18.
+Epic B (extractores C#/Kotlin/Swift, PyPI) = workflow aparte.
 
 ### v0.16.0 resumen (referencia)
 

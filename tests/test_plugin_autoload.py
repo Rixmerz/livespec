@@ -55,6 +55,15 @@ def test_detect_doc_rows_activate_docs_plugin(workspace, monkeypatch):
     assert detect_active_plugins(state) == {"docs"}
 
 
+def test_explorer_bundle_on_disk_activates_docs_plugin(workspace, monkeypatch):
+    monkeypatch.delenv("LIVESPEC_PLUGINS", raising=False)
+    state = get_state()
+    out = workspace / ".mcp-docs" / "explorer"
+    out.mkdir(parents=True)
+    (out / "index.html").write_text("<html></html>", encoding="utf-8")
+    assert detect_active_plugins(state) == {"docs"}
+
+
 def test_detect_both_rows_activate_both_plugins(workspace, monkeypatch):
     monkeypatch.delenv("LIVESPEC_PLUGINS", raising=False)
     state = get_state()

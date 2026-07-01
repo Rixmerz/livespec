@@ -67,10 +67,11 @@ calls this function?". livespec layers Functional Requirement ↔ code links
 on top so an agent on a serious-software-shop codebase can answer
 *"changing this function affects RF-042, RF-088 and 3 dependent RFs"* in
 one round-trip. RF agentic tools ship in the default surface;
-RF mutation/management tools live in the `livespec-rf` plugin. Since
-multi-tenant v0.12 all plugins register at startup (there is no single
-DB to auto-detect against when every call carries its own `workspace`),
-so the full 33-tool surface is always visible.
+RF mutation/management tools live in the `livespec-rf` plugin. Plugins
+register at boot (multi-tenant: every `workspace=` has its own DB), but
+**`PluginVisibilityMiddleware`** hides mutation/doc tools from `tools/list`
+until that workspace has `rf`/`doc` rows — or you set
+`LIVESPEC_PLUGINS=rf` / `=all` in MCP config.
 
 ### What "living" actually means here
 
@@ -197,6 +198,13 @@ Every tool requires `workspace` (absolute project root). Pass it on each call;
 omitting it is an error (no env fallback). LRU cache (8 workspaces) — one MCP
 server, many projects, no restart.
 
+**Menu (v0.18):** plugins register at boot but `PluginVisibilityMiddleware`
+hides mutation/doc tools from `tools/list` until the workspace has `rf` rows,
+a `.mcp-docs/explorer/` bundle (docs plugin), or you set `LIVESPEC_PLUGINS`.
+After the first tool call with `workspace=`, the session menu reflects that
+repo (~19 tools on a fresh repo → up to 33 when RFs + explorer exist). Reconnect
+the MCP host if your client cached an old tool list.
+
 ### Default surface — code intel + RF agentic (19)
 
 These tools answer the questions an agent ASKS on an unfamiliar codebase.
@@ -224,8 +232,9 @@ Always registered.
 #### Search (1, v0.12)
 - `search(query, scope='all'|'code'|'requirements', limit=20)` — hybrid
   retrieval over AST-aware chunks of symbols + RFs. FTS5 keyword lane
-  always live; vector lane fuses via Reciprocal Rank Fusion (k=60)
-  when `[embeddings]` extra is installed and chunks are embedded.
+  always live (splits `snake_case` into OR tokens); vector lane fuses via
+  Reciprocal Rank Fusion (k=60) when `[embeddings]` extra is installed and
+  chunks are embedded — falls back to FTS-only if the embedder is offline.
   Use when you want "code that talks about X" without an exact
   symbol-name match. Companion tool `embed_chunks()` (also default
   surface) populates vec0 tables on demand; ~200MB model download on
@@ -287,8 +296,8 @@ Always registered.
 
 ### `livespec-rf` plugin — RF mutation (10)
 
-Auto-loads when the workspace DB has rf rows, or when `LIVESPEC_PLUGINS`
-includes `rf`. Tools an *operator* runs to mutate RF state.
+Visible in `tools/list` when the workspace DB has `rf` rows, or when
+`LIVESPEC_PLUGINS` includes `rf`. Tools an *operator* runs to mutate RF state.
 
 `bulk_link_rf_symbols` — previously in this plugin — was promoted to the
 default agentic surface so agents always have an escape hatch for
@@ -312,8 +321,8 @@ reach (configs, SQL, YAML).
 
 ### `livespec-docs` plugin — doc generation (4)
 
-Auto-loads when the workspace DB has doc rows, or when `LIVESPEC_PLUGINS`
-includes `docs`. Human-tier ceremony for managing generated docs.
+Visible when the workspace has `doc` rows, a `.mcp-docs/explorer/` bundle, or
+`LIVESPEC_PLUGINS` includes `docs`. Human-tier ceremony for managing generated docs.
 
 - `generate_docs(target_type, identifier, content?, max_tokens?)` —
   three modes: caller_supplied / sampling / needs_caller_content. Works
@@ -333,6 +342,8 @@ includes `docs`. Human-tier ceremony for managing generated docs.
   coverage), a per-RF **uncovered-symbols** drill-down, and a **coverage
   trend** sparkline. Pure projection of the RF graph: no server, no build
   step, opens from `file://`. Re-run to refresh (or `index_project(explorer=True)`).
+  **Local preview:** `livespec-mcp explorer serve` → `http://127.0.0.1:8765/explorer/`
+  (`/` and `/index.html` redirect there).
 
 ### Migrating from older versions
 
@@ -454,3 +465,5 @@ data trumped the prior intuition.
 | 17 — v0.12 | ✅ | Multi-repo workspace: `workspace` required on every call, one server instance serves N repos (LRU per-workspace state). RAG layer wired: `index_project` runs AST-aware chunking, `search` (FTS5 + optional sqlite-vec via RRF) + `embed_chunks` exposed. JSDoc extraction for TS/JS (`@rf:` annotations in JSDoc now scanned). `bulk_link_rf_symbols` promoted out of the RF plugin. Banner-comment filter. `force=True` preserves manual RF links |
 | 18 — v0.13 | ✅ | Framework coverage sprint: Spring Boot (Java annotations → endpoints + DI-aware dead-code), Angular (TS decorators, template-reachability method protection, lifecycle hooks), Hono (call-style route extraction with method+path, named-handler callback refs, module-level registration scan — also covers Express-style apps). TS decorator + Java annotation extraction (migration v8 auto re-extract). Dual-decorator alias fix: `find_dead_code` on livespec-mcp itself 22 → **0** |
 | 19 — v0.14 | ✅ | Personal-fit sprint: gitignore-aware indexing (root + nested + negations via `pathspec`), `.livespec.toml` per-repo config (ignore/languages/max_file_bytes, outranks .gitignore), headless CLI (`livespec-mcp index|status` — cron/systemd/pre-commit sin host MCP), fix resources rotos bajo multi-tenant (MRU binding + `mcp_error` shape), `languages_unsupported` reporting, closure-capture TS/JS/Rust, embed cache persistente XDG, Django re-validation: dead-code **344** (serie 824→514→348→344), partial reindex **1.4s** |
+| 20 — v0.15–0.17 | ✅ | RF Explorer static bundle (`export_explorer`), derived RF test coverage + explorer meters, Changes/drill-down/trend/freshness, reproducible self-RFs (`livespec-rf-links.json`) |
+| 21 — v0.18 | ✅ | `PluginVisibilityMiddleware` (per-workspace tool menu, 19→33 after index). `livespec-mcp explorer serve` + FastAPI `mount_explorer` autowire. Explorer landing + Swagger API tab. Search: FTS snake_case + offline vector fallback. **342** default tests |

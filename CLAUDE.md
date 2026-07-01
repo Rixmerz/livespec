@@ -51,6 +51,7 @@ read before starting any feature work in v0.8+.
 ```bash
 uv run pytest -q -m "not embeddings"      # default suite (no model downloads)
 uv run pytest -m embeddings                # add the embeddings smoke (~30s first run)
+uv run livespec-mcp explorer serve .       # RF Explorer at http://127.0.0.1:8765/explorer/
 uv run pytest tests/test_rf_deps.py -v     # single file
 uv run pytest tests/test_rf_deps.py::test_link_and_walk_dependencies -v   # single test
 ```
@@ -196,20 +197,17 @@ The v0.8 curation pass shipped: battle-test data (3 sessions, 40 calls,
   + bulk_link_rf_symbols (escape hatch, promoted v0.12).
 - **Plugin `livespec-rf` (10 tools)** — RF mutation ceremony: CRUD,
   link/unlink, RF-RF graph, scans, markdown import.
-- **Plugin `livespec-docs` (3 tools)** — generate_docs, list_docs,
-  export_documentation.
+- **Plugin `livespec-docs` (4 tools)** — generate_docs, list_docs,
+  export_documentation, export_explorer.
 - **Dropped (v0.8-v0.9)**: list_files, get_index_status (resource
   `project://index/status`), get_symbol_info, get_call_graph,
   rebuild_chunks (runs inside index_project), watcher trio
   (race-condition trap; `index_project(watch=True)` remains).
 
-**Plugin loading reality (v0.12+):** plugins register UNCONDITIONALLY at
-startup (`register_all_plugins` in server.py). The original
-auto-detect-by-DB-state design died with multi-tenant workspaces — there
-is no single DB to query at startup when every call carries its own
-`workspace`. All 32 tools are always visible. If per-workspace tool
-menus matter again, the mechanism must become per-call, not
-startup-time.
+**Plugin loading (v0.18):** plugins register at boot (`register_all_plugins`);
+`PluginVisibilityMiddleware` filters `tools/list` and gates `tools/call` per
+workspace (rf/doc rows, explorer bundle on disk, or `LIVESPEC_PLUGINS` override).
+Session caches the last `workspace=` from tool calls.
 
 ---
 

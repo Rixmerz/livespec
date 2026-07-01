@@ -350,6 +350,12 @@ def register(mcp: FastMCP) -> None:
         non-deterministic field; pass an ISO timestamp to stamp the bundle,
         or leave it None so two runs on an unchanged project produce
         byte-identical ``data.json`` (modulo the resolved diff range).
+
+        **FastAPI:** when the workspace has ``app = FastAPI(...)`` in
+        ``main.py`` / ``app.py``, this tool auto-appends
+        ``mount_explorer(app)`` so the running API serves the bundle at
+        ``/explorer`` (disable via ``.livespec.toml`` →
+        ``[explorer] auto_mount = false``).
         """
         try:
             st = get_state(workspace)
@@ -365,4 +371,5 @@ def register(mcp: FastMCP) -> None:
             "ok": True,
             "files_written": result["files_written"],
             "counts": result["data"]["meta"]["counts"],
+            "autowire": result.get("autowire"),
         }

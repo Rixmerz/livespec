@@ -41,3 +41,6 @@ Thumbs.db
 
 # jig local scratch state
 .jig/
+
+# Playwright MCP debug output
+.playwright-mcp/

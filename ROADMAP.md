@@ -79,11 +79,12 @@ primera pregunta del README — bug en la versión inicial de esta tier list.
 **Mecanismo de activación:** server queries DB al startup. Si
 `SELECT COUNT(*) FROM rf > 0`, el plugin se registra automáticamente.
 
-> **Corrección v0.12+:** el auto-detect por DB-state murió con el modo
-> multi-tenant (workspace per-call) — no hay UNA DB que consultar en
-> startup. `register_all_plugins` registra los plugins SIEMPRE; las 32
-> tools son visibles en todo momento. Si volver a menús per-workspace
-> importa, el mecanismo tiene que ser per-call, no startup-time.
+> **Corrección v0.12 → v0.18:** el auto-detect por DB-state no puede
+> correr solo en startup (multi-tenant, `workspace` per-call).
+> Los plugins se registran al boot, pero **`PluginVisibilityMiddleware`**
+> filtra `tools/list` y bloquea `tools/call` per-workspace según filas
+> `rf`/`doc` o ``LIVESPEC_PLUGINS``. Tras el primer tool call con
+> ``workspace=``, el menú de esa sesión refleja el estado del repo.
 Override via `LIVESPEC_PLUGINS=rf` o `LIVESPEC_PLUGINS=` para
 forzar/desactivar. Cero fricción cognitiva — agente que llega a un
 repo que ya adoptó RFs encuentra las tools de mutación sin configurar nada.
