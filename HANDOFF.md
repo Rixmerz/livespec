@@ -60,7 +60,7 @@ Lo que landeó (batch post-v0.17, sin tag previo en remoto):
 livespec-mcp: explorer UI OK en `:8765/explorer/`; plugin menu 19→33 in-process;
 `search("index_project")` 15 hits tras fix FTS.
 
-**HEAD:** (see `git log -1` after push — v0.18.0 batch)
+**HEAD:** `fa74c08` (v0.18.0 — plugin menu + explorer serve + search FTS fix)
 
 **Pendiente:** battle-test en repos ajenos; Cursor no refresca `tools/list` sin
 reconectar MCP; tests `embeddings` dependen de ONNX/hub en esta máquina.
