@@ -306,72 +306,15 @@ def register(
         Idempotent: re-linking an existing (rf, symbol, relation) is a no-op
         (`linked: false` but `ok: true`). v0.7 B1 — closes the brownfield
         migration friction where 50+ RFs needed individual round-trips.
+
+        **Test symbols:** ``symbol_qname`` must name an indexed *function* or
+        *method* (e.g. ``tests.pkg.test_auth.test_login_ok``). Test *modules*
+        (``tests.pkg.test_auth``) are not symbols and will fail lookup.
         """
         st = get_state(workspace)
-        pid = st.project_id
-        results: list[dict[str, Any]] = []
-        n_linked = 0
-        n_skipped = 0
-        n_failed = 0
-        for m in mappings:
-            rf_id = m.get("rf_id")
-            symbol_qname = m.get("symbol_qname")
-            if not rf_id or not symbol_qname:
-                results.append({
-                    "rf_id": rf_id, "symbol_qname": symbol_qname,
-                    "ok": False, "linked": False,
-                    "error": "rf_id and symbol_qname are required",
-                })
-                n_failed += 1
-                continue
-            relation = m.get("relation", "implements")
-            confidence = float(m.get("confidence", 1.0))
-            source = m.get("source", "manual")
-            rf = st.conn.execute(
-                "SELECT id FROM rf WHERE project_id=? AND rf_id=?", (pid, rf_id)
-            ).fetchone()
-            if not rf:
-                results.append({
-                    "rf_id": rf_id, "symbol_qname": symbol_qname,
-                    "ok": False, "linked": False,
-                    "error": f"RF '{rf_id}' not found",
-                })
-                n_failed += 1
-                continue
-            sym = st.conn.execute(
-                """SELECT s.id FROM symbol s JOIN file f ON f.id=s.file_id
-                   WHERE f.project_id=? AND s.qualified_name=? LIMIT 1""",
-                (pid, symbol_qname),
-            ).fetchone()
-            if not sym:
-                results.append({
-                    "rf_id": rf_id, "symbol_qname": symbol_qname,
-                    "ok": False, "linked": False,
-                    "error": f"Symbol '{symbol_qname}' not found",
-                })
-                n_failed += 1
-                continue
-            cur = st.conn.execute(
-                """INSERT OR IGNORE INTO rf_symbol(rf_id, symbol_id, relation, confidence, source)
-                   VALUES(?,?,?,?,?)""",
-                (int(rf["id"]), int(sym["id"]), relation, confidence, source),
-            )
-            linked = cur.rowcount > 0
-            if linked:
-                n_linked += 1
-            else:
-                n_skipped += 1
-            results.append({
-                "rf_id": rf_id, "symbol_qname": symbol_qname,
-                "ok": True, "linked": linked, "error": None,
-            })
-        return {
-            "linked": n_linked,
-            "skipped": n_skipped,
-            "failed": n_failed,
-            "total": len(mappings),
-            "results": results,
-        }
+        from livespec_mcp.domain.requirements_sync import bulk_link_rf_symbols_impl
+
+        return bulk_link_rf_symbols_impl(st, mappings)
 
     @agentic_tool(annotations={"readOnlyHint": True, "idempotentHint": True})
     def get_requirement_implementation(
@@ -430,55 +373,17 @@ def register(
         Path is resolved relative to the workspace root if not absolute.
         """
         st = get_state(workspace)
-        pid = st.project_id
-        p = Path(path)
-        if not p.is_absolute():
-            p = st.settings.workspace / path
-        if not p.exists():
+        try:
+            from livespec_mcp.domain.requirements_sync import (
+                import_requirements_from_markdown_file,
+            )
+
+            return import_requirements_from_markdown_file(st, path)
+        except FileNotFoundError:
             return mcp_error(
-                f"file not found: {p}",
+                f"file not found: {path}",
                 hint="path is resolved relative to the workspace root if not absolute",
             )
-        text = p.read_text(encoding="utf-8", errors="replace")
-        parsed = parse_rfs_markdown(text)
-        created = 0
-        updated = 0
-        for prf in parsed:
-            module_id = None
-            if prf.module:
-                row = st.conn.execute(
-                    "SELECT id FROM module WHERE project_id=? AND name=?", (pid, prf.module)
-                ).fetchone()
-                if row:
-                    module_id = int(row["id"])
-                else:
-                    cur = st.conn.execute(
-                        "INSERT INTO module(project_id, name) VALUES(?,?)", (pid, prf.module)
-                    )
-                    module_id = int(cur.lastrowid)
-            existing = st.conn.execute(
-                "SELECT id FROM rf WHERE project_id=? AND rf_id=?", (pid, prf.rf_id)
-            ).fetchone()
-            if existing:
-                st.conn.execute(
-                    """UPDATE rf SET title=?, description=?, status=?, priority=?,
-                       module_id=?, updated_at=datetime('now') WHERE id=?""",
-                    (prf.title, prf.description, prf.status, prf.priority, module_id, existing["id"]),
-                )
-                updated += 1
-            else:
-                st.conn.execute(
-                    """INSERT INTO rf(project_id, rf_id, title, description, module_id, status, priority)
-                       VALUES(?,?,?,?,?,?,?)""",
-                    (pid, prf.rf_id, prf.title, prf.description, module_id, prf.status, prf.priority),
-                )
-                created += 1
-        return {
-            "source": str(p),
-            "parsed": len(parsed),
-            "created": created,
-            "updated": updated,
-        }
 
     @mutation_tool(annotations={"readOnlyHint": False, "idempotentHint": True, "destructiveHint": True})
     def delete_requirement(rf_id: str, workspace: Workspace | None = None) -> dict[str, Any]:

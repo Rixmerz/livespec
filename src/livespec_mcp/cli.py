@@ -8,6 +8,7 @@ pre-commit hooks, CI) without an MCP host in the middle:
     livespec-mcp index <path> [--force] [--embed]   # index + chunks, JSON out
     livespec-mcp status <path>                      # index status, JSON out
     livespec-mcp explorer serve [path] [--port 8765]  # RF Explorer at /explorer/
+    livespec-mcp fastapi init [path]                  # index + Explorer + Cursor assets
     livespec-mcp serve                              # explicit server form
 
 JSON goes to stdout, errors to stderr with exit code 1.
@@ -84,6 +85,37 @@ def main(argv: list[str] | None = None) -> int:
         help="URL prefix (default: /explorer)",
     )
 
+    p_fastapi = sub.add_parser(
+        "fastapi",
+        help="FastAPI + RF Explorer onboarding",
+    )
+    p_fastapi_sub = p_fastapi.add_subparsers(dest="fastapi_cmd", required=True)
+    p_fastapi_init = p_fastapi_sub.add_parser(
+        "init",
+        help="index, build Explorer, autowire, install Cursor rule/skill",
+    )
+    p_fastapi_init.add_argument(
+        "path",
+        nargs="?",
+        default=".",
+        help="repo root (default: current directory)",
+    )
+    p_fastapi_init.add_argument(
+        "--no-index",
+        action="store_true",
+        help="skip index_project + explorer bundle",
+    )
+    p_fastapi_init.add_argument(
+        "--no-wire",
+        action="store_true",
+        help="skip autowire mount_explorer into main.py/app.py",
+    )
+    p_fastapi_init.add_argument(
+        "--no-cursor",
+        action="store_true",
+        help="skip .cursor/rules + .cursor/skills install",
+    )
+
     args = parser.parse_args(argv)
 
     if args.cmd == "serve":
@@ -103,6 +135,23 @@ def main(argv: list[str] | None = None) -> int:
             except FileNotFoundError as e:
                 print(f"error: {e}", file=sys.stderr)
                 return 1
+        return 0
+    if args.cmd == "fastapi":
+        if args.fastapi_cmd == "init":
+            from livespec_mcp.explorer.install import init_fastapi_project
+
+            try:
+                result = init_fastapi_project(
+                    args.path,
+                    index=not args.no_index,
+                    wire_app=not args.no_wire,
+                    install_cursor=not args.no_cursor,
+                )
+            except FileNotFoundError as e:
+                print(f"error: {e}", file=sys.stderr)
+                return 1
+            print(json.dumps(result.__dict__, indent=2))
+            return 1 if result.errors else 0
         return 0
     try:
         if args.cmd == "index":

@@ -165,6 +165,24 @@ def _m009_rf_coverage_snapshot(conn: sqlite3.Connection) -> None:
     )
 
 
+def _m010_agent_scratch(conn: sqlite3.Connection) -> None:
+    """v0.18: per-project agent scratch notes keyed by symbol qname."""
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS agent_scratch (
+            id INTEGER PRIMARY KEY,
+            project_id INTEGER NOT NULL REFERENCES project(id) ON DELETE CASCADE,
+            qname TEXT NOT NULL,
+            note TEXT NOT NULL,
+            updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+            UNIQUE(project_id, qname)
+        )"""
+    )
+    conn.execute(
+        """CREATE INDEX IF NOT EXISTS idx_agent_scratch_project
+           ON agent_scratch(project_id)"""
+    )
+
+
 def _m006_legacy_v02_recover(conn: sqlite3.Connection) -> None:
     """P0.2: detect a v0.2-era DB whose symbol_ref is empty even though edges
     exist. That happens when the project was indexed before the persistent
@@ -188,6 +206,7 @@ MIGRATIONS: list[Migration] = [
     (7, "visibility", _m007_visibility),
     (8, "ts_java_decorators_reextract", _m008_ts_java_decorators),
     (9, "rf_coverage_snapshot", _m009_rf_coverage_snapshot),
+    (10, "agent_scratch", _m010_agent_scratch),
 ]
 
 

@@ -47,10 +47,25 @@ def test_autowire_appends_mount_block(workspace: Path):
     result = autowire_fastapi_explorer(workspace, auto_mount=True)
     assert result.wired is True
     text = main.read_text(encoding="utf-8")
-    assert "mount_explorer(app)" in text
+    assert 'mount_explorer(app, prefix="/explorer")' in text
     again = autowire_fastapi_explorer(workspace, auto_mount=True)
     assert again.wired is False
     assert again.reason == "already_wired"
+
+
+def test_autowire_uses_mount_path_from_config(workspace: Path):
+    main = workspace / "main.py"
+    main.write_text("from fastapi import FastAPI\n\napp = FastAPI()\n")
+    (workspace / ".livespec.toml").write_text(
+        '[explorer]\nauto_mount = true\nmount_path = "/api/docs"\n',
+        encoding="utf-8",
+    )
+    result = autowire_fastapi_explorer(
+        workspace, auto_mount=True, mount_path="/api/docs"
+    )
+    assert result.wired is True
+    text = main.read_text(encoding="utf-8")
+    assert 'mount_explorer(app, prefix="/api/docs")' in text
 
 
 def test_write_explorer_bundle_autowires_fastapi(workspace: Path):
@@ -58,7 +73,34 @@ def test_write_explorer_bundle_autowires_fastapi(workspace: Path):
     st = get_state(str(workspace))
     result = write_explorer_bundle(st)
     assert result["autowire"]["wired"] is True
-    assert "mount_explorer(app)" in (workspace / "main.py").read_text(encoding="utf-8")
+    assert 'mount_explorer(app, prefix="/explorer")' in (workspace / "main.py").read_text(encoding="utf-8")
+
+
+def test_enable_explorer_mounts_with_config_prefix(workspace: Path):
+    _write_minimal_bundle(workspace)
+    (workspace / ".livespec.toml").write_text(
+        '[explorer]\nmount_path = "/rf-explorer"\n',
+        encoding="utf-8",
+    )
+    from livespec_mcp.explorer.fastapi import enable_explorer
+
+    app = Starlette(routes=[Route("/", lambda r: PlainTextResponse("api"))])
+    prefix = enable_explorer(app, workspace=workspace)
+    assert prefix == "/rf-explorer"
+
+    client = TestClient(app)
+    assert client.get("/rf-explorer/", follow_redirects=True).status_code == 200
+
+
+def test_explorer_middleware_mounts_without_main_patch(workspace: Path):
+    _write_minimal_bundle(workspace)
+    from livespec_mcp.explorer.fastapi import LivespecExplorerMiddleware
+
+    inner = Starlette(routes=[Route("/health", lambda r: PlainTextResponse("ok"))])
+    app = LivespecExplorerMiddleware(inner, workspace=workspace)
+    client = TestClient(app)
+    assert client.get("/health").text == "ok"
+    assert "RF Explorer" in client.get("/explorer/", follow_redirects=True).text
 
 
 def test_explorer_host_app_redirects_index_html_to_mount(workspace: Path):

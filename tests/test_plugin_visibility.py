@@ -39,7 +39,8 @@ async def test_list_tools_hides_plugins_on_fresh_workspace(workspace, monkeypatc
     assert "index_project" in names
     assert "create_requirement" not in names
     assert "generate_docs" not in names
-    assert "export_explorer" not in names
+    assert "export_explorer" in names
+    assert "import_requirements_from_markdown" in names
     assert "bulk_link_rf_symbols" in names
 
 

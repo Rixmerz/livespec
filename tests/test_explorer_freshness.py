@@ -76,6 +76,25 @@ async def test_no_bundle_no_flag_does_not_create_one(workspace: Path):
 
 
 @pytest.mark.asyncio
+async def test_fastapi_workspace_autobuilds_explorer_on_first_index(workspace: Path):
+    """FastAPI entry autodetect: first index_project builds the bundle without
+    explorer=True (same path as export_explorer autowire)."""
+    (workspace / "main.py").write_text(
+        "from fastapi import FastAPI\n\napp = FastAPI()\n"
+    )
+    explorer_dir = workspace / ".mcp-docs" / "explorer"
+    data_path = explorer_dir / "data.json"
+    html_path = explorer_dir / "index.html"
+
+    async with Client(mcp) as c:
+        result = (await c.call_tool("index_project", {})).data
+
+    assert result["explorer_regenerated"] is True
+    assert data_path.exists(), "FastAPI autodetect should create data.json"
+    assert html_path.exists(), "FastAPI autodetect should create index.html"
+
+
+@pytest.mark.asyncio
 async def test_explorer_flag_creates_bundle(workspace: Path):
     """index_project(explorer=True) builds the bundle on demand:
     explorer_regenerated is True and both files land."""

@@ -70,12 +70,18 @@ def register(mcp: FastMCP) -> None:
         if not have_embeddings():
             return mcp_error(
                 "fastembed not installed",
-                hint="install with `pip install -e .[embeddings]`",
+                hint=(
+                    "install embeddings extra: `uv pip install -e \".[embeddings]\"` "
+                    "then reconnect MCP (/mcp) and re-run embed_chunks"
+                ),
             )
         if not have_sqlite_vec(st.conn):
             return mcp_error(
                 "sqlite-vec not loadable",
-                hint="install with `pip install -e .[embeddings]`",
+                hint=(
+                    "install embeddings extra: `uv pip install -e \".[embeddings]\"` "
+                    "then reconnect MCP (/mcp) and re-run embed_chunks"
+                ),
             )
         with st.lock():
             stats = embed_pending(st.conn, st.project_id)

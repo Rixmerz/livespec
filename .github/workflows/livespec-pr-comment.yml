@@ -1,0 +1,52 @@
+name: Livespec PR impact
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+jobs:
+  rf-impact-comment:
+    name: Post RF diff impact
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+
+      - name: Set up Python 3.12
+        run: uv python install 3.12
+
+      - name: Create venv
+        run: uv venv --python 3.12
+
+      - name: Install
+        run: uv pip install -e ".[dev]"
+
+      - name: Index workspace and render markdown
+        env:
+          LIVESPEC_WORKSPACE: ${{ github.workspace }}
+          GITHUB_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          GITHUB_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: uv run python scripts/pr_diff_impact.py > /tmp/livespec-pr-comment.md
+
+      - name: Show comment preview
+        run: cat /tmp/livespec-pr-comment.md
+
+      - name: Post PR comment
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if [ -z "${GH_TOKEN:-}" ]; then
+            echo "No GITHUB_TOKEN — skipping PR comment (markdown still in /tmp/livespec-pr-comment.md)"
+            exit 0
+          fi
+          gh pr comment "${{ github.event.pull_request.number }}" \
+            --body-file /tmp/livespec-pr-comment.md \
+            --repo "${{ github.repository }}"

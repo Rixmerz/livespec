@@ -83,6 +83,9 @@ async def test_export_explorer_writes_both_files(workspace: Path):
     assert 'data-route="changes"' in html
     assert "copy-call" in html
     assert "callShape" in html
+    assert "http-exec" in html
+    assert "ep-base-url" in html
+    assert "isHttpTryIt" in html
     # Endpoints grouped by MCP kind (Tools / Resources / Prompts), and the
     # Mermaid label sanitizer for the Dependencies tab is present.
     assert "EP_KIND_LABEL" in html
@@ -95,6 +98,8 @@ async def test_export_explorer_writes_both_files(workspace: Path):
     assert "requirements_touched" in html
     # v0.16 D: a coverage trend view (sparkline + per-snapshot bars).
     assert "buildTrend" in html
+    assert "buildTrendOverview" in html
+    assert "trend-table" in html
     assert "Coverage trend" in html
     assert "History starts accumulating" in html
     # FIXED Mermaid (preserved): classDef colours are resolved to concrete
@@ -222,9 +227,12 @@ async def test_export_explorer_data_schema(workspace: Path):
         # Every API-surface endpoint carries a kind in the valid vocabulary,
         # and is never a pytest fixture (those live in DATA.fixtures).
         assert ep["kind"] in {"tool", "resource", "prompt", "other"}
-    # A plain Flask @app.route is a real endpoint but not an MCP
-    # tool/resource/prompt, so it classifies as "other" — still API surface.
-    assert login_ep["kind"] == "other"
+    # Flask @app.route with http_method/http_path is framework-routed API
+    # surface (same bucket as hono/TS routes), not a bare decorator-only entry.
+    assert login_ep["kind"] == "tool"
+    assert login_ep["framework"] == "flask"
+    assert login_ep["method"] == "POST"
+    assert login_ep["path"] == "/login"
 
     # Fixtures are a separate collection (test infra, not API surface).
     assert "fixtures" in data

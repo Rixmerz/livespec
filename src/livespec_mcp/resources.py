@@ -1,5 +1,23 @@
 """MCP resources: project:// addressable views.
 
+Canonical URI scheme (v0.19):
+
+| URI | MIME | Purpose |
+|-----|------|---------|
+| ``project://overview`` | JSON | Project overview (PageRank spine) |
+| ``project://index/status`` | JSON | Index stats |
+| ``project://requirements`` | JSON | All RFs |
+| ``project://requirements/{rf_id}`` | JSON | RF + implementations |
+| ``project://files/{path}`` | JSON | Indexed file + symbols |
+| ``project://symbols/{qname}`` | JSON | Symbol metadata |
+| ``doc://symbol/{qname}`` | markdown | Generated symbol doc |
+| ``doc://requirement/{rf_id}`` | markdown | Generated RF doc |
+| ``code://symbol/{qname}`` | plain | Raw symbol source slice |
+
+Legacy alias ``livespec://…`` is **not** registered — use ``project://`` /
+``doc://`` / ``code://`` as above. External docs may refer to the product as
+"livespec" but resource URIs stay ``project://`` for MCP compatibility.
+
 Workspace resolution (v0.14): resource URIs have no ``workspace`` parameter
 channel, so resources bind to the **most recently used** workspace (the one
 the last tool call touched). Before any tool call there is nothing to bind

@@ -24,6 +24,14 @@ def test_absent_file_yields_defaults(workspace: Path):
     assert cfg == RepoConfig()
     assert cfg.languages is None
     assert cfg.max_file_bytes == 2_000_000
+    assert cfg.agent_log_calls is False
+
+
+def test_agent_log_calls_config(workspace: Path):
+    (workspace / ".livespec.toml").write_text("[agent]\nlog_calls = true\n")
+    cfg = load_repo_config(workspace)
+    assert cfg.agent_log_calls is True
+    assert cfg.as_payload()["agent"]["log_calls"] is True
 
 
 def test_extra_ignore_patterns(workspace: Path):

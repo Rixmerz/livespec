@@ -43,7 +43,6 @@ RF_MUTATION_TOOL_NAMES = frozenset(
         "get_rf_dependency_graph",
         "scan_rf_annotations",
         "scan_docstrings_for_rf_hints",
-        "import_requirements_from_markdown",
     }
 )
 
@@ -52,14 +51,23 @@ DOCS_PLUGIN_TOOL_NAMES = frozenset(
         "generate_docs",
         "list_docs",
         "export_documentation",
-        "export_explorer",
     }
 )
 
-PLUGIN_TOOL_NAMES = RF_MUTATION_TOOL_NAMES | DOCS_PLUGIN_TOOL_NAMES
+# Core surface tools registered by plugins but always visible (not gated).
+CORE_PLUGIN_TOOL_NAMES = frozenset(
+    {
+        "export_explorer",
+        "import_requirements_from_markdown",
+    }
+)
+
+PLUGIN_TOOL_NAMES = RF_MUTATION_TOOL_NAMES | DOCS_PLUGIN_TOOL_NAMES | CORE_PLUGIN_TOOL_NAMES
 
 
 def plugin_name_for_tool(tool_name: str) -> str | None:
+    if tool_name in CORE_PLUGIN_TOOL_NAMES:
+        return None
     if tool_name in RF_MUTATION_TOOL_NAMES:
         return "rf"
     if tool_name in DOCS_PLUGIN_TOOL_NAMES:
@@ -151,6 +159,7 @@ def register_all_plugins(mcp: FastMCP) -> set[str]:
 
 
 __all__ = [
+    "CORE_PLUGIN_TOOL_NAMES",
     "DOCS_PLUGIN_TOOL_NAMES",
     "KNOWN_PLUGINS",
     "PLUGIN_TOOL_NAMES",

@@ -35,7 +35,29 @@ Todo el stack es local-first: 0 servicios externos, 0 API keys obligatorias, 0 D
 
 ---
 
-## 3. Estado actual: v0.18.0 — plugin menu per-workspace + explorer serve
+## 3. Estado actual: v0.19.0 — FastAPI + brownfield RF bootstrap
+
+Tests **368 default + 3 embeddings = 371**. Schema **v10** (`agent_scratch`
+table). pyproject **0.19.0**. Core menu **24** tools always visible
+(incl. `import_requirements_from_markdown` + `export_explorer`); full menu
+**36** after index on repo with RFs + explorer.
+
+Lo que landeó en v0.19.0:
+- **FastAPI** — HTTP route extraction, Explorer Try-it, `fastapi init`,
+  runtime `enable_explorer`, autodetect on index.
+- **Agent tooling** — `grep_in_indexed_files`, `agent_scratch`×2,
+  `payload_warning`, optional `[agent] log_calls`.
+- **Brownfield RF** — `[requirements].sync_from` / `links_seed`,
+  `scripts/sync_livespec_rfs.py`, duplicate-spec warnings, pytest fixture
+  filter in `find_endpoints`, `embed_chunks` install hints, Explorer
+  integration-only badge.
+- **CI** — `.github/workflows/livespec-pr-comment.yml` + `pr_diff_impact.py`.
+
+**Gate:** `uv run pytest -q -m "not embeddings"` → **368 passed**.
+
+**Post-release:** reconectar MCP (`/mcp`); battle-test PR workflow; omitido PyPI.
+
+### v0.18.0 resumen (referencia)
 
 Tests **342 default + 3 embeddings = 345**. Schema **v9** (sin migración nueva).
 pyproject **0.18.0**. Tool surface **33** (19 core + 10 RF plugin + 4 docs) —
