@@ -37,7 +37,7 @@ Todo el stack es local-first: 0 servicios externos, 0 API keys obligatorias, 0 D
 
 ## 3. Estado actual: v0.19.0 — FastAPI + brownfield RF bootstrap
 
-Tests **368 default + 3 embeddings = 371**. Schema **v10** (`agent_scratch`
+**HEAD:** `67d2f14` on `main`. Tests **368 default + 3 embeddings = 371**. Schema **v10** (`agent_scratch`
 table). pyproject **0.19.0**. Core menu **24** tools always visible
 (incl. `import_requirements_from_markdown` + `export_explorer`); full menu
 **36** after index on repo with RFs + explorer.
