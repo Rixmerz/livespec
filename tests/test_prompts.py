@@ -13,10 +13,10 @@ def test_agent_playbook_file_exists():
 
 def test_agent_playbook_loads_key_sections():
     text = _load_agent_playbook()
-    assert "@rf:RF-" in text
+    assert "@spec:SPEC-" in text
     assert "index_project" in text
     assert "quick_orient" in text
-    assert "bulk_link_rf_symbols" in text
+    assert "bulk_link_spec_symbols" in text
     assert "anti-patterns" in text.lower() or "Anti-patterns" in text
 
 

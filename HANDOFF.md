@@ -35,7 +35,59 @@ Todo el stack es local-first: 0 servicios externos, 0 API keys obligatorias, 0 D
 
 ---
 
-## 3. Estado actual: v0.19.0 — FastAPI + brownfield RF bootstrap
+## 3. Estado actual: v0.20.0 (pre-release) — RF → Spec nomenclatura + taxonomía (hard cut)
+
+**Base:** sobre HEAD `10e439d` (v0.19.0) en `main`, aún **sin commitear/pushear**
+en esta sesión — 77 archivos tocados (+1864/-3903 líneas). pyproject sigue en
+**0.19.0** (bump a 0.20.0 pendiente — P6, "solo cuando se decida cortar" el
+release). Tests **370 passed** (`-m "not embeddings"`).
+
+**Pendiente inmediato:** commitear + pushear este batch a `main` (direct push,
+preferencia guardada), luego P6 cuando el usuario decida cortar el release:
+promover CHANGELOG `[Unreleased]`→`[0.20.0]`, bump `pyproject.toml`, tag +
+GitHub release.
+
+**Qué es esto:** refactor de nomenclatura de punta a punta: `RF` (Functional
+Requirement) generaliza a `Spec` con taxonomía (`kind`: `functional_requirement`,
+`non_functional_requirement`, `adr`, `design`, `constraint`, `epic`, `other`).
+**Hard cut** — un solo release breaking, sin aliases ni wrappers deprecados.
+Ejecutado en 6 fases (P0-P5 completas, P6 = bump+tag pendiente de decisión):
+
+- **P0 (schema):** `rf`→`spec`, `rf_symbol`→`spec_symbol`,
+  `rf_dependency`→`spec_dependency`, `rf_coverage_snapshot`→
+  `spec_coverage_snapshot`; migración **v11** (`_m011_rename_rf_to_spec`)
+  preserva ids `RF-NNN` existentes y agrega columna `kind`.
+- **P1 (domain):** `matcher.py` (`@spec:`/`@not_spec`), `md_rfs.py`→
+  `md_specs.py` (headings `## SPEC-NNN:`), `requirements_sync.py`→
+  `specs_sync.py`.
+- **P2 (tools):** 13 tools MCP renombradas (`list_requirements`→`list_specs`,
+  `create_requirement`→`create_spec`, etc.), `analyze_impact`/`audit_coverage`/
+  `git_diff_impact` payload keys (`dependent_specs`, `specs_touched`,
+  `spec_coverage`), plugin `livespec-rf`→`livespec-spec`, `server.py`.
+- **P3 (explorer):** `tools/explorer.py` — `data.json` fields + labels/ids/CSS
+  del HTML/JS embebido (`#specnav`, `.spine .spec`, etc.). Re-generar bundle
+  con `export_explorer` tras el merge.
+- **P4 (tests):** pase mecánico sobre ~40 archivos de test + fixes puntuales
+  (migración v11 "undo" en el test, `Spec-`→`SPEC-` mixed-case, `AGENT_PLAYBOOK.md`
+  reescrito). Suite verde: **370 passed**.
+- **P5 (docs):** README (pitch, tour, tools, resources, roadmap row v0.20),
+  CLAUDE.md (arquitectura + tool tiers), ROADMAP.md (nota histórica al tope,
+  cuerpo intacto — es reflexión punto-en-el-tiempo), CHANGELOG `[Unreleased]`,
+  scripts renombrados (`apply_rf_links.py`→`apply_spec_links.py`,
+  `sync_livespec_rfs.py`→`sync_livespec_specs.py`, `pr_diff_impact.py` y
+  `validate_mcp.py`/`dogfood_v019.py` actualizados), seed propio del proyecto
+  (`docs/requirements/livespec-rfs.md`→`livespec-specs.md`,
+  `livespec-rf-links.json`→`livespec-spec-links.json`, verificado
+  end-to-end: 12 specs importados, 109/109 links aplicados sin fallos),
+  `.github/workflows/livespec-pr-comment.yml`, `pyproject.toml` description.
+
+**Decisión de IDs:** los `RF-NNN` existentes NO se renumeran (siguen siendo
+válidos como `spec_id`); specs nuevas generan `SPEC-NNN`. Formato mixto
+intencional para no romper referencias históricas — ver nota en CHANGELOG.
+
+**Gate:** `uv run pytest -q -m "not embeddings"` → **370 passed**.
+
+### v0.19.0 resumen (referencia)
 
 **HEAD:** `67d2f14` on `main`. Tests **368 default + 3 embeddings = 371**. Schema **v10** (`agent_scratch`
 table). pyproject **0.19.0**. Core menu **24** tools always visible

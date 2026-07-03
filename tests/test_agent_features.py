@@ -105,4 +105,4 @@ async def test_export_explorer_visible_on_fresh_workspace(workspace, monkeypatch
     async with Client(mcp) as c:
         names = {t.name for t in await c.list_tools()}
     assert "export_explorer" in names
-    assert "import_requirements_from_markdown" in names
+    assert "import_specs_from_markdown" in names

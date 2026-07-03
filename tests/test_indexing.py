@@ -71,28 +71,28 @@ async def test_who_calls_and_impact(sample_repo):
 async def test_requirement_crud_and_link(sample_repo):
     async with Client(mcp) as c:
         await c.call_tool("index_project", {})
-        rf = (
+        spec = (
             await c.call_tool(
-                "create_requirement",
-                {"title": "Login flow", "rf_id": "RF-001", "priority": "high"},
+                "create_spec",
+                {"title": "Login flow", "spec_id": "SPEC-001", "priority": "high"},
             )
         ).data
-        assert rf["rf_id"] == "RF-001"
+        assert spec["spec_id"] == "SPEC-001"
 
         rf2 = (
             await c.call_tool(
-                "create_requirement",
-                {"title": "API surface", "rf_id": "RF-002"},
+                "create_spec",
+                {"title": "API surface", "spec_id": "SPEC-002"},
             )
         ).data
-        assert rf2["rf_id"] == "RF-002"
+        assert rf2["spec_id"] == "SPEC-002"
 
-        # Annotation scan should link RF-001 -> pkg.auth.login via @rf: in docstring
-        scan = (await c.call_tool("scan_rf_annotations", {})).data
+        # Annotation scan should link SPEC-001 -> pkg.auth.login via @spec: in docstring
+        scan = (await c.call_tool("scan_spec_annotations", {})).data
         assert scan["links_created"] >= 1
 
         impl = (
-            await c.call_tool("get_requirement_implementation", {"rf_id": "RF-001"})
+            await c.call_tool("get_spec_implementation", {"spec_id": "SPEC-001"})
         ).data
         qnames = {s["qualified_name"] for s in impl["symbols"]}
         assert "pkg.auth.login" in qnames
@@ -100,8 +100,8 @@ async def test_requirement_crud_and_link(sample_repo):
         # Manual link
         linked = (
             await c.call_tool(
-                "link_rf_symbol",
-                {"rf_id": "RF-002", "symbol_qname": "pkg.api.API.handle"},
+                "link_spec_symbol",
+                {"spec_id": "SPEC-002", "symbol_qname": "pkg.api.API.handle"},
             )
         ).data
         assert linked["linked"] is True
@@ -109,10 +109,10 @@ async def test_requirement_crud_and_link(sample_repo):
         impact = (
             await c.call_tool(
                 "analyze_impact",
-                {"target_type": "requirement", "target": "RF-001"},
+                {"target_type": "spec", "target": "SPEC-001"},
             )
         ).data
-        assert impact["rf_id"] == "RF-001"
+        assert impact["spec_id"] == "SPEC-001"
         assert len(impact["implementing_symbols"]) >= 1
 
 
@@ -126,8 +126,8 @@ async def test_resource_overview(sample_repo):
         # v0.8 P3 prep: project://overview is paritetic with get_project_overview
         assert "languages" in data
         assert "top_symbols" in data
-        assert "requirements_total" in data
-        assert "requirements_linked" in data
+        assert "specs_total" in data
+        assert "specs_linked" in data
 
 
 @pytest.mark.asyncio
@@ -151,7 +151,7 @@ async def test_resource_index_status_returns_full_payload(sample_repo):
         data = json.loads(res[0].text)
         for key in (
             "workspace", "project_id", "files", "symbols", "edges",
-            "requirements", "last_run",
+            "specs", "last_run",
         ):
             assert key in data, f"missing key {key!r}: {data}"
         # Drop markers must NOT leak from the resource surface

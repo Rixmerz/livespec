@@ -6,6 +6,58 @@ follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Breaking — RF → Spec nomenclature + taxonomy (hard cut, no aliases)
+- **Taxonomy:** `RF` (Functional Requirement) generalized to `Spec`, a
+  broader concept with a `kind` column: `functional_requirement`,
+  `non_functional_requirement`, `adr`, `design`, `constraint`, `epic`,
+  `other`. RF was too narrow — a `Spec` can now model ADRs, NFRs, and
+  other non-functional artifacts alongside functional requirements.
+- **Schema (migration v11):** `rf` → `spec`, `rf_symbol` → `spec_symbol`,
+  `rf_dependency` → `spec_dependency`, `rf_coverage_snapshot` →
+  `spec_coverage_snapshot`; `rf_id` columns → `spec_id`; new `spec.kind`
+  column (defaults to `functional_requirement` on migrated rows).
+  Existing `RF-NNN` string ids are preserved as-is (not renumbered);
+  new specs generate `SPEC-NNN` ids.
+- **Annotations:** `@rf:` → `@spec:`, `@not_rf` → `@not_spec`. Markdown
+  spec imports now parse `## SPEC-NNN: Title` headings (was `## RF-NNN:`).
+- **Tools renamed** (no old-name aliases — calling a dropped name is a
+  hard error): `list_requirements`→`list_specs`,
+  `get_requirement_implementation`→`get_spec_implementation`,
+  `propose_requirements_from_codebase`→`propose_specs_from_codebase`,
+  `bulk_link_rf_symbols`→`bulk_link_spec_symbols`,
+  `import_requirements_from_markdown`→`import_specs_from_markdown`,
+  `create_requirement`→`create_spec`, `update_requirement`→`update_spec`,
+  `delete_requirement`→`delete_spec`, `link_rf_symbol`→`link_spec_symbol`,
+  `link_rf_dependency`→`link_spec_dependency`,
+  `unlink_rf_dependency`→`unlink_spec_dependency`,
+  `get_rf_dependency_graph`→`get_spec_dependency_graph`,
+  `scan_rf_annotations`→`scan_spec_annotations`,
+  `scan_docstrings_for_rf_hints`→`scan_docstrings_for_spec_hints`.
+  `analyze_impact(target_type="requirement")` → `target_type="spec"`.
+  `generate_docs(target_type="requirement")` → `target_type="spec"`.
+- **`list_specs`** gains a `kind` filter alongside `status`/`module`/`priority`.
+- **Plugin `livespec-rf` renamed to `livespec-spec`.**
+- **Config:** `.livespec.toml` `[requirements]` table renamed to `[specs]`
+  (`sync_from`, `links_seed` keys unchanged).
+- **Resources:** `project://requirements` → `project://specs`,
+  `project://requirements/{rf_id}` → `project://specs/{spec_id}`,
+  `doc://requirement/{rf_id}` → `doc://spec/{spec_id}`.
+- **Payload keys renamed** across `analyze_impact`, `audit_coverage`,
+  `git_diff_impact`, `export_explorer`'s `data.json`, e.g.
+  `dependent_requirements`→`dependent_specs`,
+  `requirements_touched`→`specs_touched`,
+  `rf_coverage`→`spec_coverage`, `requirements`→`specs`.
+- **Explorer bundle:** rebuilt HTML/JS labels, ids, routes and CSS classes
+  (`#rfnav`→`#specnav`, `.spine .rf`→`.spine .spec`, etc.) — re-run
+  `export_explorer` (or `index_project(explorer=True)`) to regenerate.
+- **Scripts renamed:** `scripts/apply_rf_links.py`→`scripts/apply_spec_links.py`,
+  `scripts/sync_livespec_rfs.py`→`scripts/sync_livespec_specs.py`.
+  `docs/requirements/livespec-rfs.md`→`livespec-specs.md`,
+  `livespec-rf-links.{md,json}`→`livespec-spec-links.{md,json}`.
+- No temporary aliases or deprecation shims — single breaking release.
+  Migration v11 handles existing databases transparently on next
+  `index_project`; callers must update tool/field names in one pass.
+
 ## [0.19.0] - 2026-06-30
 
 ### Changed — brownfield RF bootstrap

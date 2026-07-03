@@ -10,7 +10,7 @@ FastAPI repo. Livespec workspace:
 Use livespec MCP with workspace= on every call.
 
 Goals this session:
-1. Confirm index + RF Explorer at /explorer
+1. Confirm index + Spec Explorer at /explorer
 2. List HTTP routes (GET/POST) via find_endpoints(framework="fastapi")
 3. [YOUR TASK HERE]
 

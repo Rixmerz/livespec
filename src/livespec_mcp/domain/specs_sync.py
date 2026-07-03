@@ -1,4 +1,4 @@
-"""RF markdown sync helpers: duplicate-spec scan + post-index import."""
+"""Spec markdown sync helpers: duplicate-spec scan + post-index import."""
 
 from __future__ import annotations
 
@@ -7,27 +7,27 @@ import re
 from pathlib import Path
 from typing import Any
 
-from livespec_mcp.domain.md_rfs import parse_rfs_markdown
+from livespec_mcp.domain.md_specs import parse_specs_markdown
 
-_RF_HEADER_SCAN = re.compile(
-    r"^##+\s+(RF[-_]?\d+)\s*[:\-]",
+_SPEC_HEADER_SCAN = re.compile(
+    r"^##+\s+(SPEC[-_]?\d+)\s*[:\-]",
     re.MULTILINE | re.IGNORECASE,
 )
 
 
-def _normalize_rf(raw: str) -> str:
+def _normalize_spec(raw: str) -> str:
     digits = "".join(c for c in raw if c.isdigit())
-    return f"RF-{int(digits):03d}" if digits else raw.upper()
+    return f"SPEC-{int(digits):03d}" if digits else raw.upper()
 
 
-def scan_duplicate_rf_markdown_specs(
+def scan_duplicate_spec_markdown_specs(
     workspace: Path,
     *,
     exclude: Path | None = None,
     max_files: int = 200,
 ) -> list[dict[str, Any]]:
-    """Find RF ids declared in more than one markdown file under ``workspace``."""
-    by_rf: dict[str, list[str]] = {}
+    """Find spec ids declared in more than one markdown file under ``workspace``."""
+    by_spec: dict[str, list[str]] = {}
     scanned = 0
     for path in sorted(workspace.rglob("*.md")):
         if scanned >= max_files:
@@ -45,20 +45,20 @@ def scan_duplicate_rf_markdown_specs(
         except OSError:
             continue
         scanned += 1
-        for m in _RF_HEADER_SCAN.finditer(text):
-            rf_id = _normalize_rf(m.group(1))
-            by_rf.setdefault(rf_id, [])
-            if rel not in by_rf[rf_id]:
-                by_rf[rf_id].append(rel)
+        for m in _SPEC_HEADER_SCAN.finditer(text):
+            spec_id = _normalize_spec(m.group(1))
+            by_spec.setdefault(spec_id, [])
+            if rel not in by_spec[spec_id]:
+                by_spec[spec_id].append(rel)
     warnings: list[dict[str, Any]] = []
-    for rf_id, paths in sorted(by_rf.items()):
+    for spec_id, paths in sorted(by_spec.items()):
         if len(paths) > 1:
             warnings.append(
                 {
-                    "rf_id": rf_id,
+                    "spec_id": spec_id,
                     "paths": paths,
                     "message": (
-                        f"{rf_id} appears in {len(paths)} markdown files — "
+                        f"{spec_id} appears in {len(paths)} markdown files — "
                         "keep a single canonical spec to avoid drift"
                     ),
                 }
@@ -66,7 +66,7 @@ def scan_duplicate_rf_markdown_specs(
     return warnings
 
 
-def import_requirements_from_markdown_file(
+def import_specs_from_markdown_file(
     st: Any,
     path: str | Path,
     *,
@@ -80,34 +80,34 @@ def import_requirements_from_markdown_file(
     if not p.exists():
         raise FileNotFoundError(str(p))
     text = p.read_text(encoding="utf-8", errors="replace")
-    parsed = parse_rfs_markdown(text)
+    parsed = parse_specs_markdown(text)
     created = 0
     updated = 0
-    for prf in parsed:
+    for pspec in parsed:
         module_id = None
-        if prf.module:
+        if pspec.module:
             row = st.conn.execute(
-                "SELECT id FROM module WHERE project_id=? AND name=?", (pid, prf.module)
+                "SELECT id FROM module WHERE project_id=? AND name=?", (pid, pspec.module)
             ).fetchone()
             if row:
                 module_id = int(row["id"])
             else:
                 cur = st.conn.execute(
-                    "INSERT INTO module(project_id, name) VALUES(?,?)", (pid, prf.module)
+                    "INSERT INTO module(project_id, name) VALUES(?,?)", (pid, pspec.module)
                 )
                 module_id = int(cur.lastrowid)
         existing = st.conn.execute(
-            "SELECT id FROM rf WHERE project_id=? AND rf_id=?", (pid, prf.rf_id)
+            "SELECT id FROM spec WHERE project_id=? AND spec_id=?", (pid, pspec.spec_id)
         ).fetchone()
         if existing:
             st.conn.execute(
-                """UPDATE rf SET title=?, description=?, status=?, priority=?,
+                """UPDATE spec SET title=?, description=?, status=?, priority=?,
                    module_id=?, updated_at=datetime('now') WHERE id=?""",
                 (
-                    prf.title,
-                    prf.description,
-                    prf.status,
-                    prf.priority,
+                    pspec.title,
+                    pspec.description,
+                    pspec.status,
+                    pspec.priority,
                     module_id,
                     existing["id"],
                 ),
@@ -115,16 +115,16 @@ def import_requirements_from_markdown_file(
             updated += 1
         else:
             st.conn.execute(
-                """INSERT INTO rf(project_id, rf_id, title, description, module_id, status, priority)
+                """INSERT INTO spec(project_id, spec_id, title, description, module_id, status, priority)
                    VALUES(?,?,?,?,?,?,?)""",
                 (
                     pid,
-                    prf.rf_id,
-                    prf.title,
-                    prf.description,
+                    pspec.spec_id,
+                    pspec.title,
+                    pspec.description,
                     module_id,
-                    prf.status,
-                    prf.priority,
+                    pspec.status,
+                    pspec.priority,
                 ),
             )
             created += 1
@@ -136,13 +136,13 @@ def import_requirements_from_markdown_file(
         "updated": updated,
     }
     if check_duplicates:
-        dupes = scan_duplicate_rf_markdown_specs(st.settings.workspace, exclude=p)
+        dupes = scan_duplicate_spec_markdown_specs(st.settings.workspace, exclude=p)
         if dupes:
             out["duplicate_spec_warnings"] = dupes
     return out
 
 
-def bulk_link_rf_symbols_impl(st: Any, mappings: list[dict[str, Any]]) -> dict[str, Any]:
+def bulk_link_spec_symbols_impl(st: Any, mappings: list[dict[str, Any]]) -> dict[str, Any]:
     """Core bulk-link loop (shared with MCP tool)."""
     pid = st.project_id
     results: list[dict[str, Any]] = []
@@ -150,16 +150,16 @@ def bulk_link_rf_symbols_impl(st: Any, mappings: list[dict[str, Any]]) -> dict[s
     n_skipped = 0
     n_failed = 0
     for m in mappings:
-        rf_id = m.get("rf_id")
+        spec_id = m.get("spec_id")
         symbol_qname = m.get("symbol_qname")
-        if not rf_id or not symbol_qname:
+        if not spec_id or not symbol_qname:
             results.append(
                 {
-                    "rf_id": rf_id,
+                    "spec_id": spec_id,
                     "symbol_qname": symbol_qname,
                     "ok": False,
                     "linked": False,
-                    "error": "rf_id and symbol_qname are required",
+                    "error": "spec_id and symbol_qname are required",
                 }
             )
             n_failed += 1
@@ -167,17 +167,17 @@ def bulk_link_rf_symbols_impl(st: Any, mappings: list[dict[str, Any]]) -> dict[s
         relation = m.get("relation", "implements")
         confidence = float(m.get("confidence", 1.0))
         source = m.get("source", "manual")
-        rf = st.conn.execute(
-            "SELECT id FROM rf WHERE project_id=? AND rf_id=?", (pid, rf_id)
+        spec = st.conn.execute(
+            "SELECT id FROM spec WHERE project_id=? AND spec_id=?", (pid, spec_id)
         ).fetchone()
-        if not rf:
+        if not spec:
             results.append(
                 {
-                    "rf_id": rf_id,
+                    "spec_id": spec_id,
                     "symbol_qname": symbol_qname,
                     "ok": False,
                     "linked": False,
-                    "error": f"RF '{rf_id}' not found",
+                    "error": f"Spec '{spec_id}' not found",
                 }
             )
             n_failed += 1
@@ -196,7 +196,7 @@ def bulk_link_rf_symbols_impl(st: Any, mappings: list[dict[str, Any]]) -> dict[s
                 )
             results.append(
                 {
-                    "rf_id": rf_id,
+                    "spec_id": spec_id,
                     "symbol_qname": symbol_qname,
                     "ok": False,
                     "linked": False,
@@ -207,9 +207,9 @@ def bulk_link_rf_symbols_impl(st: Any, mappings: list[dict[str, Any]]) -> dict[s
             n_failed += 1
             continue
         cur = st.conn.execute(
-            """INSERT OR IGNORE INTO rf_symbol(rf_id, symbol_id, relation, confidence, source)
+            """INSERT OR IGNORE INTO spec_symbol(spec_id, symbol_id, relation, confidence, source)
                VALUES(?,?,?,?,?)""",
-            (int(rf["id"]), int(sym["id"]), relation, confidence, source),
+            (int(spec["id"]), int(sym["id"]), relation, confidence, source),
         )
         linked = cur.rowcount > 0
         if linked:
@@ -218,7 +218,7 @@ def bulk_link_rf_symbols_impl(st: Any, mappings: list[dict[str, Any]]) -> dict[s
             n_skipped += 1
         results.append(
             {
-                "rf_id": rf_id,
+                "spec_id": spec_id,
                 "symbol_qname": symbol_qname,
                 "ok": True,
                 "linked": linked,
@@ -247,37 +247,37 @@ def apply_links_seed(st: Any, seed_path: str | Path) -> dict[str, Any]:
     for entry in raw:
         if not isinstance(entry, dict):
             continue
-        rf_id = entry.get("rf_id")
+        spec_id = entry.get("spec_id")
         qname = entry.get("qname") or entry.get("symbol_qname")
-        if not rf_id or not qname:
+        if not spec_id or not qname:
             continue
         mappings.append(
             {
-                "rf_id": rf_id,
+                "spec_id": spec_id,
                 "symbol_qname": qname,
                 "relation": entry.get("relation", "implements"),
                 "source": entry.get("source", "manual"),
             }
         )
-    return bulk_link_rf_symbols_impl(st, mappings)
+    return bulk_link_spec_symbols_impl(st, mappings)
 
 
-def sync_requirements_from_config(st: Any) -> dict[str, Any] | None:
-    """Run ``[requirements].sync_from`` (+ optional ``links_seed``) from TOML."""
+def sync_specs_from_config(st: Any) -> dict[str, Any] | None:
+    """Run ``[specs].sync_from`` (+ optional ``links_seed``) from TOML."""
     from livespec_mcp.config import load_repo_config
 
     cfg = load_repo_config(st.settings.workspace)
-    if not cfg.requirements_sync_from and not cfg.requirements_links_seed:
+    if not cfg.specs_sync_from and not cfg.specs_links_seed:
         return None
     result: dict[str, Any] = {"imports": [], "links": None}
-    for rel in cfg.requirements_sync_from:
+    for rel in cfg.specs_sync_from:
         try:
-            result["imports"].append(import_requirements_from_markdown_file(st, rel))
+            result["imports"].append(import_specs_from_markdown_file(st, rel))
         except FileNotFoundError as e:
             result["imports"].append({"path": rel, "error": str(e)})
-    if cfg.requirements_links_seed:
+    if cfg.specs_links_seed:
         try:
-            result["links"] = apply_links_seed(st, cfg.requirements_links_seed)
+            result["links"] = apply_links_seed(st, cfg.specs_links_seed)
         except (FileNotFoundError, ValueError) as e:
             result["links"] = {"error": str(e)}
     return result

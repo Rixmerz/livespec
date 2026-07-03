@@ -119,17 +119,17 @@ async def test_quick_orient_includes_linked_rfs(sample_repo):
     async with Client(mcp) as c:
         await c.call_tool("index_project", {})
         await c.call_tool(
-            "create_requirement",
-            {"title": "Login flow", "rf_id": "RF-001"},
+            "create_spec",
+            {"title": "Login flow", "spec_id": "SPEC-001"},
         )
-        # Pick up the @rf:RF-001 in login's docstring
-        await c.call_tool("scan_rf_annotations", {})
+        # Pick up the @spec:SPEC-001 in login's docstring
+        await c.call_tool("scan_spec_annotations", {})
 
         out = (
             await c.call_tool("quick_orient", {"qname": "pkg.auth.login"})
         ).data
-        rf_ids = {r["rf_id"] for r in out["requirements"]}
-        assert "RF-001" in rf_ids
+        spec_ids = {r["spec_id"] for r in out["specs"]}
+        assert "SPEC-001" in spec_ids
 
 
 @pytest.mark.asyncio

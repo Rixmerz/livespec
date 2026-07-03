@@ -1,5 +1,5 @@
 ---
-description: Livespec MCP + RF Explorer at /explorer for this FastAPI service
+description: Livespec MCP + Spec Explorer at /explorer for this FastAPI service
 globs: main.py,app.py,**/routers/**/*.py,**/routes/**/*.py
 alwaysApply: false
 ---
@@ -16,7 +16,7 @@ workspace="<absolute path to THIS repo root>"
 
 Never index a parent folder. Reconnect MCP (`/mcp`) after upgrading livespec-mcp.
 
-## RF Explorer at `/explorer`
+## Spec Explorer at `/explorer`
 
 - Bundle: `.mcp-docs/explorer/` (from `index_project(explorer=True)` or `export_explorer`).
 - Mount (pick one):

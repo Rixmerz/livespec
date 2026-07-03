@@ -18,12 +18,12 @@ get_project_overview(workspace="PROJECT")
 
 `index_project` walks the workspace, parses every supported file
 (Python, Go, Java, JS, TS, Rust, Ruby, PHP), persists symbols + call
-edges, and auto-runs the `@rf:` annotation matcher. It is incremental:
+edges, and auto-runs the `@spec:` annotation matcher. It is incremental:
 the second call on the same workspace reads `xxh3` content hashes and
 re-extracts only changed files.
 
 `get_project_overview` returns languages, top symbols by PageRank
-(infrastructure noise filtered out by default), and RF totals. This is
+(infrastructure noise filtered out by default), and Spec totals. This is
 your map of the codebase.
 
 ## 2. Find the symbol you care about
@@ -39,7 +39,7 @@ quick_orient(qname="auth.LoginService.authenticate")
 
 `quick_orient` is the canonical first-contact composite. One call gets
 you metadata, the docstring lead, top-5 callers + top-5 callees by
-PageRank, linked RFs, and an `is_entry_point` flag (true for
+PageRank, linked Specs, and an `is_entry_point` flag (true for
 `@mcp.tool` / `@app.route` / etc. — symbols with zero callers that
 aren't dead). It replaces the 3-4 separate calls older agents used to
 chain.
@@ -64,9 +64,9 @@ analyze_impact(target_type="symbol", target="auth.LoginService.authenticate")
 `who_calls` is the slim backward cone (just callers).
 `who_does_this_call` is the forward counterpart.
 `analyze_impact` is the wider blast-radius tool: it follows the
-transitive call graph and rolls up affected RFs in a single response —
-useful when you want *"if I change this, which Functional Requirements
-am I touching?"* in one call.
+transitive call graph and rolls up affected Specs in a single response —
+useful when you want *"if I change this, which Specs (Functional
+Requirements, ADRs, ...) am I touching?"* in one call.
 
 ## 5. PR review / impact of a diff
 
@@ -77,52 +77,52 @@ git_diff_impact(base_ref="main", head_ref="HEAD")
 Returns:
 - changed files
 - impacted callers (transitively)
-- affected RFs
+- affected Specs
 - suggested test files
 
 Use this to decide test scope before opening a PR or as a check in CI.
 
-## 6. RF flow on an RF-active codebase
+## 6. Spec flow on a Spec-active codebase
 
 ```
-list_requirements(has_implementation=True)
-get_requirement_implementation(rf_id="RF-042")
+list_specs(has_implementation=True)
+get_spec_implementation(spec_id="SPEC-042")
 audit_coverage()
 ```
 
-`list_requirements` is the orientation surface — RFs with title,
-status, priority, and link count. `get_requirement_implementation`
+`list_specs` is the orientation surface — Specs with kind, title,
+status, priority, and link count. `get_spec_implementation`
 answers the README's headline question
-*"¿qué código implementa el RF-042?"* in one round-trip.
+*"¿qué código implementa el SPEC-042?"* in one round-trip.
 
-`audit_coverage` is the macro view: which modules have RFs, which are
-truly orphan, which RFs lack implementation, and which have low avg
+`audit_coverage` is the macro view: which modules have Specs, which are
+truly orphan, which Specs lack implementation, and which have low avg
 confidence on their links.
 
-## 7. RF flow on a fresh codebase (brownfield discovery)
+## 7. Spec flow on a fresh codebase (brownfield discovery)
 
 ```
-propose_requirements_from_codebase()
+propose_specs_from_codebase()
 ```
 
 Heuristic discovery: groups symbols by qname prefix (configurable
-`module_depth`), ranks by PageRank-weighted score, and proposes RF
+`module_depth`), ranks by PageRank-weighted score, and proposes Spec
 candidates with humanized title + description + suggested_symbols.
 
-To accept a proposal you need the **`livespec-rf` plugin** visible in your
+To accept a proposal you need the **`livespec-spec` plugin** visible in your
 tool list. After `index_project(workspace=...)`, mutation tools appear when the
-DB has RFs; on a **fresh** repo use `LIVESPEC_PLUGINS=rf` (or `=all`) or
+DB has Specs; on a **fresh** repo use `LIVESPEC_PLUGINS=spec` (or `=all`) or
 reconnect MCP if the host cached ~19 core tools only.
 
 ```
-create_requirement(title=..., description=..., rf_id=...)        # plugin
-bulk_link_rf_symbols(mappings=[{rf_id, symbol_qname}, ...])      # plugin
+create_spec(title=..., description=..., spec_id=...)             # plugin
+bulk_link_spec_symbols(mappings=[{spec_id, symbol_qname}, ...])  # plugin
 ```
 
 ## 8. When something looks wrong
 
 ```
-find_dead_code()         # symbols with zero callers and zero RF links
+find_dead_code()         # symbols with zero callers and zero Spec links
 find_orphan_tests()      # tests whose call cone never reaches non-test code
 find_endpoints()         # framework-decorated handlers
 ```

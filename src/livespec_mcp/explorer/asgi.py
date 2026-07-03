@@ -1,4 +1,4 @@
-"""Mount the static RF Explorer bundle on any Starlette/FastAPI app at ``/explorer``.
+"""Mount the static Spec Explorer bundle on any Starlette/FastAPI app at ``/explorer``.
 
 Typical use (manual)::
 
@@ -36,7 +36,7 @@ def explorer_bundle_dir(workspace: Path | str | None = None) -> Path:
 def _ensure_bundle(bundle_dir: Path) -> None:
     if not (bundle_dir / "index.html").is_file():
         raise FileNotFoundError(
-            f"RF Explorer bundle missing at {bundle_dir} — "
+            f"Spec Explorer bundle missing at {bundle_dir} — "
             "run export_explorer or index_project(explorer=True) first"
         )
 
@@ -109,12 +109,12 @@ def serve_explorer(
     port: int = 8765,
     prefix: str = _DEFAULT_PREFIX,
 ) -> None:
-    """Run a local HTTP server for the RF Explorer bundle."""
+    """Run a local HTTP server for the Spec Explorer bundle."""
     import uvicorn
 
     app = create_explorer_host_app(workspace, prefix=prefix)
     mount_path = prefix.rstrip("/") or _DEFAULT_PREFIX
-    print(f"RF Explorer: http://{host}:{port}{mount_path}/", flush=True)
+    print(f"Spec Explorer: http://{host}:{port}{mount_path}/", flush=True)
     uvicorn.run(app, host=host, port=port, log_level="info")
 
 
@@ -124,7 +124,7 @@ def mount_explorer(
     workspace: Path | str | None = None,
     prefix: str = _DEFAULT_PREFIX,
 ) -> str:
-    """Mount the RF Explorer under ``prefix`` (default ``/explorer``).
+    """Mount the Spec Explorer under ``prefix`` (default ``/explorer``).
 
     Works with FastAPI and plain Starlette apps (``app.mount``). Returns the
     mount prefix actually used.

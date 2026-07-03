@@ -1,10 +1,10 @@
-"""v0.16: RF coverage drill-down, diff→RF impact helper, and trend recording.
+"""v0.16: Spec coverage drill-down, diff→Spec impact helper, and trend recording.
 
 Covers three additive features:
 
-* ``compute_rf_test_coverage`` now reports per-RF ``uncovered_symbols``
+* ``compute_spec_test_coverage`` now reports per-Spec ``uncovered_symbols``
   (impl symbols neither test-reached nor explicitly ``tests``-linked).
-* ``compute_diff_rf_impact`` maps a git range to the RFs it touches.
+* ``compute_diff_spec_impact`` maps a git range to the Specs it touches.
 * ``storage/trends`` persists a coverage snapshot per ``audit_coverage`` run
   and reads them back chronologically; the migration applies cleanly.
 """
@@ -20,7 +20,7 @@ from fastmcp import Client
 from livespec_mcp.server import mcp
 from livespec_mcp.state import get_state
 from livespec_mcp.storage.trends import read_trend, record_snapshot
-from livespec_mcp.tools.analysis import compute_diff_rf_impact
+from livespec_mcp.tools.analysis import compute_diff_spec_impact
 
 
 def _git(workspace: Path, *args: str) -> str:
@@ -38,7 +38,7 @@ def _git(workspace: Path, *args: str) -> str:
 
 @pytest.mark.asyncio
 async def test_uncovered_symbols_lists_untested_impl(workspace):
-    """An RF with one TESTED impl and one UNTESTED impl: only the untested
+    """An Spec with one TESTED impl and one UNTESTED impl: only the untested
     qname appears in `uncovered_symbols`; the tested one does not."""
     pkg = workspace / "pkg"
     pkg.mkdir()
@@ -62,20 +62,20 @@ async def test_uncovered_symbols_lists_untested_impl(workspace):
     async with Client(mcp) as c:
         await c.call_tool("index_project", {})
         await c.call_tool(
-            "create_requirement", {"rf_id": "RF-001", "title": "Feature"}
+            "create_spec", {"spec_id": "SPEC-001", "title": "Feature"}
         )
         await c.call_tool(
-            "link_rf_symbol",
-            {"rf_id": "RF-001", "symbol_qname": "pkg.feature.covered_impl"},
+            "link_spec_symbol",
+            {"spec_id": "SPEC-001", "symbol_qname": "pkg.feature.covered_impl"},
         )
         await c.call_tool(
-            "link_rf_symbol",
-            {"rf_id": "RF-001", "symbol_qname": "pkg.feature.uncovered_impl"},
+            "link_spec_symbol",
+            {"spec_id": "SPEC-001", "symbol_qname": "pkg.feature.uncovered_impl"},
         )
         out = (await c.call_tool("audit_coverage", {})).data
 
-    by_id = {r["rf_id"]: r for r in out["rf_coverage"]}
-    entry = by_id["RF-001"]
+    by_id = {r["spec_id"]: r for r in out["spec_coverage"]}
+    entry = by_id["SPEC-001"]
     assert "uncovered_symbols" in entry, f"field missing: {entry}"
     assert entry["uncovered_symbols"] == ["pkg.feature.uncovered_impl"], (
         f"only the untested impl should be listed: {entry['uncovered_symbols']}"
@@ -88,7 +88,7 @@ async def test_uncovered_symbols_lists_untested_impl(workspace):
 
 @pytest.mark.asyncio
 async def test_uncovered_symbols_empty_when_fully_tested(workspace):
-    """A fully-tested RF has an empty `uncovered_symbols` list."""
+    """A fully-tested Spec has an empty `uncovered_symbols` list."""
     pkg = workspace / "pkg"
     pkg.mkdir()
     (pkg / "__init__.py").write_text("")
@@ -107,26 +107,26 @@ async def test_uncovered_symbols_empty_when_fully_tested(workspace):
     async with Client(mcp) as c:
         await c.call_tool("index_project", {})
         await c.call_tool(
-            "create_requirement", {"rf_id": "RF-010", "title": "Done"}
+            "create_spec", {"spec_id": "SPEC-010", "title": "Done"}
         )
         await c.call_tool(
-            "link_rf_symbol",
-            {"rf_id": "RF-010", "symbol_qname": "pkg.feature.implementer"},
+            "link_spec_symbol",
+            {"spec_id": "SPEC-010", "symbol_qname": "pkg.feature.implementer"},
         )
         out = (await c.call_tool("audit_coverage", {})).data
 
-    entry = {r["rf_id"]: r for r in out["rf_coverage"]}["RF-010"]
+    entry = {r["spec_id"]: r for r in out["spec_coverage"]}["SPEC-010"]
     assert entry["uncovered_symbols"] == []
     assert entry["uncovered_symbols_count"] == 0
 
 
-# ---------- Feature A: compute_diff_rf_impact ----------
+# ---------- Feature A: compute_diff_spec_impact ----------
 
 
 @pytest.fixture
 def git_repo_with_rf(sample_repo: Path) -> Path:
     """sample_repo committed, then auth.py mutated in a second commit.
-    HEAD~1..HEAD touches pkg/auth.py (which carries login → RF link)."""
+    HEAD~1..HEAD touches pkg/auth.py (which carries login → Spec link)."""
     _git(sample_repo, "init", "-q")
     _git(sample_repo, "config", "user.email", "test@example.com")
     _git(sample_repo, "config", "user.name", "test")
@@ -140,47 +140,47 @@ def git_repo_with_rf(sample_repo: Path) -> Path:
 
 
 @pytest.mark.asyncio
-async def test_compute_diff_rf_impact_returns_touched_rfs(git_repo_with_rf):
+async def test_compute_diff_spec_impact_returns_touched_rfs(git_repo_with_rf):
     async with Client(mcp) as c:
         await c.call_tool("index_project", {})
-        # Link RF-100 to the changed file's symbol so the diff touches it.
+        # Link SPEC-100 to the changed file's symbol so the diff touches it.
         await c.call_tool(
-            "create_requirement", {"rf_id": "RF-100", "title": "Auth login"}
+            "create_spec", {"spec_id": "SPEC-100", "title": "Auth login"}
         )
         await c.call_tool(
-            "link_rf_symbol",
-            {"rf_id": "RF-100", "symbol_qname": "pkg.auth.login"},
+            "link_spec_symbol",
+            {"spec_id": "SPEC-100", "symbol_qname": "pkg.auth.login"},
         )
 
         st = get_state()
-        result = compute_diff_rf_impact(st, "HEAD~1", "HEAD")
+        result = compute_diff_spec_impact(st, "HEAD~1", "HEAD")
 
     assert result["base"] == "HEAD~1"
     assert result["head"] == "HEAD"
     assert "pkg/auth.py" in result["files_changed"]
-    touched_ids = {r["rf_id"] for r in result["requirements_touched"]}
-    assert "RF-100" in touched_ids, (
-        f"RF-100 should be touched by the auth.py diff: {result['requirements_touched']}"
+    touched_ids = {r["spec_id"] for r in result["specs_touched"]}
+    assert "SPEC-100" in touched_ids, (
+        f"SPEC-100 should be touched by the auth.py diff: {result['specs_touched']}"
     )
-    entry = next(r for r in result["requirements_touched"] if r["rf_id"] == "RF-100")
+    entry = next(r for r in result["specs_touched"] if r["spec_id"] == "SPEC-100")
     assert "pkg/auth.py" in entry["files"]
     assert entry["title"] == "Auth login"
     assert isinstance(entry["test_coverage_ratio"], (int, float))
 
 
 @pytest.mark.asyncio
-async def test_compute_diff_rf_impact_empty_shape_without_git(workspace, sample_repo):
+async def test_compute_diff_spec_impact_empty_shape_without_git(workspace, sample_repo):
     """No git history → clear empty shape (caller omits the section)."""
     async with Client(mcp) as c:
         await c.call_tool("index_project", {})
         st = get_state()
-        result = compute_diff_rf_impact(st, "HEAD~1", "HEAD")
+        result = compute_diff_spec_impact(st, "HEAD~1", "HEAD")
 
     assert result == {
         "base": "HEAD~1",
         "head": "HEAD",
         "files_changed": [],
-        "requirements_touched": [],
+        "specs_touched": [],
     }
 
 
@@ -197,7 +197,7 @@ def test_trend_record_and_read_two_snapshots(tmp_path):
     record_snapshot(
         conn,
         pid,
-        per_rf={"RF-001": 0.5, "RF-002": 1.0},
+        per_spec={"SPEC-001": 0.5, "SPEC-002": 1.0},
         avg=0.75,
         verified_count=1,
         ts="2026-06-25T10:00:00+00:00",
@@ -205,7 +205,7 @@ def test_trend_record_and_read_two_snapshots(tmp_path):
     record_snapshot(
         conn,
         pid,
-        per_rf={"RF-001": 1.0, "RF-002": 1.0},
+        per_spec={"SPEC-001": 1.0, "SPEC-002": 1.0},
         avg=1.0,
         verified_count=2,
         ts="2026-06-25T11:00:00+00:00",
@@ -225,13 +225,13 @@ def test_trend_record_and_read_two_snapshots(tmp_path):
 
 
 def test_trend_handles_no_rfs_avg_none(tmp_path):
-    """A snapshot with no RFs records avg=None and reads back as None."""
+    """A snapshot with no Specs records avg=None and reads back as None."""
     from livespec_mcp.storage.db import connect, get_or_create_project
 
     conn = connect(tmp_path / "trend2.db")
     pid = get_or_create_project(conn, "p", str(tmp_path))
     record_snapshot(
-        conn, pid, per_rf={}, avg=None, verified_count=0,
+        conn, pid, per_spec={}, avg=None, verified_count=0,
         ts="2026-06-25T12:00:00+00:00",
     )
     trend = read_trend(conn, pid)
@@ -249,10 +249,10 @@ def test_trend_dedups_unchanged_consecutive(tmp_path):
     pid = get_or_create_project(conn, "p", str(tmp_path))
     for ts in ("2026-06-25T10:00:00+00:00", "2026-06-25T10:05:00+00:00"):
         record_snapshot(
-            conn, pid, per_rf={"RF-001": 0.5}, avg=0.5, verified_count=1, ts=ts
+            conn, pid, per_spec={"SPEC-001": 0.5}, avg=0.5, verified_count=1, ts=ts
         )
     record_snapshot(
-        conn, pid, per_rf={"RF-001": 1.0}, avg=1.0, verified_count=1,
+        conn, pid, per_spec={"SPEC-001": 1.0}, avg=1.0, verified_count=1,
         ts="2026-06-25T10:10:00+00:00",
     )
     trend = read_trend(conn, pid)
@@ -272,11 +272,11 @@ async def test_audit_coverage_records_a_snapshot(workspace):
     async with Client(mcp) as c:
         await c.call_tool("index_project", {})
         await c.call_tool(
-            "create_requirement", {"rf_id": "RF-500", "title": "F"}
+            "create_spec", {"spec_id": "SPEC-500", "title": "F"}
         )
         await c.call_tool(
-            "link_rf_symbol",
-            {"rf_id": "RF-500", "symbol_qname": "pkg.feature.implementer"},
+            "link_spec_symbol",
+            {"spec_id": "SPEC-500", "symbol_qname": "pkg.feature.implementer"},
         )
         await c.call_tool("audit_coverage", {})
         await c.call_tool("audit_coverage", {})  # unchanged -> deduped
@@ -285,5 +285,5 @@ async def test_audit_coverage_records_a_snapshot(workspace):
         trend = read_trend(st.conn, st.project_id)
 
     assert len(trend) == 1, f"unchanged re-audits should dedup to one snapshot: {trend}"
-    # avg is a float (RF-500 exists) and verified_count is an int.
+    # avg is a float (SPEC-500 exists) and verified_count is an int.
     assert all(isinstance(t["verified_count"], int) for t in trend)

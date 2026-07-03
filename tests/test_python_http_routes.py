@@ -1,4 +1,4 @@
-"""Flask/FastAPI HTTP method + path extraction for find_endpoints / RF Explorer."""
+"""Flask/FastAPI HTTP method + path extraction for find_endpoints / Spec Explorer."""
 
 from __future__ import annotations
 

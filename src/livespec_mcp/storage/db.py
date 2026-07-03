@@ -63,6 +63,15 @@ def _has_column(conn: sqlite3.Connection, table: str, column: str) -> bool:
     )
 
 
+def _table_exists(conn: sqlite3.Connection, table: str) -> bool:
+    return (
+        conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)
+        ).fetchone()
+        is not None
+    )
+
+
 def _try_drop_column(conn: sqlite3.Connection, table: str, column: str) -> None:
     if not _has_column(conn, table, column):
         return
@@ -195,6 +204,71 @@ def _m006_legacy_v02_recover(conn: sqlite3.Connection) -> None:
         _flag_reextract(conn)
 
 
+def _m011_rename_rf_to_spec(conn: sqlite3.Connection) -> None:
+    """v0.20: RF nomenclature renamed to Spec + new `kind` taxonomy column.
+
+    `connect()` runs `schema.sql` (which now defines `spec`/`spec_symbol`/
+    `spec_dependency`/`spec_coverage_snapshot`) via `executescript` BEFORE
+    migrations run. On a DB that still has the legacy `rf` tables, that
+    leaves empty `spec*` shells sitting next to the populated `rf*` tables.
+    Drop those empty shells, then rename the legacy tables/columns in place
+    so existing rows (and their ids) survive untouched — only the container
+    names change. SQLite (3.25+) rewrites FK/CHECK/index definitions that
+    reference a renamed table or column automatically.
+
+    Existing `rf_id` string values (e.g. ``RF-042``) are preserved as-is in
+    the renamed `spec_id` column — only newly created specs get the
+    ``SPEC-NNN`` format (see `_next_spec_id` in tools/specs.py).
+
+    Note: on a brand-new database, migrations 1-11 all run in the same
+    first `connect()` — `_m009_rf_coverage_snapshot` still unconditionally
+    creates the legacy-named `rf_coverage_snapshot` table even though `rf`
+    itself was never created (schema.sql defines `spec` directly). That's
+    why the coverage-snapshot rename below is guarded independently of the
+    main `rf` table check.
+    """
+    if _table_exists(conn, "rf"):
+        conn.execute("DROP TABLE IF EXISTS spec_dependency")
+        conn.execute("DROP TABLE IF EXISTS spec_symbol")
+        conn.execute("DROP TABLE IF EXISTS spec")
+
+        conn.execute("ALTER TABLE rf RENAME TO spec")
+        conn.execute("ALTER TABLE spec RENAME COLUMN rf_id TO spec_id")
+        _try_add_column(conn, "spec", "kind", "TEXT NOT NULL DEFAULT 'functional_requirement'")
+
+        conn.execute("ALTER TABLE rf_symbol RENAME TO spec_symbol")
+        conn.execute("ALTER TABLE spec_symbol RENAME COLUMN rf_id TO spec_id")
+
+        conn.execute("ALTER TABLE rf_dependency RENAME TO spec_dependency")
+        conn.execute("ALTER TABLE spec_dependency RENAME COLUMN parent_rf_id TO parent_spec_id")
+        conn.execute("ALTER TABLE spec_dependency RENAME COLUMN child_rf_id TO child_spec_id")
+
+        for old_index in (
+            "idx_rf_status", "idx_rf_module", "idx_rfsym_rf", "idx_rfsym_sym",
+            "idx_rfdep_parent", "idx_rfdep_child",
+        ):
+            conn.execute(f"DROP INDEX IF EXISTS {old_index}")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_spec_status ON spec(project_id, status)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_spec_module ON spec(module_id)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_specsym_spec ON spec_symbol(spec_id)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_specsym_sym ON spec_symbol(symbol_id)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_specdep_parent ON spec_dependency(parent_spec_id)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_specdep_child ON spec_dependency(child_spec_id)")
+
+        conn.execute("UPDATE doc SET target_type='spec' WHERE target_type='requirement'")
+        conn.execute("UPDATE chunk SET source_type='spec' WHERE source_type='requirement'")
+
+    if _table_exists(conn, "rf_coverage_snapshot"):
+        conn.execute("DROP TABLE IF EXISTS spec_coverage_snapshot")
+        conn.execute("ALTER TABLE rf_coverage_snapshot RENAME TO spec_coverage_snapshot")
+        conn.execute("ALTER TABLE spec_coverage_snapshot RENAME COLUMN rf_id TO spec_id")
+        conn.execute("DROP INDEX IF EXISTS idx_rf_cov_snap")
+        conn.execute(
+            """CREATE INDEX IF NOT EXISTS idx_spec_cov_snap
+               ON spec_coverage_snapshot(project_id, spec_id, ts)"""
+        )
+
+
 # Ordered registry. Append-only — never reuse a version number.
 MIGRATIONS: list[Migration] = [
     (1, "drop_dead_tables", _m001_drop_dead_tables),
@@ -207,6 +281,7 @@ MIGRATIONS: list[Migration] = [
     (8, "ts_java_decorators_reextract", _m008_ts_java_decorators),
     (9, "rf_coverage_snapshot", _m009_rf_coverage_snapshot),
     (10, "agent_scratch", _m010_agent_scratch),
+    (11, "rename_rf_to_spec", _m011_rename_rf_to_spec),
 ]
 
 

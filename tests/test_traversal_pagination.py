@@ -131,7 +131,7 @@ async def test_analyze_impact_symbol_summary_only(workspace):
     assert "impacted_callers" not in out
     assert "calls_into" not in out
     assert out["counts"]["impacted_callers"] >= 12
-    assert "affected_requirements" in out["counts"]
+    assert "affected_specs" in out["counts"]
 
 
 @pytest.mark.asyncio

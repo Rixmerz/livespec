@@ -7,7 +7,7 @@ from fastmcp import Client, FastMCP
 
 from livespec_mcp.plugin_visibility import PluginVisibilityMiddleware
 from livespec_mcp.state import get_state
-from livespec_mcp.tools import analysis, indexing, requirements, search
+from livespec_mcp.tools import analysis, indexing, specs, search
 from livespec_mcp.tools.plugins import register_all_plugins
 
 
@@ -16,7 +16,7 @@ def _minimal_mcp() -> FastMCP:
     mcp.add_middleware(PluginVisibilityMiddleware())
     indexing.register(mcp)
     analysis.register(mcp)
-    requirements.register(mcp)
+    specs.register(mcp)
     search.register(mcp)
     register_all_plugins(mcp)
     return mcp
@@ -24,8 +24,8 @@ def _minimal_mcp() -> FastMCP:
 
 def _seed_rf(state) -> None:
     state.conn.execute(
-        "INSERT INTO rf (project_id, rf_id, title) VALUES (?, ?, ?)",
-        (state.project_id, "RF-001", "seed"),
+        "INSERT INTO spec (project_id, spec_id, title) VALUES (?, ?, ?)",
+        (state.project_id, "SPEC-001", "seed"),
     )
     state.conn.commit()
 
@@ -37,11 +37,11 @@ async def test_list_tools_hides_plugins_on_fresh_workspace(workspace, monkeypatc
     async with Client(mcp) as c:
         names = {t.name for t in await c.list_tools()}
     assert "index_project" in names
-    assert "create_requirement" not in names
+    assert "create_spec" not in names
     assert "generate_docs" not in names
     assert "export_explorer" in names
-    assert "import_requirements_from_markdown" in names
-    assert "bulk_link_rf_symbols" in names
+    assert "import_specs_from_markdown" in names
+    assert "bulk_link_spec_symbols" in names
 
 
 @pytest.mark.asyncio
@@ -56,8 +56,8 @@ async def test_list_tools_shows_rf_after_workspace_touch(workspace, monkeypatch)
             {"workspace": str(workspace)},
         )
         names = {t.name for t in await c.list_tools()}
-    assert "create_requirement" in names
-    assert "link_rf_symbol" in names
+    assert "create_spec" in names
+    assert "link_spec_symbol" in names
 
 
 @pytest.mark.asyncio
@@ -66,7 +66,7 @@ async def test_call_plugin_tool_blocked_without_rf_rows(workspace, monkeypatch):
     mcp = _minimal_mcp()
     async with Client(mcp) as c:
         result = await c.call_tool(
-            "create_requirement",
+            "create_spec",
             {"title": "x", "workspace": str(workspace)},
         )
     data = result.data if hasattr(result, "data") else result.structured_content
@@ -83,12 +83,12 @@ async def test_call_plugin_tool_allowed_when_rf_rows_exist(workspace, monkeypatc
     mcp = _minimal_mcp()
     async with Client(mcp) as c:
         result = await c.call_tool(
-            "create_requirement",
+            "create_spec",
             {"title": "from test", "workspace": str(workspace)},
         )
     data = result.data if hasattr(result, "data") else result.structured_content
     assert not data.get("isError")
-    assert data.get("rf_id")
+    assert data.get("spec_id")
 
 
 @pytest.mark.asyncio
@@ -97,5 +97,5 @@ async def test_env_all_shows_plugins_without_workspace_touch(workspace, monkeypa
     mcp = _minimal_mcp()
     async with Client(mcp) as c:
         names = {t.name for t in await c.list_tools()}
-    assert "create_requirement" in names
+    assert "create_spec" in names
     assert "export_explorer" in names

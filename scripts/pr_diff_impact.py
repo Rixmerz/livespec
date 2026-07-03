@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Print a markdown PR comment summarising RF impact for a git range.
+"""Print a markdown PR comment summarising Spec impact for a git range.
 
-Uses the same ``compute_diff_rf_impact`` helper as the RF Explorer Changes
-view. Intended for GitHub Actions (``livespec-pr-comment.yml``) but runnable
-locally:
+Uses the same ``compute_diff_spec_impact`` helper as the Spec Explorer
+Changes view. Intended for GitHub Actions (``livespec-pr-comment.yml``) but
+runnable locally:
 
     uv run python scripts/pr_diff_impact.py
     GITHUB_BASE_SHA=main GITHUB_HEAD_SHA=HEAD uv run python scripts/pr_diff_impact.py
@@ -34,12 +34,12 @@ def render_markdown(
     base: str,
     head: str,
     files_changed: list[str],
-    requirements_touched: list[dict],
+    specs_touched: list[dict],
     workspace: Path,
 ) -> str:
     """Build the PR comment body."""
     lines: list[str] = [
-        "## Livespec — RF impact",
+        "## Livespec — Spec impact",
         "",
         f"**Range:** `{base}`..`{head}`  ",
         f"**Workspace:** `{workspace}`",
@@ -56,10 +56,10 @@ def render_markdown(
 
     lines.append(f"**{len(files_changed)}** file(s) changed.")
     lines.append("")
-    if not requirements_touched:
+    if not specs_touched:
         lines.extend(
             [
-                "No tracked requirements (RFs) are touched by these changes.",
+                "No tracked specs are touched by these changes.",
                 "",
                 "<details><summary>Changed files</summary>",
                 "",
@@ -74,28 +74,28 @@ def render_markdown(
         return "\n".join(lines)
 
     lines.append(
-        f"**{len(requirements_touched)}** requirement(s) touched:"
+        f"**{len(specs_touched)}** spec(s) touched:"
     )
     lines.append("")
-    lines.append("| RF | Title | Test coverage | Changed files |")
+    lines.append("| Spec | Title | Test coverage | Changed files |")
     lines.append("|---|---|---:|---|")
-    for row in requirements_touched:
-        rf_id = row.get("rf_id", "")
+    for row in specs_touched:
+        spec_id = row.get("spec_id", "")
         title = (row.get("title") or "").replace("|", "\\|")
         cov = _pct(float(row.get("test_coverage_ratio") or 0))
         files = row.get("files") or []
         file_cell = ", ".join(f"`{f}`" for f in files[:5])
         if len(files) > 5:
             file_cell += f" (+{len(files) - 5} more)"
-        lines.append(f"| `{rf_id}` | {title} | {cov} | {file_cell or '—'} |")
+        lines.append(f"| `{spec_id}` | {title} | {cov} | {file_cell or '—'} |")
     lines.append("")
     under_tested = [
         r
-        for r in requirements_touched
+        for r in specs_touched
         if float(r.get("test_coverage_ratio") or 0) < 0.5
     ]
     if under_tested:
-        ids = ", ".join(f"`{r['rf_id']}`" for r in under_tested[:12])
+        ids = ", ".join(f"`{r['spec_id']}`" for r in under_tested[:12])
         lines.append(f"> **Heads-up:** low test coverage on {ids}.")
         lines.append("")
     lines.append(
@@ -112,18 +112,18 @@ def main() -> int:
     head = _env_ref("GITHUB_HEAD_SHA", "LIVESPEC_HEAD_REF", "HEAD")
 
     from livespec_mcp.state import get_state
-    from livespec_mcp.tools.analysis import compute_diff_rf_impact
+    from livespec_mcp.tools.analysis import compute_diff_spec_impact
     from livespec_mcp.tools.indexing import run_index_pipeline
 
     st = get_state(str(workspace))
     run_index_pipeline(st, force=False)
 
-    impact = compute_diff_rf_impact(st, base, head)
+    impact = compute_diff_spec_impact(st, base, head)
     body = render_markdown(
         base=str(impact.get("base") or base),
         head=str(impact.get("head") or head),
         files_changed=list(impact.get("files_changed") or []),
-        requirements_touched=list(impact.get("requirements_touched") or []),
+        specs_touched=list(impact.get("specs_touched") or []),
         workspace=workspace,
     )
     sys.stdout.write(body)

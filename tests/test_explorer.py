@@ -1,7 +1,7 @@
-"""export_explorer: static RF Explorer bundle generation.
+"""export_explorer: static Spec Explorer bundle generation.
 
 Asserts the tool writes data.json + index.html, the JSON schema is
-complete, the 0-RF case still populates endpoints + coverage, and two
+complete, the 0-Spec case still populates endpoints + coverage, and two
 runs are byte-identical modulo meta.generated_at.
 """
 
@@ -16,7 +16,7 @@ from fastmcp import Client
 from livespec_mcp.server import mcp
 
 _TOP_KEYS = {
-    "meta", "dashboard", "requirements", "rf_topology", "endpoints",
+    "meta", "dashboard", "specs", "spec_topology", "endpoints",
     "fixtures", "coverage", "trend", "changes",
 }
 
@@ -32,7 +32,7 @@ def _write_flask_app(workspace: Path) -> None:
         "\n"
         "@app.route('/login', methods=['POST'])\n"
         "def login(user, password):\n"
-        '    """Login handler.\n\n    @rf:RF-001\n    """\n'
+        '    """Login handler.\n\n    @spec:SPEC-001\n    """\n'
         "    return verify(user, password)\n"
         "\n"
         "@app.route('/health')\n"
@@ -90,12 +90,12 @@ async def test_export_explorer_writes_both_files(workspace: Path):
     # Mermaid label sanitizer for the Dependencies tab is present.
     assert "EP_KIND_LABEL" in html
     assert "mermaidLabel" in html
-    # v0.16 B: the per-RF uncovered-symbols drill-down (the actionable gap).
+    # v0.16 B: the per-Spec uncovered-symbols drill-down (the actionable gap).
     assert "Uncovered symbols" in html
     assert "uncovered_symbols_count" in html
-    # v0.16 A: a Changes tab driven by the git diff RF impact section.
+    # v0.16 A: a Changes tab driven by the git diff Spec impact section.
     assert "buildChanges" in html
-    assert "requirements_touched" in html
+    assert "specs_touched" in html
     # v0.16 D: a coverage trend view (sparkline + per-snapshot bars).
     assert "buildTrend" in html
     assert "buildTrendOverview" in html
@@ -115,20 +115,20 @@ async def test_export_explorer_data_schema(workspace: Path):
     _write_flask_app(workspace)
     async with Client(mcp) as c:
         await c.call_tool("index_project", {})
-        # Make RF-001 real and link it, plus a second RF + a dependency edge.
-        await c.call_tool("create_requirement", {"rf_id": "RF-001", "title": "Login"})
-        await c.call_tool("create_requirement", {"rf_id": "RF-002", "title": "Auth lib"})
+        # Make SPEC-001 real and link it, plus a second Spec + a dependency edge.
+        await c.call_tool("create_spec", {"spec_id": "SPEC-001", "title": "Login"})
+        await c.call_tool("create_spec", {"spec_id": "SPEC-002", "title": "Auth lib"})
         await c.call_tool(
-            "link_rf_symbol",
-            {"rf_id": "RF-001", "symbol_qname": "app.routes.login"},
+            "link_spec_symbol",
+            {"spec_id": "SPEC-001", "symbol_qname": "app.routes.login"},
         )
         await c.call_tool(
-            "link_rf_symbol",
-            {"rf_id": "RF-002", "symbol_qname": "app.lib.verify"},
+            "link_spec_symbol",
+            {"spec_id": "SPEC-002", "symbol_qname": "app.lib.verify"},
         )
         await c.call_tool(
-            "link_rf_dependency",
-            {"parent_rf_id": "RF-001", "child_rf_id": "RF-002"},
+            "link_spec_dependency",
+            {"parent_spec_id": "SPEC-001", "child_spec_id": "SPEC-002"},
         )
         await c.call_tool("export_explorer", {})
 
@@ -140,24 +140,24 @@ async def test_export_explorer_data_schema(workspace: Path):
     # meta + counts shape
     assert set(data["meta"].keys()) == {"project", "generated_at", "base_path", "counts"}
     assert set(data["meta"]["counts"].keys()) == {
-        "requirements", "symbols", "endpoints", "files",
+        "specs", "symbols", "endpoints", "files",
     }
-    assert data["meta"]["counts"]["requirements"] == 2
+    assert data["meta"]["counts"]["specs"] == 2
 
     # dashboard rollup (PO headline) shape + correctness
     dash = data["dashboard"]
     assert set(dash.keys()) == {
-        "requirements", "dev_state_counts", "with_endpoints",
+        "specs", "dev_state_counts", "with_endpoints",
         "with_dependencies", "implemented_pct", "verified", "avg_coverage",
         "avg_test_coverage",
     }
-    assert dash["requirements"] == 2
+    assert dash["specs"] == 2
     assert set(dash["dev_state_counts"].keys()) == {
         "not_started", "in_progress", "implemented", "verified",
     }
-    # dev_state counts sum to the requirement total.
+    # dev_state counts sum to the spec total.
     assert sum(dash["dev_state_counts"].values()) == 2
-    # Both RFs have a linked symbol -> both count as having implementation.
+    # Both Specs have a linked symbol -> both count as having implementation.
     assert dash["implemented_pct"] == 100.0
     # No test coverage exists here (no test symbols reach the impl, no
     # explicit test links), so verified is truthfully 0.
@@ -166,26 +166,26 @@ async def test_export_explorer_data_schema(workspace: Path):
     assert dash["avg_coverage"] is not None
     # avg_test_coverage present; 0.0 here (no real test coverage).
     assert dash["avg_test_coverage"] == 0.0
-    # verified count == #RFs with real test coverage > 0.
+    # verified count == #Specs with real test coverage > 0.
     assert dash["verified"] == sum(
-        1 for r in data["requirements"] if r["test_coverage_ratio"] > 0
+        1 for r in data["specs"] if r["test_coverage_ratio"] > 0
     )
 
-    # RF-001 carries its implementing symbol (with signature), endpoint, dep.
-    rf1 = next(r for r in data["requirements"] if r["id"] == "RF-001")
+    # SPEC-001 carries its implementing symbol (with signature), endpoint, dep.
+    rf1 = next(r for r in data["specs"] if r["id"] == "SPEC-001")
     assert any(s["qname"] == "app.routes.login" for s in rf1["symbols"])
     sym = next(s for s in rf1["symbols"] if s["qname"] == "app.routes.login")
     assert "signature" in sym and "file" in sym and "line" in sym
     assert "app.routes.login" in rf1["endpoints"]
-    assert rf1["depends_on"] == ["RF-002"]
+    assert rf1["depends_on"] == ["SPEC-002"]
     assert rf1["coverage"] is not None
 
-    # Every requirement carries a derived dev_state in the valid vocabulary.
+    # Every spec carries a derived dev_state in the valid vocabulary.
     valid_states = {"not_started", "in_progress", "implemented", "verified"}
     valid_sources = {"derived", "explicit", "both", "none"}
-    for r in data["requirements"]:
+    for r in data["specs"]:
         assert r["dev_state"] in valid_states
-        # v0.15: REAL test-coverage fields on every requirement.
+        # v0.15: REAL test-coverage fields on every spec.
         assert isinstance(r["test_coverage_ratio"], (int, float))
         assert 0.0 <= r["test_coverage_ratio"] <= 1.0
         assert r["coverage_source"] in valid_sources
@@ -194,35 +194,35 @@ async def test_export_explorer_data_schema(workspace: Path):
             assert r["dev_state"] == "verified"
         # link confidence and test coverage are distinct fields.
         assert "coverage" in r and "test_coverage_ratio" in r
-        # v0.16 B: every RF carries the uncovered-symbol drill-down (a list +
-        # an exact count), sourced from compute_rf_test_coverage — no recompute.
+        # v0.16 B: every Spec carries the uncovered-symbol drill-down (a list +
+        # an exact count), sourced from compute_spec_test_coverage — no recompute.
         assert isinstance(r["uncovered_symbols"], list)
         assert isinstance(r["uncovered_symbols_count"], int)
         assert r["uncovered_symbols_count"] >= len(r["uncovered_symbols"])
-    # RF-001 has a high-confidence link but no test coverage -> implemented.
+    # SPEC-001 has a high-confidence link but no test coverage -> implemented.
     assert rf1["dev_state"] == "implemented"
     assert rf1["test_coverage_ratio"] == 0.0
     assert rf1["coverage_source"] == "none"
 
     # Topology nodes carry dev_state too (for colour-coding the graph).
-    for n in data["rf_topology"]["nodes"]:
+    for n in data["spec_topology"]["nodes"]:
         assert n["dev_state"] in valid_states
 
-    # topology has the RF-001 -> RF-002 edge
-    edges = {(e["from"], e["to"]) for e in data["rf_topology"]["edges"]}
-    assert ("RF-001", "RF-002") in edges
-    node_ids = {n["id"] for n in data["rf_topology"]["nodes"]}
-    assert {"RF-001", "RF-002"} <= node_ids
+    # topology has the SPEC-001 -> SPEC-002 edge
+    edges = {(e["from"], e["to"]) for e in data["spec_topology"]["edges"]}
+    assert ("SPEC-001", "SPEC-002") in edges
+    node_ids = {n["id"] for n in data["spec_topology"]["nodes"]}
+    assert {"SPEC-001", "SPEC-002"} <= node_ids
 
-    # endpoints surface includes the login route, tagged with RF-001
+    # endpoints surface includes the login route, tagged with SPEC-001
     handlers = {e["handler"] for e in data["endpoints"]}
     assert "app.routes.login" in handlers
     login_ep = next(e for e in data["endpoints"] if e["handler"] == "app.routes.login")
-    assert "RF-001" in login_ep["rf_ids"]
+    assert "SPEC-001" in login_ep["spec_ids"]
     for ep in data["endpoints"]:
         assert set(ep.keys()) == {
             "kind", "framework", "handler", "signature", "path", "method",
-            "rf_ids",
+            "spec_ids",
         }
         # Every API-surface endpoint carries a kind in the valid vocabulary,
         # and is never a pytest fixture (those live in DATA.fixtures).
@@ -241,7 +241,7 @@ async def test_export_explorer_data_schema(workspace: Path):
         assert fx["kind"] == "fixture"
         assert set(fx.keys()) == {
             "kind", "framework", "handler", "signature", "path", "method",
-            "rf_ids",
+            "spec_ids",
         }
     # No fixture leaks into the API-surface endpoint list or its count.
     assert all(e["kind"] != "fixture" for e in data["endpoints"])
@@ -264,24 +264,24 @@ async def test_export_explorer_data_schema(workspace: Path):
             snap["avg_test_coverage"], (int, float)
         )
 
-    # v0.16 A: top-level changes — RF-centric git diff impact. The workspace
+    # v0.16 A: top-level changes — Spec-centric git diff impact. The workspace
     # fixture is not a git repo, so the range is omitted (base/head None) and
     # the lists are empty — but the keyed shape is always present.
     assert isinstance(data["changes"], dict)
     assert set(data["changes"].keys()) == {
-        "base", "head", "files_changed", "requirements_touched",
+        "base", "head", "files_changed", "specs_touched",
     }
     assert isinstance(data["changes"]["files_changed"], list)
-    assert isinstance(data["changes"]["requirements_touched"], list)
-    for rt in data["changes"]["requirements_touched"]:
+    assert isinstance(data["changes"]["specs_touched"], list)
+    for rt in data["changes"]["specs_touched"]:
         assert set(rt.keys()) == {
-            "rf_id", "title", "files", "test_coverage_ratio",
+            "spec_id", "title", "files", "test_coverage_ratio",
         }
 
 
 @pytest.mark.asyncio
 async def test_export_explorer_zero_rf_case(workspace: Path):
-    """No RFs: requirements==[] but endpoints + coverage still populated."""
+    """No Specs: specs==[] but endpoints + coverage still populated."""
     _write_flask_app(workspace)
     async with Client(mcp) as c:
         await c.call_tool("index_project", {})
@@ -290,38 +290,38 @@ async def test_export_explorer_zero_rf_case(workspace: Path):
     data = json.loads(
         (workspace / ".mcp-docs" / "explorer" / "data.json").read_text(encoding="utf-8")
     )
-    assert data["requirements"] == []
-    assert data["rf_topology"]["nodes"] == []
-    assert data["rf_topology"]["edges"] == []
-    assert data["meta"]["counts"]["requirements"] == 0
+    assert data["specs"] == []
+    assert data["spec_topology"]["nodes"] == []
+    assert data["spec_topology"]["edges"] == []
+    assert data["meta"]["counts"]["specs"] == 0
 
-    # Dashboard is present and truthfully empty in the 0-RF case.
+    # Dashboard is present and truthfully empty in the 0-Spec case.
     assert "dashboard" in data
-    assert data["dashboard"]["requirements"] == 0
+    assert data["dashboard"]["specs"] == 0
     assert data["dashboard"]["verified"] == 0
     assert data["dashboard"]["implemented_pct"] == 0.0
     assert data["dashboard"]["avg_coverage"] is None
-    # avg_test_coverage present and None (no RFs to average).
+    # avg_test_coverage present and None (no Specs to average).
     assert data["dashboard"]["avg_test_coverage"] is None
     assert sum(data["dashboard"]["dev_state_counts"].values()) == 0
 
-    # Endpoints + coverage are not gated on RFs existing.
+    # Endpoints + coverage are not gated on Specs existing.
     handlers = {e["handler"] for e in data["endpoints"]}
     assert "app.routes.login" in handlers
     assert "app.routes.health" in handlers
-    # Every endpoint is orphan (no RF linked) in the 0-RF case.
+    # Every endpoint is orphan (no Spec linked) in the 0-Spec case.
     assert "app.routes.login" in data["coverage"]["orphan_endpoints"]
     assert data["meta"]["counts"]["endpoints"] >= 2
     assert isinstance(data["coverage"]["totals"], dict)
     assert data["coverage"]["totals"]
 
-    # trend + changes stay truthful in the 0-RF case: trend is a list (no RFs
+    # trend + changes stay truthful in the 0-Spec case: trend is a list (no Specs
     # means each snapshot's avg is None), changes is the keyed-empty shape.
     assert isinstance(data["trend"], list)
     assert isinstance(data["changes"], dict)
-    assert data["changes"]["requirements_touched"] == []
+    assert data["changes"]["specs_touched"] == []
     assert set(data["changes"].keys()) == {
-        "base", "head", "files_changed", "requirements_touched",
+        "base", "head", "files_changed", "specs_touched",
     }
 
 
@@ -363,15 +363,15 @@ async def test_export_explorer_excludes_fixtures_from_surface(workspace: Path):
 
 @pytest.mark.asyncio
 async def test_export_explorer_mermaid_labels_sanitized(workspace: Path):
-    """RF titles with &, <, >, " must be HTML-entity-encoded for Mermaid v10
+    """Spec titles with &, <, >, " must be HTML-entity-encoded for Mermaid v10
     so the Dependencies graph parses (no 'Syntax error in text')."""
     _write_flask_app(workspace)
     async with Client(mcp) as c:
         await c.call_tool("index_project", {})
         # A title loaded with Mermaid-breaking characters.
         await c.call_tool(
-            "create_requirement",
-            {"rf_id": "RF-001", "title": 'Dead-code & coverage <x> "q" (9 langs)'},
+            "create_spec",
+            {"spec_id": "SPEC-001", "title": 'Dead-code & coverage <x> "q" (9 langs)'},
         )
         await c.call_tool("export_explorer", {})
 
@@ -381,7 +381,7 @@ async def test_export_explorer_mermaid_labels_sanitized(workspace: Path):
     # The raw, unsanitized title is stored verbatim in the data (the viewer
     # sanitizes at render time via mermaidLabel()). This locks in that the
     # breaking chars reach the viewer and rely on JS encoding.
-    node = next(n for n in data["rf_topology"]["nodes"] if n["id"] == "RF-001")
+    node = next(n for n in data["spec_topology"]["nodes"] if n["id"] == "SPEC-001")
     assert "&" in node["title"] and "<" in node["title"]
 
     # Mirror the viewer's mermaidLabel() transform in Python and assert the
@@ -410,7 +410,7 @@ def _strip_volatile(d: dict) -> dict:
     - ``meta.generated_at`` — the injectable timestamp.
     - ``trend`` — every audit records a wall-clock snapshot (and the series
       grows between two export calls), so it is inherently per-run.
-    - ``changes`` — RF-centric git diff impact for the resolved range; depends
+    - ``changes`` — Spec-centric git diff impact for the resolved range; depends
       on the workspace's git state, so it is range-dependent, not content-pure.
     """
     d = dict(d)
@@ -428,10 +428,10 @@ async def test_export_explorer_idempotent(workspace: Path):
     data_path = workspace / ".mcp-docs" / "explorer" / "data.json"
     async with Client(mcp) as c:
         await c.call_tool("index_project", {})
-        await c.call_tool("create_requirement", {"rf_id": "RF-001", "title": "Login"})
+        await c.call_tool("create_spec", {"spec_id": "SPEC-001", "title": "Login"})
         await c.call_tool(
-            "link_rf_symbol",
-            {"rf_id": "RF-001", "symbol_qname": "app.routes.login"},
+            "link_spec_symbol",
+            {"spec_id": "SPEC-001", "symbol_qname": "app.routes.login"},
         )
 
         await c.call_tool("export_explorer", {"generated_at": "2026-01-01T00:00:00Z"})
@@ -474,7 +474,7 @@ async def test_write_explorer_bundle_no_args_backward_compat(workspace: Path):
     assert "autowire" in result
     assert isinstance(result["data"]["trend"], list)
     assert isinstance(result["data"]["changes"], dict)
-    assert {"base", "head", "files_changed", "requirements_touched"} == set(
+    assert {"base", "head", "files_changed", "specs_touched"} == set(
         result["data"]["changes"].keys()
     )
     # Both files land on disk.

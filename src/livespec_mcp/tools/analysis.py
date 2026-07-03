@@ -1025,7 +1025,7 @@ def compute_endpoints(
         # v0.14: mirror find_dead_code's alias detection so plugin-
         # registered tools decorated via an alias factory
         # (`mutation_tool = mcp.tool if X else _noop`, used by the
-        # RF plugin's `@mutation_tool`/`@agentic_tool`) are surfaced
+        # Spec plugin's `@mutation_tool`/`@agentic_tool`) are surfaced
         # too — without this they read as plain decorators whose last
         # segment isn't in _ENTRY_POINT_DECORATOR_LASTSEG and get missed.
         workspace_path = st.settings.workspace
@@ -1265,18 +1265,18 @@ def filter_api_endpoints(
     return out
 
 
-# v0.15: forward-BFS depth bound for auto-derived RF test coverage. A test
+# v0.15: forward-BFS depth bound for auto-derived Spec test coverage. A test
 # reaches an implementation through at most: test → helper/fixture → impl
 # (two indirections). Depth-LIMITED, not a full transitive closure, so the
 # multi-source BFS stays cheap on big repos (Django ~40K symbols). Computed
-# ONCE per audit, not per-RF.
+# ONCE per audit, not per-Spec.
 _TEST_REACH_DEPTH = 3
 
 
 def _is_test_file_path(path: str) -> bool:
     """True if `path` is a test file. Same heuristic as the nested
     ``is_test_path`` in ``find_orphan_tests`` (lifted to module scope so the
-    RF-test-coverage derivation reuses it instead of reinventing detection):
+    Spec-test-coverage derivation reuses it instead of reinventing detection):
     anything under a ``tests/`` tree or matching ``test_*`` / ``*_test.*``
     naming. Path is project-relative (no leading slash)."""
     base = path.rsplit("/", 1)[-1]
@@ -1290,11 +1290,11 @@ def _is_test_file_path(path: str) -> bool:
     )
 
 
-def compute_rf_test_coverage(
+def compute_spec_test_coverage(
     st: AppState,
     view: GraphView,
 ) -> dict[str, dict[str, Any]]:
-    """Auto-derive per-RF test coverage from the call graph (v0.15).
+    """Auto-derive per-Spec test coverage from the call graph (v0.15).
 
     Reuses the already-loaded cached ``view`` (do NOT reload the graph).
 
@@ -1302,14 +1302,14 @@ def compute_rf_test_coverage(
     1. TEST symbols = symbols whose file is a test file (``_is_test_file_path``).
     2. ``tested_symbols`` = multi-source forward BFS from ALL test symbols
        over the call graph, bounded ``_TEST_REACH_DEPTH``. Computed once.
-    3. For each RF: an ``implements`` symbol S counts as TESTED if it is in
+    3. For each Spec: an ``implements`` symbol S counts as TESTED if it is in
        ``tested_symbols`` (derived) OR carries an explicit ``relation='tests'``
        link (explicit). ``coverage_source`` ∈ {derived, explicit, both, none}
        records which kinds contributed.
 
-    Returns a mapping ``rf_id -> {rf_id, title, test_coverage_ratio,
+    Returns a mapping ``spec_id -> {spec_id, title, test_coverage_ratio,
     tested_symbols, total_symbols, coverage_source}``. ``test_coverage_ratio``
-    is 0.0 when the RF has no ``implements`` symbols.
+    is 0.0 when the Spec has no ``implements`` symbols.
     """
     pid = st.project_id
     g = view.g
@@ -1341,23 +1341,23 @@ def compute_rf_test_coverage(
             tested_symbols.add(succ)
             frontier.append((succ, depth + 1))
 
-    # Step 3: per-RF rollup. One pass over the rf/rf_symbol join.
+    # Step 3: per-Spec rollup. One pass over the spec/spec_symbol join.
     rows = st.conn.execute(
-        """SELECT r.rf_id, r.title, rs.symbol_id, rs.relation
-           FROM rf r JOIN rf_symbol rs ON rs.rf_id=r.id
+        """SELECT r.spec_id, r.title, rs.symbol_id, rs.relation
+           FROM spec r JOIN spec_symbol rs ON rs.spec_id=r.id
            WHERE r.project_id=?
-           ORDER BY r.rf_id""",
+           ORDER BY r.spec_id""",
         (pid,),
     ).fetchall()
 
-    # rf_id -> {"title", "impl": set[int], "explicit": set[int]}
+    # spec_id -> {"title", "impl": set[int], "explicit": set[int]}
     agg: dict[str, dict[str, Any]] = {}
     for r in rows:
-        rf_id = r["rf_id"]
-        bucket = agg.get(rf_id)
+        spec_id = r["spec_id"]
+        bucket = agg.get(spec_id)
         if bucket is None:
             bucket = {"title": r["title"], "impl": set(), "explicit": set()}
-            agg[rf_id] = bucket
+            agg[spec_id] = bucket
         sid = int(r["symbol_id"])
         relation = r["relation"]
         if relation == "implements":
@@ -1365,11 +1365,11 @@ def compute_rf_test_coverage(
         elif relation == "tests":
             bucket["explicit"].add(sid)
 
-    # v0.16 B: cap on the per-RF uncovered drill-down list.
+    # v0.16 B: cap on the per-Spec uncovered drill-down list.
     _UNCOVERED_CAP = 50
 
     out: dict[str, dict[str, Any]] = {}
-    for rf_id, bucket in agg.items():
+    for spec_id, bucket in agg.items():
         impl: set[int] = bucket["impl"]
         explicit: set[int] = bucket["explicit"]
         total = len(impl)
@@ -1407,8 +1407,8 @@ def compute_rf_test_coverage(
             if sid in view.sym_meta and view.sym_meta[sid].get("qualified_name")
         )
         uncovered_total = len(uncovered_qnames)
-        out[rf_id] = {
-            "rf_id": rf_id,
+        out[spec_id] = {
+            "spec_id": spec_id,
             "title": bucket["title"],
             "test_coverage_ratio": round(ratio, 4),
             "tested_symbols": tested_count,
@@ -1431,8 +1431,8 @@ def compute_coverage(st: AppState) -> dict[str, Any]:
     pid = st.project_id
 
     # v0.8 P2 fix #8: filter package-marker basenames out of the
-    # "modules without RF" candidate set. They are import infrastructure,
-    # never the right home for a `@rf:` annotation.
+    # "modules without Spec" candidate set. They are import infrastructure,
+    # never the right home for a `@spec:` annotation.
     _PACKAGE_MARKER_BASENAMES = frozenset({
         "__init__.py",
         "package-info.java",
@@ -1456,14 +1456,14 @@ def compute_coverage(st: AppState) -> dict[str, Any]:
         lang = detect_language(_Path(path))
         return lang in ANNOTATION_SUPPORTED_LANGUAGES
 
-    all_no_rf = [
+    all_no_spec = [
         r["path"]
         for r in st.conn.execute(
             """SELECT f.path FROM file f
                WHERE f.project_id=?
                  AND NOT EXISTS (
                    SELECT 1 FROM symbol s
-                   JOIN rf_symbol rs ON rs.symbol_id=s.id
+                   JOIN spec_symbol rs ON rs.symbol_id=s.id
                    WHERE s.file_id=f.id
                  )
                ORDER BY f.path""",
@@ -1473,32 +1473,32 @@ def compute_coverage(st: AppState) -> dict[str, Any]:
     ]
     # Split off files whose language has no annotation extractor —
     # these are not "truly orphan", just outside what we can scan.
-    modules_unsupported_language = [p for p in all_no_rf if not _annotation_supported(p)]
-    modules_no_rf = [p for p in all_no_rf if _annotation_supported(p)]
+    modules_unsupported_language = [p for p in all_no_spec if not _annotation_supported(p)]
+    modules_no_spec = [p for p in all_no_spec if _annotation_supported(p)]
 
     # Split direct-orphan into implicitly-covered vs truly-orphan via the
     # call graph: a file is implicitly covered if any of its symbols has
-    # an rf-linked symbol in its ancestor cone (someone calls in here from
+    # a spec-linked symbol in its ancestor cone (someone calls in here from
     # an annotated entry point).
     # Load the cached call graph once and reuse it for both the
-    # implicit-coverage split below and the per-RF test-coverage derivation
+    # implicit-coverage split below and the per-Spec test-coverage derivation
     # (v0.15). load_graph is cached by (db, project, run_id) — cheap.
     view = load_graph(st.conn, pid)
 
     modules_implicit: list[str] = []
     modules_truly_orphan: list[str] = []
-    if modules_no_rf:
-        rf_linked_sids: set[int] = {
+    if modules_no_spec:
+        spec_linked_sids: set[int] = {
             int(r["symbol_id"])
             for r in st.conn.execute(
-                """SELECT DISTINCT rs.symbol_id FROM rf_symbol rs
+                """SELECT DISTINCT rs.symbol_id FROM spec_symbol rs
                    JOIN symbol s ON s.id=rs.symbol_id
                    JOIN file f ON f.id=s.file_id
                    WHERE f.project_id=?""",
                 (pid,),
             )
         }
-        for path in modules_no_rf:
+        for path in modules_no_spec:
             file_sids = {
                 int(r["id"])
                 for r in st.conn.execute(
@@ -1509,40 +1509,40 @@ def compute_coverage(st: AppState) -> dict[str, Any]:
                 )
             }
             covered = False
-            if rf_linked_sids and file_sids:
+            if spec_linked_sids and file_sids:
                 for sid in file_sids:
                     if sid not in view.g:
                         continue
-                    if ancestors_within(view.g, sid, 10) & rf_linked_sids:
+                    if ancestors_within(view.g, sid, 10) & spec_linked_sids:
                         covered = True
                         break
             (modules_implicit if covered else modules_truly_orphan).append(path)
 
-    rfs_no_impl = [
+    specs_no_impl = [
         dict(r)
         for r in st.conn.execute(
-            """SELECT r.rf_id, r.title, r.status, r.priority FROM rf r
+            """SELECT r.spec_id, r.title, r.status, r.priority FROM spec r
                WHERE r.project_id=?
                  AND NOT EXISTS (
-                   SELECT 1 FROM rf_symbol rs WHERE rs.rf_id=r.id
+                   SELECT 1 FROM spec_symbol rs WHERE rs.spec_id=r.id
                  )
-               ORDER BY r.rf_id""",
+               ORDER BY r.spec_id""",
             (pid,),
         )
     ]
 
-    rfs_low_conf = [
+    specs_low_conf = [
         {
-            "rf_id": r["rf_id"],
+            "spec_id": r["spec_id"],
             "title": r["title"],
             "avg_confidence": round(float(r["avg_confidence"]), 3),
             "link_count": int(r["link_count"]),
         }
         for r in st.conn.execute(
-            """SELECT r.rf_id, r.title,
+            """SELECT r.spec_id, r.title,
                       AVG(rs.confidence) AS avg_confidence,
                       COUNT(rs.id) AS link_count
-               FROM rf r JOIN rf_symbol rs ON rs.rf_id=r.id
+               FROM spec r JOIN spec_symbol rs ON rs.spec_id=r.id
                WHERE r.project_id=?
                GROUP BY r.id
                HAVING avg_confidence < 0.7
@@ -1551,46 +1551,46 @@ def compute_coverage(st: AppState) -> dict[str, Any]:
         )
     ]
 
-    # v0.8 P2 fix #9: RFs with at least one rf_symbol row whose
+    # v0.8 P2 fix #9: Specs with at least one spec_symbol row whose
     # relation is 'tests'. Schema already supports this; surface it.
-    rf_test_coverage = [
+    spec_test_coverage = [
         {
-            "rf_id": r["rf_id"],
+            "spec_id": r["spec_id"],
             "title": r["title"],
             "test_count": int(r["test_count"]),
         }
         for r in st.conn.execute(
-            """SELECT r.rf_id, r.title, COUNT(rs.id) AS test_count
-               FROM rf r JOIN rf_symbol rs ON rs.rf_id=r.id
+            """SELECT r.spec_id, r.title, COUNT(rs.id) AS test_count
+               FROM spec r JOIN spec_symbol rs ON rs.spec_id=r.id
                WHERE r.project_id=? AND rs.relation='tests'
                GROUP BY r.id
-               ORDER BY test_count DESC, r.rf_id""",
+               ORDER BY test_count DESC, r.spec_id""",
             (pid,),
         )
     ]
 
-    # v0.15: auto-derived per-RF test coverage from the call graph. Reuses
+    # v0.15: auto-derived per-Spec test coverage from the call graph. Reuses
     # the cached `view` (no reload). Additive — leaves the explicit-link
-    # `rf_test_coverage` / `rfs_with_test_coverage` above untouched.
-    rf_coverage_map = compute_rf_test_coverage(st, view)
-    rf_coverage = sorted(
-        rf_coverage_map.values(),
-        key=lambda d: (-d["test_coverage_ratio"], d["rf_id"]),
+    # `spec_test_coverage` / `specs_with_test_coverage` above untouched.
+    spec_coverage_map = compute_spec_test_coverage(st, view)
+    spec_coverage = sorted(
+        spec_coverage_map.values(),
+        key=lambda d: (-d["test_coverage_ratio"], d["spec_id"]),
     )
-    rfs_with_any_test_coverage = sum(
-        1 for d in rf_coverage if d["test_coverage_ratio"] > 0
+    specs_with_any_test_coverage = sum(
+        1 for d in spec_coverage if d["test_coverage_ratio"] > 0
     )
     avg_test_coverage = (
         round(
-            sum(d["test_coverage_ratio"] for d in rf_coverage) / len(rf_coverage),
+            sum(d["test_coverage_ratio"] for d in spec_coverage) / len(spec_coverage),
             4,
         )
-        if rf_coverage
+        if spec_coverage
         else 0.0
     )
 
     # v0.16 D: record one coverage trend snapshot per audit. The avg +
-    # verified-RF count + per-RF ratios are appended to rf_coverage_snapshot
+    # verified-Spec count + per-Spec ratios are appended to spec_coverage_snapshot
     # so the explorer can plot coverage over time. Best-effort: a recording
     # failure must never break the audit itself.
     try:
@@ -1601,37 +1601,37 @@ def compute_coverage(st: AppState) -> dict[str, Any]:
         trends.record_snapshot(
             st.conn,
             pid,
-            per_rf={d["rf_id"]: d["test_coverage_ratio"] for d in rf_coverage},
-            avg=avg_test_coverage if rf_coverage else None,
-            verified_count=rfs_with_any_test_coverage,
+            per_spec={d["spec_id"]: d["test_coverage_ratio"] for d in spec_coverage},
+            avg=avg_test_coverage if spec_coverage else None,
+            verified_count=specs_with_any_test_coverage,
             ts=datetime.now(UTC).isoformat(),
         )
     except Exception:
         pass
 
     counts = {
-        "modules_without_rf": len(modules_no_rf),
+        "modules_without_rf": len(modules_no_spec),
         "modules_implicitly_covered": len(modules_implicit),
         "modules_truly_orphan": len(modules_truly_orphan),
         "modules_unsupported_language": len(modules_unsupported_language),
-        "rfs_without_implementation": len(rfs_no_impl),
-        "rfs_low_confidence": len(rfs_low_conf),
-        "rfs_with_test_coverage": len(rf_test_coverage),
-        "rfs_with_any_test_coverage": rfs_with_any_test_coverage,
+        "specs_without_implementation": len(specs_no_impl),
+        "specs_low_confidence": len(specs_low_conf),
+        "specs_with_test_coverage": len(spec_test_coverage),
+        "specs_with_any_test_coverage": specs_with_any_test_coverage,
         "avg_test_coverage": avg_test_coverage,
     }
     return {
         "counts": counts,
-        "modules_without_rf": modules_no_rf,
+        "modules_without_rf": modules_no_spec,
         "modules_implicitly_covered": modules_implicit,
         "modules_truly_orphan": modules_truly_orphan,
         "modules_unsupported_language": modules_unsupported_language,
-        "rfs_without_implementation": rfs_no_impl,
-        "rfs_low_confidence": rfs_low_conf,
-        "rf_coverage": rf_coverage,
+        "specs_without_implementation": specs_no_impl,
+        "specs_low_confidence": specs_low_conf,
+        "spec_coverage": spec_coverage,
         "avg_test_coverage": avg_test_coverage,
-        "rfs_with_any_test_coverage": rfs_with_any_test_coverage,
-        "rf_test_coverage": rf_test_coverage,
+        "specs_with_any_test_coverage": specs_with_any_test_coverage,
+        "spec_test_coverage": spec_test_coverage,
     }
 
 
@@ -1641,7 +1641,7 @@ def _git_diff_changed_files(
     """Run ``git diff --name-only base..head`` for ``ws_root``.
 
     Shared core for ``git_diff_impact`` (the paginated tool) and
-    ``compute_diff_rf_impact`` (the explorer helper). Returns
+    ``compute_diff_spec_impact`` (the explorer helper). Returns
     ``(changed_paths, None)`` on success or ``(None, error_dict)`` when git
     is missing / the range is unknown / the workspace has no history — the
     error dict is already shaped by ``mcp_error`` so callers can return it
@@ -1700,25 +1700,25 @@ def _git_diff_changed_files(
     return [p for p in proc.stdout.splitlines() if p.strip()], None
 
 
-def compute_diff_rf_impact(
+def compute_diff_spec_impact(
     st: AppState,
     base: str,
     head: str,
     max_depth: int = 5,
 ) -> dict[str, Any]:
-    """RF-centric impact of a git range, for the explorer export (v0.16 A).
+    """Spec-centric impact of a git range, for the explorer export (v0.16 A).
 
     Walks the diff the same way ``git_diff_impact`` does (changed files →
-    indexed symbols → backward caller cone → touched RFs), then folds each
-    touched RF down to ``{rf_id, title, files, test_coverage_ratio}``:
+    indexed symbols → backward caller cone → touched Specs), then folds each
+    touched Spec down to ``{spec_id, title, files, test_coverage_ratio}``:
 
-    * ``files`` — the CHANGED files that contribute symbols to that RF
-      (either directly linked or whose change reaches the RF's symbols
+    * ``files`` — the CHANGED files that contribute symbols to that Spec
+      (either directly linked or whose change reaches the Spec's symbols
       through the caller cone), sorted.
-    * ``test_coverage_ratio`` — pulled from ``compute_rf_test_coverage`` so
-      the explorer can flag "touched but under-tested" RFs.
+    * ``test_coverage_ratio`` — pulled from ``compute_spec_test_coverage`` so
+      the explorer can flag "touched but under-tested" Specs.
 
-    Returns ``{base, head, files_changed, requirements_touched}``. When git
+    Returns ``{base, head, files_changed, specs_touched}``. When git
     or the range is unavailable, returns the same keys with empty lists so
     the caller can simply omit the section.
     """
@@ -1726,7 +1726,7 @@ def compute_diff_rf_impact(
         "base": base,
         "head": head,
         "files_changed": [],
-        "requirements_touched": [],
+        "specs_touched": [],
     }
 
     changed_paths, err = _git_diff_changed_files(
@@ -1758,7 +1758,7 @@ def compute_diff_rf_impact(
 
     # For each changed file, the cone of symbols its change touches
     # (the file's own symbols + their backward callers). Used to map a
-    # touched RF back to the changed file(s) responsible.
+    # touched Spec back to the changed file(s) responsible.
     cone_by_file: dict[str, set[int]] = {}
     for path, ids in sids_by_file.items():
         cone: set[int] = set(ids)
@@ -1773,54 +1773,54 @@ def compute_diff_rf_impact(
     if not all_touched:
         return empty
 
-    # Map every touched symbol id -> the RFs that link it.
+    # Map every touched symbol id -> the Specs that link it.
     placeholders = ",".join("?" * len(all_touched))
-    sym_to_rfs: dict[int, list[str]] = {}
-    rf_titles: dict[str, str] = {}
+    sym_to_specs: dict[int, list[str]] = {}
+    spec_titles: dict[str, str] = {}
     for r in st.conn.execute(
-        f"""SELECT rs.symbol_id, r.rf_id, r.title
-            FROM rf_symbol rs JOIN rf r ON r.id = rs.rf_id
+        f"""SELECT rs.symbol_id, r.spec_id, r.title
+            FROM spec_symbol rs JOIN spec r ON r.id = rs.spec_id
             WHERE r.project_id=? AND rs.symbol_id IN ({placeholders})""",
         [pid, *list(all_touched)],
     ):
-        sym_to_rfs.setdefault(int(r["symbol_id"]), []).append(r["rf_id"])
-        rf_titles[r["rf_id"]] = r["title"]
+        sym_to_specs.setdefault(int(r["symbol_id"]), []).append(r["spec_id"])
+        spec_titles[r["spec_id"]] = r["title"]
 
-    if not rf_titles:
+    if not spec_titles:
         return {
             "base": base,
             "head": head,
             "files_changed": sorted(sids_by_file.keys()),
-            "requirements_touched": [],
+            "specs_touched": [],
         }
 
-    # Per-RF: which CHANGED files reach it (via that file's cone).
-    files_by_rf: dict[str, set[str]] = {}
+    # Per-Spec: which CHANGED files reach it (via that file's cone).
+    files_by_spec: dict[str, set[str]] = {}
     for path, cone in cone_by_file.items():
         for sid in cone:
-            for rf_id in sym_to_rfs.get(sid, ()):
-                files_by_rf.setdefault(rf_id, set()).add(path)
+            for spec_id in sym_to_specs.get(sid, ()):
+                files_by_spec.setdefault(spec_id, set()).add(path)
 
-    coverage_map = compute_rf_test_coverage(st, view)
-    requirements_touched = [
+    coverage_map = compute_spec_test_coverage(st, view)
+    specs_touched = [
         {
-            "rf_id": rf_id,
-            "title": rf_titles[rf_id],
-            "files": sorted(files_by_rf.get(rf_id, set())),
+            "spec_id": spec_id,
+            "title": spec_titles[spec_id],
+            "files": sorted(files_by_spec.get(spec_id, set())),
             "test_coverage_ratio": (
-                coverage_map[rf_id]["test_coverage_ratio"]
-                if rf_id in coverage_map
+                coverage_map[spec_id]["test_coverage_ratio"]
+                if spec_id in coverage_map
                 else 0.0
             ),
         }
-        for rf_id in sorted(rf_titles)
+        for spec_id in sorted(spec_titles)
     ]
 
     return {
         "base": base,
         "head": head,
         "files_changed": sorted(sids_by_file.keys()),
-        "requirements_touched": requirements_touched,
+        "specs_touched": specs_touched,
     }
 
 
@@ -1867,12 +1867,12 @@ def compute_project_overview(
         top_syms.append({**meta, "pagerank": round(score, 6)})
         if len(top_syms) >= 20:
             break
-    rf_total = st.conn.execute(
-        "SELECT COUNT(*) c FROM rf WHERE project_id=?", (pid,)
+    spec_total = st.conn.execute(
+        "SELECT COUNT(*) c FROM spec WHERE project_id=?", (pid,)
     ).fetchone()["c"]
-    rf_linked = st.conn.execute(
-        """SELECT COUNT(DISTINCT r.id) c FROM rf r
-           JOIN rf_symbol rs ON rs.rf_id=r.id WHERE r.project_id=?""",
+    spec_linked = st.conn.execute(
+        """SELECT COUNT(DISTINCT r.id) c FROM spec r
+           JOIN spec_symbol rs ON rs.spec_id=r.id WHERE r.project_id=?""",
         (pid,),
     ).fetchone()["c"]
     return {
@@ -1880,8 +1880,8 @@ def compute_project_overview(
         "languages": langs,
         "top_symbols": top_syms,
         "structural_patterns_filtered": sorted(structural_names),
-        "requirements_total": int(rf_total),
-        "requirements_linked": int(rf_linked),
+        "specs_total": int(spec_total),
+        "specs_linked": int(spec_linked),
     }
 
 
@@ -2108,7 +2108,7 @@ def register(mcp: FastMCP) -> None:
 
         Slim alias of `analyze_impact(target_type='symbol', target=qname,
         max_depth=...)` that returns only the callers list — no forward cone,
-        no RF rollup. Use when an agent only needs the answer to "what would
+        no Spec rollup. Use when an agent only needs the answer to "what would
         break if I touched this?".
 
         v0.9 P2: pagination contract. ``limit`` (default 200) caps the
@@ -2217,13 +2217,13 @@ def register(mcp: FastMCP) -> None:
 
         Returns the symbol's metadata (kind, signature, file, line range),
         the first non-empty line of its docstring, the top-5 direct callers
-        and top-5 direct callees ranked by PageRank, any linked RFs, and an
+        and top-5 direct callees ranked by PageRank, any linked Specs, and an
         `is_entry_point` flag (true when the symbol is decorated with a
         framework decorator like `@mcp.tool`, `@app.route`, `@task`, etc.) —
         so a `callers_count: 0` result is not misread as dead code.
         Designed for an agent's first contact with an unfamiliar symbol:
         instead of `find_symbol` -> `get_symbol_info` -> `analyze_impact`
-        -> `get_requirement_implementation`, run this once.""" + WORKSPACE_DOCSTRING_NOTE
+        -> `get_spec_implementation`, run this once.""" + WORKSPACE_DOCSTRING_NOTE
         st = get_state(workspace)
         pid = st.project_id
         sym = _resolve_symbol(st.conn, pid, qname)
@@ -2264,9 +2264,9 @@ def register(mcp: FastMCP) -> None:
                 for meta, score in scored[:n]
             ]
 
-        rfs = st.conn.execute(
-            """SELECT r.rf_id, r.title, rs.relation, rs.confidence
-               FROM rf_symbol rs JOIN rf r ON r.id=rs.rf_id WHERE rs.symbol_id=?""",
+        specs = st.conn.execute(
+            """SELECT r.spec_id, r.title, rs.relation, rs.confidence
+               FROM spec_symbol rs JOIN spec r ON r.id=rs.spec_id WHERE rs.symbol_id=?""",
             (sid,),
         ).fetchall()
 
@@ -2311,12 +2311,12 @@ def register(mcp: FastMCP) -> None:
             "callees_count": len(callees_all),
             "top_callers": _topn(callers_all),
             "top_callees": _topn(callees_all),
-            "requirements": [dict(r) for r in rfs],
+            "specs": [dict(r) for r in specs],
         }
 
     @mcp.tool(annotations={"readOnlyHint": True, "idempotentHint": True})
     def analyze_impact(
-        target_type: Literal["symbol", "file", "requirement"],
+        target_type: Literal["symbol", "file", "spec"],
         target: str,
         max_depth: int = 5,
         limit: int = 200,
@@ -2327,10 +2327,10 @@ def register(mcp: FastMCP) -> None:
     ) -> dict[str, Any]:
         """Topological impact analysis: what changes if `target` changes.
 
-        - symbol: backward cone of callers + RFs that touch any reached symbol.
+        - symbol: backward cone of callers + Specs that touch any reached symbol.
           Set max_depth=1 to get the equivalent of a "find references".
         - file:   union of impacts from every symbol in the file.
-        - requirement: forward cone from every symbol implementing the RF + their callers.
+        - spec: forward cone from every symbol implementing the Spec + their callers.
 
         v0.9 P2: pagination contract. ``impacted_callers`` and (for symbol
         target) ``calls_into`` are paginated by ``limit`` (default 200).
@@ -2349,15 +2349,15 @@ def register(mcp: FastMCP) -> None:
         pid = st.project_id
         view = load_graph(st.conn, pid)
 
-        def rfs_for_symbols(ids: set[int]) -> list[dict]:
+        def specs_for_symbols(ids: set[int]) -> list[dict]:
             if not ids:
                 return []
             placeholders = ",".join("?" * len(ids))
             return [
                 dict(r)
                 for r in st.conn.execute(
-                    f"""SELECT DISTINCT r.rf_id, r.title, r.status, r.priority
-                        FROM rf_symbol rs JOIN rf r ON r.id=rs.rf_id
+                    f"""SELECT DISTINCT r.spec_id, r.title, r.status, r.priority
+                        FROM spec_symbol rs JOIN spec r ON r.id=rs.spec_id
                         WHERE rs.symbol_id IN ({placeholders})""",
                     list(ids),
                 ).fetchall()
@@ -2395,7 +2395,7 @@ def register(mcp: FastMCP) -> None:
                     "counts": {
                         "impacted_callers": len(impacted),
                         "calls_into": len(forward),
-                        "affected_requirements": len(rfs_for_symbols(impacted | {sid})),
+                        "affected_specs": len(specs_for_symbols(impacted | {sid})),
                     },
                 }
             callers_page, callers_total, callers_next = _paginate_meta(impacted)
@@ -2410,7 +2410,7 @@ def register(mcp: FastMCP) -> None:
                     "root": sym["qualified_name"],
                     "impacted_callers": callers_page,
                     "calls_into": calls_page,
-                    "affected_requirements": rfs_for_symbols(impacted | {sid}),
+                    "affected_specs": specs_for_symbols(impacted | {sid}),
                     "counts": {
                         "impacted_callers": callers_total,
                         "calls_into": calls_total,
@@ -2446,8 +2446,8 @@ def register(mcp: FastMCP) -> None:
                     "symbols_in_file": len(sids),
                     "counts": {
                         "impacted_callers": len(impacted),
-                        "affected_requirements": len(
-                            rfs_for_symbols(impacted | set(sids))
+                        "affected_specs": len(
+                            specs_for_symbols(impacted | set(sids))
                         ),
                     },
                 }
@@ -2457,7 +2457,7 @@ def register(mcp: FastMCP) -> None:
                     "file": target,
                     "symbols_in_file": len(sids),
                     "impacted_callers": callers_page,
-                    "affected_requirements": rfs_for_symbols(impacted | set(sids)),
+                    "affected_specs": specs_for_symbols(impacted | set(sids)),
                     "counts": {"impacted_callers": callers_total},
                     "next_cursor": callers_next,
                 },
@@ -2465,49 +2465,49 @@ def register(mcp: FastMCP) -> None:
                     callers_total, limit=limit, summary_only=summary_only
                 ),
             )
-        if target_type == "requirement":
-            rf = st.conn.execute(
-                "SELECT id, rf_id FROM rf WHERE project_id=? AND rf_id=?", (pid, target)
+        if target_type == "spec":
+            spec = st.conn.execute(
+                "SELECT id, spec_id FROM spec WHERE project_id=? AND spec_id=?", (pid, target)
             ).fetchone()
-            if not rf:
+            if not spec:
                 return mcp_error(
-                    f"RF '{target}' not found",
-                    hint="check `list_requirements()` for known RF ids",
+                    f"Spec '{target}' not found",
+                    hint="check `list_specs()` for known Spec ids",
                 )
 
-            # v0.5 P2: include backward RFs in the dependency graph (RFs that
-            # require / extend this one). A change to RF-001 ripples to RF-042
-            # if RF-042 requires RF-001. Walk rf_dependency backward.
-            dependent_rf_ids: set[int] = set()
-            frontier = [int(rf["id"])]
+            # v0.5 P2: include backward Specs in the dependency graph (Specs that
+            # require / extend this one). A change to SPEC-001 ripples to SPEC-042
+            # if SPEC-042 requires SPEC-001. Walk spec_dependency backward.
+            dependent_spec_ids: set[int] = set()
+            frontier = [int(spec["id"])]
             while frontier:
                 cur_id = frontier.pop()
                 for r in st.conn.execute(
-                    "SELECT parent_rf_id FROM rf_dependency WHERE child_rf_id=?",
+                    "SELECT parent_spec_id FROM spec_dependency WHERE child_spec_id=?",
                     (cur_id,),
                 ):
-                    pid_dep = int(r["parent_rf_id"])
-                    if pid_dep in dependent_rf_ids:
+                    pid_dep = int(r["parent_spec_id"])
+                    if pid_dep in dependent_spec_ids:
                         continue
-                    dependent_rf_ids.add(pid_dep)
+                    dependent_spec_ids.add(pid_dep)
                     frontier.append(pid_dep)
 
-            # All RF ids whose impact contributes to this analysis: target +
-            # the set of RFs that transitively depend on it (cascade).
-            all_rf_ids = {int(rf["id"])} | dependent_rf_ids
-            placeholders = ",".join("?" * len(all_rf_ids))
+            # All Spec ids whose impact contributes to this analysis: target +
+            # the set of Specs that transitively depend on it (cascade).
+            all_spec_ids = {int(spec["id"])} | dependent_spec_ids
+            placeholders = ",".join("?" * len(all_spec_ids))
             sid_rows = st.conn.execute(
-                f"SELECT DISTINCT symbol_id FROM rf_symbol WHERE rf_id IN ({placeholders})",
-                list(all_rf_ids),
+                f"SELECT DISTINCT symbol_id FROM spec_symbol WHERE spec_id IN ({placeholders})",
+                list(all_spec_ids),
             ).fetchall()
             sids = [int(r["symbol_id"]) for r in sid_rows]
 
             if not sids:
                 return {
-                    "rf_id": rf["rf_id"],
-                    "warning": "RF (and its dependents) have no linked symbols",
+                    "spec_id": spec["spec_id"],
+                    "warning": "Spec (and its dependents) have no linked symbols",
                     "implementing_symbols": [],
-                    "dependent_requirements": [],
+                    "dependent_specs": [],
                 }
             forward: set[int] = set()
             backward: set[int] = set()
@@ -2516,28 +2516,28 @@ def register(mcp: FastMCP) -> None:
                     forward |= descendants_within(view.g, sid, max_depth)
                     backward |= ancestors_within(view.g, sid, max_depth)
 
-            dep_rf_meta: list[dict[str, Any]] = []
-            if dependent_rf_ids:
-                dep_placeholders = ",".join("?" * len(dependent_rf_ids))
-                dep_rf_meta = [
+            dep_spec_meta: list[dict[str, Any]] = []
+            if dependent_spec_ids:
+                dep_placeholders = ",".join("?" * len(dependent_spec_ids))
+                dep_spec_meta = [
                     dict(r)
                     for r in st.conn.execute(
-                        f"""SELECT rf_id, title, status, priority FROM rf
+                        f"""SELECT spec_id, title, status, priority FROM spec
                             WHERE id IN ({dep_placeholders})""",
-                        list(dependent_rf_ids),
+                        list(dependent_spec_ids),
                     )
                 ]
 
             return {
-                "rf_id": rf["rf_id"],
-                "dependent_requirements": dep_rf_meta,
+                "spec_id": spec["spec_id"],
+                "dependent_specs": dep_spec_meta,
                 "implementing_symbols": [view.sym_meta[n] for n in sids if n in view.sym_meta],
                 "downstream": [view.sym_meta[n] for n in forward if n in view.sym_meta],
                 "upstream_callers": [view.sym_meta[n] for n in backward if n in view.sym_meta],
             }
         return mcp_error(
             f"Unknown target_type '{target_type}'",
-            hint="target_type must be one of: 'symbol', 'file', 'requirement'",
+            hint="target_type must be one of: 'symbol', 'file', 'spec'",
         )
 
     @mcp.tool(annotations={"readOnlyHint": True, "idempotentHint": True})
@@ -2546,7 +2546,7 @@ def register(mcp: FastMCP) -> None:
         include_structural_patterns: bool = False,
         workspace: Workspace | None = None,
     ) -> dict[str, Any]:
-        """High-level snapshot: languages, modules, top symbols by PageRank, RF coverage.
+        """High-level snapshot: languages, modules, top symbols by PageRank, Spec coverage.
 
         By default the top-symbols list filters out:
         - infrastructure noise (DI helpers, FastMCP `register` outer fns,
@@ -2574,7 +2574,7 @@ def register(mcp: FastMCP) -> None:
         summary_only: bool = False,
         workspace: Workspace | None = None,
     ) -> dict[str, Any]:
-        """Symbols with zero callers and zero RF links — removal candidates.
+        """Symbols with zero callers and zero Spec links — removal candidates.
 
         Filters out, by default:
         - Files under `tests/`, `scripts/`, `bin/`; `__main__.py`; `manage.py`
@@ -2611,7 +2611,7 @@ def register(mcp: FastMCP) -> None:
 
         Useful sanity check before a refactor: anything in the result is
         unreachable from in-project callers AND not traceably implementing
-        any RF AND not exposed publicly.
+        any Spec AND not exposed publicly.
         """
         st = get_state(workspace)
         pid = st.project_id
@@ -2624,7 +2624,7 @@ def register(mcp: FastMCP) -> None:
                    SELECT 1 FROM symbol_edge e WHERE e.dst_symbol_id=s.id
                  )
                  AND NOT EXISTS (
-                   SELECT 1 FROM rf_symbol rs WHERE rs.symbol_id=s.id
+                   SELECT 1 FROM spec_symbol rs WHERE rs.symbol_id=s.id
                  )
                ORDER BY f.path, s.start_line""",
             (pid,),
@@ -2939,36 +2939,36 @@ def register(mcp: FastMCP) -> None:
         summary_only: bool = False,
         workspace: Workspace | None = None,
     ) -> dict[str, Any]:
-        """RF coverage audit: what's missing / under-confident.
+        """Spec coverage audit: what's missing / under-confident.
 
         Six signals:
-        - `modules_without_rf`: files whose symbols have no DIRECT `rf_symbol` link
+        - `modules_without_rf`: files whose symbols have no DIRECT `spec_symbol` link
         - `modules_implicitly_covered`: subset of `modules_without_rf` whose
-          symbols are called transitively by an rf-linked symbol — covered
+          symbols are called transitively by a spec-linked symbol — covered
           indirectly through the call graph (e.g. a data layer reached via
-          API handlers that carry the `@rf:` annotation)
+          API handlers that carry the `@spec:` annotation)
         - `modules_truly_orphan`: subset of `modules_without_rf` with NO direct
           link AND no transitive coverage — the actually-actionable list
         - `modules_unsupported_language`: files in languages whose extractor
-          does not yet read in-source `@rf:` annotations (everything outside
+          does not yet read in-source `@spec:` annotations (everything outside
           Python / JS / TS today). Listed separately so they aren't reported
           as orphans — the gap is in the extractor, not the project.
-        - `rfs_without_implementation`: RFs with no `rf_symbol` row at all
-        - `rfs_low_confidence`: RFs whose avg(rf_symbol.confidence) < 0.7
-          (typically means only verb-anchored matches, no `@rf:` annotation)
-        - `rf_test_coverage` (v0.8 P2 fix #9): RFs that have ≥1 `relation='tests'`
-          link, with the count. Use this to spot RFs implemented but not
-          tested (RF in this list with low test_count → coverage gap).
-        - `rf_coverage` (v0.15): per-RF AUTO-DERIVED test coverage from the
-          call graph. Each entry is `{rf_id, title, test_coverage_ratio,
-          tested_symbols, total_symbols, coverage_source}`. An RF's
+        - `specs_without_implementation`: Specs with no `spec_symbol` row at all
+        - `specs_low_confidence`: Specs whose avg(spec_symbol.confidence) < 0.7
+          (typically means only verb-anchored matches, no `@spec:` annotation)
+        - `spec_test_coverage` (v0.8 P2 fix #9): Specs that have ≥1 `relation='tests'`
+          link, with the count. Use this to spot Specs implemented but not
+          tested (Spec in this list with low test_count → coverage gap).
+        - `spec_coverage` (v0.15): per-Spec AUTO-DERIVED test coverage from the
+          call graph. Each entry is `{spec_id, title, test_coverage_ratio,
+          tested_symbols, total_symbols, coverage_source}`. A Spec's
           `implements` symbol counts as tested when a test symbol reaches it
           within 3 call-graph hops (derived) OR it carries an explicit
           `relation='tests'` link (explicit); `coverage_source`
           ∈ {derived, explicit, both, none}. No hand-linking required —
-          this is the differentiator over the explicit-only `rf_test_coverage`
-          above. Rollups `avg_test_coverage` and `rfs_with_any_test_coverage`
-          (RFs with ratio>0) are also in `counts`.
+          this is the differentiator over the explicit-only `spec_test_coverage`
+          above. Rollups `avg_test_coverage` and `specs_with_any_test_coverage`
+          (Specs with ratio>0) are also in `counts`.
 
         v0.7 (B3): paginated. `limit` (default 200) caps each list per
         call; `cursor` resumes; `summary_only=True` returns only the
@@ -2976,7 +2976,7 @@ def register(mcp: FastMCP) -> None:
 
         v0.8 P2 fix #8: package-marker files (`__init__.py`,
         `package-info.java`, `mod.rs`) are auto-excluded from
-        `modules_without_rf` — `@rf:` annotations on a no-op import
+        `modules_without_rf` — `@spec:` annotations on a no-op import
         marker would never be the right place anyway.
         """
         st = get_state(workspace)
@@ -2988,10 +2988,10 @@ def register(mcp: FastMCP) -> None:
         modules_implicit = cov["modules_implicitly_covered"]
         modules_truly_orphan = cov["modules_truly_orphan"]
         modules_unsupported_language = cov["modules_unsupported_language"]
-        rfs_no_impl = cov["rfs_without_implementation"]
-        rfs_low_conf = cov["rfs_low_confidence"]
-        rf_test_coverage = cov["rf_test_coverage"]
-        rf_coverage = cov["rf_coverage"]
+        specs_no_impl = cov["specs_without_implementation"]
+        specs_low_conf = cov["specs_low_confidence"]
+        spec_test_coverage = cov["spec_test_coverage"]
+        spec_coverage = cov["spec_coverage"]
         if summary_only:
             return {"counts": counts}
 
@@ -3004,31 +3004,31 @@ def register(mcp: FastMCP) -> None:
         mi_p, mi_next = _page(modules_implicit)
         mt_p, mt_next = _page(modules_truly_orphan)
         mu_p, mu_next = _page(modules_unsupported_language)
-        rfn_p, rfn_next = _page(rfs_no_impl)
-        rfl_p, rfl_next = _page(rfs_low_conf)
-        rftc_p, rftc_next = _page(rf_test_coverage)
-        rfcov_p, rfcov_next = _page(rf_coverage)
+        specn_p, specn_next = _page(specs_no_impl)
+        specl_p, specl_next = _page(specs_low_conf)
+        spectc_p, spectc_next = _page(spec_test_coverage)
+        speccov_p, speccov_next = _page(spec_coverage)
         return {
             "counts": counts,
             "modules_without_rf": mw_p,
             "modules_implicitly_covered": mi_p,
             "modules_truly_orphan": mt_p,
             "modules_unsupported_language": mu_p,
-            "rfs_without_implementation": rfn_p,
-            "rfs_low_confidence": rfl_p,
-            "rf_test_coverage": rftc_p,
-            "rf_coverage": rfcov_p,
+            "specs_without_implementation": specn_p,
+            "specs_low_confidence": specl_p,
+            "spec_test_coverage": spectc_p,
+            "spec_coverage": speccov_p,
             "avg_test_coverage": cov["avg_test_coverage"],
-            "rfs_with_any_test_coverage": cov["rfs_with_any_test_coverage"],
+            "specs_with_any_test_coverage": cov["specs_with_any_test_coverage"],
             "next_cursor": {
                 "modules_without_rf": mw_next,
                 "modules_implicitly_covered": mi_next,
                 "modules_truly_orphan": mt_next,
                 "modules_unsupported_language": mu_next,
-                "rfs_without_implementation": rfn_next,
-                "rfs_low_confidence": rfl_next,
-                "rf_test_coverage": rftc_next,
-                "rf_coverage": rfcov_next,
+                "specs_without_implementation": specn_next,
+                "specs_low_confidence": specl_next,
+                "spec_test_coverage": spectc_next,
+                "spec_coverage": speccov_next,
             },
         }
 
@@ -3133,13 +3133,13 @@ def register(mcp: FastMCP) -> None:
         summary_only: bool = False,
         workspace: Workspace | None = None,
     ) -> dict[str, Any]:
-        """Topological impact of a git diff: changed files -> RFs + callers + suggested tests.
+        """Topological impact of a git diff: changed files -> Specs + callers + suggested tests.
 
         The CI/PR-review entry point. Given a base..head git range, this tool:
         1. lists changed files via `git diff --name-only`
         2. resolves each one against the indexed symbols
         3. unions the backward cone of callers across them
-        4. unions the affected RFs
+        4. unions the affected Specs
         5. suggests test files: any file under `tests/` (or `*_test.*`) whose
            symbols call any impacted symbol — those are likely to break.
 
@@ -3149,14 +3149,14 @@ def register(mcp: FastMCP) -> None:
         v0.7 (B3): paginated. `impacted_limit` (default 200) caps the
         `impacted_callers` list — the unbounded cone was the cause of
         7M-char payloads on Rust monorepos. `summary_only=True` returns
-        counts + the small lists (changed_files, affected_requirements,
+        counts + the small lists (changed_files, affected_specs,
         suggested_tests) without `changed_symbols` or `impacted_callers`.
         """
         st = get_state(workspace)
         pid = st.project_id
         ws_root = str(st.settings.workspace)
 
-        # v0.16 A: shared git-diff core (also feeds compute_diff_rf_impact).
+        # v0.16 A: shared git-diff core (also feeds compute_diff_spec_impact).
         changed_paths, err = _git_diff_changed_files(ws_root, base_ref, head_ref)
         if err is not None:
             return err
@@ -3167,7 +3167,7 @@ def register(mcp: FastMCP) -> None:
                 "changed_files": [],
                 "changed_files_indexed": [],
                 "changed_files_unindexed": [],
-                "affected_requirements": [],
+                "affected_specs": [],
                 "suggested_tests": [],
                 "counts": {"impacted_callers": 0, "changed_symbols": 0},
             }
@@ -3211,18 +3211,18 @@ def register(mcp: FastMCP) -> None:
                 impacted |= ancestors_within(view.g, sid, max_depth)
         impacted -= changed_sym_ids
 
-        # Affected RFs: any rf_symbol whose symbol_id is in changed | impacted
+        # Affected Specs: any spec_symbol whose symbol_id is in changed | impacted
         all_touched = changed_sym_ids | impacted
-        affected_rfs: list[dict[str, Any]] = []
+        affected_specs: list[dict[str, Any]] = []
         if all_touched:
             placeholders = ",".join("?" * len(all_touched))
             for r in st.conn.execute(
-                f"""SELECT DISTINCT r.rf_id, r.title, r.status, r.priority
-                    FROM rf_symbol rs JOIN rf r ON r.id = rs.rf_id
+                f"""SELECT DISTINCT r.spec_id, r.title, r.status, r.priority
+                    FROM spec_symbol rs JOIN spec r ON r.id = rs.spec_id
                     WHERE rs.symbol_id IN ({placeholders})""",
                 list(all_touched),
             ):
-                affected_rfs.append(dict(r))
+                affected_specs.append(dict(r))
 
         # Suggested tests: files under a tests/ folder OR matching *_test.* /
         # test_*.* whose symbols are in `impacted` (i.e. test functions that call
@@ -3269,7 +3269,7 @@ def register(mcp: FastMCP) -> None:
             "changed_files": len(changed_paths),
             "changed_symbols": len(changed_symbol_meta),
             "impacted_callers": len(impacted_meta),
-            "affected_requirements": len(affected_rfs),
+            "affected_specs": len(affected_specs),
             "suggested_tests": len(suggested_tests),
         }
         base = {
@@ -3278,7 +3278,7 @@ def register(mcp: FastMCP) -> None:
             "changed_files": changed_paths,
             "changed_files_indexed": sorted(indexed_paths),
             "changed_files_unindexed": sorted(set(changed_paths) - indexed_paths),
-            "affected_requirements": affected_rfs,
+            "affected_specs": affected_specs,
             "suggested_tests": suggested_tests,
             "counts": counts,
         }

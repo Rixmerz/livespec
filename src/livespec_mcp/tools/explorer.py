@@ -1,7 +1,7 @@
-"""RF Explorer bundle builder (livespec-docs plugin surface).
+"""Spec Explorer bundle builder (livespec-docs plugin surface).
 
-Emits a static, self-contained "RF Explorer" — a Swagger-UI-style bundle
-auto-generated from the project's Requirements + call graph + endpoints +
+Emits a static, self-contained "Spec Explorer" — a Swagger-UI-style bundle
+auto-generated from the project's Specs + call graph + endpoints +
 coverage audit. Two artifacts land under ``<workspace>/.mcp-docs/explorer/``:
 
     data.json   machine-readable bundle (schema below)
@@ -9,18 +9,18 @@ coverage audit. Two artifacts land under ``<workspace>/.mcp-docs/explorer/``:
 
 The data layer REUSES the compute logic behind ``find_endpoints`` and
 ``audit_coverage`` (``compute_endpoints`` / ``compute_coverage`` in
-``tools.analysis``) and reads RF / rf_symbol / rf_dependency directly —
-no MCP round-trips, no duplicated SQL beyond the per-RF symbol join.
+``tools.analysis``) and reads Spec / spec_symbol / spec_dependency directly —
+no MCP round-trips, no duplicated SQL beyond the per-Spec symbol join.
 
 data.json schema:
     {
       "meta": {"project", "generated_at"|null, "base_path": "/explorer",
-               "counts": {"requirements", "symbols", "endpoints", "files"}},
-      "dashboard": {"requirements", "dev_state_counts": {...},
+               "counts": {"specs", "symbols", "endpoints", "files"}},
+      "dashboard": {"specs", "dev_state_counts": {...},
                     "with_endpoints", "with_dependencies",
                     "implemented_pct", "verified", "avg_coverage",
                     "avg_test_coverage"},
-      "requirements": [{"id", "title", "status", "dev_state", "description",
+      "specs": [{"id", "title", "status", "dev_state", "description",
                         "symbols": [{"qname", "signature"|null, "file", "line"}],
                         "endpoints": [str], "depends_on": [str],
                         "coverage": float|null,
@@ -28,37 +28,37 @@ data.json schema:
                         "tested_symbols": int, "total_symbols": int,
                         "uncovered_symbols": [str],
                         "uncovered_symbols_count": int}],
-      "rf_topology": {"nodes": [{"id", "title", "dev_state"}],
+      "spec_topology": {"nodes": [{"id", "title", "dev_state"}],
                       "edges": [{"from", "to", "kind"}]},
       "endpoints": [{"kind": str, "framework"|null, "handler",
                      "signature"|null, "path"|null, "method"|null,
-                     "rf_ids": [str]}],
+                     "spec_ids": [str]}],
       "fixtures": [{"kind": "fixture", ...same shape as an endpoint...}],
       "coverage": {"orphan_modules": [str], "orphan_endpoints": [str],
                    "totals": {...}},
       "trend": [{"ts": str, "avg_test_coverage": float|null,
                  "verified_count": int}],
       "changes": {"base": str|null, "head": str|null, "files_changed": [str],
-                  "requirements_touched": [{"rf_id", "title", "files": [str],
+                  "specs_touched": [{"spec_id", "title", "files": [str],
                                             "test_coverage_ratio": float}]}
     }
 
 ``endpoints`` is the real API surface only: ``kind`` ∈ {tool, resource,
 prompt, other} (derived from the handler's decorator — mcp.tool /
-mcp.resource / mcp.prompt / the RF-plugin aliases, or a framework route).
+mcp.resource / mcp.prompt / the Spec-plugin aliases, or a framework route).
 ``pytest.fixture`` entries are test infrastructure, NOT API surface, so
 they are split into the separate ``fixtures`` collection and excluded from
 ``meta.counts.endpoints``. The viewer groups endpoints by ``kind``
 Swagger-style and shows fixtures in a clearly-separate collapsed section.
 
-The ``coverage`` float per RF is the AVERAGE LINK CONFIDENCE of that RF's
-``rf_symbol`` rows — i.e. how confident the RF↔code attributions are, NOT
+The ``coverage`` float per Spec is the AVERAGE LINK CONFIDENCE of that Spec's
+``spec_symbol`` rows — i.e. how confident the Spec↔code attributions are, NOT
 test coverage and NOT call-graph reachability. The UI labels it as such.
 SEPARATE from it, ``test_coverage_ratio`` (0..1) is REAL test coverage
-(v0.15): the fraction of the RF's implementing symbols reached by a test
+(v0.15): the fraction of the Spec's implementing symbols reached by a test
 symbol's depth-3 call cone UNIONED with explicit ``relation='tests'``
-links — sourced from ``compute_rf_test_coverage`` / ``compute_coverage``'s
-``rf_coverage`` list. ``coverage_source`` ∈ {derived, explicit, both, none}
+links — sourced from ``compute_spec_test_coverage`` / ``compute_coverage``'s
+``spec_coverage`` list. ``coverage_source`` ∈ {derived, explicit, both, none}
 records HOW that coverage is known. Both meters are shown, each labelled.
 
 ``dev_state`` is DERIVED from evidence (symbol links + that confidence +
@@ -88,7 +88,7 @@ from livespec_mcp.state import AppState
 from livespec_mcp.storage.trends import read_trend
 from livespec_mcp.tools.analysis import (
     compute_coverage,
-    compute_diff_rf_impact,
+    compute_diff_spec_impact,
     compute_endpoints,
 )
 
@@ -105,7 +105,7 @@ def _resolve_diff_range(
     delta to show), fall back to ``HEAD~1``..``HEAD``. Returns ``None`` when
     the workspace is not a git repo / git is unavailable (the caller then
     omits the section). Explicit ``base``/``head`` are passed through verbatim
-    and are NOT validated here — ``compute_diff_rf_impact`` already degrades to
+    and are NOT validated here — ``compute_diff_spec_impact`` already degrades to
     an empty shape on an unknown range.
     """
     if base is not None and head is not None:
@@ -154,7 +154,7 @@ def _derive_dev_state(
     in_progress; coverage >= 0.7 -> implemented. ``verified`` supersedes the
     others whenever REAL test coverage exists (``test_coverage_ratio > 0``) —
     the v0.15 call-graph-derived + explicit-test-link signal from
-    ``compute_rf_test_coverage``. ``coverage`` here is average link confidence
+    ``compute_spec_test_coverage``. ``coverage`` here is average link confidence
     (see module docstring), the same signal the spine bar shows.
     """
     if symbol_count == 0:
@@ -183,7 +183,7 @@ def _framework_of_endpoint(ep: dict[str, Any]) -> str | None:
 
 # Map an endpoint's decorator last-segment to a coarse "kind" for grouping.
 # MCP servers carry no HTTP framework, so the decorator (mcp.tool / mcp.resource
-# / mcp.prompt / pytest.fixture / the RF-plugin aliases) is the real signal.
+# / mcp.prompt / pytest.fixture / the Spec-plugin aliases) is the real signal.
 # Anything unrecognised falls back to "other" so the surface stays honest.
 _KIND_BY_DECORATOR_LASTSEG: dict[str, str] = {
     "tool": "tool",
@@ -219,14 +219,14 @@ def compute_explorer_data(
     base: str | None = None,
     head: str | None = None,
 ) -> dict[str, Any]:
-    """Build the full RF Explorer data bundle for ``st``'s workspace.
+    """Build the full Spec Explorer data bundle for ``st``'s workspace.
 
     Pure read; reuses ``compute_endpoints`` + ``compute_coverage`` +
-    ``compute_diff_rf_impact`` + ``read_trend``. The returned dict matches the
+    ``compute_diff_spec_impact`` + ``read_trend``. The returned dict matches the
     data.json schema documented in the module docstring. ``generated_at`` is
     passed through verbatim (default None) so callers control determinism.
 
-    ``base``/``head`` scope the top-level ``changes`` section (RF-centric git
+    ``base``/``head`` scope the top-level ``changes`` section (Spec-centric git
     diff impact). Both default to None — see ``_resolve_diff_range`` for the
     defaulting (``main``..``HEAD`` with a ``HEAD~1``..``HEAD`` fallback, omitted
     entirely when the workspace is not a git repo). Defaulting keeps the
@@ -236,53 +236,53 @@ def compute_explorer_data(
     conn = st.conn
     pid = st.project_id
 
-    # --- Requirements + per-RF symbols (with signatures) ---------------
-    rf_rows = conn.execute(
-        """SELECT id, rf_id, title, description, status, priority
-           FROM rf WHERE project_id=? ORDER BY rf_id""",
+    # --- Specs + per-Spec symbols (with signatures) ---------------
+    spec_rows = conn.execute(
+        """SELECT id, spec_id, title, description, status, priority
+           FROM spec WHERE project_id=? ORDER BY spec_id""",
         (pid,),
     ).fetchall()
 
-    # rf.id (internal pk) -> rf_id string, for topology edge resolution
-    rfid_by_pk: dict[int, str] = {int(r["id"]): r["rf_id"] for r in rf_rows}
+    # spec.id (internal pk) -> spec_id string, for topology edge resolution
+    specid_by_pk: dict[int, str] = {int(r["id"]): r["spec_id"] for r in spec_rows}
 
-    # Coverage audit (single load): reused for the per-RF REAL test coverage
+    # Coverage audit (single load): reused for the per-Spec REAL test coverage
     # (v0.15) below AND the orphan/gaps section later. This is the ONLY
     # graph-backed coverage computation in this builder — no second load.
     cov = compute_coverage(st)
-    # rf_id -> {test_coverage_ratio, coverage_source, tested_symbols,
-    # total_symbols} from compute_coverage's rf_coverage list.
-    rf_cov_by_id: dict[str, dict[str, Any]] = {
-        c["rf_id"]: c for c in cov.get("rf_coverage", [])
+    # spec_id -> {test_coverage_ratio, coverage_source, tested_symbols,
+    # total_symbols} from compute_coverage's spec_coverage list.
+    spec_cov_by_id: dict[str, dict[str, Any]] = {
+        c["spec_id"]: c for c in cov.get("spec_coverage", [])
     }
 
-    # symbol qname -> set of rf_ids (for endpoint -> RF mapping). Built
-    # from every rf_symbol link, regardless of relation.
-    qname_to_rfids: dict[str, list[str]] = {}
+    # symbol qname -> set of spec_ids (for endpoint -> Spec mapping). Built
+    # from every spec_symbol link, regardless of relation.
+    qname_to_specids: dict[str, list[str]] = {}
     for r in conn.execute(
-        """SELECT rf.rf_id AS rf_id, s.qualified_name AS qname
-           FROM rf_symbol rs
-           JOIN rf ON rf.id = rs.rf_id
+        """SELECT spec.spec_id AS spec_id, s.qualified_name AS qname
+           FROM spec_symbol rs
+           JOIN spec ON spec.id = rs.spec_id
            JOIN symbol s ON s.id = rs.symbol_id
-           WHERE rf.project_id=?
-           ORDER BY rf.rf_id, s.qualified_name""",
+           WHERE spec.project_id=?
+           ORDER BY spec.spec_id, s.qualified_name""",
         (pid,),
     ):
-        qname_to_rfids.setdefault(r["qname"], [])
-        if r["rf_id"] not in qname_to_rfids[r["qname"]]:
-            qname_to_rfids[r["qname"]].append(r["rf_id"])
+        qname_to_specids.setdefault(r["qname"], [])
+        if r["spec_id"] not in qname_to_specids[r["qname"]]:
+            qname_to_specids[r["qname"]].append(r["spec_id"])
 
-    # depends_on edges (forward): parent -> child, by rf_id string
+    # depends_on edges (forward): parent -> child, by spec_id string
     depends_on: dict[str, list[str]] = {}
     topo_edges: list[dict[str, str]] = []
     for r in conn.execute(
-        """SELECT parent_rf_id, child_rf_id, kind FROM rf_dependency
-           WHERE parent_rf_id IN (SELECT id FROM rf WHERE project_id=?)
-           ORDER BY parent_rf_id, child_rf_id, kind""",
+        """SELECT parent_spec_id, child_spec_id, kind FROM spec_dependency
+           WHERE parent_spec_id IN (SELECT id FROM spec WHERE project_id=?)
+           ORDER BY parent_spec_id, child_spec_id, kind""",
         (pid,),
     ):
-        parent = rfid_by_pk.get(int(r["parent_rf_id"]))
-        child = rfid_by_pk.get(int(r["child_rf_id"]))
+        parent = specid_by_pk.get(int(r["parent_spec_id"]))
+        child = specid_by_pk.get(int(r["child_spec_id"]))
         if parent is None or child is None:
             continue
         depends_on.setdefault(parent, [])
@@ -290,18 +290,18 @@ def compute_explorer_data(
             depends_on[parent].append(child)
         topo_edges.append({"from": parent, "to": child, "kind": r["kind"]})
 
-    requirements: list[dict[str, Any]] = []
-    total_rf_symbols = 0
-    for rf in rf_rows:
+    specs: list[dict[str, Any]] = []
+    total_spec_symbols = 0
+    for spec in spec_rows:
         sym_rows = conn.execute(
             """SELECT s.qualified_name AS qname, s.signature, f.path AS file,
                       s.start_line AS line, rs.relation, rs.confidence
-               FROM rf_symbol rs
+               FROM spec_symbol rs
                JOIN symbol s ON s.id = rs.symbol_id
                JOIN file f ON f.id = s.file_id
-               WHERE rs.rf_id = ?
+               WHERE rs.spec_id = ?
                ORDER BY rs.confidence DESC, s.qualified_name, s.start_line""",
-            (int(rf["id"]),),
+            (int(spec["id"]),),
         ).fetchall()
         symbols = [
             {
@@ -312,10 +312,10 @@ def compute_explorer_data(
             }
             for sr in sym_rows
         ]
-        total_rf_symbols += len(symbols)
-        # Coverage signal: avg LINK CONFIDENCE of this RF's rf_symbol rows,
+        total_spec_symbols += len(symbols)
+        # Coverage signal: avg LINK CONFIDENCE of this Spec's spec_symbol rows,
         # or None when there are no links (unimplemented). This is NOT test
-        # coverage — it is how confident the RF↔code attributions are.
+        # coverage — it is how confident the Spec↔code attributions are.
         if sym_rows:
             coverage: float | None = round(
                 sum(float(sr["confidence"]) for sr in sym_rows) / len(sym_rows), 4
@@ -323,40 +323,40 @@ def compute_explorer_data(
         else:
             coverage = None
         # REAL test coverage (v0.15): call-graph-derived + explicit test
-        # links, from compute_rf_test_coverage. This SUPERSEDES the old
+        # links, from compute_spec_test_coverage. This SUPERSEDES the old
         # explicit-link-only verified rule. `coverage_source` ∈
         # {derived, explicit, both, none}.
-        rf_id = rf["rf_id"]
-        rc = rf_cov_by_id.get(rf_id)
+        spec_id = spec["spec_id"]
+        rc = spec_cov_by_id.get(spec_id)
         test_coverage_ratio = float(rc["test_coverage_ratio"]) if rc else 0.0
         coverage_source = rc["coverage_source"] if rc else "none"
         tested_symbols = int(rc["tested_symbols"]) if rc else 0
         total_symbols = int(rc["total_symbols"]) if rc else len(symbols)
         # v0.16 B: drill-down list of `implements` symbols with NO test
         # coverage (neither call-graph-reached nor explicitly tests-linked).
-        # Sourced verbatim from compute_rf_test_coverage's rf_coverage entry
+        # Sourced verbatim from compute_spec_test_coverage's spec_coverage entry
         # — already capped + counted there, NO recompute here.
         uncovered_symbols = list(rc["uncovered_symbols"]) if rc else []
         uncovered_symbols_count = int(rc["uncovered_symbols_count"]) if rc else 0
         dev_state = _derive_dev_state(len(symbols), coverage, test_coverage_ratio)
-        # Endpoints owned by this RF: endpoint handler qnames linked to it.
+        # Endpoints owned by this Spec: endpoint handler qnames linked to it.
         owned_endpoints = sorted(
             {
                 sr["qname"]
                 for sr in sym_rows
-                if rf_id in qname_to_rfids.get(sr["qname"], [])
+                if spec_id in qname_to_specids.get(sr["qname"], [])
             }
         )
-        requirements.append(
+        specs.append(
             {
-                "id": rf_id,
-                "title": rf["title"],
-                "status": rf["status"],
+                "id": spec_id,
+                "title": spec["title"],
+                "status": spec["status"],
                 "dev_state": dev_state,
-                "description": rf["description"] or "",
+                "description": spec["description"] or "",
                 "symbols": symbols,
                 "endpoints": owned_endpoints,
-                "depends_on": sorted(depends_on.get(rf_id, [])),
+                "depends_on": sorted(depends_on.get(spec_id, [])),
                 "coverage": coverage,
                 "test_coverage_ratio": test_coverage_ratio,
                 "coverage_source": coverage_source,
@@ -398,7 +398,7 @@ def compute_explorer_data(
             "signature": sig_by_qname.get(handler),
             "path": ep.get("hono_path") or ep.get("http_path"),
             "method": ep.get("hono_method") or ep.get("http_method"),
-            "rf_ids": list(qname_to_rfids.get(handler, [])),
+            "spec_ids": list(qname_to_specids.get(handler, [])),
         }
         # pytest fixtures are test infrastructure, not API surface — they
         # are kept in a separate, clearly-labelled collection so the
@@ -409,9 +409,9 @@ def compute_explorer_data(
             endpoints.append(entry)
 
     # --- Coverage / orphans --------------------------------------------
-    # `cov` already computed once above (reused for per-RF test coverage).
+    # `cov` already computed once above (reused for per-Spec test coverage).
     orphan_endpoints = sorted(
-        {ep["handler"] for ep in endpoints if not ep["rf_ids"] and ep["handler"]}
+        {ep["handler"] for ep in endpoints if not ep["spec_ids"] and ep["handler"]}
     )
     coverage_section = {
         "orphan_modules": list(cov["modules_truly_orphan"]),
@@ -420,15 +420,15 @@ def compute_explorer_data(
     }
 
     # --- Topology nodes (colored by dev_state in the viewer) -----------
-    dev_state_by_id = {r["id"]: r["dev_state"] for r in requirements}
+    dev_state_by_id = {r["id"]: r["dev_state"] for r in specs}
     topology = {
         "nodes": [
             {
-                "id": r["rf_id"],
+                "id": r["spec_id"],
                 "title": r["title"],
-                "dev_state": dev_state_by_id.get(r["rf_id"], "not_started"),
+                "dev_state": dev_state_by_id.get(r["spec_id"], "not_started"),
             }
-            for r in rf_rows
+            for r in spec_rows
         ],
         "edges": topo_edges,
     }
@@ -444,9 +444,9 @@ def compute_explorer_data(
     test_coverage_values: list[float] = []
     with_endpoints = 0
     with_dependencies = 0
-    implemented_symbol_count = 0  # RFs with >= 1 implementing symbol
-    verified_count = 0  # RFs with REAL test coverage (test_coverage_ratio > 0)
-    for r in requirements:
+    implemented_symbol_count = 0  # Specs with >= 1 implementing symbol
+    verified_count = 0  # Specs with REAL test coverage (test_coverage_ratio > 0)
+    for r in specs:
         dev_state_counts[r["dev_state"]] = dev_state_counts.get(r["dev_state"], 0) + 1
         if r["coverage"] is not None:
             coverage_values.append(r["coverage"])
@@ -459,27 +459,27 @@ def compute_explorer_data(
             with_dependencies += 1
         if r["symbols"]:
             implemented_symbol_count += 1
-    total_reqs = len(requirements)
+    total_reqs = len(specs)
     dashboard = {
-        "requirements": total_reqs,
+        "specs": total_reqs,
         "dev_state_counts": dev_state_counts,
         "with_endpoints": with_endpoints,
         "with_dependencies": with_dependencies,
-        # % of RFs that have >= 1 implementing symbol (any code attributed).
+        # % of Specs that have >= 1 implementing symbol (any code attributed).
         "implemented_pct": (
             round(implemented_symbol_count / total_reqs * 100, 1)
             if total_reqs
             else 0.0
         ),
-        # RFs backed by REAL test coverage (call-graph-derived + explicit).
+        # Specs backed by REAL test coverage (call-graph-derived + explicit).
         "verified": verified_count,
-        # Mean of the per-RF average-link-confidence values (RFs with links).
+        # Mean of the per-Spec average-link-confidence values (Specs with links).
         "avg_coverage": (
             round(sum(coverage_values) / len(coverage_values), 4)
             if coverage_values
             else None
         ),
-        # Mean of the per-RF REAL test-coverage ratios (all RFs; None if no RFs).
+        # Mean of the per-Spec REAL test-coverage ratios (all Specs; None if no Specs).
         "avg_test_coverage": (
             round(sum(test_coverage_values) / len(test_coverage_values), 4)
             if test_coverage_values
@@ -496,9 +496,9 @@ def compute_explorer_data(
     # Sourced verbatim from storage.trends.read_trend — NO recompute.
     trend = read_trend(conn, pid)
 
-    # --- Git diff RF impact (top-level "changes") ----------------------
+    # --- Git diff Spec impact (top-level "changes") ----------------------
     # Resolve the range (main..HEAD, HEAD~1..HEAD fallback, omitted off-git),
-    # then delegate to compute_diff_rf_impact — NO diff logic recomputed here.
+    # then delegate to compute_diff_spec_impact — NO diff logic recomputed here.
     ws_root = str(st.settings.workspace)
     rng = _resolve_diff_range(ws_root, base, head)
     if rng is None:
@@ -506,10 +506,10 @@ def compute_explorer_data(
             "base": None,
             "head": None,
             "files_changed": [],
-            "requirements_touched": [],
+            "specs_touched": [],
         }
     else:
-        changes = compute_diff_rf_impact(st, rng[0], rng[1])
+        changes = compute_diff_spec_impact(st, rng[0], rng[1])
 
     return {
         "meta": {
@@ -518,15 +518,15 @@ def compute_explorer_data(
             # Overwritten in write_explorer_bundle from .livespec.toml [explorer].mount_path
             "base_path": "/explorer",
             "counts": {
-                "requirements": len(rf_rows),
-                "symbols": total_rf_symbols,
+                "specs": len(spec_rows),
+                "symbols": total_spec_symbols,
                 "endpoints": len(endpoints),
                 "files": int(files_count),
             },
         },
         "dashboard": dashboard,
-        "requirements": requirements,
-        "rf_topology": topology,
+        "specs": specs,
+        "spec_topology": topology,
         "endpoints": endpoints,
         # pytest fixtures, kept separate from the API surface (same shape as
         # an endpoint entry). The viewer shows these in a collapsed section.
@@ -534,7 +534,7 @@ def compute_explorer_data(
         "coverage": coverage_section,
         # Coverage trend over recorded audit snapshots (chronological).
         "trend": trend,
-        # RF-centric git diff impact for the resolved range (empty off-git).
+        # Spec-centric git diff impact for the resolved range (empty off-git).
         "changes": changes,
     }
 
@@ -623,7 +623,7 @@ _HTML_TEMPLATE = """<!DOCTYPE html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>RF Explorer · __PROJECT__</title>
+<title>Spec Explorer · __PROJECT__</title>
 <!-- Single external dep. Offline: the Topology tab falls back to text. -->
 <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
 <style>
@@ -788,7 +788,7 @@ _HTML_TEMPLATE = """<!DOCTYPE html>
   }
   main.pad { padding: 26px 32px 60px; max-width: 1180px; }
 
-  /* ---- Sidebar / RF spine ---- */
+  /* ---- Sidebar / Spec spine ---- */
   aside.spine {
     border-right: 1px solid var(--line);
     background: var(--surface);
@@ -814,34 +814,34 @@ _HTML_TEMPLATE = """<!DOCTYPE html>
     outline: none;
   }
   .spine .list { overflow-y: auto; flex: 1; padding: 6px; }
-  .spine .rf {
+  .spine .spec {
     display: block; width: 100%; text-align: left; appearance: none; border: 0;
     font: inherit; cursor: pointer; color: inherit;
     padding: 9px 11px; margin: 1px 0; border-radius: 9px;
     background: transparent; position: relative;
     transition: background .13s ease;
   }
-  .spine .rf:hover { background: var(--surface-2); }
-  .spine .rf[aria-current="true"] {
+  .spine .spec:hover { background: var(--surface-2); }
+  .spine .spec[aria-current="true"] {
     background: var(--accent-weak);
     box-shadow: inset 0 0 0 1px var(--accent-line);
   }
-  .spine .rf[aria-current="true"]::before {
+  .spine .spec[aria-current="true"]::before {
     content: ""; position: absolute; left: -1px; top: 9px; bottom: 9px;
     width: 3px; border-radius: 3px; background: var(--accent);
   }
-  .spine .rf .top { display: flex; align-items: center; gap: 7px; }
-  .spine .rf .rid {
+  .spine .spec .top { display: flex; align-items: center; gap: 7px; }
+  .spine .spec .rid {
     font-family: var(--mono); font-size: 11px; font-weight: 650;
     color: var(--accent-ink); letter-spacing: -.01em;
   }
-  .spine .rf[aria-current="true"] .rid { color: var(--accent-ink); }
-  .spine .rf .ti {
+  .spine .spec[aria-current="true"] .rid { color: var(--accent-ink); }
+  .spine .spec .ti {
     font-size: 13px; font-weight: 530; margin-top: 2px; color: var(--fg-soft);
     line-height: 1.35;
   }
-  .spine .rf[aria-current="true"] .ti { color: var(--fg); }
-  .spine .rf .dot {
+  .spine .spec[aria-current="true"] .ti { color: var(--fg); }
+  .spine .spec .dot {
     width: 7px; height: 7px; border-radius: 50%; flex: none; margin-left: auto;
   }
   .spine .none { padding: 18px 16px; color: var(--muted); font-style: italic; font-size: 13px; }
@@ -942,12 +942,12 @@ _HTML_TEMPLATE = """<!DOCTYPE html>
   .ds-chip[aria-pressed="true"] .ct { color: var(--accent-ink); }
 
   /* spine coverage micro-bar + summary line */
-  .spine .rf .sub { font-size: 11.5px; color: var(--muted); margin-top: 3px; line-height: 1.4; }
-  .spine .rf .covbar {
+  .spine .spec .sub { font-size: 11.5px; color: var(--muted); margin-top: 3px; line-height: 1.4; }
+  .spine .spec .covbar {
     height: 4px; border-radius: 3px; margin-top: 6px;
     background: color-mix(in srgb, var(--muted) 22%, transparent); overflow: hidden;
   }
-  .spine .rf .covbar > span { display: block; height: 100%; border-radius: 3px; background: var(--ds, var(--accent)); }
+  .spine .spec .covbar > span { display: block; height: 100%; border-radius: 3px; background: var(--ds, var(--accent)); }
 
   /* stale-status flag + how-derived note */
   .stale-flag {
@@ -1388,7 +1388,7 @@ _HTML_TEMPLATE = """<!DOCTYPE html>
 
   .empty { color: var(--muted); font-style: italic; padding: 10px 0; font-size: 13px; }
 
-  /* ---- Uncovered symbols drill-down (RF detail) ---- */
+  /* ---- Uncovered symbols drill-down (Spec detail) ---- */
   details.uncovered {
     margin-top: 16px; border: 1px solid color-mix(in srgb, var(--warn) 32%, var(--line));
     border-radius: var(--radius); background: var(--surface); box-shadow: var(--shadow-sm);
@@ -1418,7 +1418,7 @@ _HTML_TEMPLATE = """<!DOCTYPE html>
   }
   .uncovered-more { font-size: 11.5px; color: var(--muted); margin-top: 8px; font-style: italic; }
 
-  /* ---- Changes (git diff RF impact) ---- */
+  /* ---- Changes (git diff Spec impact) ---- */
   .chg-head {
     display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 14px;
   }
@@ -1498,16 +1498,16 @@ _HTML_TEMPLATE = """<!DOCTYPE html>
 <body>
 <header class="app">
   <div class="brand">
-    <span class="mark" aria-hidden="true">RF</span>
+    <span class="mark" aria-hidden="true">Spec</span>
     <h1>
-      <span class="kicker">Requirements Status</span>
+      <span class="kicker">Specs Status</span>
       <span class="proj">__PROJECT__</span>
     </h1>
   </div>
   <div class="stats" id="stats" aria-label="Project totals"></div>
   <nav class="tabs" role="tablist" aria-label="Explorer views">
     <button role="tab" data-route="landing" aria-current="page">Overview</button>
-    <button role="tab" data-route="requirements">Requirements<span class="pill" id="pill-rf"></span></button>
+    <button role="tab" data-route="specs">Specs<span class="pill" id="pill-spec"></span></button>
     <button role="tab" data-route="topology">Dependencies<span class="pill" id="pill-topo"></span></button>
     <button role="tab" data-route="endpoints">API<span class="pill" id="pill-ep"></span></button>
     <button role="tab" data-route="changes">Changes<span class="pill" id="pill-chg"></span></button>
@@ -1518,25 +1518,25 @@ _HTML_TEMPLATE = """<!DOCTYPE html>
 <section class="panel active" data-panel="landing" role="tabpanel" aria-label="Overview">
   <main class="scroll pad" id="landing-main"></main>
 </section>
-<section class="panel" data-panel="requirements" role="tabpanel" aria-label="Requirements" hidden>
+<section class="panel" data-panel="specs" role="tabpanel" aria-label="Specs" hidden>
   <div class="split">
-    <aside class="spine" aria-label="Requirement spine">
+    <aside class="spine" aria-label="Spec spine">
       <div class="search">
-        <label for="rf-filter" class="sr-only" style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)">Search requirements</label>
-        <input id="rf-filter" type="search" placeholder="Search requirements…" autocomplete="off" spellcheck="false">
+        <label for="spec-filter" class="sr-only" style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)">Search specs</label>
+        <input id="spec-filter" type="search" placeholder="Search specs…" autocomplete="off" spellcheck="false">
       </div>
       <div class="ds-filters" id="ds-filters" role="group" aria-label="Filter by development state"></div>
-      <div class="list" id="rfnav"></div>
+      <div class="list" id="specnav"></div>
     </aside>
-    <main class="scroll pad" id="rfmain">
+    <main class="scroll pad" id="specmain">
       <section class="dash" id="dashboard" aria-label="Project status overview"></section>
-      <div id="rfdetail"><div class="empty">Select a requirement to see what it is and where it stands.</div></div>
+      <div id="specdetail"><div class="empty">Select a spec to see what it is and where it stands.</div></div>
     </main>
   </div>
 </section>
 <section class="panel" data-panel="topology" role="tabpanel" aria-label="Dependencies" hidden>
   <main class="scroll pad">
-    <p class="lead">How requirements depend on one another. Each box is colour-coded by its development state.</p>
+    <p class="lead">How specs depend on one another. Each box is colour-coded by its development state.</p>
     <div class="topo-bar">
       <div class="legend" id="topo-legend" aria-hidden="false"></div>
       <span class="chip muted" id="topo-counts"></span>
@@ -1567,9 +1567,9 @@ const el = id => document.getElementById(id);
 // ---- Client-side router (/explorer, /explorer/endpoints, …) ----
 // Served over HTTP: History API paths under meta.base_path (default /explorer).
 // file:// fallback: hash routes (#/endpoints) so local opens still work.
-const ROUTES = ['landing', 'requirements', 'topology', 'endpoints', 'changes', 'gaps'];
+const ROUTES = ['landing', 'specs', 'topology', 'endpoints', 'changes', 'gaps'];
 const ROUTE_LABEL = {
-  landing: 'Overview', requirements: 'Requirements', topology: 'Dependencies',
+  landing: 'Overview', specs: 'Specs', topology: 'Dependencies',
   endpoints: 'API', changes: 'Changes', gaps: 'Coverage gaps',
 };
 function routerBase() {
@@ -1637,8 +1637,8 @@ function showRoute(route) {
     p.hidden = !on;
   });
   if (route === 'topology') renderTopology();
-  if (route === 'requirements' && DATA.requirements.length && !activeRF) {
-    selectRF(DATA.requirements[0].id);
+  if (route === 'specs' && DATA.specs.length && !activeSpec) {
+    selectSpec(DATA.specs[0].id);
   }
   if (route === 'landing') buildLanding();
 }
@@ -1648,7 +1648,7 @@ window.addEventListener('hashchange', () => showRoute(currentRoute()));
 // ---- Header stats + tab count pills ----
 const counts = DATA.meta.counts;
 el('stats').innerHTML = [
-  ['requirements', 'Requirements'],
+  ['specs', 'Specs'],
   ['symbols', 'Linked symbols'],
   ['endpoints', 'Endpoints'],
   ['files', 'Files'],
@@ -1656,13 +1656,13 @@ el('stats').innerHTML = [
   `<div class="stat"><span class="n">${counts[k]}</span><span class="l">${label}</span></div>`
 ).join('');
 
-const edgeCount = DATA.rf_topology.edges.length;
-const CHANGES = DATA.changes || { base: null, head: null, files_changed: [], requirements_touched: [] };
+const edgeCount = DATA.spec_topology.edges.length;
+const CHANGES = DATA.changes || { base: null, head: null, files_changed: [], specs_touched: [] };
 const TREND = DATA.trend || [];
-el('pill-rf').textContent = DATA.requirements.length;
-el('pill-topo').textContent = DATA.rf_topology.nodes.length;
+el('pill-spec').textContent = DATA.specs.length;
+el('pill-topo').textContent = DATA.spec_topology.nodes.length;
 el('pill-ep').textContent = DATA.endpoints.length;
-el('pill-chg').textContent = (CHANGES.requirements_touched || []).length;
+el('pill-chg').textContent = (CHANGES.specs_touched || []).length;
 el('pill-gap').textContent =
   DATA.coverage.orphan_modules.length + DATA.coverage.orphan_endpoints.length;
 
@@ -1675,9 +1675,9 @@ const DS_LABEL = {
   verified: 'Verified',
 };
 const DS_BLURB = {
-  not_started: 'No code is attributed to this requirement yet.',
+  not_started: 'No code is attributed to this spec yet.',
   in_progress: 'Code is being attributed; attribution confidence is still building.',
-  implemented: 'Code implements this requirement with high-confidence links.',
+  implemented: 'Code implements this spec with high-confidence links.',
   verified: 'Backed by real test coverage — tests reach the implementing code (call-graph-derived) or are explicitly linked.',
 };
 const dsClass = s => 'ds-' + (DEV_STATES.includes(s) ? s : 'not_started');
@@ -1686,7 +1686,7 @@ function statePill(s, big) {
   return `<span class="state-pill ${big ? 'big ' : ''}${cls}">` +
     `<span class="dot"></span>${esc(DS_LABEL[s] || s)}</span>`;
 }
-// Coverage = AVERAGE LINK CONFIDENCE of the RF's code links (not test
+// Coverage = AVERAGE LINK CONFIDENCE of the Spec's code links (not test
 // coverage, not call-graph reachability). Labelled precisely everywhere.
 const COVERAGE_LABEL = 'link confidence';
 function covPct(v) { return v == null ? null : Math.round(v * 100); }
@@ -1714,9 +1714,9 @@ function sourceBadge(src) {
 // dev_state is implemented/verified but the human still marks it draft/
 // in-review/proposed (i.e. not an "advanced" declared status).
 const ADVANCED_STATUS = new Set(['approved', 'done', 'implemented', 'verified', 'released', 'complete']);
-function statusLooksStale(rf) {
-  if (rf.dev_state !== 'implemented' && rf.dev_state !== 'verified') return false;
-  const declared = String(rf.status || '').toLowerCase();
+function statusLooksStale(spec) {
+  if (spec.dev_state !== 'implemented' && spec.dev_state !== 'verified') return false;
+  const declared = String(spec.status || '').toLowerCase();
   return !ADVANCED_STATUS.has(declared);
 }
 const statusClass = s => 'st-' + String(s || 'draft').replace(/[^a-z_]/gi, '_').toLowerCase();
@@ -1724,16 +1724,16 @@ const statusClass = s => 'st-' + String(s || 'draft').replace(/[^a-z_]/gi, '_').
 // ---- Project dashboard (PO reads this first) ----
 function renderDashboard() {
   const d = DATA.dashboard;
-  if (!d || !d.requirements) {
+  if (!d || !d.specs) {
     el('dashboard').innerHTML =
-      '<div class="empty">No requirements defined yet — see the Endpoints &amp; Coverage gaps tabs for what exists in code.</div>';
+      '<div class="empty">No specs defined yet — see the Endpoints &amp; Coverage gaps tabs for what exists in code.</div>';
     return;
   }
   const c = d.dev_state_counts;
   const avgCov = d.avg_coverage == null ? '—' : Math.round(d.avg_coverage * 100) + '<span class="unit">%</span>';
   const avgTestCov = d.avg_test_coverage == null ? '—' : Math.round(d.avg_test_coverage * 100) + '<span class="unit">%</span>';
   const tiles = [
-    { n: d.requirements, k: 'Requirements', cls: '' },
+    { n: d.specs, k: 'Specs', cls: '' },
     { n: d.implemented_pct + '<span class="unit">%</span>', k: 'Have implementation', cls: 'accent' },
     { n: d.verified, k: 'Verified by tests', cls: d.verified > 0 ? 'good' : '' },
     { n: avgTestCov, k: 'Avg ' + TEST_COVERAGE_LABEL, cls: (d.avg_test_coverage || 0) > 0 ? 'good' : '' },
@@ -1746,7 +1746,7 @@ function renderDashboard() {
   ).join('') + '</div>';
 
   // status breakdown bar
-  const total = d.requirements || 1;
+  const total = d.specs || 1;
   h += '<div class="breakdown"><div class="bar" role="img" aria-label="Development state breakdown">';
   DEV_STATES.forEach(s => {
     const n = c[s] || 0;
@@ -1764,10 +1764,10 @@ function renderDashboard() {
 let dsFilter = 'all';  // 'all' or one of DEV_STATES
 function renderDsFilters() {
   const box = el('ds-filters');
-  if (!DATA.requirements.length) { box.style.display = 'none'; return; }
-  const counts = { all: DATA.requirements.length };
+  if (!DATA.specs.length) { box.style.display = 'none'; return; }
+  const counts = { all: DATA.specs.length };
   DEV_STATES.forEach(s => counts[s] = 0);
-  DATA.requirements.forEach(rf => { counts[rf.dev_state] = (counts[rf.dev_state] || 0) + 1; });
+  DATA.specs.forEach(spec => { counts[spec.dev_state] = (counts[spec.dev_state] || 0) + 1; });
   const chips = [['all', 'All']].concat(
     DEV_STATES.filter(s => counts[s] > 0).map(s => [s, DS_LABEL[s]]));
   box.innerHTML = chips.map(([k, label]) =>
@@ -1779,83 +1779,83 @@ function renderDsFilters() {
       dsFilter = btn.getAttribute('data-ds');
       box.querySelectorAll('.ds-chip').forEach(b =>
         b.setAttribute('aria-pressed', b === btn ? 'true' : 'false'));
-      renderSpine(el('rf-filter').value);
+      renderSpine(el('spec-filter').value);
     }));
 }
 
-// ---- Requirements spine + detail ----
-const nav = el('rfnav');
-const detail = el('rfdetail');
-const rfmain = el('rfmain');
-let activeRF = null;
+// ---- Specs spine + detail ----
+const nav = el('specnav');
+const detail = el('specdetail');
+const specmain = el('specmain');
+let activeSpec = null;
 
 function renderSpine(filter) {
   const q = (filter || '').trim().toLowerCase();
   nav.innerHTML = '';
-  const matches = DATA.requirements.filter(rf => {
-    if (dsFilter !== 'all' && rf.dev_state !== dsFilter) return false;
-    return !q || rf.id.toLowerCase().includes(q) || (rf.title || '').toLowerCase().includes(q) ||
-      (rf.description || '').toLowerCase().includes(q);
+  const matches = DATA.specs.filter(spec => {
+    if (dsFilter !== 'all' && spec.dev_state !== dsFilter) return false;
+    return !q || spec.id.toLowerCase().includes(q) || (spec.title || '').toLowerCase().includes(q) ||
+      (spec.description || '').toLowerCase().includes(q);
   });
-  if (!DATA.requirements.length) {
-    nav.innerHTML = '<div class="none">No requirements linked yet.<br>See the Endpoints &amp; Coverage gaps tabs.</div>';
+  if (!DATA.specs.length) {
+    nav.innerHTML = '<div class="none">No specs linked yet.<br>See the Endpoints &amp; Coverage gaps tabs.</div>';
     return;
   }
   if (!matches.length) {
-    nav.innerHTML = '<div class="none">No requirements match this filter.</div>';
+    nav.innerHTML = '<div class="none">No specs match this filter.</div>';
     return;
   }
-  matches.forEach(rf => {
+  matches.forEach(spec => {
     const b = document.createElement('button');
-    b.className = 'rf ' + dsClass(rf.dev_state);
+    b.className = 'spec ' + dsClass(spec.dev_state);
     b.type = 'button';
-    b.setAttribute('aria-current', rf.id === activeRF ? 'true' : 'false');
-    const pct = covPct(rf.coverage);
-    const summary = DS_BLURB[rf.dev_state] || '';
+    b.setAttribute('aria-current', spec.id === activeSpec ? 'true' : 'false');
+    const pct = covPct(spec.coverage);
+    const summary = DS_BLURB[spec.dev_state] || '';
     b.innerHTML =
-      `<div class="top"><span class="rid">${esc(rf.id)}</span>` +
-      statePill(rf.dev_state, false) + '</div>' +
-      `<div class="ti">${esc(rf.title)}</div>` +
+      `<div class="top"><span class="rid">${esc(spec.id)}</span>` +
+      statePill(spec.dev_state, false) + '</div>' +
+      `<div class="ti">${esc(spec.title)}</div>` +
       `<div class="sub">${esc(summary)}</div>` +
       (pct != null ? `<div class="covbar" title="${pct}% ${COVERAGE_LABEL}"><span style="width:${pct}%"></span></div>` : '');
-    b.addEventListener('click', () => selectRF(rf.id));
+    b.addEventListener('click', () => selectSpec(spec.id));
     nav.appendChild(b);
   });
 }
 
-function selectRF(id) {
-  activeRF = id;
-  nav.querySelectorAll('.rf').forEach(n => {
+function selectSpec(id) {
+  activeSpec = id;
+  nav.querySelectorAll('.spec').forEach(n => {
     const on = n.querySelector('.rid') && n.querySelector('.rid').textContent === id;
     n.setAttribute('aria-current', on ? 'true' : 'false');
   });
-  const rf = DATA.requirements.find(r => r.id === id);
-  if (!rf) return;
+  const spec = DATA.specs.find(r => r.id === id);
+  if (!spec) return;
 
-  const pct = covPct(rf.coverage);
-  const testPct = Math.round((rf.test_coverage_ratio || 0) * 100);
-  const covSrc = rf.coverage_source || 'none';
+  const pct = covPct(spec.coverage);
+  const testPct = Math.round((spec.test_coverage_ratio || 0) * 100);
+  const covSrc = spec.coverage_source || 'none';
 
   // --- Plain-language head: title + prominent dev_state ---
   let h = '<div class="detail-head">' +
-    `<div class="eyebrow">${esc(rf.id)}</div>` +
-    `<h2 class="title">${esc(rf.title)}</h2></div>`;
+    `<div class="eyebrow">${esc(spec.id)}</div>` +
+    `<h2 class="title">${esc(spec.title)}</h2></div>`;
 
-  h += '<div class="meta-row">' + statePill(rf.dev_state, true) +
-    `<span class="chip status muted" title="Declared status (manually maintained)"><span class="dot ${statusClass(rf.status)}"></span>declared: ${esc(rf.status || 'none')}</span>` +
-    (statusLooksStale(rf) ? '<span class="stale-flag" title="The declared status has not caught up with the code evidence">⚠ declared status not updated</span>' : '') +
+  h += '<div class="meta-row">' + statePill(spec.dev_state, true) +
+    `<span class="chip status muted" title="Declared status (manually maintained)"><span class="dot ${statusClass(spec.status)}"></span>declared: ${esc(spec.status || 'none')}</span>` +
+    (statusLooksStale(spec) ? '<span class="stale-flag" title="The declared status has not caught up with the code evidence">⚠ declared status not updated</span>' : '') +
     '</div>';
 
   // Description leads the content.
-  h += rf.description
-    ? `<p class="desc">${esc(rf.description)}</p>`
-    : '<p class="desc"><span class="empty">No description provided for this requirement.</span></p>';
+  h += spec.description
+    ? `<p class="desc">${esc(spec.description)}</p>`
+    : '<p class="desc"><span class="empty">No description provided for this spec.</span></p>';
 
   // --- How this state was derived (transparency) ---
-  h += `<p class="derive-note ${dsClass(rf.dev_state)}">` +
-    `<span class="lbl">${esc(DS_LABEL[rf.dev_state])}</span> — ${esc(DS_BLURB[rf.dev_state])} ` +
+  h += `<p class="derive-note ${dsClass(spec.dev_state)}">` +
+    `<span class="lbl">${esc(DS_LABEL[spec.dev_state])}</span> — ${esc(DS_BLURB[spec.dev_state])} ` +
     'States are derived from <b>code evidence</b> (implementation links + their attribution confidence), not a manually-maintained field. ' +
-    '“Verified” means <b>real test coverage</b> exists — a test reaches the implementing code (auto-derived from the call graph) or an explicit test↔requirement link is present.</p>';
+    '“Verified” means <b>real test coverage</b> exists — a test reaches the implementing code (auto-derived from the call graph) or an explicit test↔spec link is present.</p>';
 
   // --- Two DISTINCT coverage meters: real test coverage + link confidence ---
   const testCovCls = testPct >= 70 ? 'high' : (testPct >= 30 ? 'mid' : 'low');
@@ -1865,10 +1865,10 @@ function selectRF(id) {
     '<div class="cov-meter">' +
       `<div class="cov-meter-h"><span class="cov-meter-l">${esc(TEST_COVERAGE_LABEL)}</span>` +
       sourceBadge(covSrc) + '</div>' +
-      `<div class="cov ${testCovCls}" title="${rf.tested_symbols}/${rf.total_symbols} implementing symbols reached by tests">` +
+      `<div class="cov ${testCovCls}" title="${spec.tested_symbols}/${spec.total_symbols} implementing symbols reached by tests">` +
       `<span class="track"><span class="fill" style="width:${testPct}%"></span></span>` +
       `<span class="v">${testPct}%</span></div>` +
-      `<div class="cov-meter-hint">${rf.tested_symbols}/${rf.total_symbols} symbols reached by tests · auto-derived from the call graph, unioned with explicit test links</div>` +
+      `<div class="cov-meter-hint">${spec.tested_symbols}/${spec.total_symbols} symbols reached by tests · auto-derived from the call graph, unioned with explicit test links</div>` +
     '</div>' +
     // LINK CONFIDENCE — separate signal, distinctly labelled.
     '<div class="cov-meter">' +
@@ -1876,15 +1876,15 @@ function selectRF(id) {
       (pct == null
         ? '<div class="cov"><span class="track"><span class="fill" style="width:0%"></span></span><span class="v">—</span></div>'
         : `<div class="cov ${linkCovCls}"><span class="track"><span class="fill" style="width:${pct}%"></span></span><span class="v">${pct}%</span></div>`) +
-      '<div class="cov-meter-hint">how confident the RF↔code attribution links are — NOT test coverage</div>' +
+      '<div class="cov-meter-hint">how confident the Spec↔code attribution links are — NOT test coverage</div>' +
     '</div>' +
     '</div>';
 
   // --- Uncovered symbols drill-down (the actionable gap) ---
   // Lists implementing symbols that no test reaches (call-graph) and that
   // carry no explicit test link. Shown only when there is a gap to act on.
-  const uncovered = rf.uncovered_symbols || [];
-  const uncoveredCount = rf.uncovered_symbols_count || 0;
+  const uncovered = spec.uncovered_symbols || [];
+  const uncoveredCount = spec.uncovered_symbols_count || 0;
   if (uncoveredCount > 0) {
     h += '<details class="uncovered"><summary>Uncovered symbols ' +
       `<span class="ct" style="font-family:var(--mono)">${uncoveredCount}</span>` +
@@ -1904,35 +1904,35 @@ function selectRF(id) {
       `<div class="ml">${esc(TEST_COVERAGE_LABEL)}</div><div class="hint">real coverage (derived + explicit)</div></div>` +
     `<div class="metric"><div class="mv">${pct == null ? '—' : pct + '%'}</div>` +
       `<div class="ml">${esc(COVERAGE_LABEL)}</div><div class="hint">avg confidence of code links</div></div>` +
-    `<div class="metric"><div class="mv">${rf.endpoints.length}</div><div class="ml">Endpoints exposed</div></div>` +
-    `<div class="metric"><div class="mv">${rf.depends_on.length}</div><div class="ml">Dependencies</div></div>` +
-    `<div class="metric"><div class="mv">${rf.symbols.length}</div><div class="ml">Implementing symbols</div></div>` +
+    `<div class="metric"><div class="mv">${spec.endpoints.length}</div><div class="ml">Endpoints exposed</div></div>` +
+    `<div class="metric"><div class="mv">${spec.depends_on.length}</div><div class="ml">Dependencies</div></div>` +
+    `<div class="metric"><div class="mv">${spec.symbols.length}</div><div class="ml">Implementing symbols</div></div>` +
     '</div>';
 
   // --- Dependencies as clickable chips ---
   h += '<div class="sec"><h3 class="sec-h">Depends on' +
-    `<span class="ct">${rf.depends_on.length}</span></h3>`;
-  if (rf.depends_on.length) {
+    `<span class="ct">${spec.depends_on.length}</span></h3>`;
+  if (spec.depends_on.length) {
     h += '<div class="clusterbox">' +
-      rf.depends_on.map(d =>
+      spec.depends_on.map(d =>
         `<button type="button" class="chip dep" data-goto="${esc(d)}">${esc(d)}</button>`
       ).join('') + '</div>';
   } else {
-    h += '<div class="empty">No dependencies — this requirement stands on its own.</div>';
+    h += '<div class="empty">No dependencies — this spec stands on its own.</div>';
   }
   h += '</div>';
 
   // --- Technical detail (collapsed by default) ---
   h += '<details class="tech"><summary>Technical detail ' +
-    `<span class="hint">${rf.symbols.length} symbol${rf.symbols.length === 1 ? '' : 's'} · ${rf.endpoints.length} endpoint${rf.endpoints.length === 1 ? '' : 's'} (for developers)</span></summary>` +
+    `<span class="hint">${spec.symbols.length} symbol${spec.symbols.length === 1 ? '' : 's'} · ${spec.endpoints.length} endpoint${spec.endpoints.length === 1 ? '' : 's'} (for developers)</span></summary>` +
     '<div class="tech-body">';
 
   h += '<div class="sec" style="margin-top:8px"><h3 class="sec-h">Implementing symbols' +
-    `<span class="ct">${rf.symbols.length}</span></h3>`;
-  if (rf.symbols.length) {
+    `<span class="ct">${spec.symbols.length}</span></h3>`;
+  if (spec.symbols.length) {
     h += '<div class="card"><table><thead><tr>' +
       '<th>Symbol</th><th>Signature</th><th>Location</th></tr></thead><tbody>';
-    rf.symbols.forEach(s => {
+    spec.symbols.forEach(s => {
       const file = esc(s.file), line = s.line;
       h += '<tr>' +
         `<td><span class="qname">${esc(s.qname)}</span></td>` +
@@ -1946,31 +1946,31 @@ function selectRF(id) {
   h += '</div>';
 
   h += '<div class="sec"><h3 class="sec-h">Owned endpoints' +
-    `<span class="ct">${rf.endpoints.length}</span></h3>`;
-  h += rf.endpoints.length
+    `<span class="ct">${spec.endpoints.length}</span></h3>`;
+  h += spec.endpoints.length
     ? '<div class="clusterbox">' +
-      rf.endpoints.map(e => `<span class="chip mono accent">${esc(e)}</span>`).join('') + '</div>'
+      spec.endpoints.map(e => `<span class="chip mono accent">${esc(e)}</span>`).join('') + '</div>'
     : '<div class="empty">None.</div>';
   h += '</div></div></details>';
 
   detail.innerHTML = h;
-  rfmain.scrollTop = 0;
+  specmain.scrollTop = 0;
   detail.querySelectorAll('[data-goto]').forEach(btn =>
     btn.addEventListener('click', () => {
       const target = btn.getAttribute('data-goto');
-      if (DATA.requirements.some(r => r.id === target)) {
-        el('rf-filter').value = '';
+      if (DATA.specs.some(r => r.id === target)) {
+        el('spec-filter').value = '';
         dsFilter = 'all';
         renderDsFilters();
         renderSpine('');
-        selectRF(target);
+        selectSpec(target);
       }
     }));
 }
 
 renderDashboard();
 renderDsFilters();
-el('rf-filter').addEventListener('input', e => renderSpine(e.target.value));
+el('spec-filter').addEventListener('input', e => renderSpine(e.target.value));
 renderSpine('');
 
 // ---- Landing (/explorer) ----
@@ -1981,17 +1981,17 @@ function buildLanding() {
   const c = counts;
   let h = '<div class="landing-hero">' +
     `<h2>${esc(DATA.meta.project)}</h2>` +
-    '<p class="sub">Live map of requirements, API surface, dependencies and coverage — ' +
+    '<p class="sub">Live map of specs, API surface, dependencies and coverage — ' +
     'auto-generated from the indexed codebase.</p></div>';
   h += '<div id="landing-dash"></div>';
   if (TREND.length) h += buildTrendOverview();
   h += '<div class="nav-cards">';
   const cards = [
-    ['requirements', 'Requirements', 'Browse RFs, implementation evidence and test coverage.', d.requirements || c.requirements],
+    ['specs', 'Specs', 'Browse Specs, implementation evidence and test coverage.', d.specs || c.specs],
     ['endpoints', 'API', 'Swagger-style view of tools, routes and MCP entry points.', c.endpoints],
-    ['topology', 'Dependencies', 'How requirements depend on each other.', DATA.rf_topology.nodes.length],
-    ['changes', 'Changes', 'Git diff impact on requirements in the current range.', (CHANGES.requirements_touched || []).length],
-    ['gaps', 'Coverage gaps', 'Orphan modules and endpoints without an RF link.',
+    ['topology', 'Dependencies', 'How specs depend on each other.', DATA.spec_topology.nodes.length],
+    ['changes', 'Changes', 'Git diff impact on specs in the current range.', (CHANGES.specs_touched || []).length],
+    ['gaps', 'Coverage gaps', 'Orphan modules and endpoints without a Spec link.',
       DATA.coverage.orphan_modules.length + DATA.coverage.orphan_endpoints.length],
   ];
   cards.forEach(([route, title, desc, n]) => {
@@ -2017,7 +2017,7 @@ function buildLanding() {
 // ---- Dependencies graph (Mermaid, themed, coloured by dev_state) ----
 const safeId = s => s.replace(/[^A-Za-z0-9_]/g, '_');
 // Sanitize a node label for Mermaid v10's quoted-string ["..."] syntax.
-// RF titles routinely contain &, <, >, " which break the flowchart parser
+// Spec titles routinely contain &, <, >, " which break the flowchart parser
 // ("Syntax error in text"). HTML-entity-encode exactly those four chars
 // (& FIRST so it doesn't double-encode the entities we add). Mermaid renders
 // the entities back as glyphs, so the label stays readable. Parentheses, ↔
@@ -2030,9 +2030,9 @@ function mermaidLabel(s) {
     .replace(/"/g, '&quot;');
 }
 function buildMermaid() {
-  const t = DATA.rf_topology;
+  const t = DATA.spec_topology;
   let src = 'graph TD\\n';
-  if (!t.nodes.length) { return src + '  empty["No requirements indexed"]\\n'; }
+  if (!t.nodes.length) { return src + '  empty["No specs indexed"]\\n'; }
   t.nodes.forEach(n => {
     const nid = safeId(n.id);
     const label = mermaidLabel(n.id + ': ' + (n.title || ''));
@@ -2088,12 +2088,12 @@ function renderTopoLegend() {
   });
 }
 async function renderTopology() {
-  const t = DATA.rf_topology;
+  const t = DATA.spec_topology;
   const linkedCount = new Set();
   t.edges.forEach(e => { linkedCount.add(e.from); linkedCount.add(e.to); });
   const indep = t.nodes.length - linkedCount.size;
   el('topo-counts').textContent =
-    `${t.nodes.length} requirements · ${edgeCount} dependency edges · ${indep} independent`;
+    `${t.nodes.length} specs · ${edgeCount} dependency edges · ${indep} independent`;
   renderTopoLegend();
   if (mermaidRendered) return;
   mermaidRendered = true;
@@ -2119,7 +2119,7 @@ async function renderTopology() {
         fontSize: '13px',
       },
     });
-    const { svg } = await mermaid.render('rfgraph', buildMermaid());
+    const { svg } = await mermaid.render('specgraph', buildMermaid());
     el('mermaid-graph').innerHTML = svg;
   } catch (err) {
     // Offline / CDN unavailable: show readable graph source, never blank.
@@ -2254,8 +2254,8 @@ function buildEndpoints() {
       const args = sigArgTypes(ep.signature);
       const shape = callShape(ep);
       const cid = `cc-${k}-${i}`;
-      const rfs = ep.rf_ids.length
-        ? ep.rf_ids.map(r => `<span class="chip accent" style="font-size:11px">${esc(r)}</span>`).join(' ')
+      const specs = ep.spec_ids.length
+        ? ep.spec_ids.map(r => `<span class="chip accent" style="font-size:11px">${esc(r)}</span>`).join(' ')
         : '<span class="chip muted">unlinked</span>';
       const searchHay = [ep.handler, path, ep.method, ep.kind, shortName(ep.handler)].join(' ').toLowerCase();
       h += `<details class="swagger-op" data-search="${esc(searchHay)}">` +
@@ -2298,8 +2298,8 @@ function buildEndpoints() {
           `<span class="chip muted">${esc(method)}</span></div>` +
           `<pre class="http-response" id="${eid}" hidden aria-live="polite"></pre></div></div>`;
       }
-      h += '<div class="op-section"><div class="op-section-h">Requirements</div>' +
-        `<div class="clusterbox">${rfs}</div></div>` +
+      h += '<div class="op-section"><div class="op-section-h">Specs</div>' +
+        `<div class="clusterbox">${specs}</div></div>` +
         '</div></details>';
     });
     h += '</div></section>';
@@ -2404,19 +2404,19 @@ function buildEndpoints() {
 
 // ---- Gaps ----
 const TOTAL_LABELS = {
-  modules_without_rf: 'Modules without RF',
+  modules_without_rf: 'Modules without Spec',
   modules_implicitly_covered: 'Implicitly covered',
   modules_truly_orphan: 'Truly orphan',
   modules_unsupported_language: 'Unsupported language',
-  rfs_without_implementation: 'RFs w/o impl',
-  rfs_low_confidence: 'RFs low confidence',
-  rfs_with_test_coverage: 'RFs w/ tests',
+  specs_without_implementation: 'Specs w/o impl',
+  specs_low_confidence: 'Specs low confidence',
+  specs_with_test_coverage: 'Specs w/ tests',
 };
 function buildGaps() {
   const g = DATA.coverage;
-  let h = '<p class="lead">Code not yet attributed to any requirement. ' +
-    'Orphan modules and endpoints are candidates for a new requirement link — ' +
-    'they represent functionality the requirement map does not yet account for.</p>';
+  let h = '<p class="lead">Code not yet attributed to any spec. ' +
+    'Orphan modules and endpoints are candidates for a new spec link — ' +
+    'they represent functionality the spec map does not yet account for.</p>';
 
   // KPI row from totals
   h += '<div class="kpis">';
@@ -2424,8 +2424,8 @@ function buildGaps() {
     const label = TOTAL_LABELS[k] || k.replace(/_/g, ' ');
     let cls = '';
     if (k === 'modules_truly_orphan' || k === 'modules_without_rf') cls = ' flag';
-    if (k === 'rfs_with_test_coverage' && v > 0) cls = ' good';
-    if (k === 'rfs_without_implementation' && v > 0) cls = ' flag';
+    if (k === 'specs_with_test_coverage' && v > 0) cls = ' good';
+    if (k === 'specs_without_implementation' && v > 0) cls = ' flag';
     h += `<div class="kpi${cls}"><div class="n">${esc(v)}</div><div class="k">${esc(label)}</div></div>`;
   });
   h += '</div>';
@@ -2435,7 +2435,7 @@ function buildGaps() {
   h += g.orphan_modules.length
     ? '<ul class="orphan-list">' +
       g.orphan_modules.map(m => `<li>${esc(m)}</li>`).join('') + '</ul>'
-    : '<div class="empty">None — every module is reachable from a requirement.</div>';
+    : '<div class="empty">None — every module is reachable from a spec.</div>';
   h += '</div>';
 
   h += '<div class="sec"><h3 class="sec-h">Orphan endpoints' +
@@ -2443,7 +2443,7 @@ function buildGaps() {
   h += g.orphan_endpoints.length
     ? '<ul class="orphan-list">' +
       g.orphan_endpoints.map(m => `<li>${esc(m)}</li>`).join('') + '</ul>'
-    : '<div class="empty">None — every endpoint is linked to a requirement.</div>';
+    : '<div class="empty">None — every endpoint is linked to a spec.</div>';
   h += '</div>';
 
   el('gapmain').innerHTML = h;
@@ -2483,7 +2483,7 @@ function buildTrendOverview() {
   }
   const tail = series.slice(-3);
   h += '<table class="trend-table"><thead><tr>' +
-    '<th>When</th><th>Avg test coverage</th><th>Verified RFs</th></tr></thead><tbody>';
+    '<th>When</th><th>Avg test coverage</th><th>Verified Specs</th></tr></thead><tbody>';
   tail.forEach(s => {
     const pct = Math.round((s.avg_test_coverage == null ? 0 : s.avg_test_coverage) * 100);
     h += '<tr>' +
@@ -2494,7 +2494,7 @@ function buildTrendOverview() {
   h += '</tbody></table>';
   h += '<div class="trend-meta">' +
     `<span>Latest: <b>${lastPct}%</b> avg ${esc(TEST_COVERAGE_LABEL)}</span>` +
-    `<span>Verified RFs: <b>${last.verified_count}</b></span></div>';
+    `<span>Verified Specs: <b>${last.verified_count}</b></span></div>';
   h += '</div>';
   return h;
 }
@@ -2506,7 +2506,7 @@ function buildTrend() {
       '<span class="t">Coverage trend</span></div>' +
       '<div class="empty">No coverage snapshots recorded yet — run an audit to start the history.</div></div>';
   }
-  // y values in [0,1]; null avg (no RFs at that snapshot) treated as 0.
+  // y values in [0,1]; null avg (no Specs at that snapshot) treated as 0.
   const pts = series.map(s => (s.avg_test_coverage == null ? 0 : s.avg_test_coverage));
   const last = series[series.length - 1];
   const lastPct = Math.round((last.avg_test_coverage == null ? 0 : last.avg_test_coverage) * 100);
@@ -2557,16 +2557,16 @@ function buildTrend() {
   const deltaStr = (delta >= 0 ? '+' : '') + delta + '%';
   h += '<div class="trend-meta">' +
     `<span>Latest: <b>${lastPct}%</b> avg ${esc(TEST_COVERAGE_LABEL)}</span>` +
-    `<span>Verified RFs: <b>${last.verified_count}</b></span>` +
+    `<span>Verified Specs: <b>${last.verified_count}</b></span>` +
     `<span>Since first snapshot: <b>${esc(deltaStr)}</b></span></div>`;
   h += '</div>';
   return h;
 }
 
-// ---- Changes (RF-centric git diff impact for the resolved range) ----
+// ---- Changes (Spec-centric git diff impact for the resolved range) ----
 function buildChanges() {
   const c = CHANGES;
-  const touched = c.requirements_touched || [];
+  const touched = c.specs_touched || [];
   const filesChanged = c.files_changed || [];
   const hasRange = c.base != null && c.head != null;
 
@@ -2578,7 +2578,7 @@ function buildChanges() {
 
   if (!hasRange) {
     h += '<div class="empty">No git range available — this workspace is not a git ' +
-      'repository (or has no history), so there are no changes to attribute to requirements.</div>';
+      'repository (or has no history), so there are no changes to attribute to specs.</div>';
     h += '</div>';
     el('chgmain').innerHTML = h;
     return;
@@ -2587,16 +2587,16 @@ function buildChanges() {
   h += '<div class="chg-head">' +
     `<span class="chg-range">${esc(c.base)}<span class="sep">..</span>${esc(c.head)}</span>` +
     `<span class="chip muted">${filesChanged.length} file${filesChanged.length === 1 ? '' : 's'} changed</span>` +
-    `<span class="chip muted">${touched.length} requirement${touched.length === 1 ? '' : 's'} touched</span></div>`;
+    `<span class="chip muted">${touched.length} spec${touched.length === 1 ? '' : 's'} touched</span></div>`;
 
   if (!filesChanged.length) {
     h += '<div class="empty">No changes in this range — base and head point to the same code.</div>';
   } else if (!touched.length) {
-    h += '<div class="empty">Files changed, but none of them map to a tracked requirement ' +
-      '(no RF links reach the changed code). See the Coverage gaps tab for unattributed code.</div>';
+    h += '<div class="empty">Files changed, but none of them map to a tracked spec ' +
+      '(no Spec links reach the changed code). See the Coverage gaps tab for unattributed code.</div>';
   } else {
     h += '<div class="card"><table><thead><tr>' +
-      '<th>Requirement</th><th>Title</th><th>Changed files</th><th>Test coverage</th></tr></thead><tbody>';
+      '<th>Spec</th><th>Title</th><th>Changed files</th><th>Test coverage</th></tr></thead><tbody>';
     touched.forEach(r => {
       const pct = Math.round((r.test_coverage_ratio || 0) * 100);
       const cls = ratioCls(pct);
@@ -2604,7 +2604,7 @@ function buildChanges() {
         ? '<div class="files-list">' + r.files.map(f => `<span class="f">${esc(f)}</span>`).join('') + '</div>'
         : '<span class="empty">—</span>';
       h += '<tr>' +
-        `<td><span class="qname">${esc(r.rf_id)}</span></td>` +
+        `<td><span class="qname">${esc(r.spec_id)}</span></td>` +
         `<td>${esc(r.title || '')}</td>` +
         `<td>${files}</td>` +
         `<td><span class="ratio-bar ${cls}"><span class="track"><span class="fill" style="width:${pct}%"></span></span>` +

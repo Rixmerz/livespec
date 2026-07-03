@@ -40,7 +40,7 @@ class IndexStats:
     files_skipped: int = 0
     symbols_total: int = 0
     edges_total: int = 0
-    rf_links_created: int = 0
+    spec_links_created: int = 0
     manual_links_restored: int = 0
     languages: dict[str, int] = None  # type: ignore
     languages_unsupported: dict[str, int] = None  # type: ignore  # mapped ext, no extractor
@@ -188,34 +188,34 @@ def index_project(
     changed_file_ids: list[int] = []
     files_deleted = False
 
-    # Snapshot manual / non-annotation rf_symbol links before any cascade
+    # Snapshot manual / non-annotation spec_symbol links before any cascade
     # delete fires. Re-extracting a file wipes its symbols (and via FK
-    # cascade, every rf_symbol row pointing at them), which silently
-    # destroyed mappings created by `bulk_link_rf_symbols` /
-    # `link_rf_symbol`. We re-resolve by symbol qname after the new
+    # cascade, every spec_symbol row pointing at them), which silently
+    # destroyed mappings created by `bulk_link_spec_symbols` /
+    # `link_spec_symbol`. We re-resolve by symbol qname after the new
     # symbols are inserted and INSERT OR IGNORE the manual links back.
     # `source = 'annotation'` is intentionally NOT snapshotted: those
     # are re-derived by `scan_annotations` from the fresh docstrings,
     # so trying to preserve them would just shadow legitimate edits to
-    # `@rf:` tags in source.
+    # `@spec:` tags in source.
     manual_links_snapshot: list[tuple[str, str, str, float, str]] = [
         (
-            r["rf_id"],
+            r["spec_id"],
             r["qname"],
             r["relation"],
             float(r["confidence"]),
             r["source"],
         )
         for r in conn.execute(
-            """SELECT r.rf_id AS rf_id, s.qualified_name AS qname,
-                      rs.relation AS relation, rs.confidence AS confidence,
-                      rs.source AS source
-               FROM rf_symbol rs
-               JOIN rf r ON r.id = rs.rf_id
-               JOIN symbol s ON s.id = rs.symbol_id
+            """SELECT sp.spec_id AS spec_id, s.qualified_name AS qname,
+                      ss.relation AS relation, ss.confidence AS confidence,
+                      ss.source AS source
+               FROM spec_symbol ss
+               JOIN spec sp ON sp.id = ss.spec_id
+               JOIN symbol s ON s.id = ss.symbol_id
                JOIN file f ON f.id = s.file_id
                WHERE f.project_id = ?
-                 AND rs.source != 'annotation'""",
+                 AND ss.source != 'annotation'""",
             (project_id,),
         )
     ]
@@ -285,13 +285,13 @@ def index_project(
             project_id=project_id,
             changed_file_ids=changed_file_ids if use_targeted else None,
         )
-        # P0.1: also re-link RF annotations from docstrings. Cheap, idempotent
+        # P0.1: also re-link Spec annotations from docstrings. Cheap, idempotent
         # (INSERT OR IGNORE), and prevents traceability from going silently
-        # stale when an edited symbol's old rf_symbol row is cascaded away.
+        # stale when an edited symbol's old spec_symbol row is cascaded away.
         from livespec_mcp.domain.matcher import scan_annotations
-        stats.rf_links_created = scan_annotations(conn, project_id=project_id)
+        stats.spec_links_created = scan_annotations(conn, project_id=project_id)
 
-        # Restore manual rf_symbol links wiped by the symbol cascade. We
+        # Restore manual spec_symbol links wiped by the symbol cascade. We
         # re-resolve symbol qname → new symbol_id and INSERT OR IGNORE,
         # so links whose target symbol now lives at a new id come back,
         # and links whose symbol qname disappeared from the codebase
@@ -302,7 +302,7 @@ def index_project(
             # semantics when a qname exists in more than one file.
             conn.execute(
                 """CREATE TEMP TABLE IF NOT EXISTS _manual_links(
-                       rf_id_str TEXT, qname TEXT, relation TEXT,
+                       spec_id_str TEXT, qname TEXT, relation TEXT,
                        confidence REAL, source TEXT)"""
             )
             conn.execute("DELETE FROM _manual_links")
@@ -310,13 +310,13 @@ def index_project(
                 "INSERT INTO _manual_links VALUES(?,?,?,?,?)", manual_links_snapshot
             )
             cur = conn.execute(
-                """INSERT OR IGNORE INTO rf_symbol(rf_id, symbol_id, relation, confidence, source)
-                   SELECT rf.id, MIN(s.id), m.relation, m.confidence, m.source
+                """INSERT OR IGNORE INTO spec_symbol(spec_id, symbol_id, relation, confidence, source)
+                   SELECT sp.id, MIN(s.id), m.relation, m.confidence, m.source
                    FROM _manual_links m
-                   JOIN rf ON rf.rf_id = m.rf_id_str AND rf.project_id = ?
+                   JOIN spec sp ON sp.spec_id = m.spec_id_str AND sp.project_id = ?
                    JOIN symbol s ON s.qualified_name = m.qname
                    JOIN file f ON f.id = s.file_id AND f.project_id = ?
-                   GROUP BY rf.id, m.qname, m.relation, m.confidence, m.source""",
+                   GROUP BY sp.id, m.qname, m.relation, m.confidence, m.source""",
                 (project_id, project_id),
             )
             stats.manual_links_restored = max(cur.rowcount, 0)

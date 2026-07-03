@@ -1,7 +1,7 @@
 [project]
 name = "livespec-mcp"
 version = "0.19.0"
-description = "Code intelligence for AI agents: call graph, impact analysis, and bidirectional Functional Requirement <-> code traceability"
+description = "Code intelligence for AI agents: call graph, impact analysis, and bidirectional Spec <-> code traceability"
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }

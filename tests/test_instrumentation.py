@@ -32,12 +32,12 @@ async def test_every_dispatch_logs_one_line(sample_repo):
     ws = str(sample_repo)
     async with Client(mcp) as c:
         await c.call_tool("index_project", {"workspace": ws})
-        await c.call_tool("list_requirements", {"workspace": ws})
+        await c.call_tool("list_specs", {"workspace": ws})
         await c.call_tool("find_symbol", {"query": "login", "workspace": ws})
 
     entries = _read_log(sample_repo)
     names = [e["tool_name"] for e in entries]
-    assert names == ["index_project", "list_requirements", "find_symbol"]
+    assert names == ["index_project", "list_specs", "find_symbol"]
     # Schema fields present on every line
     for e in entries:
         assert set(e.keys()) >= {
@@ -97,7 +97,7 @@ async def test_logging_disabled_via_env(sample_repo, monkeypatch):
     monkeypatch.setenv("LIVESPEC_AGENT_LOG", "0")
     ws = str(sample_repo)
     async with Client(mcp) as c:
-        await c.call_tool("list_requirements", {"workspace": ws})
+        await c.call_tool("list_specs", {"workspace": ws})
 
     log = sample_repo / ".mcp-docs" / "agent_log.jsonl"
     assert not log.exists()
@@ -109,7 +109,7 @@ async def test_log_respects_repo_config_log_calls(sample_repo, monkeypatch):
     (sample_repo / ".livespec.toml").write_text("[agent]\nlog_calls = true\n")
     ws = str(sample_repo)
     async with Client(mcp) as c:
-        await c.call_tool("list_requirements", {"workspace": ws})
+        await c.call_tool("list_specs", {"workspace": ws})
     assert _read_log(sample_repo)
 
 
@@ -118,7 +118,7 @@ async def test_log_off_by_default_without_config(sample_repo, monkeypatch):
     monkeypatch.delenv("LIVESPEC_AGENT_LOG", raising=False)
     ws = str(sample_repo)
     async with Client(mcp) as c:
-        await c.call_tool("list_requirements", {"workspace": ws})
+        await c.call_tool("list_specs", {"workspace": ws})
     log = sample_repo / ".mcp-docs" / "agent_log.jsonl"
     assert not log.exists()
 
@@ -128,7 +128,7 @@ async def test_log_file_lives_under_resolved_workspace(sample_repo):
     """Log lands under the workspace path passed on the tool call."""
     ws = str(sample_repo)
     async with Client(mcp) as c:
-        await c.call_tool("list_requirements", {"workspace": ws})
+        await c.call_tool("list_specs", {"workspace": ws})
 
     log = sample_repo / ".mcp-docs" / "agent_log.jsonl"
     assert log.exists()

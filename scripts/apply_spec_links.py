@@ -1,26 +1,27 @@
-"""Reproduce livespec's own RF->symbol links from a committed seed.
+"""Reproduce livespec's own Spec->symbol links from a committed seed.
 
-The RF *definitions* in ``docs/requirements/livespec-rfs.md`` regenerate via
-``import_requirements_from_markdown``. The ``implements`` / ``tests`` *links*
-between each RF and the symbols that satisfy it live only in the local
+The Spec *definitions* in ``docs/requirements/livespec-specs.md`` regenerate
+via ``import_specs_from_markdown``. The ``implements`` / ``tests`` *links*
+between each Spec and the symbols that satisfy it live only in the local
 (gitignored) ``.mcp-docs/docs.db``. This script makes those links
 reproducible from a fresh clone by replaying the committed seed
-(``docs/requirements/livespec-rf-links.json``) through the in-process
-``bulk_link_rf_symbols`` MCP tool.
+(``docs/requirements/livespec-spec-links.json``) through the in-process
+``bulk_link_spec_symbols`` MCP tool.
 
 Deterministic regeneration flow (run against a freshly cloned workspace):
 
     1. index_project                        # builds the symbol index
-    2. import_requirements_from_markdown \\
-         docs/requirements/livespec-rfs.md   # recreates the 12 RF defs
-    3. python scripts/apply_rf_links.py      # recreates the implements/tests links
+    2. import_specs_from_markdown \\
+         docs/requirements/livespec-specs.md   # recreates the 12 Spec defs
+    3. python scripts/apply_spec_links.py   # recreates the implements/tests links
 
-The seed is a sorted list of ``{"rf_id", "qname", "relation"}`` objects.
-``bulk_link_rf_symbols`` uses ``INSERT OR IGNORE``, so re-running this script
-is idempotent: existing links are skipped, only missing ones are created.
+The seed is a sorted list of ``{"spec_id", "qname", "relation"}`` objects.
+``bulk_link_spec_symbols`` uses ``INSERT OR IGNORE``, so re-running this
+script is idempotent: existing links are skipped, only missing ones are
+created.
 
 Usage:
-    python scripts/apply_rf_links.py [--workspace PATH] [--links PATH]
+    python scripts/apply_spec_links.py [--workspace PATH] [--links PATH]
 """
 
 from __future__ import annotations
@@ -40,7 +41,7 @@ DEFAULT_LINKS = (
     Path(__file__).resolve().parent.parent
     / "docs"
     / "requirements"
-    / "livespec-rf-links.json"
+    / "livespec-spec-links.json"
 )
 
 
@@ -53,26 +54,26 @@ def _load_links(links_path: Path) -> list[dict[str, str]]:
     for i, entry in enumerate(raw):
         if not isinstance(entry, dict):
             raise ValueError(f"{links_path}[{i}]: expected an object")
-        rf_id = entry.get("rf_id")
+        spec_id = entry.get("spec_id")
         qname = entry.get("qname")
         relation = entry.get("relation", "implements")
-        if not rf_id or not qname:
-            raise ValueError(f"{links_path}[{i}]: 'rf_id' and 'qname' are required")
-        links.append({"rf_id": rf_id, "qname": qname, "relation": relation})
+        if not spec_id or not qname:
+            raise ValueError(f"{links_path}[{i}]: 'spec_id' and 'qname' are required")
+        links.append({"spec_id": spec_id, "qname": qname, "relation": relation})
     return links
 
 
 def _to_mappings(links: list[dict[str, str]]) -> list[dict[str, Any]]:
-    """Translate seed entries to ``bulk_link_rf_symbols`` mapping objects.
+    """Translate seed entries to ``bulk_link_spec_symbols`` mapping objects.
 
-    Grouped by (rf_id, relation) ordering for a diff-friendly, deterministic
+    Grouped by (spec_id, relation) ordering for a diff-friendly, deterministic
     payload. The tool itself accepts a single flat list and links them all in
     one transaction.
     """
-    ordered = sorted(links, key=lambda d: (d["rf_id"], d["relation"], d["qname"]))
+    ordered = sorted(links, key=lambda d: (d["spec_id"], d["relation"], d["qname"]))
     return [
         {
-            "rf_id": link["rf_id"],
+            "spec_id": link["spec_id"],
             "symbol_qname": link["qname"],
             "relation": link["relation"],
             "source": "manual",
@@ -82,16 +83,16 @@ def _to_mappings(links: list[dict[str, str]]) -> list[dict[str, Any]]:
 
 
 async def _apply(workspace: Path, mappings: list[dict[str, Any]]) -> dict[str, Any]:
-    """Call ``bulk_link_rf_symbols`` in-process and return its result."""
+    """Call ``bulk_link_spec_symbols`` in-process and return its result."""
     args: dict[str, Any] = {"mappings": mappings, "workspace": str(workspace)}
     async with Client(mcp) as client:
-        result = await client.call_tool("bulk_link_rf_symbols", args)
+        result = await client.call_tool("bulk_link_spec_symbols", args)
     return result.data
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        description="Reproduce livespec RF->symbol links from the committed seed."
+        description="Reproduce livespec Spec->symbol links from the committed seed."
     )
     parser.add_argument(
         "--workspace",
@@ -130,7 +131,7 @@ def main(argv: list[str] | None = None) -> int:
         for entry in result.get("results", []):
             if not entry.get("ok"):
                 print(
-                    f"  FAILED {entry.get('rf_id')} -> "
+                    f"  FAILED {entry.get('spec_id')} -> "
                     f"{entry.get('symbol_qname')}: {entry.get('error')}",
                     file=sys.stderr,
                 )

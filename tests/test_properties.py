@@ -28,21 +28,21 @@ def test_parse_annotations_never_crashes(text: str):
     out = parse_annotations(text)
     assert isinstance(out, list)
     for hit in out:
-        assert hit.rf_id.startswith("RF-")
+        assert hit.spec_id.startswith("SPEC-")
         assert hit.confidence in (0.7, 1.0)
         assert hit.relation in ("implements", "tests", "references")
 
 
 @given(st.integers(min_value=0, max_value=999))
 @settings(max_examples=50, deadline=None)
-def test_parse_annotations_normalizes_rf_ids(n: int):
-    """`@rf:RF-N` and `@rf:RF-00N` produce the same normalized id."""
-    text_short = f"@rf:RF-{n}"
-    text_padded = f"@rf:RF-{n:03d}"
+def test_parse_annotations_normalizes_spec_ids(n: int):
+    """`@spec:Spec-N` and `@spec:Spec-00N` produce the same normalized id."""
+    text_short = f"@spec:SPEC-{n}"
+    text_padded = f"@spec:SPEC-{n:03d}"
     a = parse_annotations(text_short)
     b = parse_annotations(text_padded)
     assert len(a) == 1 and len(b) == 1
-    assert a[0].rf_id == b[0].rf_id == f"RF-{n:03d}"
+    assert a[0].spec_id == b[0].spec_id == f"SPEC-{n:03d}"
 
 
 # ---------- Indexer idempotence ----------

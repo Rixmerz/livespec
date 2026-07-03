@@ -29,18 +29,18 @@ def register(mcp: FastMCP) -> None:
     @mcp.tool(annotations={"readOnlyHint": True, "idempotentHint": True})
     def search(
         query: str,
-        scope: Literal["all", "code", "requirements"] = "all",
+        scope: Literal["all", "code", "specs"] = "all",
         limit: int = 20,
         workspace: Workspace | None = None,
     ) -> dict[str, Any]:
-        """Hybrid retrieval over chunked symbols + RFs.
+        """Hybrid retrieval over chunked symbols + Specs.
 
         FTS5 keyword lane always runs. When embeddings are available,
         a vector lane is fused with Reciprocal Rank Fusion (k=60).
         Run `index_project(embed=True)` once to populate vectors;
         subsequent calls reuse them.
 
-        scope: 'all' | 'code' | 'requirements'""" + WORKSPACE_DOCSTRING_NOTE
+        scope: 'all' | 'code' | 'specs'""" + WORKSPACE_DOCSTRING_NOTE
         if not query or not query.strip():
             return mcp_error("query is required", hint="pass a non-empty query string")
         if limit < 1 or limit > 200:

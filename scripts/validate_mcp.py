@@ -24,7 +24,7 @@ async def main() -> int:
         "index_project",
         "get_project_overview",
         "find_symbol",
-        "list_requirements",
+        "list_specs",
         "search",
     }
     missing_tools = required - names
@@ -64,8 +64,8 @@ async def main() -> int:
     async with Client(mcp) as client:
         # Missing workspace must fail
         try:
-            await client.call_tool("list_requirements", {})
-            errors.append("list_requirements without workspace should fail")
+            await client.call_tool("list_specs", {})
+            errors.append("list_specs without workspace should fail")
         except Exception as exc:
             msg = str(exc).lower()
             if "workspace" not in msg and "required" not in msg:
@@ -101,12 +101,12 @@ async def main() -> int:
             matches = (fd or {}).get("matches") or []
             print(f"  find_symbol(register): {len(matches)} matches")
 
-            lr = await client.call_tool("list_requirements", {"workspace": ws_s, "limit": 5})
+            lr = await client.call_tool("list_specs", {"workspace": ws_s, "limit": 5})
             ld = lr.data if hasattr(lr, "data") else lr
             if isinstance(ld, str):
                 ld = json.loads(ld)
-            reqs = (ld or {}).get("requirements") or (ld or {}).get("items") or []
-            print(f"  list_requirements: {len(reqs)} RFs")
+            specs = (ld or {}).get("specs") or (ld or {}).get("items") or []
+            print(f"  list_specs: {len(specs)} Specs")
 
     if errors:
         print("\nVALIDATION FAILED")

@@ -1,12 +1,12 @@
-"""RF test-coverage trend persistence (v0.16 P D).
+"""Spec test-coverage trend persistence (v0.16 P D).
 
-Every ``audit_coverage`` run appends one snapshot row per RF plus a rollup,
+Every ``audit_coverage`` run appends one snapshot row per Spec plus a rollup,
 so the coverage ratio can be plotted over time. The table is created by an
-append-only migration in ``storage/db.py`` (``rf_coverage_snapshot``).
+append-only migration in ``storage/db.py`` (``spec_coverage_snapshot``).
 
 Two functions:
 
-* ``record_snapshot`` — append one audit's worth of per-RF ratios + rollups,
+* ``record_snapshot`` — append one audit's worth of per-Spec ratios + rollups,
   all sharing one ``ts``.
 * ``read_trend`` — chronological list of ``{ts, avg_test_coverage,
   verified_count}`` rollup rows (one per recorded audit).
@@ -20,25 +20,26 @@ from __future__ import annotations
 import sqlite3
 from typing import Any
 
-# Sentinel rf_id used to store the per-snapshot rollup (avg + verified count)
-# on its own row. RF ids are user strings like "RF-042"; this one starts with
-# a NUL-safe marker that cannot collide with a real RF id.
-_ROLLUP_RF_ID = "__rollup__"
+# Sentinel spec_id used to store the per-snapshot rollup (avg + verified
+# count) on its own row. Spec ids are user strings like "SPEC-042"; this one
+# starts with a NUL-safe marker that cannot collide with a real spec id.
+_ROLLUP_SPEC_ID = "__rollup__"
 
 
 def record_snapshot(
     conn: sqlite3.Connection,
     project_id: int,
-    per_rf: dict[str, float],
+    per_spec: dict[str, float],
     avg: float | None,
     verified_count: int,
     ts: str,
 ) -> None:
     """Append one coverage snapshot for ``project_id`` taken at ``ts``.
 
-    ``per_rf`` maps ``rf_id -> test_coverage_ratio``; each becomes one row.
-    A single rollup row (``rf_id=__rollup__``) stores ``avg`` (NULL allowed)
-    and ``verified_count`` so ``read_trend`` can emit them without re-deriving.
+    ``per_spec`` maps ``spec_id -> test_coverage_ratio``; each becomes one
+    row. A single rollup row (``spec_id=__rollup__``) stores ``avg`` (NULL
+    allowed) and ``verified_count`` so ``read_trend`` can emit them without
+    re-deriving.
 
     All rows share the same ``ts`` — that is what groups them into one
     snapshot.
@@ -51,10 +52,10 @@ def record_snapshot(
     """
     last = conn.execute(
         """SELECT ratio AS avg, verified_count
-           FROM rf_coverage_snapshot
-           WHERE project_id=? AND rf_id=?
+           FROM spec_coverage_snapshot
+           WHERE project_id=? AND spec_id=?
            ORDER BY ts DESC, id DESC LIMIT 1""",
-        (project_id, _ROLLUP_RF_ID),
+        (project_id, _ROLLUP_SPEC_ID),
     ).fetchone()
     if last is not None:
         last_avg = last["avg"]
@@ -65,21 +66,21 @@ def record_snapshot(
             return  # unchanged since last snapshot — record only on change
 
     rows: list[tuple[int, str, str, float | None]] = [
-        (project_id, ts, rf_id, float(ratio)) for rf_id, ratio in per_rf.items()
+        (project_id, ts, spec_id, float(ratio)) for spec_id, ratio in per_spec.items()
     ]
-    # Rollup row: ratio column carries the avg (NULL when no RFs);
+    # Rollup row: ratio column carries the avg (NULL when no Specs);
     # verified_count rides in its own column.
     conn.executemany(
-        """INSERT INTO rf_coverage_snapshot
-               (project_id, ts, rf_id, ratio, verified_count)
+        """INSERT INTO spec_coverage_snapshot
+               (project_id, ts, spec_id, ratio, verified_count)
            VALUES (?, ?, ?, ?, NULL)""",
         rows,
     )
     conn.execute(
-        """INSERT INTO rf_coverage_snapshot
-               (project_id, ts, rf_id, ratio, verified_count)
+        """INSERT INTO spec_coverage_snapshot
+               (project_id, ts, spec_id, ratio, verified_count)
            VALUES (?, ?, ?, ?, ?)""",
-        (project_id, ts, _ROLLUP_RF_ID, avg, int(verified_count)),
+        (project_id, ts, _ROLLUP_SPEC_ID, avg, int(verified_count)),
     )
 
 
@@ -88,14 +89,14 @@ def read_trend(conn: sqlite3.Connection, project_id: int) -> list[dict[str, Any]
 
     Returns one dict per recorded audit:
     ``{ts, avg_test_coverage, verified_count}``, ordered by ``ts`` ascending.
-    ``avg_test_coverage`` is ``None`` when the audit had no RFs.
+    ``avg_test_coverage`` is ``None`` when the audit had no Specs.
     """
     rows = conn.execute(
         """SELECT ts, ratio AS avg_test_coverage, verified_count
-           FROM rf_coverage_snapshot
-           WHERE project_id=? AND rf_id=?
+           FROM spec_coverage_snapshot
+           WHERE project_id=? AND spec_id=?
            ORDER BY ts ASC, id ASC""",
-        (project_id, _ROLLUP_RF_ID),
+        (project_id, _ROLLUP_SPEC_ID),
     ).fetchall()
     return [
         {

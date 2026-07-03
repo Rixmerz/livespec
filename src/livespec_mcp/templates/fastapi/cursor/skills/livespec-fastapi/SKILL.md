@@ -1,9 +1,9 @@
 ---
 name: livespec-fastapi
 description: >-
-  Onboard and operate Livespec MCP on a FastAPI repo: index, mount RF Explorer
-  at /explorer, HTTP route discovery, Try-it, RF traceability. Use when the
-  project uses FastAPI, mentions /explorer, livespec-mcp, or RF Explorer.
+  Onboard and operate Livespec MCP on a FastAPI repo: index, mount Spec Explorer
+  at /explorer, HTTP route discovery, Try-it, Spec traceability. Use when the
+  project uses FastAPI, mentions /explorer, livespec-mcp, or Spec Explorer.
 ---
 
 # Livespec + FastAPI
@@ -11,7 +11,7 @@ description: >-
 ## When to trigger
 
 - Repo has `FastAPI()` in `main.py` / `app.py`
-- User wants `/explorer`, code intelligence, or RF traceability on a Python API
+- User wants `/explorer`, code intelligence, or Spec traceability on a Python API
 - After `livespec-mcp fastapi init` was run in this repo
 
 ## Required: `workspace`
@@ -39,7 +39,7 @@ Manual equivalent:
 2. **HTTP surface** — `find_endpoints(framework="fastapi")`; confirm GET/POST paths.
 3. **Refresh UI** — `export_explorer(workspace=...)` before demoing Explorer.
 4. **Task work** — `find_symbol` → `quick_orient` → `analyze_impact` / `who_calls`.
-5. **RFs** (if adopted) — `list_requirements`, `get_requirement_implementation(rf_id)`, `audit_coverage(summary_only=True)`.
+5. **Specs** (if adopted) — `list_specs`, `get_spec_implementation(spec_id)`, `audit_coverage(summary_only=True)`.
 6. **After edits** — `git_diff_impact(summary_only=True)`; use `payload_warning` if present.
 
 ## Explorer Try-it

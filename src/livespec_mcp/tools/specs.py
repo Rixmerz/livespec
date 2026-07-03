@@ -1,31 +1,38 @@
-"""RF tools: CRUD + linking + implementation lookup + RF dependency graph.
+"""Spec tools: CRUD + linking + implementation lookup + Spec dependency graph.
 
 P1.2 consolidation: `suggest_rf_links` removed. To get implementation
-candidates for an RF, call `search(query=<rf.title + rf.description>,
+candidates for a Spec, call `search(query=<spec.title + spec.description>,
 scope='code')` directly — the agent can then post-filter and call
-`link_rf_symbol` for each accepted candidate.
+`link_spec_symbol` for each accepted candidate.
 
-RF-link naming (current; v0.6 renamed for clarity, v0.8 removed the
-deprecated aliases):
-  RF -> code symbol            link_rf_symbol
-  RF -> another RF             link_rf_dependency
+Spec-link naming (v0.20 renamed RF -> Spec; taxonomy expanded via `kind`):
+  Spec -> code symbol            link_spec_symbol
+  Spec -> another Spec           link_spec_dependency
 """
 
 from __future__ import annotations
 
 import re
-from pathlib import Path
 from typing import Any, Literal
 
 from fastmcp import FastMCP
 
 from livespec_mcp.domain.graph import load_graph, page_rank
 from livespec_mcp.domain.matcher import scan_annotations
-from livespec_mcp.domain.md_rfs import parse_rfs_markdown
 from livespec_mcp.state import get_state
 from livespec_mcp.tools._errors import mcp_error
 from livespec_mcp.tools.analysis import symbol_not_found_error
 from livespec_mcp.workspace_param import WORKSPACE_DOCSTRING_NOTE, Workspace
+
+SpecKind = Literal[
+    "functional_requirement",
+    "non_functional_requirement",
+    "adr",
+    "design",
+    "constraint",
+    "epic",
+    "other",
+]
 
 
 def _humanize_module_segment(seg: str) -> str:
@@ -53,17 +60,17 @@ _GENERIC_MODULE_NAMES = {
 }
 
 
-def _next_rf_id(conn, project_id: int) -> str:
+def _next_spec_id(conn, project_id: int) -> str:
     row = conn.execute(
-        "SELECT rf_id FROM rf WHERE project_id=? ORDER BY id DESC LIMIT 1",
+        "SELECT spec_id FROM spec WHERE project_id=? ORDER BY id DESC LIMIT 1",
         (project_id,),
     ).fetchone()
     n = 1
     if row:
-        digits = "".join(c for c in row["rf_id"] if c.isdigit())
+        digits = "".join(c for c in row["spec_id"] if c.isdigit())
         if digits:
             n = int(digits) + 1
-    return f"RF-{n:03d}"
+    return f"SPEC-{n:03d}"
 
 
 def _noop_decorator(**_kwargs: Any):
@@ -71,7 +78,7 @@ def _noop_decorator(**_kwargs: Any):
 
     Used to suppress @mcp.tool registration on a per-tool basis when
     splitting `register` between the default surface (agentic tools) and
-    the optional `livespec-rf` plugin surface (mutation tools).
+    the optional `livespec-spec` plugin surface (mutation tools).
     """
 
     def _wrap(fn):
@@ -85,17 +92,17 @@ def register(
     agentic: bool = True,
     mutation: bool = False,
 ) -> None:
-    """Register RF tools.
+    """Register Spec tools.
 
-    v0.8 P3.4 split:
+    v0.8 P3.4 split (v0.20 renamed rf -> spec):
       - ``agentic=True, mutation=False`` (default, called by ``server.py``):
-        registers the 3 RF tools an agent ASKS — ``list_requirements``,
-        ``get_requirement_implementation``, ``propose_requirements_from_codebase``
+        registers the Spec tools an agent ASKS — ``list_specs``,
+        ``get_spec_implementation``, ``propose_specs_from_codebase``
         — plus the brownfield-discovery helpers.
-      - ``agentic=False, mutation=True`` (called by ``tools.plugins.rf``):
-        registers the 11 mutation/linking tools a HUMAN runs to mutate RF
-        state. Auto-loads when the workspace DB has rf rows or
-        ``LIVESPEC_PLUGINS`` includes ``rf``.
+      - ``agentic=False, mutation=True`` (called by ``tools.plugins.spec``):
+        registers the mutation/linking tools a HUMAN runs to mutate Spec
+        state. Auto-loads when the workspace DB has spec rows or
+        ``LIVESPEC_PLUGINS`` includes ``spec``.
 
     The dual-decorator pattern below keeps every tool definition in a
     single file while letting registration flip on/off per surface.
@@ -104,22 +111,25 @@ def register(
     mutation_tool = mcp.tool if mutation else _noop_decorator
 
     @mutation_tool(annotations={"readOnlyHint": False, "idempotentHint": False})
-    def create_requirement(
+    def create_spec(
         title: str,
         description: str | None = None,
-        rf_id: str | None = None,
+        spec_id: str | None = None,
+        kind: SpecKind = "functional_requirement",
         module: str | None = None,
         priority: Literal["low", "medium", "high", "critical"] = "medium",
         status: Literal["draft", "active", "deprecated"] = "draft",
         workspace: Workspace | None = None,
     ) -> dict[str, Any]:
-        """Create a Functional Requirement.
+        """Create a Spec (functional requirement, NFR, ADR, design note, ...).
 
-        Auto-assigns rf_id (RF-NNN) if not provided. Not idempotent — use
-        `update_requirement` for changes.""" + WORKSPACE_DOCSTRING_NOTE
+        Auto-assigns spec_id (SPEC-NNN) if not provided. `kind` classifies
+        the spec — see SpecKind for the documented values (free-text column,
+        not DB-enforced, so custom kinds also work). Not idempotent — use
+        `update_spec` for changes.""" + WORKSPACE_DOCSTRING_NOTE
         st = get_state(workspace)
         pid = st.project_id
-        rid = rf_id or _next_rf_id(st.conn, pid)
+        sid = spec_id or _next_spec_id(st.conn, pid)
         module_id = None
         if module:
             r = st.conn.execute(
@@ -133,37 +143,41 @@ def register(
                 )
                 module_id = int(cur.lastrowid)
         cur = st.conn.execute(
-            """INSERT INTO rf(project_id, rf_id, title, description, module_id, status, priority)
-               VALUES(?,?,?,?,?,?,?)""",
-            (pid, rid, title, description, module_id, status, priority),
+            """INSERT INTO spec(project_id, spec_id, kind, title, description, module_id, status, priority)
+               VALUES(?,?,?,?,?,?,?,?)""",
+            (pid, sid, kind, title, description, module_id, status, priority),
         )
-        return {"id": int(cur.lastrowid), "rf_id": rid, "title": title}
+        return {"id": int(cur.lastrowid), "spec_id": sid, "kind": kind, "title": title}
 
     @mutation_tool(annotations={"readOnlyHint": False, "idempotentHint": True})
-    def update_requirement(
-        rf_id: str,
+    def update_spec(
+        spec_id: str,
         title: str | None = None,
         description: str | None = None,
+        kind: SpecKind | None = None,
         status: Literal["draft", "active", "deprecated"] | None = None,
         priority: Literal["low", "medium", "high", "critical"] | None = None,
         module: str | None = None,
         workspace: Workspace | None = None,
     ) -> dict[str, Any]:
-        """Patch fields on an existing RF. Idempotent."""
+        """Patch fields on an existing Spec. Idempotent."""
         st = get_state(workspace)
         pid = st.project_id
         row = st.conn.execute(
-            "SELECT id FROM rf WHERE project_id=? AND rf_id=?", (pid, rf_id)
+            "SELECT id FROM spec WHERE project_id=? AND spec_id=?", (pid, spec_id)
         ).fetchone()
         if not row:
             return mcp_error(
-                f"RF '{rf_id}' not found",
-                hint="check `list_requirements()` for known RF ids",
+                f"Spec '{spec_id}' not found",
+                hint="check `list_specs()` for known spec ids",
             )
-        rf_pk = int(row["id"])
+        spec_pk = int(row["id"])
         sets: list[str] = []
         args: list[Any] = []
-        for col, val in [("title", title), ("description", description), ("status", status), ("priority", priority)]:
+        for col, val in [
+            ("title", title), ("description", description), ("kind", kind),
+            ("status", status), ("priority", priority),
+        ]:
             if val is not None:
                 sets.append(f"{col}=?")
                 args.append(val)
@@ -179,48 +193,52 @@ def register(
             sets.append("module_id=?")
             args.append(module_id)
         sets.append("updated_at=datetime('now')")
-        args.append(rf_pk)
-        st.conn.execute(f"UPDATE rf SET {', '.join(sets)} WHERE id=?", args)
-        return {"rf_id": rf_id, "updated": True}
+        args.append(spec_pk)
+        st.conn.execute(f"UPDATE spec SET {', '.join(sets)} WHERE id=?", args)
+        return {"spec_id": spec_id, "updated": True}
 
     @agentic_tool(annotations={"readOnlyHint": True, "idempotentHint": True})
-    def list_requirements(
+    def list_specs(
         status: str | None = None,
         module: str | None = None,
         priority: str | None = None,
+        kind: str | None = None,
         has_implementation: bool | None = None,
         limit: int = 100,
         workspace: Workspace | None = None,
     ) -> dict[str, Any]:
-        """List RFs with filters. Returns rf_id, title, status, priority, module, link_count.""" + WORKSPACE_DOCSTRING_NOTE
+        """List Specs with filters. Returns spec_id, kind, title, status, priority, module, link_count.""" + WORKSPACE_DOCSTRING_NOTE
         st = get_state(workspace)
         pid = st.project_id
         sql = [
-            """SELECT r.id, r.rf_id, r.title, r.description, r.status, r.priority,
+            """SELECT sp.id, sp.spec_id, sp.kind, sp.title, sp.description, sp.status, sp.priority,
                       m.name AS module,
-                      (SELECT COUNT(*) FROM rf_symbol rs WHERE rs.rf_id=r.id) AS link_count
-               FROM rf r LEFT JOIN module m ON m.id=r.module_id
-               WHERE r.project_id=?"""
+                      (SELECT COUNT(*) FROM spec_symbol ss WHERE ss.spec_id=sp.id) AS link_count
+               FROM spec sp LEFT JOIN module m ON m.id=sp.module_id
+               WHERE sp.project_id=?"""
         ]
         args: list[Any] = [pid]
         if status:
-            sql.append("AND r.status=?")
+            sql.append("AND sp.status=?")
             args.append(status)
         if priority:
-            sql.append("AND r.priority=?")
+            sql.append("AND sp.priority=?")
             args.append(priority)
+        if kind:
+            sql.append("AND sp.kind=?")
+            args.append(kind)
         if module:
             sql.append("AND m.name=?")
             args.append(module)
-        sql.append("ORDER BY r.rf_id LIMIT ?")
+        sql.append("ORDER BY sp.spec_id LIMIT ?")
         args.append(limit)
         rows = [dict(r) for r in st.conn.execute(" ".join(sql), args).fetchall()]
         if has_implementation is not None:
             rows = [r for r in rows if (r["link_count"] > 0) == has_implementation]
-        return {"requirements": rows}
+        return {"specs": rows}
 
-    def _do_link_rf_symbol(
-        rf_id: str,
+    def _do_link_spec_symbol(
+        spec_id: str,
         symbol_qname: str,
         relation: str,
         confidence: float,
@@ -230,13 +248,13 @@ def register(
     ) -> dict[str, Any]:
         st = get_state(workspace)
         pid = st.project_id
-        rf = st.conn.execute(
-            "SELECT id FROM rf WHERE project_id=? AND rf_id=?", (pid, rf_id)
+        spec = st.conn.execute(
+            "SELECT id FROM spec WHERE project_id=? AND spec_id=?", (pid, spec_id)
         ).fetchone()
-        if not rf:
+        if not spec:
             return mcp_error(
-                f"RF '{rf_id}' not found",
-                hint="check `list_requirements()` for known RF ids",
+                f"Spec '{spec_id}' not found",
+                hint="check `list_specs()` for known spec ids",
             )
         sym = st.conn.execute(
             """SELECT s.id FROM symbol s JOIN file f ON f.id=s.file_id
@@ -247,20 +265,20 @@ def register(
             return symbol_not_found_error(st.conn, pid, symbol_qname)
         if unlink:
             st.conn.execute(
-                "DELETE FROM rf_symbol WHERE rf_id=? AND symbol_id=? AND relation=?",
-                (rf["id"], sym["id"], relation),
+                "DELETE FROM spec_symbol WHERE spec_id=? AND symbol_id=? AND relation=?",
+                (spec["id"], sym["id"], relation),
             )
-            return {"unlinked": True, "rf_id": rf_id, "symbol": symbol_qname}
+            return {"unlinked": True, "spec_id": spec_id, "symbol": symbol_qname}
         st.conn.execute(
-            """INSERT OR REPLACE INTO rf_symbol(rf_id, symbol_id, relation, confidence, source)
+            """INSERT OR REPLACE INTO spec_symbol(spec_id, symbol_id, relation, confidence, source)
                VALUES(?,?,?,?,?)""",
-            (rf["id"], sym["id"], relation, confidence, source),
+            (spec["id"], sym["id"], relation, confidence, source),
         )
-        return {"linked": True, "rf_id": rf_id, "symbol": symbol_qname, "relation": relation}
+        return {"linked": True, "spec_id": spec_id, "symbol": symbol_qname, "relation": relation}
 
     @mutation_tool(annotations={"readOnlyHint": False, "idempotentHint": True})
-    def link_rf_symbol(
-        rf_id: str,
+    def link_spec_symbol(
+        spec_id: str,
         symbol_qname: str,
         relation: Literal["implements", "tests", "references"] = "implements",
         confidence: float = 1.0,
@@ -268,24 +286,21 @@ def register(
         unlink: bool = False,
         workspace: Workspace | None = None,
     ) -> dict[str, Any]:
-        """Link (or unlink) an RF to a code symbol. unlink=True removes the link.
-
-        v0.6 rename of link_requirement_to_code (kept as deprecated alias).
-        """
-        return _do_link_rf_symbol(
-            rf_id, symbol_qname, relation, confidence, source, unlink, workspace
+        """Link (or unlink) a Spec to a code symbol. unlink=True removes the link."""
+        return _do_link_spec_symbol(
+            spec_id, symbol_qname, relation, confidence, source, unlink, workspace
         )
 
     @agentic_tool(annotations={"readOnlyHint": False, "idempotentHint": True})
-    def bulk_link_rf_symbols(
+    def bulk_link_spec_symbols(
         mappings: list[dict[str, Any]],
         workspace: Workspace | None = None,
     ) -> dict[str, Any]:
-        """Batch-link N (rf_id, symbol_qname) pairs in a single transaction.
+        """Batch-link N (spec_id, symbol_qname) pairs in a single transaction.
 
         Each `mappings` entry accepts:
             {
-              "rf_id": "RF-001",                          # required
+              "spec_id": "SPEC-001",                       # required
               "symbol_qname": "pkg.auth.login",            # required
               "relation": "implements" | "tests" | "references",  # default implements
               "confidence": 0.0..1.0,                      # default 1.0
@@ -293,66 +308,68 @@ def register(
             }
 
         Returns per-mapping result so the caller knows which entries
-        landed vs. which failed (RF/symbol not found, validation, etc.):
+        landed vs. which failed (Spec/symbol not found, validation, etc.):
             {
               "linked": int, "skipped": int, "failed": int,
               "results": [
-                {"rf_id": "RF-001", "symbol_qname": "...",
+                {"spec_id": "SPEC-001", "symbol_qname": "...",
                  "ok": bool, "linked": bool, "error": str | None},
                 ...
               ]
             }
 
-        Idempotent: re-linking an existing (rf, symbol, relation) is a no-op
-        (`linked: false` but `ok: true`). v0.7 B1 — closes the brownfield
-        migration friction where 50+ RFs needed individual round-trips.
+        Idempotent: re-linking an existing (spec, symbol, relation) is a
+        no-op (`linked: false` but `ok: true`). v0.7 B1 — closes the
+        brownfield migration friction where 50+ specs needed individual
+        round-trips.
 
         **Test symbols:** ``symbol_qname`` must name an indexed *function* or
         *method* (e.g. ``tests.pkg.test_auth.test_login_ok``). Test *modules*
         (``tests.pkg.test_auth``) are not symbols and will fail lookup.
         """
         st = get_state(workspace)
-        from livespec_mcp.domain.requirements_sync import bulk_link_rf_symbols_impl
+        from livespec_mcp.domain.specs_sync import bulk_link_spec_symbols_impl
 
-        return bulk_link_rf_symbols_impl(st, mappings)
+        return bulk_link_spec_symbols_impl(st, mappings)
 
     @agentic_tool(annotations={"readOnlyHint": True, "idempotentHint": True})
-    def get_requirement_implementation(
-        rf_id: str,
+    def get_spec_implementation(
+        spec_id: str,
         workspace: Workspace | None = None,
     ) -> dict[str, Any]:
-        """What code implements an RF: list of symbols + files + coverage signals."""
+        """What code implements a Spec: list of symbols + files + coverage signals."""
         st = get_state(workspace)
         pid = st.project_id
-        rf = st.conn.execute(
-            """SELECT r.*, m.name AS module FROM rf r
-               LEFT JOIN module m ON m.id=r.module_id
-               WHERE r.project_id=? AND r.rf_id=?""",
-            (pid, rf_id),
+        spec = st.conn.execute(
+            """SELECT sp.*, m.name AS module FROM spec sp
+               LEFT JOIN module m ON m.id=sp.module_id
+               WHERE sp.project_id=? AND sp.spec_id=?""",
+            (pid, spec_id),
         ).fetchone()
-        if not rf:
+        if not spec:
             return mcp_error(
-                f"RF '{rf_id}' not found",
-                hint="check `list_requirements()` for known RF ids",
+                f"Spec '{spec_id}' not found",
+                hint="check `list_specs()` for known spec ids",
             )
         rows = st.conn.execute(
             """SELECT s.qualified_name, s.kind, s.signature, s.start_line, s.end_line,
-                      f.path, rs.relation, rs.confidence, rs.source
-               FROM rf_symbol rs JOIN symbol s ON s.id=rs.symbol_id
+                      f.path, ss.relation, ss.confidence, ss.source
+               FROM spec_symbol ss JOIN symbol s ON s.id=ss.symbol_id
                JOIN file f ON f.id=s.file_id
-               WHERE rs.rf_id=?
-               ORDER BY rs.confidence DESC, s.qualified_name""",
-            (rf["id"],),
+               WHERE ss.spec_id=?
+               ORDER BY ss.confidence DESC, s.qualified_name""",
+            (spec["id"],),
         ).fetchall()
         files = sorted({r["path"] for r in rows})
         return {
-            "rf": {
-                "rf_id": rf["rf_id"],
-                "title": rf["title"],
-                "description": rf["description"],
-                "status": rf["status"],
-                "priority": rf["priority"],
-                "module": rf["module"],
+            "spec": {
+                "spec_id": spec["spec_id"],
+                "kind": spec["kind"],
+                "title": spec["title"],
+                "description": spec["description"],
+                "status": spec["status"],
+                "priority": spec["priority"],
+                "module": spec["module"],
             },
             "symbols": [dict(r) for r in rows],
             "files": files,
@@ -360,25 +377,28 @@ def register(
         }
 
     @mutation_tool(annotations={"readOnlyHint": False, "idempotentHint": True})
-    def import_requirements_from_markdown(
+    def import_specs_from_markdown(
         path: str,
         workspace: Workspace | None = None,
     ) -> dict[str, Any]:
-        """Bulk-create / update RFs from a Markdown spec file.
+        """Bulk-create / update Specs from a Markdown spec file.
 
-        Format expected: `## RF-NNN: Title` headers, with `**Prioridad:** alta`
+        Format expected: `## SPEC-NNN: Title` headers, with `**Prioridad:** alta`
         and `**Módulo:** auth` metadata lines (Spanish or English variants).
-        Idempotent: re-import updates existing RFs in place rather than duplicating.
+        Idempotent: re-import updates existing Specs in place rather than
+        duplicating. Imported specs default to `kind=functional_requirement`
+        (the markdown format has no `kind` column yet — use `update_spec` to
+        reclassify).
 
         Path is resolved relative to the workspace root if not absolute.
         """
         st = get_state(workspace)
         try:
-            from livespec_mcp.domain.requirements_sync import (
-                import_requirements_from_markdown_file,
+            from livespec_mcp.domain.specs_sync import (
+                import_specs_from_markdown_file,
             )
 
-            return import_requirements_from_markdown_file(st, path)
+            return import_specs_from_markdown_file(st, path)
         except FileNotFoundError:
             return mcp_error(
                 f"file not found: {path}",
@@ -386,38 +406,39 @@ def register(
             )
 
     @mutation_tool(annotations={"readOnlyHint": False, "idempotentHint": True, "destructiveHint": True})
-    def delete_requirement(rf_id: str, workspace: Workspace | None = None) -> dict[str, Any]:
-        """Permanently delete an RF and its rf_symbol links (cascade).
+    def delete_spec(spec_id: str, workspace: Workspace | None = None) -> dict[str, Any]:
+        """Permanently delete a Spec and its spec_symbol links (cascade).
 
-        Idempotent: deleting an unknown rf_id returns deleted=False without error.
+        Idempotent: deleting an unknown spec_id returns deleted=False without error.
         """
         st = get_state(workspace)
         pid = st.project_id
         cur = st.conn.execute(
-            "DELETE FROM rf WHERE project_id=? AND rf_id=?", (pid, rf_id)
+            "DELETE FROM spec WHERE project_id=? AND spec_id=?", (pid, spec_id)
         )
-        return {"rf_id": rf_id, "deleted": cur.rowcount > 0}
+        return {"spec_id": spec_id, "deleted": cur.rowcount > 0}
 
     @agentic_tool(annotations={"readOnlyHint": True, "idempotentHint": True})
-    def propose_requirements_from_codebase(
+    def propose_specs_from_codebase(
         module_depth: int = 3,
         min_symbols_per_group: int = 3,
         max_proposals: int = 30,
         skip_already_covered: bool = True,
         workspace: Workspace | None = None,
     ) -> dict[str, Any]:
-        """Heuristic RF discovery for brownfield projects (v0.7 B2).
+        """Heuristic Spec discovery for brownfield projects (v0.7 B2).
 
         The killer feature for adopting livespec on an existing codebase.
         Groups symbols by their qname prefix at `module_depth` (default 3;
         e.g. depth=3 means `src.pkg.auth.*` -> group "src.pkg.auth"). A
         deeper default avoids collapsing a whole `src.*` subtree into one
-        useless RF — pass a lower `module_depth` for shallow layouts. Ranks
+        useless spec — pass a lower `module_depth` for shallow layouts. Ranks
         groups by total
-        PageRank score, and proposes one RF candidate per actionable group:
+        PageRank score, and proposes one Spec candidate per actionable group
+        (kind defaults to "functional_requirement"):
 
           {
-            "proposed_rf_id": "RF-007",
+            "proposed_spec_id": "SPEC-007",
             "title": "Auth",                       # humanized module name
             "description": "...",                  # first sentence of top symbol's docstring
             "module_key": "pkg.auth",
@@ -428,17 +449,17 @@ def register(
 
         Filters:
         - Generic module names (src, lib, core, common, utils, ...) are not
-          used as RF titles — fall back to the previous segment.
-        - Already-RF-covered groups: skipped by default. Pass
-          `skip_already_covered=False` to also propose RFs for partially
-          covered modules (useful when adding sub-feature RFs alongside an
-          existing feature RF).
+          used as Spec titles — fall back to the previous segment.
+        - Already-Spec-covered groups: skipped by default. Pass
+          `skip_already_covered=False` to also propose specs for partially
+          covered modules (useful when adding sub-feature specs alongside an
+          existing feature spec).
         - Infrastructure / dunders / decorated handlers: excluded from
           symbol counts (same heuristic as find_dead_code).
 
         Output is sorted by group score descending. Pair with
-        bulk_link_rf_symbols + create_requirement to land accepted
-        proposals in two calls per RF: create the RF, then bulk-link its
+        bulk_link_spec_symbols + create_spec to land accepted
+        proposals in two calls per spec: create the spec, then bulk-link its
         symbols.
         """
         st = get_state(workspace)
@@ -450,8 +471,8 @@ def register(
         linked_sids = {
             int(r["symbol_id"])
             for r in st.conn.execute(
-                """SELECT DISTINCT rs.symbol_id FROM rf_symbol rs
-                   JOIN symbol s ON s.id=rs.symbol_id
+                """SELECT DISTINCT ss.symbol_id FROM spec_symbol ss
+                   JOIN symbol s ON s.id=ss.symbol_id
                    JOIN file f ON f.id=s.file_id
                    WHERE f.project_id=?""",
                 (pid,),
@@ -492,15 +513,15 @@ def register(
 
         # Build proposals
         proposals: list[dict[str, Any]] = []
-        next_rf_n = 0
-        # Compute starting RF id offset based on existing RFs
-        last_rf = st.conn.execute(
-            "SELECT rf_id FROM rf WHERE project_id=? ORDER BY id DESC LIMIT 1",
+        next_spec_n = 0
+        # Compute starting spec id offset based on existing specs
+        last_spec = st.conn.execute(
+            "SELECT spec_id FROM spec WHERE project_id=? ORDER BY id DESC LIMIT 1",
             (pid,),
         ).fetchone()
-        if last_rf:
-            digits = "".join(c for c in last_rf["rf_id"] if c.isdigit())
-            next_rf_n = int(digits) if digits else 0
+        if last_spec:
+            digits = "".join(c for c in last_spec["spec_id"] if c.isdigit())
+            next_spec_n = int(digits) if digits else 0
 
         for group_key, syms in groups.items():
             if len(syms) < min_symbols_per_group:
@@ -540,11 +561,11 @@ def register(
 
             score = sum(s for _, s, _ in top)
 
-            next_rf_n += 1
-            proposed_rf_id = f"RF-{next_rf_n:03d}"
+            next_spec_n += 1
+            proposed_spec_id = f"SPEC-{next_spec_n:03d}"
 
             proposals.append({
-                "proposed_rf_id": proposed_rf_id,
+                "proposed_spec_id": proposed_spec_id,
                 "title": title,
                 "description": description,
                 "module_key": group_key,
@@ -564,16 +585,16 @@ def register(
         proposals.sort(key=lambda p: p["score"], reverse=True)
         proposals = proposals[:max_proposals]
 
-        # Re-number RF ids in score order so the highest-value group gets
-        # RF-{next}, second gets RF-{next+1}, etc. — keeps the suggestion
-        # naturally ordered.
-        if last_rf:
-            digits = "".join(c for c in last_rf["rf_id"] if c.isdigit())
+        # Re-number spec ids in score order so the highest-value group gets
+        # SPEC-{next}, second gets SPEC-{next+1}, etc. — keeps the
+        # suggestion naturally ordered.
+        if last_spec:
+            digits = "".join(c for c in last_spec["spec_id"] if c.isdigit())
             base = int(digits) if digits else 0
         else:
             base = 0
         for i, p in enumerate(proposals, start=1):
-            p["proposed_rf_id"] = f"RF-{base + i:03d}"
+            p["proposed_spec_id"] = f"SPEC-{base + i:03d}"
 
         return {
             "proposals": proposals,
@@ -582,31 +603,31 @@ def register(
         }
 
     @mutation_tool(annotations={"readOnlyHint": True, "idempotentHint": True})
-    def scan_docstrings_for_rf_hints(
+    def scan_docstrings_for_spec_hints(
         limit: int = 200,
         cursor: int = 0,
         summary_only: bool = False,
         workspace: Workspace | None = None,
     ) -> dict[str, Any]:
-        """Surface RF candidates from existing docstrings — brownfield helper.
+        """Surface Spec candidates from existing docstrings — brownfield helper.
 
         Walks every symbol that has a docstring AND is not already linked
-        to any RF. For each one, extracts:
+        to any Spec. For each one, extracts:
           - the first sentence (up to ~140 chars)
           - the leading action verb if present ("Validates...", "Handles...",
             "Manages...", etc.)
           - the symbol metadata
 
         Useful when adopting livespec on an existing project: instead of
-        guessing at RFs from scratch, the agent reads a few hundred of
-        these hints and proposes RFs grouped by leading verb / module.
+        guessing at specs from scratch, the agent reads a few hundred of
+        these hints and proposes specs grouped by leading verb / module.
 
         Returns also a `verb_histogram` so the agent can see which actions
         dominate the codebase ("47 'Validates...', 31 'Handles...'") —
-        that's the input signal for v0.7 B2 (propose_requirements_from_codebase).
+        that's the input signal for v0.7 B2 (propose_specs_from_codebase).
 
         v0.7 B6 — heuristic only, no LLM. The agent decides which hints
-        become RFs.
+        become specs.
         """
         st = get_state(workspace)
         pid = st.project_id
@@ -617,7 +638,7 @@ def register(
                FROM symbol s JOIN file f ON f.id=s.file_id
                WHERE f.project_id=? AND s.docstring IS NOT NULL AND s.docstring != ''
                  AND NOT EXISTS (
-                   SELECT 1 FROM rf_symbol rs WHERE rs.symbol_id=s.id
+                   SELECT 1 FROM spec_symbol ss WHERE ss.symbol_id=s.id
                  )
                ORDER BY f.path, s.start_line""",
             (pid,),
@@ -640,7 +661,7 @@ def register(
             # First sentence, capped
             first_sent = _SENT_END.split(doc, maxsplit=1)[0].strip()
             if not first_sent or first_sent.startswith("@"):
-                # Pure annotation lines like '@rf:RF-001' — already scanned
+                # Pure annotation lines like '@spec:SPEC-001' — already scanned
                 continue
             first_sent = first_sent[:140]
             # Leading word
@@ -685,12 +706,12 @@ def register(
         }
 
     @mutation_tool(annotations={"readOnlyHint": False, "idempotentHint": True})
-    def scan_rf_annotations(workspace: Workspace | None = None) -> dict[str, Any]:
-        """Re-scan all symbol docstrings for RF annotations and (re)link them.
+    def scan_spec_annotations(workspace: Workspace | None = None) -> dict[str, Any]:
+        """Re-scan all symbol docstrings for Spec annotations and (re)link them.
 
         Two-level matcher (P1.4):
-        - Explicit prefix `@rf:RF-001` / `@implements:RF-001` -> confidence 1.0
-        - Verb-anchored `implements RF-001` (with negation guard) -> 0.7
+        - Explicit prefix `@spec:SPEC-001` / `@implements:SPEC-001` -> confidence 1.0
+        - Verb-anchored `implements SPEC-001` (with negation guard) -> 0.7
         Idempotent: skips existing links.
         """
         st = get_state(workspace)
@@ -698,81 +719,81 @@ def register(
         n = scan_annotations(st.conn, pid)
         return {"links_created": n}
 
-    # ---------- v0.5 P2 / v0.6 P1: RF dependency graph ----------
+    # ---------- v0.5 P2 / v0.6 P1 / v0.20: Spec dependency graph ----------
 
-    def _do_link_rf_dependency(
-        parent_rf_id: str,
-        child_rf_id: str,
+    def _do_link_spec_dependency(
+        parent_spec_id: str,
+        child_spec_id: str,
         kind: str,
         workspace: Workspace | None = None,
     ) -> dict[str, Any]:
         st = get_state(workspace)
         pid = st.project_id
-        if parent_rf_id == child_rf_id:
-            return mcp_error("An RF cannot depend on itself")
+        if parent_spec_id == child_spec_id:
+            return mcp_error("A Spec cannot depend on itself")
         parent = st.conn.execute(
-            "SELECT id, rf_id FROM rf WHERE project_id=? AND rf_id=?",
-            (pid, parent_rf_id),
+            "SELECT id, spec_id FROM spec WHERE project_id=? AND spec_id=?",
+            (pid, parent_spec_id),
         ).fetchone()
         child = st.conn.execute(
-            "SELECT id, rf_id FROM rf WHERE project_id=? AND rf_id=?",
-            (pid, child_rf_id),
+            "SELECT id, spec_id FROM spec WHERE project_id=? AND spec_id=?",
+            (pid, child_spec_id),
         ).fetchone()
         if not parent:
             return mcp_error(
-                f"RF '{parent_rf_id}' not found",
-                hint="check `list_requirements()` for known RF ids",
+                f"Spec '{parent_spec_id}' not found",
+                hint="check `list_specs()` for known spec ids",
             )
         if not child:
             return mcp_error(
-                f"RF '{child_rf_id}' not found",
-                hint="check `list_requirements()` for known RF ids",
+                f"Spec '{child_spec_id}' not found",
+                hint="check `list_specs()` for known spec ids",
             )
         descendants: set[int] = set()
         frontier = [int(child["id"])]
         while frontier:
             current = frontier.pop()
             for r in st.conn.execute(
-                "SELECT child_rf_id FROM rf_dependency WHERE parent_rf_id=?",
+                "SELECT child_spec_id FROM spec_dependency WHERE parent_spec_id=?",
                 (current,),
             ):
-                cid = int(r["child_rf_id"])
+                cid = int(r["child_spec_id"])
                 if cid in descendants:
                     continue
                 descendants.add(cid)
                 if cid == int(parent["id"]):
                     return mcp_error(
-                        f"would create a cycle: {child_rf_id} already "
-                        f"transitively depends on {parent_rf_id}",
-                        hint="walk the existing graph with `get_rf_dependency_graph` to see the conflicting path",
+                        f"would create a cycle: {child_spec_id} already "
+                        f"transitively depends on {parent_spec_id}",
+                        hint="walk the existing graph with `get_spec_dependency_graph` to see the conflicting path",
                     )
                 frontier.append(cid)
         cur = st.conn.execute(
-            """INSERT OR IGNORE INTO rf_dependency(parent_rf_id, child_rf_id, kind)
+            """INSERT OR IGNORE INTO spec_dependency(parent_spec_id, child_spec_id, kind)
                VALUES(?,?,?)""",
             (int(parent["id"]), int(child["id"]), kind),
         )
         return {
             "linked": cur.rowcount > 0,
-            "parent": parent_rf_id,
-            "child": child_rf_id,
+            "parent": parent_spec_id,
+            "child": child_spec_id,
             "kind": kind,
         }
 
     @mutation_tool(annotations={"readOnlyHint": False, "idempotentHint": True})
-    def link_rf_dependency(
-        parent_rf_id: str,
-        child_rf_id: str,
+    def link_spec_dependency(
+        parent_spec_id: str,
+        child_spec_id: str,
         kind: Literal["requires", "extends", "conflicts"] = "requires",
         workspace: Workspace | None = None,
     ) -> dict[str, Any]:
-        """Declare that one RF depends on another (RF-RF edge).
+        """Declare that one Spec depends on another (Spec-Spec edge).
 
         Semantics:
         - `requires`  : parent needs child to be implemented first (the
-                        common case — RF-API needs RF-AUTH).
-        - `extends`   : parent specializes child's behavior (RF-EXPORT-PDF
-                        extends RF-EXPORT).
+                        common case — SPEC-API needs SPEC-AUTH).
+        - `extends`   : parent specializes child's behavior (SPEC-EXPORT-PDF
+                        extends SPEC-EXPORT).
         - `conflicts` : the two cannot both be active (mutually exclusive
                         rollouts).
 
@@ -782,58 +803,58 @@ def register(
 
         Self-loops are rejected by the schema CHECK constraint.
         """
-        return _do_link_rf_dependency(parent_rf_id, child_rf_id, kind, workspace)
+        return _do_link_spec_dependency(parent_spec_id, child_spec_id, kind, workspace)
 
-    def _do_unlink_rf_dependency(
-        parent_rf_id: str,
-        child_rf_id: str,
+    def _do_unlink_spec_dependency(
+        parent_spec_id: str,
+        child_spec_id: str,
         kind: str | None,
         workspace: Workspace | None = None,
     ) -> dict[str, Any]:
         st = get_state(workspace)
         pid = st.project_id
         parent = st.conn.execute(
-            "SELECT id FROM rf WHERE project_id=? AND rf_id=?",
-            (pid, parent_rf_id),
+            "SELECT id FROM spec WHERE project_id=? AND spec_id=?",
+            (pid, parent_spec_id),
         ).fetchone()
         child = st.conn.execute(
-            "SELECT id FROM rf WHERE project_id=? AND rf_id=?",
-            (pid, child_rf_id),
+            "SELECT id FROM spec WHERE project_id=? AND spec_id=?",
+            (pid, child_spec_id),
         ).fetchone()
         if not parent or not child:
-            return {"unlinked": 0, "parent": parent_rf_id, "child": child_rf_id}
+            return {"unlinked": 0, "parent": parent_spec_id, "child": child_spec_id}
         if kind is None:
             cur = st.conn.execute(
-                "DELETE FROM rf_dependency WHERE parent_rf_id=? AND child_rf_id=?",
+                "DELETE FROM spec_dependency WHERE parent_spec_id=? AND child_spec_id=?",
                 (int(parent["id"]), int(child["id"])),
             )
         else:
             cur = st.conn.execute(
-                """DELETE FROM rf_dependency WHERE parent_rf_id=? AND child_rf_id=?
+                """DELETE FROM spec_dependency WHERE parent_spec_id=? AND child_spec_id=?
                    AND kind=?""",
                 (int(parent["id"]), int(child["id"]), kind),
             )
         return {
             "unlinked": cur.rowcount,
-            "parent": parent_rf_id,
-            "child": child_rf_id,
+            "parent": parent_spec_id,
+            "child": child_spec_id,
             "kind": kind,
         }
 
     @mutation_tool(annotations={"readOnlyHint": False, "idempotentHint": True, "destructiveHint": True})
-    def unlink_rf_dependency(
-        parent_rf_id: str,
-        child_rf_id: str,
+    def unlink_spec_dependency(
+        parent_spec_id: str,
+        child_spec_id: str,
         kind: Literal["requires", "extends", "conflicts"] | None = None,
         workspace: Workspace | None = None,
     ) -> dict[str, Any]:
-        """Remove an RF dependency edge. If `kind` is None, drops every edge
+        """Remove a Spec dependency edge. If `kind` is None, drops every edge
         between the pair regardless of kind. Idempotent.
         """
-        return _do_unlink_rf_dependency(parent_rf_id, child_rf_id, kind, workspace)
+        return _do_unlink_spec_dependency(parent_spec_id, child_spec_id, kind, workspace)
 
-    def _do_get_rf_dependency_graph(
-        rf_id: str,
+    def _do_get_spec_dependency_graph(
+        spec_id: str,
         direction: str,
         max_depth: int,
         workspace: Workspace | None = None,
@@ -841,13 +862,13 @@ def register(
         st = get_state(workspace)
         pid = st.project_id
         root = st.conn.execute(
-            "SELECT id, rf_id FROM rf WHERE project_id=? AND rf_id=?",
-            (pid, rf_id),
+            "SELECT id, spec_id FROM spec WHERE project_id=? AND spec_id=?",
+            (pid, spec_id),
         ).fetchone()
         if not root:
             return mcp_error(
-                f"RF '{rf_id}' not found",
-                hint="check `list_requirements()` for known RF ids",
+                f"Spec '{spec_id}' not found",
+                hint="check `list_specs()` for known spec ids",
             )
         root_id = int(root["id"])
 
@@ -862,19 +883,19 @@ def register(
                     continue
                 if forward:
                     rows = st.conn.execute(
-                        """SELECT parent_rf_id, child_rf_id, kind FROM rf_dependency
-                           WHERE parent_rf_id=?""",
+                        """SELECT parent_spec_id, child_spec_id, kind FROM spec_dependency
+                           WHERE parent_spec_id=?""",
                         (node,),
                     )
                 else:
                     rows = st.conn.execute(
-                        """SELECT parent_rf_id, child_rf_id, kind FROM rf_dependency
-                           WHERE child_rf_id=?""",
+                        """SELECT parent_spec_id, child_spec_id, kind FROM spec_dependency
+                           WHERE child_spec_id=?""",
                         (node,),
                     )
                 for r in rows:
-                    edges.append((int(r["parent_rf_id"]), int(r["child_rf_id"]), r["kind"]))
-                    next_id = int(r["child_rf_id"]) if forward else int(r["parent_rf_id"])
+                    edges.append((int(r["parent_spec_id"]), int(r["child_spec_id"]), r["kind"]))
+                    next_id = int(r["child_spec_id"]) if forward else int(r["parent_spec_id"])
                     if next_id not in visited:
                         visited.add(next_id)
                         frontier.append((next_id, depth + 1))
@@ -884,23 +905,23 @@ def register(
         if direction in ("backward", "both"):
             walk(root_id, forward=False)
 
-        # Resolve metadata for visited RFs
+        # Resolve metadata for visited specs
         if visited:
             placeholders = ",".join("?" * len(visited))
-            rf_meta = {
+            spec_meta = {
                 int(r["id"]): {
-                    "rf_id": r["rf_id"],
+                    "spec_id": r["spec_id"],
                     "title": r["title"],
                     "status": r["status"],
                     "priority": r["priority"],
                 }
                 for r in st.conn.execute(
-                    f"SELECT id, rf_id, title, status, priority FROM rf WHERE id IN ({placeholders})",
+                    f"SELECT id, spec_id, title, status, priority FROM spec WHERE id IN ({placeholders})",
                     list(visited),
                 )
             }
         else:
-            rf_meta = {}
+            spec_meta = {}
 
         # Dedupe edges
         edge_keys: set[tuple[int, int, str]] = set()
@@ -911,31 +932,31 @@ def register(
                 continue
             edge_keys.add(key)
             edge_payload.append({
-                "parent": rf_meta.get(p, {}).get("rf_id"),
-                "child": rf_meta.get(c, {}).get("rf_id"),
+                "parent": spec_meta.get(p, {}).get("spec_id"),
+                "child": spec_meta.get(c, {}).get("spec_id"),
                 "kind": k,
             })
 
         return {
-            "root": rf_id,
+            "root": spec_id,
             "direction": direction,
-            "nodes": list(rf_meta.values()),
+            "nodes": list(spec_meta.values()),
             "edges": edge_payload,
         }
 
     @mutation_tool(annotations={"readOnlyHint": True, "idempotentHint": True})
-    def get_rf_dependency_graph(
-        rf_id: str,
+    def get_spec_dependency_graph(
+        spec_id: str,
         direction: Literal["forward", "backward", "both"] = "both",
         max_depth: int = 5,
         workspace: Workspace | None = None,
     ) -> dict[str, Any]:
-        """Walk the RF dependency graph from a given RF.
+        """Walk the Spec dependency graph from a given Spec.
 
-        - forward:  what does this RF depend on (children, transitively)?
-        - backward: what depends on this RF (parents, transitively)?
+        - forward:  what does this Spec depend on (children, transitively)?
+        - backward: what depends on this Spec (parents, transitively)?
         - both:     union of both.
 
-        Returns the visited RF metadata + the edges traversed.
+        Returns the visited Spec metadata + the edges traversed.
         """
-        return _do_get_rf_dependency_graph(rf_id, direction, max_depth, workspace)
+        return _do_get_spec_dependency_graph(spec_id, direction, max_depth, workspace)
