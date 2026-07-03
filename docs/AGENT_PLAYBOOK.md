@@ -244,8 +244,8 @@ When explaining code to the user, cite **Spec ids** from `list_specs` / annotati
 | `onboard_project` | New repo, no context |
 | `explain_symbol` | Deep dive one qname |
 | `analyze_change_impact` | Planned change |
-| `audit_requirement_coverage` | Traceability audit |
-| `extract_requirements_from_module` | Module-scoped Spec draft |
+| `audit_spec_coverage` | Traceability audit |
+| `extract_specs_from_module` | Module-scoped Spec draft |
 
 ---
 

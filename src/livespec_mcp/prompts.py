@@ -52,7 +52,7 @@ def register(mcp: FastMCP) -> None:
         )
 
     @mcp.prompt
-    def audit_requirement_coverage() -> str:
+    def audit_spec_coverage() -> str:
         """List Specs without code links, and code modules without Spec links."""
         return (
             "Audit traceability:\n"
@@ -62,10 +62,10 @@ def register(mcp: FastMCP) -> None:
         )
 
     @mcp.prompt
-    def extract_requirements_from_module(module_or_path: str) -> str:
+    def extract_specs_from_module(module_or_path: str) -> str:
         """Infer candidate Specs by reading the public surface of a module."""
         return (
-            f"Infer Functional Requirements from `{module_or_path}`. Steps:\n"
+            f"Infer Specs from `{module_or_path}`. Steps:\n"
             f"1) `propose_specs_from_codebase(scope='{module_or_path}')` —\n"
             f"   heuristic groups + suggested symbols. If nothing is returned,\n"
             f"   fall back to `find_symbol(query='*')` to enumerate by hand.\n"

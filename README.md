@@ -455,8 +455,8 @@ Visible when the workspace has `doc` rows, a `.mcp-docs/explorer/` bundle, or
 - **`agent_playbook`** — primary agent guide: tool tiers, call patterns, `@spec:` commenting, brownfield Spec workflow, anti-patterns
 - `onboard_project`
 - `analyze_change_impact`
-- `audit_requirement_coverage`
-- `extract_requirements_from_module`
+- `audit_spec_coverage`
+- `extract_specs_from_module`
 - `document_undocumented_symbols`
 - `refresh_stale_docs`
 - `explain_symbol`
