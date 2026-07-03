@@ -54,7 +54,10 @@ follows [SemVer](https://semver.org/).
   `git_diff_impact`, `export_explorer`'s `data.json`, e.g.
   `dependent_requirements`→`dependent_specs`,
   `requirements_touched`→`specs_touched`,
-  `rf_coverage`→`spec_coverage`, `requirements`→`specs`.
+  `rf_coverage`→`spec_coverage`, `requirements`→`specs`,
+  `audit_coverage`'s `modules_without_rf`→`modules_without_spec`
+  (counts, list, and `next_cursor` key — missed in the initial pass,
+  caught during live MCP revalidation after reconnect).
 - **Explorer bundle:** rebuilt HTML/JS labels, ids, routes and CSS classes
   (`#rfnav`→`#specnav`, `.spine .rf`→`.spine .spec`, etc.) — re-run
   `export_explorer` (or `index_project(explorer=True)`) to regenerate.

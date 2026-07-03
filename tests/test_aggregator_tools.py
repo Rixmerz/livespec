@@ -102,20 +102,20 @@ async def test_audit_coverage_signals(workspace):
 
         out = (await c.call_tool("audit_coverage", {})).data
 
-    assert any("unlinked" in p for p in out["modules_without_rf"]), (
-        f"pkg/unlinked.py should appear in modules_without_rf: {out}"
+    assert any("unlinked" in p for p in out["modules_without_spec"]), (
+        f"pkg/unlinked.py should appear in modules_without_spec: {out}"
     )
     specs_no_impl_ids = {r["spec_id"] for r in out["specs_without_implementation"]}
     assert "SPEC-002" in specs_no_impl_ids, (
         f"SPEC-002 should be reported as without implementation: {out}"
     )
-    # P0.A1: new fields exist and partition `modules_without_rf`
+    # P0.A1: new fields exist and partition `modules_without_spec`
     assert isinstance(out.get("modules_implicitly_covered"), list)
     assert isinstance(out.get("modules_truly_orphan"), list)
-    # Union of the two splits == modules_without_rf
+    # Union of the two splits == modules_without_spec
     union = set(out["modules_implicitly_covered"]) | set(out["modules_truly_orphan"])
-    assert union == set(out["modules_without_rf"]), (
-        f"split must partition modules_without_rf: {out}"
+    assert union == set(out["modules_without_spec"]), (
+        f"split must partition modules_without_spec: {out}"
     )
 
 
@@ -171,7 +171,7 @@ async def test_audit_coverage_transitive_split(workspace):
 @pytest.mark.asyncio
 async def test_audit_coverage_excludes_package_markers(workspace):
     """v0.8 P2 fix #8: __init__.py / package-info.java / mod.rs should
-    NOT appear in modules_without_rf — they're package markers, never
+    NOT appear in modules_without_spec — they're package markers, never
     the right place for `@spec:` annotations."""
     pkg = workspace / "pkg"
     pkg.mkdir()
@@ -195,8 +195,8 @@ async def test_audit_coverage_excludes_package_markers(workspace):
         out = (await c.call_tool("audit_coverage", {})).data
 
     # Neither __init__.py nor pkg/subpkg/__init__.py should be flagged.
-    flagged = " | ".join(out["modules_without_rf"])
-    assert not any(p.endswith("__init__.py") for p in out["modules_without_rf"]), (
+    flagged = " | ".join(out["modules_without_spec"])
+    assert not any(p.endswith("__init__.py") for p in out["modules_without_spec"]), (
         f"__init__.py should be filtered: {flagged}"
     )
     assert not any(p.endswith("__init__.py") for p in out["modules_truly_orphan"]), (

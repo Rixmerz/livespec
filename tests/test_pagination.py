@@ -74,9 +74,9 @@ async def test_audit_coverage_summary_only(workspace):
         await c.call_tool("index_project", {})
         out = (await c.call_tool("audit_coverage", {"summary_only": True})).data
         assert "counts" in out
-        assert isinstance(out["counts"]["modules_without_rf"], int)
+        assert isinstance(out["counts"]["modules_without_spec"], int)
         # Summary mode skips the lists themselves
-        assert "modules_without_rf" not in out
+        assert "modules_without_spec" not in out
 
 
 @pytest.mark.asyncio
@@ -90,10 +90,10 @@ async def test_audit_coverage_paginated_lists(workspace):
     async with Client(mcp) as c:
         await c.call_tool("index_project", {})
         out = (await c.call_tool("audit_coverage", {"limit": 3, "cursor": 0})).data
-        assert len(out["modules_without_rf"]) <= 3
+        assert len(out["modules_without_spec"]) <= 3
         assert "next_cursor" in out
         # The cursor maps per-list
-        assert "modules_without_rf" in out["next_cursor"]
+        assert "modules_without_spec" in out["next_cursor"]
 
 
 @pytest.mark.asyncio
