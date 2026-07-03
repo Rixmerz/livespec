@@ -117,7 +117,9 @@ async def test_export_explorer_data_schema(workspace: Path):
         await c.call_tool("index_project", {})
         # Make SPEC-001 real and link it, plus a second Spec + a dependency edge.
         await c.call_tool("create_spec", {"spec_id": "SPEC-001", "title": "Login"})
-        await c.call_tool("create_spec", {"spec_id": "SPEC-002", "title": "Auth lib"})
+        await c.call_tool(
+            "create_spec", {"spec_id": "SPEC-002", "title": "Auth lib", "kind": "adr"}
+        )
         await c.call_tool(
             "link_spec_symbol",
             {"spec_id": "SPEC-001", "symbol_qname": "app.routes.login"},
@@ -179,6 +181,11 @@ async def test_export_explorer_data_schema(workspace: Path):
     assert "app.routes.login" in rf1["endpoints"]
     assert rf1["depends_on"] == ["SPEC-002"]
     assert rf1["coverage"] is not None
+
+    # v0.20: `kind` taxonomy flows through — default vs explicit.
+    assert rf1["kind"] == "functional_requirement"
+    rf2 = next(r for r in data["specs"] if r["id"] == "SPEC-002")
+    assert rf2["kind"] == "adr"
 
     # Every spec carries a derived dev_state in the valid vocabulary.
     valid_states = {"not_started", "in_progress", "implemented", "verified"}

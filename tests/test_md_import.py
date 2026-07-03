@@ -29,12 +29,16 @@ Exportar todos los registros a CSV en background.
 ## SPEC-3: Cleanup job
 **Prioridad:** baja
 Job nocturno que purga registros viejos.
+
+## SPEC-004: Use event sourcing for orders
+**Kind:** adr
+Decisión arquitectónica: usar event sourcing en el módulo de órdenes.
 """
 
 
 def test_parse_basic():
     specs = parse_specs_markdown(SAMPLE)
-    assert len(specs) == 3
+    assert len(specs) == 4
 
     rf1 = specs[0]
     assert rf1.spec_id == "SPEC-001"
@@ -42,6 +46,7 @@ def test_parse_basic():
     assert rf1.priority == "high"
     assert rf1.module == "auth"
     assert rf1.status == "active"
+    assert rf1.kind == "functional_requirement"  # default when unspecified
     assert "Token expira" in rf1.description
 
     rf2 = specs[1]
@@ -55,6 +60,21 @@ def test_parse_basic():
     assert rf3.spec_id == "SPEC-003"
     assert rf3.priority == "low"
 
+    # SPEC-004 declares a non-default kind
+    rf4 = specs[3]
+    assert rf4.spec_id == "SPEC-004"
+    assert rf4.kind == "adr"
+
+
+def test_parse_kind_synonyms():
+    text = (
+        "## SPEC-001: A\n**Tipo:** nfr\ndesc\n\n"
+        "## SPEC-002: B\n**Kind:** design\ndesc\n"
+    )
+    specs = parse_specs_markdown(text)
+    assert specs[0].kind == "non_functional_requirement"
+    assert specs[1].kind == "design"
+
 
 @pytest.mark.asyncio
 async def test_import_creates_rfs(sample_repo, tmp_path):
@@ -67,13 +87,14 @@ async def test_import_creates_rfs(sample_repo, tmp_path):
                 {"path": "specs.md"},
             )
         ).data
-        assert result["parsed"] == 3
-        assert result["created"] == 3
+        assert result["parsed"] == 4
+        assert result["created"] == 4
         assert result["updated"] == 0
 
         listed = (await c.call_tool("list_specs", {})).data
-        spec_ids = {r["spec_id"] for r in listed["specs"]}
-        assert {"SPEC-001", "SPEC-002", "SPEC-003"}.issubset(spec_ids)
+        by_id = {r["spec_id"]: r for r in listed["specs"]}
+        assert {"SPEC-001", "SPEC-002", "SPEC-003", "SPEC-004"}.issubset(by_id)
+        assert by_id["SPEC-004"]["kind"] == "adr"
 
 
 @pytest.mark.asyncio
@@ -93,6 +114,6 @@ async def test_import_is_idempotent(sample_repo):
                 {"path": "specs.md"},
             )
         ).data
-        assert first["created"] == 3
+        assert first["created"] == 4
         assert second["created"] == 0
-        assert second["updated"] == 3
+        assert second["updated"] == 4

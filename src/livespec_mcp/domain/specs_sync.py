@@ -102,21 +102,22 @@ def import_specs_from_markdown_file(
         if existing:
             st.conn.execute(
                 """UPDATE spec SET title=?, description=?, status=?, priority=?,
-                   module_id=?, updated_at=datetime('now') WHERE id=?""",
+                   module_id=?, kind=?, updated_at=datetime('now') WHERE id=?""",
                 (
                     pspec.title,
                     pspec.description,
                     pspec.status,
                     pspec.priority,
                     module_id,
+                    pspec.kind,
                     existing["id"],
                 ),
             )
             updated += 1
         else:
             st.conn.execute(
-                """INSERT INTO spec(project_id, spec_id, title, description, module_id, status, priority)
-                   VALUES(?,?,?,?,?,?,?)""",
+                """INSERT INTO spec(project_id, spec_id, title, description, module_id, status, priority, kind)
+                   VALUES(?,?,?,?,?,?,?,?)""",
                 (
                     pid,
                     pspec.spec_id,
@@ -125,6 +126,7 @@ def import_specs_from_markdown_file(
                     module_id,
                     pspec.status,
                     pspec.priority,
+                    pspec.kind,
                 ),
             )
             created += 1
