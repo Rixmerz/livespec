@@ -42,6 +42,8 @@ follows [SemVer](https://semver.org/).
 - **Resources:** `project://requirements` → `project://specs`,
   `project://requirements/{rf_id}` → `project://specs/{spec_id}`,
   `doc://requirement/{rf_id}` → `doc://spec/{spec_id}`.
+- **Prompts renamed:** `audit_requirement_coverage`→`audit_spec_coverage`,
+  `extract_requirements_from_module`→`extract_specs_from_module`.
 - **Payload keys renamed** across `analyze_impact`, `audit_coverage`,
   `git_diff_impact`, `export_explorer`'s `data.json`, e.g.
   `dependent_requirements`→`dependent_specs`,
