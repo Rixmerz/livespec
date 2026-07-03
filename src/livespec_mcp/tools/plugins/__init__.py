@@ -1,23 +1,23 @@
 """Plugin auto-detect framework (v0.8 P3.1).
 
-The default surface is code-intel + RF-agentic tools that any agent on
+The default surface is code-intel + Spec-agentic tools that any agent on
 any codebase will reach for. Mutation/management tools live in plugins
 that load only when the workspace's DB shows they're relevant:
 
-    livespec-rf    -> rf table has rows for the active project
+    livespec-spec  -> spec table has rows for the active project
     livespec-docs  -> doc table has rows for the active project
 
 The DB-state detection is a soft default. Power users override it with the
 ``LIVESPEC_PLUGINS`` env var:
 
-    LIVESPEC_PLUGINS=none      no plugins load
-    LIVESPEC_PLUGINS=all       every plugin loads
-    LIVESPEC_PLUGINS=rf        only the rf plugin loads
-    LIVESPEC_PLUGINS=rf,docs   both plugins load (same as 'all' today)
+    LIVESPEC_PLUGINS=none        no plugins load
+    LIVESPEC_PLUGINS=all         every plugin loads
+    LIVESPEC_PLUGINS=spec        only the spec plugin loads
+    LIVESPEC_PLUGINS=spec,docs   both plugins load (same as 'all' today)
 
 v0.8 only ships the framework — the plugin modules are empty register
 hooks. Tools physically migrate into them in subsequent breaking phases
-(P3.4 RF mutation, P3.5 docs management). Until then, calling
+(P3.4 Spec mutation, P3.5 docs management). Until then, calling
 ``register_active`` is safe: it never adds duplicate tools.
 """
 
@@ -29,20 +29,20 @@ from fastmcp import FastMCP
 
 from livespec_mcp.state import AppState
 
-KNOWN_PLUGINS = ("rf", "docs")
+KNOWN_PLUGINS = ("spec", "docs")
 
 # Registered by plugins but hidden unless detect_active_plugins says so.
-RF_MUTATION_TOOL_NAMES = frozenset(
+SPEC_MUTATION_TOOL_NAMES = frozenset(
     {
-        "create_requirement",
-        "update_requirement",
-        "delete_requirement",
-        "link_rf_symbol",
-        "link_rf_dependency",
-        "unlink_rf_dependency",
-        "get_rf_dependency_graph",
-        "scan_rf_annotations",
-        "scan_docstrings_for_rf_hints",
+        "create_spec",
+        "update_spec",
+        "delete_spec",
+        "link_spec_symbol",
+        "link_spec_dependency",
+        "unlink_spec_dependency",
+        "get_spec_dependency_graph",
+        "scan_spec_annotations",
+        "scan_docstrings_for_spec_hints",
     }
 )
 
@@ -58,18 +58,18 @@ DOCS_PLUGIN_TOOL_NAMES = frozenset(
 CORE_PLUGIN_TOOL_NAMES = frozenset(
     {
         "export_explorer",
-        "import_requirements_from_markdown",
+        "import_specs_from_markdown",
     }
 )
 
-PLUGIN_TOOL_NAMES = RF_MUTATION_TOOL_NAMES | DOCS_PLUGIN_TOOL_NAMES | CORE_PLUGIN_TOOL_NAMES
+PLUGIN_TOOL_NAMES = SPEC_MUTATION_TOOL_NAMES | DOCS_PLUGIN_TOOL_NAMES | CORE_PLUGIN_TOOL_NAMES
 
 
 def plugin_name_for_tool(tool_name: str) -> str | None:
     if tool_name in CORE_PLUGIN_TOOL_NAMES:
         return None
-    if tool_name in RF_MUTATION_TOOL_NAMES:
-        return "rf"
+    if tool_name in SPEC_MUTATION_TOOL_NAMES:
+        return "spec"
     if tool_name in DOCS_PLUGIN_TOOL_NAMES:
         return "docs"
     return None
@@ -117,8 +117,8 @@ def detect_active_plugins(state: AppState) -> set[str]:
             return override
 
     active: set[str] = set()
-    if _project_table_has_rows(state, "rf"):
-        active.add("rf")
+    if _project_table_has_rows(state, "spec"):
+        active.add("spec")
     if _project_table_has_rows(state, "doc") or _project_has_explorer_bundle(state):
         active.add("docs")
     return active
@@ -131,10 +131,10 @@ def register_active(mcp: FastMCP, state: AppState) -> set[str]:
     Plugins are imported lazily so an inactive one never loads its module.
     """
     active = detect_active_plugins(state)
-    if "rf" in active:
-        from livespec_mcp.tools.plugins import rf as rf_plugin
+    if "spec" in active:
+        from livespec_mcp.tools.plugins import spec as spec_plugin
 
-        rf_plugin.register(mcp)
+        spec_plugin.register(mcp)
     if "docs" in active:
         from livespec_mcp.tools.plugins import docs as docs_plugin
 
@@ -143,17 +143,17 @@ def register_active(mcp: FastMCP, state: AppState) -> set[str]:
 
 
 def register_all_plugins(mcp: FastMCP) -> set[str]:
-    """Register rf + docs plugins at server boot (multi-tenant MCP servers).
+    """Register spec + docs plugins at server boot (multi-tenant MCP servers).
 
     Tools are always registered so they can run when a workspace opts in.
     ``PluginVisibilityMiddleware`` hides them from ``tools/list`` and blocks
-    ``tools/call`` until the workspace has rf/doc rows or ``LIVESPEC_PLUGINS``
-    includes the plugin.
+    ``tools/call`` until the workspace has spec/doc rows or
+    ``LIVESPEC_PLUGINS`` includes the plugin.
     """
     from livespec_mcp.tools.plugins import docs as docs_plugin
-    from livespec_mcp.tools.plugins import rf as rf_plugin
+    from livespec_mcp.tools.plugins import spec as spec_plugin
 
-    rf_plugin.register(mcp)
+    spec_plugin.register(mcp)
     docs_plugin.register(mcp)
     return set(KNOWN_PLUGINS)
 
@@ -163,7 +163,7 @@ __all__ = [
     "DOCS_PLUGIN_TOOL_NAMES",
     "KNOWN_PLUGINS",
     "PLUGIN_TOOL_NAMES",
-    "RF_MUTATION_TOOL_NAMES",
+    "SPEC_MUTATION_TOOL_NAMES",
     "detect_active_plugins",
     "plugin_name_for_tool",
     "register_active",

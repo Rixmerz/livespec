@@ -149,19 +149,19 @@ def test_ts_js_scoped_resolution_imports(lang_dir: str, main_file: str):
 
 def test_ts_jsdoc_docstring_populated(tmp_path: Path):
     """JSDoc `/** ... */` immediately preceding a TS declaration is captured
-    as the symbol's docstring so the @rf: matcher can find tags. Covers the
+    as the symbol's docstring so the @spec: matcher can find tags. Covers the
     bug where TS symbols always had `docstring=None` even when an
-    `@rf:RF-NNN` annotation lived right above the function."""
+    `@spec:Spec-NNN` annotation lived right above the function."""
     src = """/**
  * Fetches a token.
- * @rf:BE-RF-016
+ * @spec:BE-SPEC-016
  */
 export async function getManyChatToken() { return 'x'; }
 
-/** @rf:RF-001, RF-002 */
+/** @spec:SPEC-001, SPEC-002 */
 function helper() {}
 
-// @rf:RF-009
+// @spec:SPEC-009
 function lineCommented() {}
 """
     p = tmp_path / "main.ts"
@@ -169,17 +169,17 @@ function lineCommented() {}
     _, result = extract(p, src, tmp_path)
     by_name = {s.name: s for s in result.symbols}
     assert "getManyChatToken" in by_name
-    assert "@rf:BE-RF-016" in (by_name["getManyChatToken"].docstring or "")
-    assert "@rf:RF-001" in (by_name["helper"].docstring or "")
-    # // line comments are also kept so inline `@rf:` tags still match
-    assert "@rf:RF-009" in (by_name["lineCommented"].docstring or "")
+    assert "@spec:BE-SPEC-016" in (by_name["getManyChatToken"].docstring or "")
+    assert "@spec:SPEC-001" in (by_name["helper"].docstring or "")
+    # // line comments are also kept so inline `@spec:` tags still match
+    assert "@spec:SPEC-009" in (by_name["lineCommented"].docstring or "")
 
 
 def test_ts_jsdoc_wins_over_adjacent_separator_line_comment(tmp_path: Path):
-    """Bug from real session: `// ---\n/** @rf:RF-001 */\nfunction foo() {}`
+    """Bug from real session: `// ---\n/** @spec:SPEC-001 */\nfunction foo() {}`
     used to concatenate raw text and run a single strip pass keyed on the
     leading `//`, leaving the block's `/**` mid-text and defeating the
-    matcher's line-start anchor for `@rf:`. Each comment must be stripped
+    matcher's line-start anchor for `@spec:`. Each comment must be stripped
     individually, and pure ASCII separator lines (`// ---`) must not be
     chosen as the docstring lead.
     """
@@ -189,7 +189,7 @@ def test_ts_jsdoc_wins_over_adjacent_separator_line_comment(tmp_path: Path):
 // helper section
 /**
  * Resolve a token from cache.
- * @rf:BE-RF-016
+ * @spec:BE-SPEC-016
  */
 export async function getManyChatToken() { return 'x'; }
 """
@@ -200,10 +200,10 @@ export async function getManyChatToken() { return 'x'; }
     assert sym.docstring is not None
     # Pure separator line dropped — lead is the meaningful content.
     assert not sym.docstring.lstrip().startswith("---")
-    # Block delimiters cleaned, so `@rf:` lives at line start.
+    # Block delimiters cleaned, so `@spec:` lives at line start.
     hits = parse_annotations(sym.docstring)
-    rf_ids = {h.rf_id for h in hits}
-    assert "RF-016" in rf_ids, f"matcher missed @rf in {sym.docstring!r}"
+    spec_ids = {h.spec_id for h in hits}
+    assert "SPEC-016" in spec_ids, f"matcher missed @spec in {sym.docstring!r}"
 
 
 def test_ts_jsdoc_skips_banner_with_internal_text(tmp_path: Path):
@@ -215,12 +215,12 @@ def test_ts_jsdoc_skips_banner_with_internal_text(tmp_path: Path):
     src = """// --- Token Management ---
 /**
  * Resolve a token from cache.
- * @rf:BE-RF-016
+ * @spec:BE-SPEC-016
  */
 export async function getManyChatToken() { return 'x'; }
 
 // ============= Tool Execution Dispatcher =============
-/** @rf:BE-RF-001 */
+/** @spec:BE-SPEC-001 */
 export function dispatchTool() { return null; }
 """
     p = tmp_path / "main.ts"
@@ -232,4 +232,4 @@ export function dispatchTool() { return null; }
     assert a.docstring is not None and "Token Management" not in a.docstring
     assert "Resolve a token" in a.docstring
     assert b.docstring is not None and "Tool Execution Dispatcher" not in b.docstring
-    assert "BE-RF-001" in b.docstring
+    assert "BE-SPEC-001" in b.docstring

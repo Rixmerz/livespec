@@ -39,7 +39,7 @@ async def main() -> int:
             "agent_scratch_clear",
             "find_endpoints",
             "search",
-            "list_requirements",
+            "list_specs",
             "git_diff_impact",
         ):
             if required not in names:
@@ -75,8 +75,8 @@ async def main() -> int:
         else:
             ok("plugin menu", f"{len(names2)} tools (same as pre-index)")
 
-        if "create_requirement" in names2:
-            ok("RF plugin visible", "create_requirement")
+        if "create_spec" in names2:
+            ok("Spec plugin visible", "create_spec")
         if "generate_docs" in names2:
             ok("docs plugin visible", "generate_docs")
 
@@ -180,16 +180,16 @@ async def main() -> int:
                 f"files={gdp.get('files_changed_count', '?')} warning={'payload_warning' in gdp}",
             )
 
-        # list_requirements (dogfood has RFs)
+        # list_specs (dogfood has Specs)
         lr = await client.call_tool(
-            "list_requirements", {"workspace": str(WS)}
+            "list_specs", {"workspace": str(WS)}
         )
         lrp = lr.structured_content or {}
         if lrp.get("isError"):
-            fail("list_requirements", str(lrp))
+            fail("list_specs", str(lrp))
         else:
-            reqs = lrp.get("requirements") or []
-            ok("list_requirements", f"{len(reqs)} RFs")
+            specs = lrp.get("specs") or []
+            ok("list_specs", f"{len(specs)} Specs")
 
         # export_explorer refresh
         ex = await client.call_tool(
@@ -228,7 +228,7 @@ async def main() -> int:
     mount_explorer(app, workspace=WS)
     client = TestClient(app)
     r = client.get("/explorer/endpoints")
-    if r.status_code == 200 and "swagger" in r.text.lower() or "RF Explorer" in r.text:
+    if r.status_code == 200 and "swagger" in r.text.lower() or "Spec Explorer" in r.text:
         ok("mount_explorer /explorer/endpoints", f"status={r.status_code}")
     elif r.status_code == 200:
         ok("mount_explorer /explorer/endpoints", f"status={r.status_code} len={len(r.text)}")

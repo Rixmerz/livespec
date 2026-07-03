@@ -5,6 +5,8 @@ P1.2 consolidation:
   `generate_docs(target_type, identifier, ...)`.
 - `detect_stale_docs` merged into `list_docs(only_stale=True)`.
 - All tools accept optional `workspace` for multi-tenant operation.
+- v0.20: `target_type="requirement"` renamed to `target_type="spec"`
+  (RF -> Spec nomenclature).
 
 Generation supports two modes (host-agnostic):
   1. caller_supplied: pass `content=...`, tool persists.
@@ -67,15 +69,15 @@ def _symbol_prompt(sym: dict, source: str) -> str:
     )
 
 
-def _rf_prompt(rf: dict, symbols: list[dict]) -> str:
+def _spec_prompt(spec: dict, symbols: list[dict]) -> str:
     syms = "\n".join(f"- `{s['qualified_name']}` ({s['kind']}) -> {s['file_path']}" for s in symbols)
     return (
-        f"Genera una ficha técnica del Requerimiento Funcional `{rf['rf_id']}` en Markdown.\n"
+        f"Genera una ficha técnica de la Especificación `{spec['spec_id']}` en Markdown.\n"
         f"Incluye: descripción funcional, criterios de aceptación inferidos del código, "
         f"y cómo cada símbolo lo implementa.\n\n"
-        f"Título: {rf['title']}\n"
-        f"Descripción: {rf.get('description') or '(none)'}\n"
-        f"Status: {rf.get('status')} | Prioridad: {rf.get('priority')}\n\n"
+        f"Título: {spec['title']}\n"
+        f"Descripción: {spec.get('description') or '(none)'}\n"
+        f"Status: {spec.get('status')} | Prioridad: {spec.get('priority')}\n\n"
         f"Símbolos vinculados:\n{syms or '(none)'}"
     )
 
@@ -83,14 +85,14 @@ def _rf_prompt(rf: dict, symbols: list[dict]) -> str:
 def register(mcp: FastMCP) -> None:
     @mcp.tool(annotations={"readOnlyHint": False, "idempotentHint": True, "openWorldHint": True})
     async def generate_docs(
-        target_type: Literal["symbol", "requirement"],
+        target_type: Literal["symbol", "spec"],
         identifier: str,
         ctx: Context,
         content: str | None = None,
         max_tokens: int = 600,
         workspace: Workspace | None = None,
     ) -> dict[str, Any]:
-        """Persist Markdown docs for a symbol or RF.
+        """Persist Markdown docs for a symbol or Spec.
 
         Modes:
         - caller_supplied: pass `content=...`, tool persists immediately.
@@ -161,37 +163,37 @@ def register(mcp: FastMCP) -> None:
                 "mode": "sampling",
             }
 
-        # target_type == "requirement"
-        rf = st.conn.execute(
-            "SELECT * FROM rf WHERE project_id=? AND rf_id=?", (pid, identifier)
+        # target_type == "spec"
+        spec = st.conn.execute(
+            "SELECT * FROM spec WHERE project_id=? AND spec_id=?", (pid, identifier)
         ).fetchone()
-        if not rf:
+        if not spec:
             return mcp_error(
-                f"RF '{identifier}' not found",
-                hint="check `list_requirements()` for known RF ids",
+                f"Spec '{identifier}' not found",
+                hint="check `list_specs()` for known Spec ids",
             )
-        rf_d = dict(rf)
+        spec_d = dict(spec)
         symbols = [
             dict(r)
             for r in st.conn.execute(
                 """SELECT s.qualified_name, s.kind, f.path AS file_path
-                   FROM rf_symbol rs JOIN symbol s ON s.id=rs.symbol_id
-                   JOIN file f ON f.id=s.file_id WHERE rs.rf_id=?""",
-                (rf_d["id"],),
+                   FROM spec_symbol rs JOIN symbol s ON s.id=rs.symbol_id
+                   JOIN file f ON f.id=s.file_id WHERE rs.spec_id=?""",
+                (spec_d["id"],),
             )
         ]
-        target_key = rf_d["rf_id"]
+        target_key = spec_d["spec_id"]
 
         if content is not None:
-            _persist_doc(st, "requirement", target_key, content, None, None)
+            _persist_doc(st, "spec", target_key, content, None, None)
             return {
                 "target": target_key,
-                "saved_to": f"doc://requirement/{target_key}",
+                "saved_to": f"doc://spec/{target_key}",
                 "length": len(content),
                 "mode": "caller_supplied",
             }
 
-        prompt = _rf_prompt(rf_d, symbols)
+        prompt = _spec_prompt(spec_d, symbols)
         try:
             response = await ctx.sample(prompt, max_tokens=max_tokens)
         except Exception as e:
@@ -199,24 +201,24 @@ def register(mcp: FastMCP) -> None:
                 "mode": "needs_caller_content",
                 "reason": f"sampling unavailable: {e}",
                 "instruction": (
-                    "Write the RF spec in Markdown and re-call this tool with `content` set."
+                    "Write the Spec in Markdown and re-call this tool with `content` set."
                 ),
                 "prompt": prompt,
                 "linked_symbols": symbols,
                 "target": target_key,
             }
         content_str = response.text if hasattr(response, "text") else str(response)
-        _persist_doc(st, "requirement", target_key, content_str, None, None)
+        _persist_doc(st, "spec", target_key, content_str, None, None)
         return {
             "target": target_key,
-            "saved_to": f"doc://requirement/{target_key}",
+            "saved_to": f"doc://spec/{target_key}",
             "length": len(content_str),
             "mode": "sampling",
         }
 
     @mcp.tool(annotations={"readOnlyHint": True, "idempotentHint": True})
     def list_docs(
-        target_type: Literal["symbol", "requirement", "all"] = "all",
+        target_type: Literal["symbol", "spec", "all"] = "all",
         only_stale: bool = False,
         workspace: Workspace | None = None,
     ) -> dict[str, Any]:
@@ -224,7 +226,7 @@ def register(mcp: FastMCP) -> None:
 
         only_stale=True returns only docs whose source has drifted since they
         were generated. For symbols, drift triggers on body_hash OR
-        signature_hash mismatch (P2.4). For RFs, drift triggers when the RF
+        signature_hash mismatch (P2.4). For Specs, drift triggers when the Spec
         was updated after the doc was written.
         """
         st = get_state(workspace)
@@ -266,18 +268,18 @@ def register(mcp: FastMCP) -> None:
                         "drift": "+".join(drift) + " changed",
                         "generated_at": r["generated_at"],
                     })
-        if target_type in ("requirement", "all"):
+        if target_type in ("spec", "all"):
             for r in st.conn.execute(
-                """SELECT d.target_key, d.generated_at, r.updated_at, r.rf_id
-                   FROM doc d JOIN rf r ON r.rf_id = d.target_key
-                   WHERE d.project_id=? AND r.project_id=? AND d.target_type='requirement'
+                """SELECT d.target_key, d.generated_at, r.updated_at, r.spec_id
+                   FROM doc d JOIN spec r ON r.spec_id = d.target_key
+                   WHERE d.project_id=? AND r.project_id=? AND d.target_type='spec'
                      AND r.updated_at > d.generated_at""",
                 (pid, pid),
             ):
                 stale.append({
-                    "type": "requirement",
-                    "target": r["rf_id"],
-                    "drift": "rf updated after doc generation",
+                    "type": "spec",
+                    "target": r["spec_id"],
+                    "drift": "spec updated after doc generation",
                     "generated_at": r["generated_at"],
                 })
         return {"stale": stale, "count": len(stale)}
@@ -319,24 +321,24 @@ def register(mcp: FastMCP) -> None:
         head: str | None = None,
         workspace: Workspace | None = None,
     ) -> dict[str, Any]:
-        """Emit a static, self-contained "RF Explorer" bundle.
+        """Emit a static, self-contained "Spec Explorer" bundle.
 
-        Like Swagger UI, but auto-generated from the project's Requirements +
+        Like Swagger UI, but auto-generated from the project's Specs +
         call graph + endpoints + coverage. Writes two files under
         ``<workspace>/.mcp-docs/explorer/``:
 
-        - ``data.json`` — machine-readable bundle (requirements with their
-          implementing symbols+signatures, owned endpoints, RF-RF
+        - ``data.json`` — machine-readable bundle (specs with their
+          implementing symbols+signatures, owned endpoints, Spec-Spec
           dependencies, link confidence & real test coverage incl. the
-          per-RF uncovered-symbol drill-down; full endpoint surface with the
-          RFs each belongs to; RF topology; coverage orphans; a coverage
-          trend over recorded audits; and the RF-centric impact of a git
+          per-Spec uncovered-symbol drill-down; full endpoint surface with the
+          Specs each belongs to; Spec topology; coverage orphans; a coverage
+          trend over recorded audits; and the Spec-centric impact of a git
           range).
         - ``index.html`` — a single self-contained viewer (data inlined, so
           it opens over ``file://`` with no server, no build step). Renders
-          an RF spine, per-RF detail (with an uncovered-symbols drill-down),
+          a Spec spine, per-Spec detail (with an uncovered-symbols drill-down),
           a Mermaid topology diagram, an endpoints tab grouped by kind, a
-          gaps tab, a Changes tab (git diff RF impact), and a coverage trend.
+          gaps tab, a Changes tab (git diff Spec impact), and a coverage trend.
 
         Reuses the compute logic behind ``find_endpoints``,
         ``audit_coverage`` and ``git_diff_impact`` — no duplicated SQL.

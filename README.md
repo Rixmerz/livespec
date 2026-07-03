@@ -1,8 +1,9 @@
 # livespec-mcp
 
 **Code intelligence for AI agents** — call graph, impact analysis, and
-bidirectional **Functional Requirement ↔ code** traceability. Local-first,
-zero external services, runs as an MCP server next to your editor.
+bidirectional **Spec ↔ code** traceability (functional requirements, ADRs,
+NFRs, and other spec kinds). Local-first, zero external services, runs as
+an MCP server next to your editor.
 
 Battle-tested on real codebases. Four releases of compounding wins
 on the same Django 5.1.4 queries:
@@ -15,11 +16,11 @@ on the same Django 5.1.4 queries:
 | Partial reindex (touch 1 file, Django) | — | ~7 s | — | **1.4 s** |
 
 Validated across 5 distinct agent profiles (exploration, refactor,
-RF flow, Django bugfix, TypeScript feature) — see
+Spec flow, Django bugfix, TypeScript feature) — see
 [`docs/AGENT_USAGE_DATA.md`](docs/AGENT_USAGE_DATA.md).
 
 > Want the agentic flow without reading further?
-> - **MCP prompt `agent_playbook`** — how to use tools *and* annotate code (`@rf:`).
+> - **MCP prompt `agent_playbook`** — how to use tools *and* annotate code (`@spec:`).
 > - [`docs/AGENT_QUICKSTART.md`](docs/AGENT_QUICKSTART.md) — 10-step cold-open flow.
 > - [`docs/AGENT_PLAYBOOK.md`](docs/AGENT_PLAYBOOK.md) — same content as the prompt.
 
@@ -46,32 +47,32 @@ livespec-mcp
     {"qualified_name": "django.utils.functional.SimpleLazyObject", "pagerank": 0.000209},
     {"qualified_name": "django.core.exceptions.ImproperlyConfigured", "pagerank": 0.000872}
   ],
-  "requirements": [] }
+  "specs": [] }
 
-// Wider blast radius on an RF-active codebase
-> analyze_impact(target_type="requirement", target="RF-042")
-{ "rf_id": "RF-042", "implementing_symbols": [...],
-  "dependent_requirements": ["RF-088", "RF-091"],
+// Wider blast radius on a Spec-active codebase
+> analyze_impact(target_type="spec", target="SPEC-042")
+{ "spec_id": "SPEC-042", "implementing_symbols": [...],
+  "dependent_specs": ["SPEC-088", "SPEC-091"],
   "impacted_callers": [...] }
 ```
 
 Built for the questions an agent asks on an unfamiliar codebase:
 
-- ¿Qué código implementa el RF-042?
-- Si modifico `auth.verify`, ¿qué RFs y qué llamadores se ven afectados?
-- ¿Qué módulos no tienen ningún RF asociado?
-- ¿Qué RFs dependen de RF-042 transitivamente?
+- ¿Qué código implementa el SPEC-042?
+- Si modifico `auth.verify`, ¿qué Specs y qué llamadores se ven afectados?
+- ¿Qué módulos no tienen ningún Spec asociado?
+- ¿Qué Specs dependen de SPEC-042 transitivamente?
 
-RF traceability is the differentiator. Most code-intel tools stop at "what
-calls this function?". livespec layers Functional Requirement ↔ code links
-on top so an agent on a serious-software-shop codebase can answer
-*"changing this function affects RF-042, RF-088 and 3 dependent RFs"* in
-one round-trip. RF agentic tools ship in the default surface;
-RF mutation/management tools live in the `livespec-rf` plugin. Plugins
-register at boot (multi-tenant: every `workspace=` has its own DB), but
-**`PluginVisibilityMiddleware`** hides mutation/doc tools from `tools/list`
-until that workspace has `rf`/`doc` rows — or you set
-`LIVESPEC_PLUGINS=rf` / `=all` in MCP config.
+Spec traceability is the differentiator. Most code-intel tools stop at "what
+calls this function?". livespec layers Spec ↔ code links (functional
+requirements, ADRs, NFRs, and other kinds) on top so an agent on a
+serious-software-shop codebase can answer *"changing this function affects
+SPEC-042, SPEC-088 and 3 dependent Specs"* in one round-trip. Spec agentic
+tools ship in the default surface; Spec mutation/management tools live in
+the `livespec-spec` plugin. Plugins register at boot (multi-tenant: every
+`workspace=` has its own DB), but **`PluginVisibilityMiddleware`** hides
+mutation/doc tools from `tools/list` until that workspace has `spec`/`doc`
+rows — or you set `LIVESPEC_PLUGINS=spec` / `=all` in MCP config.
 
 ### What "living" actually means here
 
@@ -79,13 +80,13 @@ until that workspace has `rf`/`doc` rows — or you set
 |---|---|---|
 | Symbol index | ✅ | xxh3 content-hash incremental, run `index_project` on demand |
 | Call graph + edges | ✅ | re-resolved on every change; persistent `symbol_ref` |
-| RF ↔ code links | ✅ | auto-scan of `@rf:` annotations after every `index_project` |
-| RF ↔ RF graph | ✅ | explicit, cycle-checked; `link_rf_dependency` (plugin) |
+| Spec ↔ code links | ✅ | auto-scan of `@spec:` annotations after every `index_project` |
+| Spec ↔ Spec graph | ✅ | explicit, cycle-checked; `link_spec_dependency` (plugin) |
 | Drift detection | ✅ | body_hash + signature_hash on every symbol; `list_docs(only_stale=True)` (plugin) |
 | **Generated docs content** | ❌ on-demand | `generate_docs` (plugin) needs an LLM-capable caller or an MCP host that supports sampling. Drift is *detected*, not *fixed*. |
 
 So: traceability is live, docs are not. If your workflow is "give me an
-agent that always knows which code implements which requirement, and which
+agent that always knows which code implements which spec, and which
 tests probably break when X changes" — this is exactly what the project is
 good at. If you wanted "writes my doc comments while I sleep" — not yet.
 
@@ -194,7 +195,7 @@ fresh index.
 
 ### FastAPI integration
 
-Three steps to serve the RF Explorer from your API — no manual wiring unless
+Three steps to serve the Spec Explorer from your API — no manual wiring unless
 you disable autowire:
 
 1. **Install** livespec-mcp in the same environment as your app
@@ -206,7 +207,7 @@ you disable autowire:
    (default in `.livespec.toml`).
 
 3. **Open** `http://localhost:<port>/explorer/` — the Overview tab shows
-   requirement status, coverage trend, and navigation into API / Changes /
+   spec status, coverage trend, and navigation into API / Changes /
    Coverage gaps. For a quick try without your app:
 
    ```bash
@@ -235,7 +236,7 @@ Writes:
 | Path | Purpose |
 |------|---------|
 | `.livespec.toml` | `[explorer]` defaults |
-| `.mcp-docs/explorer/` | RF Explorer bundle |
+| `.mcp-docs/explorer/` | Spec Explorer bundle |
 | `.cursor/rules/livespec-fastapi.mdc` | Agent rule (FastAPI globs) |
 | `.cursor/skills/livespec-fastapi/SKILL.md` | Session workflow skill |
 | `.livespec/SESSION_PROMPT.md` | Copy-paste chat opener |
@@ -243,32 +244,32 @@ Writes:
 Appends `mount_explorer(app, prefix="/explorer")` to `main.py`/`app.py` when found.
 Flags: `--no-index`, `--no-wire`, `--no-cursor`.
 
-## Tools (36 total: 24 core + 9 RF plugin + 3 docs plugin)
+## Tools (36 total: 24 core + 9 Spec plugin + 3 docs plugin)
 
 Every tool requires `workspace` (absolute project root). Pass it on each call;
 omitting it is an error (no env fallback). LRU cache (8 workspaces) — one MCP
 server, many projects, no restart.
 
 **Menu (v0.19):** plugins register at boot but `PluginVisibilityMiddleware`
-hides RF mutation / doc tools from `tools/list` until the workspace has `rf`
-rows, a `.mcp-docs/explorer/` bundle (docs plugin), or you set
-`LIVESPEC_PLUGINS`. **`import_requirements_from_markdown`** and
+hides Spec mutation / doc tools from `tools/list` until the workspace has
+`spec` rows, a `.mcp-docs/explorer/` bundle (docs plugin), or you set
+`LIVESPEC_PLUGINS`. **`import_specs_from_markdown`** and
 **`export_explorer`** are always visible (brownfield bootstrap — no
-chicken-and-egg). After the first `workspace=` call on a repo with RFs +
+chicken-and-egg). After the first `workspace=` call on a repo with Specs +
 explorer, the menu grows to **36** tools. Reconnect the MCP host if your
 client cached an old tool list.
 
-### Default surface — code intel + RF agentic (24)
+### Default surface — code intel + Spec agentic (24)
 
 These tools answer the questions an agent ASKS on an unfamiliar codebase.
-Always registered (including markdown RF import + Explorer export).
+Always registered (including markdown Spec import + Explorer export).
 
 #### Indexing (1)
 - `index_project(force=False, watch=False, embed=False, explorer=False)` — walk, parse,
   persist. Also rebuilds search chunks idempotently. Respects
   `.gitignore` (root + nested, negations included) on top of the
   built-in ignore list (v0.14). Pass `embed=True` to populate vector
-  embeddings (requires `[embeddings]` extra). Auto-builds the RF Explorer
+  embeddings (requires `[embeddings]` extra). Auto-builds the Spec Explorer
   bundle when `.mcp-docs/explorer/` already exists, `explorer=True`, or a
   FastAPI entry is detected (see **FastAPI integration** above). Read the
   `project://index/status` resource for current status (the legacy
@@ -283,17 +284,17 @@ Always registered (including markdown RF import + Explorer export).
   languages = ["python", "typescript"]  # allow-list; absent = all 9
   max_file_bytes = 2000000              # skip files larger than this
 
-  [requirements]
+  [specs]
   sync_from = ["docs/REQUISITOS_FUNCIONALES.md"]  # re-import after every index_project
-  links_seed = "docs/requirements/livespec-rf-links.json"  # optional bulk_link seed
+  links_seed = "docs/requirements/livespec-spec-links.json"  # optional bulk_link seed
 
   [explorer]
   mount_path = "/explorer"              # FastAPI mount prefix for autowire
   ```
 
 #### Search (1, v0.12)
-- `search(query, scope='all'|'code'|'requirements', limit=20)` — hybrid
-  retrieval over AST-aware chunks of symbols + RFs. FTS5 keyword lane
+- `search(query, scope='all'|'code'|'specs', limit=20)` — hybrid
+  retrieval over AST-aware chunks of symbols + Specs. FTS5 keyword lane
   always live (splits `snake_case` into OR tokens); vector lane fuses via
   Reciprocal Rank Fusion (k=60) when `[embeddings]` extra is installed and
   chunks are embedded — falls back to FTS-only if the embedder is offline.
@@ -311,17 +312,17 @@ Always registered (including markdown RF import + Explorer export).
 - `who_calls(qname, max_depth=1)` — backward cone, slim agentic alias.
 - `who_does_this_call(qname, max_depth=1)` — forward-direction counterpart.
 - `quick_orient(qname)` — composite snapshot: metadata + docstring lead +
-  top-5 callers/callees by PageRank + linked RFs + entry-point flag.
+  top-5 callers/callees by PageRank + linked Specs + entry-point flag.
   Replaces 3-4 calls with one when an agent first lands on a symbol.
-- `analyze_impact(target_type, target, max_depth)` — symbol/file/RF blast
+- `analyze_impact(target_type, target, max_depth)` — symbol/file/Spec blast
   radius. `max_depth=1` covers the old "find references" use case.
 - `get_project_overview(include_infrastructure=False)` — top symbols by
   PageRank; infra noise filtered by default.
 - `git_diff_impact(base_ref='HEAD~1', head_ref='HEAD', max_depth=5)` —
-  changed files → impacted callers → affected RFs → suggested test files.
+  changed files → impacted callers → affected Specs → suggested test files.
   PR-review entry point.
 - `find_dead_code(include_infrastructure=False)` — symbols with zero
-  callers and zero RF links. Skips entry-point paths, framework
+  callers and zero Spec links. Skips entry-point paths, framework
   decorators, `__main__` guards, list-stored callbacks.
 - `find_orphan_tests(max_depth=10)` — test functions whose forward cone
   never reaches a non-test symbol.
@@ -337,63 +338,63 @@ Always registered (including markdown RF import + Explorer export).
 - `grep_in_indexed_files(pattern, path_glob?, kind?, limit=50)` — search
   only files present in the index (avoids `node_modules` / `.venv`).
 - `agent_scratch(qname, note)` / `agent_scratch_clear(qname?)` — ephemeral
-  agent notes per project (SQLite, not RFs). Omit `qname` on clear to wipe all.
-- `audit_coverage()` — RF coverage report: modules without direct RF,
+  agent notes per project (SQLite, not Specs). Omit `qname` on clear to wipe all.
+- `audit_coverage()` — Spec coverage report: modules without direct Spec,
   modules implicitly covered (transitively reached), modules truly orphan,
   modules in languages whose annotation extractor isn't wired yet
-  (`modules_unsupported_language`), RFs without implementation, RFs with
-  low avg confidence. **(v0.16)** Also reports auto-derived per-RF **test
-  coverage** (`rf_coverage`, `avg_test_coverage`, `rfs_with_any_test_coverage`):
+  (`modules_unsupported_language`), Specs without implementation, Specs with
+  low avg confidence. **(v0.16)** Also reports auto-derived per-Spec **test
+  coverage** (`spec_coverage`, `avg_test_coverage`, `specs_with_any_test_coverage`):
   an implementing symbol counts as tested when a test's forward call-cone
   reaches it (depth 3) or an explicit `relation='tests'` link exists — so
-  RF test-coverage works with no hand-linking for projects whose tests
-  call the code directly. The RF Explorer renders this as a per-RF test
+  Spec test-coverage works with no hand-linking for projects whose tests
+  call the code directly. The Spec Explorer renders this as a per-Spec test
   coverage meter with a `coverage_source` badge.
 
-#### RF agentic — query + bootstrap (5)
-- `bulk_link_rf_symbols(mappings)` — batch-link N (rf_id, symbol_qname)
+#### Spec agentic — query + bootstrap (5)
+- `bulk_link_spec_symbols(mappings)` — batch-link N (spec_id, symbol_qname)
   pairs in one transaction. Escape hatch for files/languages where the
   in-source annotation extractor doesn't reach (configs, SQL, YAML).
   Idempotent: re-linking an existing pair is a no-op. Test symbols must be
   **functions** (`tests.pkg.test_mod.test_fn`), not modules (`tests.pkg.test_mod`).
-- `import_requirements_from_markdown(path)` — bulk-create/update RFs from
-  `## RF-NNN: Title` Markdown specs. Always visible; warns on duplicate RF
-  headings across different markdown files. Idempotent.
-- `list_requirements(status, module, priority, has_implementation)` —
-  RF discovery surface.
-- `get_requirement_implementation(rf_id)` — answers
-  *"¿qué código implementa el RF-042?"*.
-- `propose_requirements_from_codebase(module_depth=2, min_symbols_per_group=3,
-  max_proposals=30, skip_already_covered=True)` — heuristic RF discovery
-  on an RF-empty repo. Groups symbols by module + PageRank, proposes
-  RF candidates with humanized title + suggested_symbols.
+- `import_specs_from_markdown(path)` — bulk-create/update Specs from
+  `## SPEC-NNN: Title` Markdown specs. Always visible; warns on duplicate
+  Spec headings across different markdown files. Idempotent.
+- `list_specs(status, module, priority, kind, has_implementation)` —
+  Spec discovery surface.
+- `get_spec_implementation(spec_id)` — answers
+  *"¿qué código implementa el SPEC-042?"*.
+- `propose_specs_from_codebase(module_depth=2, min_symbols_per_group=3,
+  max_proposals=30, skip_already_covered=True)` — heuristic Spec discovery
+  on a Spec-empty repo. Groups symbols by module + PageRank, proposes
+  Spec candidates with humanized title + suggested_symbols.
 
-#### RF Explorer (1, always visible)
+#### Spec Explorer (1, always visible)
 - `export_explorer(base?, head?, generated_at?)` — writes
   `.mcp-docs/explorer/` (`data.json` + `index.html`). Swagger-style view by
-  Requirement; **v0.19** HTTP Try-it for routes with method/path; FastAPI
+  Spec; **v0.19** HTTP Try-it for routes with method/path; FastAPI
   autowire on export/index. Preview: `livespec-mcp explorer serve` →
   `http://127.0.0.1:8765/explorer/`.
 
-### `livespec-rf` plugin — RF mutation (9)
+### `livespec-spec` plugin — Spec mutation (9)
 
-Visible in `tools/list` when the workspace DB has `rf` rows, or when
-`LIVESPEC_PLUGINS` includes `rf`. Tools an *operator* runs to mutate RF state.
+Visible in `tools/list` when the workspace DB has `spec` rows, or when
+`LIVESPEC_PLUGINS` includes `spec`. Tools an *operator* runs to mutate Spec state.
 
-`bulk_link_rf_symbols` and `import_requirements_from_markdown` live in the
+`bulk_link_spec_symbols` and `import_specs_from_markdown` live in the
 **default surface** (always visible) so brownfield repos can bootstrap without
 setting `LIVESPEC_PLUGINS`.
 
-- `create_requirement(title, ...)`, `update_requirement(rf_id, ...)`,
-  `delete_requirement(rf_id)` — cascade-removes rf_symbol links.
-- `link_rf_symbol(rf_id, symbol_qname, relation, confidence, source, unlink)` —
-  link / unlink a single RF↔symbol pair.
-- `link_rf_dependency(parent_rf_id, child_rf_id, kind='requires')` /
-  `unlink_rf_dependency` / `get_rf_dependency_graph` — RF→RF graph.
+- `create_spec(title, ...)`, `update_spec(spec_id, ...)`,
+  `delete_spec(spec_id)` — cascade-removes spec_symbol links.
+- `link_spec_symbol(spec_id, symbol_qname, relation, confidence, source, unlink)` —
+  link / unlink a single Spec↔symbol pair.
+- `link_spec_dependency(parent_spec_id, child_spec_id, kind='requires')` /
+  `unlink_spec_dependency` / `get_spec_dependency_graph` — Spec→Spec graph.
   `kind` ∈ {requires, extends, conflicts}; cycles rejected at insert time.
-- `scan_rf_annotations()` — two-level matcher (`@rf:RF-NNN` vs.
+- `scan_spec_annotations()` — two-level matcher (`@spec:SPEC-NNN` vs.
   verb-anchored); auto-runs after every `index_project`.
-- `scan_docstrings_for_rf_hints()` — surfaces RF candidates from existing
+- `scan_docstrings_for_spec_hints()` — surfaces Spec candidates from existing
   docstrings (first sentence, leading verb). Returns
   `verb_histogram_top` for noticing dominant action verbs.
 
@@ -401,12 +402,12 @@ setting `LIVESPEC_PLUGINS`.
 
 ```text
 index_project(workspace=..., explorer=True)
-  → import_requirements_from_markdown(path="docs/REQUISITOS_FUNCIONALES.md")
-  → bulk_link_rf_symbols(mappings=[...])
+  → import_specs_from_markdown(path="docs/REQUISITOS_FUNCIONALES.md")
+  → bulk_link_spec_symbols(mappings=[...])
 ```
 
-Or add `[requirements].sync_from` to `.livespec.toml` and run
-`uv run python scripts/sync_livespec_rfs.py /path/to/repo` after editing the
+Or add `[specs].sync_from` to `.livespec.toml` and run
+`uv run python scripts/sync_livespec_specs.py /path/to/repo` after editing the
 spec without a full re-index.
 
 ### `livespec-docs` plugin — doc generation (3)
@@ -431,26 +432,27 @@ Visible when the workspace has `doc` rows, a `.mcp-docs/explorer/` bundle, or
 | `search`, `rebuild_chunks` (v0.7, dropped v0.8) | `search` is **back in v0.12** wired to a real chunk pipeline + vector lane via Reciprocal Rank Fusion. `rebuild_chunks` is now auto-run inside `index_project` (no separate tool). `find_symbol` + `quick_orient` still cover exact-name lookup. |
 | `list_files` (v0.7) | grep / ripgrep host with path glob |
 | `start_watcher` / `stop_watcher` / `watcher_status` (v0.7) | re-run `index_project` on demand (watcher race-condition trap for editing agents) |
-| `link_requirement_to_code` (v0.6 alias) | `link_rf_symbol` |
-| `link_requirements` / `unlink_requirements` (v0.6 alias) | `link_rf_dependency` / `unlink_rf_dependency` |
-| `get_requirement_dependencies` (v0.6 alias) | `get_rf_dependency_graph` |
+| `link_requirement_to_code` (v0.6 alias) | `link_spec_symbol` |
+| `link_requirements` / `unlink_requirements` (v0.6 alias) | `link_spec_dependency` / `unlink_spec_dependency` |
+| `get_requirement_dependencies` (v0.6 alias) | `get_spec_dependency_graph` |
 | `get_index_status` (v0.9, deprecated in v0.8) | read the `project://index/status` resource |
+| `list_requirements` / `get_requirement_implementation` / `create_requirement` / etc. (RF nomenclature, removed v0.20 — hard cut) | `list_specs` / `get_spec_implementation` / `create_spec` / etc. |
 
 ## Resources
 
 - `project://overview`
 - `project://index/status`
-- `project://requirements`
-- `project://requirements/{rf_id}`
+- `project://specs`
+- `project://specs/{spec_id}`
 - `project://files/{path*}`
 - `project://symbols/{qname*}`
 - `doc://symbol/{qname*}`
-- `doc://requirement/{rf_id}`
+- `doc://spec/{spec_id}`
 - `code://symbol/{qname*}` — raw symbol source slice
 
 ## Prompts (slash commands)
 
-- **`agent_playbook`** — primary agent guide: tool tiers, call patterns, `@rf:` commenting, brownfield RF workflow, anti-patterns
+- **`agent_playbook`** — primary agent guide: tool tiers, call patterns, `@spec:` commenting, brownfield Spec workflow, anti-patterns
 - `onboard_project`
 - `analyze_change_impact`
 - `audit_requirement_coverage`
@@ -503,15 +505,15 @@ In-memory FastMCP `Client(mcp)` so tests run without subprocess or network.
 
 livespec ships two user shapes deliberately:
 
-- **Agents** see the 17-tool default surface and the agentic-read RF tools
-  (`list_requirements`, `get_requirement_implementation`,
-  `propose_requirements_from_codebase`, `audit_coverage`). The composite
+- **Agents** see the 17-tool default surface and the agentic-read Spec tools
+  (`list_specs`, `get_spec_implementation`,
+  `propose_specs_from_codebase`, `audit_coverage`). The composite
   `quick_orient` is the canonical first-contact tool — it returns
-  metadata, docstring lead, top callers/callees by PageRank, linked RFs,
+  metadata, docstring lead, top callers/callees by PageRank, linked Specs,
   and entry-point flags in one call.
 - **Humans** (or operator scripts) reach for the plugin tools to mutate
-  RF state and manage docs. Auto-load happens once the DB shows real RF
-  or doc rows; before that, set `LIVESPEC_PLUGINS=all` (or `=rf` /
+  Spec state and manage docs. Auto-load happens once the DB shows real Spec
+  or doc rows; before that, set `LIVESPEC_PLUGINS=all` (or `=spec` /
   `=docs`) to bootstrap.
 
 This is why dropping `search`/`get_symbol_info` was safe: the battle-test
@@ -545,3 +547,4 @@ data trumped the prior intuition.
 | 20 — v0.15–0.17 | ✅ | RF Explorer static bundle (`export_explorer`), derived RF test coverage + explorer meters, Changes/drill-down/trend/freshness, reproducible self-RFs (`livespec-rf-links.json`) |
 | 21 — v0.18 | ✅ | `PluginVisibilityMiddleware` (per-workspace tool menu, 19→33 after index). `livespec-mcp explorer serve` + FastAPI `mount_explorer` autowire. Explorer landing + Swagger API tab. Search: FTS snake_case + offline vector fallback. **342** default tests |
 | 22 — v0.19 | ✅ | FastAPI HTTP paths + Explorer Try-it; `fastapi init`; brownfield RF bootstrap (`import_requirements_from_markdown` always visible, `[requirements].sync_from`, duplicate-spec warnings); agent tools + PR RF comment CI. **368** default tests |
+| 23 — v0.20 | ✅ | **Breaking (hard cut):** RF → Spec nomenclature + taxonomy. `rf`/`rf_symbol`/`rf_dependency` tables renamed to `spec`/`spec_symbol`/`spec_dependency` with a new `kind` column (`functional_requirement`, `non_functional_requirement`, `adr`, `design`, `constraint`, `epic`, `other`); migration v11 preserves existing `RF-NNN` ids. `@rf:`/`@not_rf` annotations renamed to `@spec:`/`@not_spec`. All RF-prefixed tools renamed (`list_requirements`→`list_specs`, `create_requirement`→`create_spec`, etc.), `livespec-rf` plugin renamed to `livespec-spec`. No aliases — single breaking release. **370** default tests |

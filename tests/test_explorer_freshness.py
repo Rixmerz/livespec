@@ -1,6 +1,6 @@
-"""Feature E — index_project keeps the RF Explorer bundle fresh.
+"""Feature E — index_project keeps the Spec Explorer bundle fresh.
 
-`index_project` auto-regenerates the static RF Explorer bundle when it
+`index_project` auto-regenerates the static Spec Explorer bundle when it
 already exists (so it never goes stale after a re-index), and builds it on
 demand via `explorer=True`. A bundle build failure must never break
 indexing. The payload reports `explorer_regenerated`.

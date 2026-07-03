@@ -1,17 +1,17 @@
 """MCP resources: project:// addressable views.
 
-Canonical URI scheme (v0.19):
+Canonical URI scheme (v0.20):
 
 | URI | MIME | Purpose |
 |-----|------|---------|
 | ``project://overview`` | JSON | Project overview (PageRank spine) |
 | ``project://index/status`` | JSON | Index stats |
-| ``project://requirements`` | JSON | All RFs |
-| ``project://requirements/{rf_id}`` | JSON | RF + implementations |
+| ``project://specs`` | JSON | All Specs |
+| ``project://specs/{spec_id}`` | JSON | Spec + implementations |
 | ``project://files/{path}`` | JSON | Indexed file + symbols |
 | ``project://symbols/{qname}`` | JSON | Symbol metadata |
 | ``doc://symbol/{qname}`` | markdown | Generated symbol doc |
-| ``doc://requirement/{rf_id}`` | markdown | Generated RF doc |
+| ``doc://spec/{spec_id}`` | markdown | Generated Spec doc |
 | ``code://symbol/{qname}`` | plain | Raw symbol source slice |
 
 Legacy alias ``livespec://…`` is **not** registered — use ``project://`` /
@@ -68,8 +68,8 @@ def register(mcp: FastMCP) -> None:
             return _no_workspace_json()
         return json.dumps(compute_project_overview(st))
 
-    @mcp.resource("project://requirements", mime_type="application/json")
-    def list_requirements() -> str:
+    @mcp.resource("project://specs", mime_type="application/json")
+    def list_specs() -> str:
         st = _resolve_state()
         if st is None:
             return _no_workspace_json()
@@ -77,33 +77,33 @@ def register(mcp: FastMCP) -> None:
         rows = [
             dict(r)
             for r in st.conn.execute(
-                """SELECT r.rf_id, r.title, r.status, r.priority, m.name as module
-                   FROM rf r LEFT JOIN module m ON m.id=r.module_id
-                   WHERE r.project_id=? ORDER BY r.rf_id""",
+                """SELECT s.spec_id, s.kind, s.title, s.status, s.priority, m.name as module
+                   FROM spec s LEFT JOIN module m ON m.id=s.module_id
+                   WHERE s.project_id=? ORDER BY s.spec_id""",
                 (pid,),
             )
         ]
-        return json.dumps({"requirements": rows})
+        return json.dumps({"specs": rows})
 
-    @mcp.resource("project://requirements/{rf_id}", mime_type="application/json")
-    def requirement(rf_id: str) -> str:
+    @mcp.resource("project://specs/{spec_id}", mime_type="application/json")
+    def spec(spec_id: str) -> str:
         st = _resolve_state()
         if st is None:
             return _no_workspace_json()
         pid = st.project_id
         row = st.conn.execute(
-            """SELECT r.*, m.name as module FROM rf r LEFT JOIN module m ON m.id=r.module_id
-               WHERE r.project_id=? AND r.rf_id=?""",
-            (pid, rf_id),
+            """SELECT s.*, m.name as module FROM spec s LEFT JOIN module m ON m.id=s.module_id
+               WHERE s.project_id=? AND s.spec_id=?""",
+            (pid, spec_id),
         ).fetchone()
         if not row:
-            return json.dumps(mcp_error(f"RF '{rf_id}' not found"))
+            return json.dumps(mcp_error(f"Spec '{spec_id}' not found"))
         symbols = [
             dict(r)
             for r in st.conn.execute(
-                """SELECT s.qualified_name, f.path, rs.relation, rs.confidence
-                   FROM rf_symbol rs JOIN symbol s ON s.id=rs.symbol_id
-                   JOIN file f ON f.id=s.file_id WHERE rs.rf_id=?""",
+                """SELECT s2.qualified_name, f.path, ss.relation, ss.confidence
+                   FROM spec_symbol ss JOIN symbol s2 ON s2.id=ss.symbol_id
+                   JOIN file f ON f.id=s2.file_id WHERE ss.spec_id=?""",
                 (row["id"],),
             )
         ]
@@ -162,19 +162,19 @@ def register(mcp: FastMCP) -> None:
             return f"# No doc for `{qname}`\n\nRun `generate_docs_for_symbol` first."
         return row["content"]
 
-    @mcp.resource("doc://requirement/{rf_id}", mime_type="text/markdown")
-    def doc_requirement(rf_id: str) -> str:
+    @mcp.resource("doc://spec/{spec_id}", mime_type="text/markdown")
+    def doc_spec(spec_id: str) -> str:
         st = _resolve_state()
         if st is None:
             return f"# No active workspace\n\n{_NO_WORKSPACE_HINT}"
         pid = st.project_id
         row = st.conn.execute(
             """SELECT content FROM doc
-               WHERE project_id=? AND target_type='requirement' AND target_key=?""",
-            (pid, rf_id),
+               WHERE project_id=? AND target_type='spec' AND target_key=?""",
+            (pid, spec_id),
         ).fetchone()
         if not row:
-            return f"# No doc for `{rf_id}`\n\nRun `generate_docs_for_requirement` first."
+            return f"# No doc for `{spec_id}`\n\nRun `generate_docs_for_spec` first."
         return row["content"]
 
     @mcp.resource("code://symbol/{qname*}", mime_type="text/plain")
@@ -207,7 +207,7 @@ def register(mcp: FastMCP) -> None:
 
         v0.9 P6: replaced the deprecated `get_index_status` tool wrapper.
         Returns `{workspace, project_id, files, symbols, edges,
-        requirements, last_run}`.
+        specs, last_run}`.
         """
         st = _resolve_state()
         if st is None:

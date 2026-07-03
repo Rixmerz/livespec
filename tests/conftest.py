@@ -6,7 +6,7 @@ import os
 from pathlib import Path
 
 # v0.8 P3.4/P3.5: force every plugin to register so tests see the full
-# mutation surface (RF CRUD, doc generation). Plugins normally auto-load
+# mutation surface (Spec CRUD, doc generation). Plugins normally auto-load
 # only when their backing tables have rows; tests on fresh workspaces
 # would otherwise miss those tools. Set BEFORE any livespec import so
 # the value is in os.environ when server.py runs its plugin auto-detect.
@@ -47,7 +47,7 @@ def sample_repo(workspace: Path) -> Path:
     (workspace / "pkg" / "auth.py").write_text(
         '"""Auth module."""\n'
         "def login(user, password):\n"
-        '    """Login a user.\n\n    @rf:RF-001\n    """\n'
+        '    """Login a user.\n\n    @spec:SPEC-001\n    """\n'
         "    return verify(user, password)\n"
         "\n"
         "def verify(user, password):\n"
@@ -59,7 +59,7 @@ def sample_repo(workspace: Path) -> Path:
         "\n"
         "class API:\n"
         "    def handle(self, req):\n"
-        '        """Implements RF-002."""\n'
+        '        """Implements SPEC-002."""\n'
         "        return login(req['user'], req['pw'])\n"
     )
     return workspace

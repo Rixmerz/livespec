@@ -45,8 +45,8 @@ def compute_index_status(st: AppState) -> dict[str, Any]:
            JOIN file f ON f.id=s.file_id WHERE f.project_id=?""",
         (pid,),
     ).fetchone()["c"]
-    rfs = st.conn.execute(
-        "SELECT COUNT(*) c FROM rf WHERE project_id=?", (pid,)
+    specs = st.conn.execute(
+        "SELECT COUNT(*) c FROM spec WHERE project_id=?", (pid,)
     ).fetchone()["c"]
     return {
         "workspace": str(st.settings.workspace),
@@ -54,7 +54,7 @@ def compute_index_status(st: AppState) -> dict[str, Any]:
         "files": int(files),
         "symbols": int(syms),
         "edges": int(edges),
-        "requirements": int(rfs),
+        "specs": int(specs),
         "last_run": dict(last) if last else None,
     }
 
@@ -81,7 +81,7 @@ def run_index_pipeline(st: AppState, *, force: bool = False, embed: bool = False
         "files_skipped": stats.files_skipped,
         "symbols_total": stats.symbols_total,
         "edges_total": stats.edges_total,
-        "rf_links_created": stats.rf_links_created,
+        "spec_links_created": stats.spec_links_created,
         "manual_links_restored": stats.manual_links_restored,
         "languages": stats.languages,
         "languages_unsupported": stats.languages_unsupported,
@@ -94,7 +94,7 @@ def run_index_pipeline(st: AppState, *, force: bool = False, embed: bool = False
 
 
 def _should_build_explorer(st: AppState, explorer: bool) -> bool:
-    """Return whether ``index_project`` should (re)generate the RF Explorer bundle.
+    """Return whether ``index_project`` should (re)generate the Spec Explorer bundle.
 
     True when any of:
 
@@ -114,7 +114,7 @@ def _should_build_explorer(st: AppState, explorer: bool) -> bool:
 
 
 def _maybe_regenerate_explorer(st: AppState, explorer: bool) -> bool:
-    """Refresh the static RF Explorer bundle to keep it from going stale.
+    """Refresh the static Spec Explorer bundle to keep it from going stale.
 
     Regenerates when :func:`_should_build_explorer` is true (explicit flag,
     existing bundle, or FastAPI entry autodetect on first index). Any failure
@@ -131,7 +131,7 @@ def _maybe_regenerate_explorer(st: AppState, explorer: bool) -> bool:
         write_explorer_bundle(st)
         return True
     except Exception:
-        _log.exception("RF Explorer bundle regeneration failed; skipping")
+        _log.exception("Spec Explorer bundle regeneration failed; skipping")
         return False
 
 
@@ -155,12 +155,12 @@ def register(mcp: FastMCP) -> None:
         Pass embed=True to populate vector embeddings after chunking
         (requires the [embeddings] extra: fastembed + sqlite-vec). First
         run downloads ~200MB of model weights; FTS5 lane works without it.
-        Pass explorer=True to (re)generate the static RF Explorer bundle
+        Pass explorer=True to (re)generate the static Spec Explorer bundle
         (.mcp-docs/explorer/) after indexing; it is also auto-refreshed
         whenever that bundle already exists, so the viewer never goes stale.
-        When ``[requirements].sync_from`` is set in ``.livespec.toml``, markdown
-        RF specs are re-imported after each index (idempotent). Optional
-        ``[requirements].links_seed`` replays ``bulk_link_rf_symbols`` from JSON.
+        When ``[specs].sync_from`` is set in ``.livespec.toml``, markdown
+        specs are re-imported after each index (idempotent). Optional
+        ``[specs].links_seed`` replays ``bulk_link_spec_symbols`` from JSON.
         On a first index, a FastAPI workspace (``app = FastAPI(...)`` in
         ``main.py`` / ``app.py``) auto-builds the bundle and autowires
         ``mount_explorer(app)`` when ``[explorer] auto_mount = true``.
@@ -172,13 +172,13 @@ def register(mcp: FastMCP) -> None:
         result = run_index_pipeline(st, force=force, embed=embed)
         result["explorer_regenerated"] = _maybe_regenerate_explorer(st, explorer)
         try:
-            from livespec_mcp.domain.requirements_sync import sync_requirements_from_config
+            from livespec_mcp.domain.specs_sync import sync_specs_from_config
 
-            req_sync = sync_requirements_from_config(st)
-            if req_sync is not None:
-                result["requirements_sync"] = req_sync
+            specs_sync = sync_specs_from_config(st)
+            if specs_sync is not None:
+                result["specs_sync"] = specs_sync
         except Exception:
-            _log.exception("requirements sync failed; skipping")
+            _log.exception("specs sync failed; skipping")
         if watch:
             from livespec_mcp.domain.watcher import Watcher, register_watcher
 

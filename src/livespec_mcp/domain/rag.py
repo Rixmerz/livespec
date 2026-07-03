@@ -122,19 +122,19 @@ def chunk_symbol(symbol_row: sqlite3.Row, source_text: str | None) -> list[Chunk
     return chunks
 
 
-def chunk_requirement(rf_row: sqlite3.Row) -> list[Chunk]:
-    desc = rf_row["description"] or ""
-    text = f"# {rf_row['rf_id']}: {rf_row['title']}\n\n{desc}".strip()
+def chunk_spec(spec_row: sqlite3.Row) -> list[Chunk]:
+    desc = spec_row["description"] or ""
+    text = f"# {spec_row['spec_id']}: {spec_row['title']}\n\n{desc}".strip()
     if _approx_tokens(text) <= TEXT_CHUNK_MAX_TOKENS:
         return [
             Chunk(
-                source_type="requirement",
-                source_id=int(rf_row["id"]),
+                source_type="spec",
+                source_id=int(spec_row["id"]),
                 text_kind="text",
                 text=text,
             )
         ]
-    # Naive split for very long RFs
+    # Naive split for very long specs
     parts = text.split("\n\n")
     out: list[Chunk] = []
     buf: list[str] = []
@@ -144,8 +144,8 @@ def chunk_requirement(rf_row: sqlite3.Row) -> list[Chunk]:
         if buf_tokens + t > TEXT_CHUNK_MAX_TOKENS and buf:
             out.append(
                 Chunk(
-                    source_type="requirement",
-                    source_id=int(rf_row["id"]),
+                    source_type="spec",
+                    source_id=int(spec_row["id"]),
                     text_kind="text",
                     text="\n\n".join(buf),
                 )
@@ -158,8 +158,8 @@ def chunk_requirement(rf_row: sqlite3.Row) -> list[Chunk]:
     if buf:
         out.append(
             Chunk(
-                source_type="requirement",
-                source_id=int(rf_row["id"]),
+                source_type="spec",
+                source_id=int(spec_row["id"]),
                 text_kind="text",
                 text="\n\n".join(buf),
             )
@@ -310,7 +310,7 @@ def upsert_chunks(conn: sqlite3.Connection, project_id: int, chunks: Iterable[Ch
 
 
 def rebuild_chunks(conn: sqlite3.Connection, project_id: int) -> dict[str, int]:
-    """Re-chunk every symbol and RF for the project. Idempotent."""
+    """Re-chunk every symbol and Spec for the project. Idempotent."""
     # Wipe existing chunks
     conn.execute("DELETE FROM chunk WHERE project_id=?", (project_id,))
 
@@ -319,7 +319,7 @@ def rebuild_chunks(conn: sqlite3.Connection, project_id: int) -> dict[str, int]:
     )
 
     sym_count = 0
-    rf_count = 0
+    spec_count = 0
 
     # Symbols
     rows = conn.execute(
@@ -340,16 +340,16 @@ def rebuild_chunks(conn: sqlite3.Connection, project_id: int) -> dict[str, int]:
         upsert_chunks(conn, project_id, chunks)
         sym_count += len(chunks)
 
-    # Requirements
-    rfs = conn.execute(
-        "SELECT id, rf_id, title, description FROM rf WHERE project_id=?", (project_id,)
+    # Specs
+    specs = conn.execute(
+        "SELECT id, spec_id, title, description FROM spec WHERE project_id=?", (project_id,)
     ).fetchall()
-    for r in rfs:
-        chunks = chunk_requirement(r)
+    for r in specs:
+        chunks = chunk_spec(r)
         upsert_chunks(conn, project_id, chunks)
-        rf_count += len(chunks)
+        spec_count += len(chunks)
 
-    return {"symbol_chunks": sym_count, "requirement_chunks": rf_count}
+    return {"symbol_chunks": sym_count, "spec_chunks": spec_count}
 
 
 def embed_pending(conn: sqlite3.Connection, project_id: int) -> dict[str, int]:
@@ -441,8 +441,8 @@ def fts_search(
     args: list = [fts_query, project_id]
     if scope == "code":
         sql.append("AND c.text_kind='code'")
-    elif scope == "requirements":
-        sql.append("AND c.source_type='requirement'")
+    elif scope == "specs":
+        sql.append("AND c.source_type='spec'")
     sql.append("ORDER BY bm LIMIT ?")
     args.append(limit * 3)
     out: list[tuple[int, float, dict]] = []
@@ -472,7 +472,7 @@ def vec_search(
         )
         text_q = (
             list(embed_texts([query], "text")[0])
-            if scope in ("all", "requirements")
+            if scope in ("all", "specs")
             else None
         )
     except Exception:

@@ -61,12 +61,12 @@ async def test_did_you_mean_in_link_requirement(sample_repo):
     async with Client(mcp) as c:
         await c.call_tool("index_project", {})
         await c.call_tool(
-            "create_requirement", {"title": "Login", "rf_id": "RF-001"}
+            "create_spec", {"title": "Login", "spec_id": "SPEC-001"}
         )
         out = (
             await c.call_tool(
-                "link_rf_symbol",
-                {"rf_id": "RF-001", "symbol_qname": "pkg.auth.lgn"},
+                "link_spec_symbol",
+                {"spec_id": "SPEC-001", "symbol_qname": "pkg.auth.lgn"},
             )
         ).data
         assert out.get("isError") is True

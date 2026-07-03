@@ -21,7 +21,7 @@ def _make_dead_code_repo(workspace):
     for i in range(8):
         body.append(
             f"def dead_{i:02d}():\n"
-            f"    # nobody calls me, no rf link\n"
+            f"    # nobody calls me, no spec link\n"
             f"    return {i}\n"
         )
     (pkg / "code.py").write_text("\n".join(body))

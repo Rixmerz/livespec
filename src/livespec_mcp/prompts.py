@@ -22,56 +22,56 @@ def _load_agent_playbook() -> str:
 def register(mcp: FastMCP) -> None:
     @mcp.prompt
     def agent_playbook() -> str:
-        """How to use livespec tools and how to comment/link code (@rf: annotations).
+        """How to use livespec tools and how to comment/link code (@spec: annotations).
 
         Invoke at the start of a session on any livespec-indexed repo. Covers cold-open
-        tool patterns, RF traceability in docstrings, Markdown RF import, anti-patterns,
+        tool patterns, Spec traceability in docstrings, Markdown Spec import, anti-patterns,
         and brownfield onboarding — the operational guide agents should follow.
         """
         return _load_agent_playbook()
 
     @mcp.prompt
     def onboard_project() -> str:
-        """Walk a new project: index, list languages, surface top symbols, draft RFs."""
+        """Walk a new project: index, list languages, surface top symbols, draft Specs."""
         return (
             "You're onboarding to a new repo through livespec-mcp. Steps:\n"
             "1) Call `index_project()` and report counts.\n"
             "2) Call `get_project_overview()` and summarize languages and top symbols.\n"
-            "3) Call `list_requirements()` — if empty, suggest 3-5 candidate RFs based on top symbols.\n"
+            "3) Call `list_specs()` — if empty, suggest 3-5 candidate Specs based on top symbols.\n"
             "4) Ask the user which module they want to focus on next."
         )
 
     @mcp.prompt
     def analyze_change_impact(target: str) -> str:
-        """Run impact analysis for a symbol/file/RF and explain blast radius."""
+        """Run impact analysis for a symbol/file/Spec and explain blast radius."""
         return (
             f"Analyze the impact of changing `{target}`. Steps:\n"
-            f"1) Detect target type (symbol qname, file path, or RF id).\n"
+            f"1) Detect target type (symbol qname, file path, or Spec id).\n"
             f"2) Call `analyze_impact(target_type=..., target='{target}')`.\n"
-            f"3) Summarize: who calls this, what RFs are affected, suggested test scope."
+            f"3) Summarize: who calls this, what Specs are affected, suggested test scope."
         )
 
     @mcp.prompt
     def audit_requirement_coverage() -> str:
-        """List RFs without code links, and code modules without RF links."""
+        """List Specs without code links, and code modules without Spec links."""
         return (
             "Audit traceability:\n"
-            "1) `list_requirements(has_implementation=False)` — orphan RFs.\n"
-            "2) For each top module, check if any RF maps via `get_requirement_implementation`.\n"
-            "3) Output two tables: orphan RFs and uncovered modules."
+            "1) `list_specs(has_implementation=False)` — orphan Specs.\n"
+            "2) For each top module, check if any Spec maps via `get_spec_implementation`.\n"
+            "3) Output two tables: orphan Specs and uncovered modules."
         )
 
     @mcp.prompt
     def extract_requirements_from_module(module_or_path: str) -> str:
-        """Infer candidate RFs by reading the public surface of a module."""
+        """Infer candidate Specs by reading the public surface of a module."""
         return (
             f"Infer Functional Requirements from `{module_or_path}`. Steps:\n"
-            f"1) `propose_requirements_from_codebase(scope='{module_or_path}')` —\n"
+            f"1) `propose_specs_from_codebase(scope='{module_or_path}')` —\n"
             f"   heuristic groups + suggested symbols. If nothing is returned,\n"
             f"   fall back to `find_symbol(query='*')` to enumerate by hand.\n"
             f"2) Group by behavioral intent (auth, billing, ingestion, ...).\n"
-            f"3) Draft 3-7 RFs (id, title, 1-line description, suggested module).\n"
-            f"4) Ask the user which to persist via `create_requirement`."
+            f"3) Draft 3-7 Specs (id, title, 1-line description, suggested module).\n"
+            f"4) Ask the user which to persist via `create_spec`."
         )
 
     @mcp.prompt
@@ -103,13 +103,13 @@ def register(mcp: FastMCP) -> None:
 
     @mcp.prompt
     def explain_symbol(qname: str) -> str:
-        """One-pass explanation: code + callers + RFs touched."""
+        """One-pass explanation: code + callers + Specs touched."""
         return (
             f"Explain `{qname}` end-to-end:\n"
             f"1) `quick_orient(qname='{qname}')` — metadata, top callers/callees,\n"
-            f"   linked RFs, entry-point flag.\n"
+            f"   linked Specs, entry-point flag.\n"
             f"2) `get_symbol_source(qname='{qname}')` to read the body.\n"
             f"3) `analyze_impact(target_type='symbol', target='{qname}')` for the full\n"
-            f"   blast radius (transitive callers + RF rollup).\n"
-            f"4) Synthesize: purpose, who depends on it, which RFs are affected."
+            f"   blast radius (transitive callers + Spec rollup).\n"
+            f"4) Synthesize: purpose, who depends on it, which Specs are affected."
         )

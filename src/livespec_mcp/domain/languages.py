@@ -48,7 +48,7 @@ EXTRACTOR_SUPPORTED: frozenset[str] = frozenset({
 })
 
 
-# Languages whose extractor populates `symbol.docstring` so the @rf:
+# Languages whose extractor populates `symbol.docstring` so the @spec:
 # annotation matcher can find tags. Used by audit_coverage to separate
 # "actually un-covered" from "extractor can't see annotations here yet".
 ANNOTATION_SUPPORTED_LANGUAGES: frozenset[str] = frozenset({

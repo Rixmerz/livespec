@@ -522,7 +522,7 @@ def _ts_leading_doc_comment(node, src_bytes: bytes, language: str) -> str | None
     sits). Supports JS/TS JSDoc (`/** ... */`), Rust outer-doc lines
     (`/// ...`), and runs of `//` line comments. The returned text is
     raw (delimiters stripped, leading `*` / `/` markers trimmed) so the
-    `@rf:` annotation matcher can scan it as if it were a Python
+    `@spec:` annotation matcher can scan it as if it were a Python
     docstring.
     """
     # Walk up through wrapping export statements so we can see the
@@ -550,7 +550,7 @@ def _ts_leading_doc_comment(node, src_bytes: bytes, language: str) -> str | None
     # Collect a contiguous run of comment siblings (handles `//` blocks
     # and `///` Rust doc comments). Each comment is stripped according
     # to its own delimiter style BEFORE joining so a `/** ... */` block
-    # adjacent to `// ...` line comments still has its `@rf:` tag at
+    # adjacent to `// ...` line comments still has its `@spec:` tag at
     # column 0 of its joined line — otherwise the leading `/**` of the
     # block leaks into the joined text and defeats the matcher's
     # line-start anchor.
@@ -610,7 +610,7 @@ def _is_separator_only(text: str) -> bool:
 def _strip_doc_comment(raw: str) -> str:
     """Strip JSDoc/`//`/`///` syntax to leave the inner text. Conservative:
     if the comment isn't a recognised doc form, return it unchanged so
-    inline `@rf:` tags inside ordinary `//` comments still match."""
+    inline `@spec:` tags inside ordinary `//` comments still match."""
     s = raw.strip()
     # JSDoc / block comment
     if s.startswith("/*"):

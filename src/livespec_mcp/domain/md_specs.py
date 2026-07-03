@@ -1,12 +1,12 @@
-"""Parse a Markdown file containing RF definitions.
+"""Parse a Markdown file containing Spec definitions.
 
 Expected format (loose; the parser tolerates whitespace and order):
 
-    ## RF-001: Title
+    ## SPEC-001: Title
     **Prioridad:** alta · **Módulo:** auth
     description...
     blank line
-    ## RF-002: ...
+    ## SPEC-002: ...
 
 Recognised priority synonyms (Spanish / English):
     crítica/critical, alta/high, media/medium, baja/low
@@ -19,7 +19,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-_HEADER_RE = re.compile(r"^##+\s+(?P<rf>RF[-_]?\d+)\s*[:\-]\s*(?P<title>.+?)\s*$")
+_HEADER_RE = re.compile(r"^##+\s+(?P<spec>SPEC[-_]?\d+)\s*[:\-]\s*(?P<title>.+?)\s*$")
 # Match `Prioridad: value` after stripping markdown bold markers.
 _META_RE = re.compile(
     r"\b(prioridad|priority|módulo|modulo|module|status|estado)\s*[:=]\s*"
@@ -41,8 +41,8 @@ _STATUS_MAP = {
 
 
 @dataclass
-class ParsedRf:
-    rf_id: str  # normalized, e.g. "RF-001"
+class ParsedSpec:
+    spec_id: str  # normalized, e.g. "SPEC-001"
     title: str
     description: str
     priority: str = "medium"
@@ -50,14 +50,14 @@ class ParsedRf:
     module: str | None = None
 
 
-def _normalize_rf(raw: str) -> str:
+def _normalize_spec(raw: str) -> str:
     digits = "".join(c for c in raw if c.isdigit())
-    return f"RF-{int(digits):03d}" if digits else raw.upper()
+    return f"SPEC-{int(digits):03d}" if digits else raw.upper()
 
 
-def parse_rfs_markdown(text: str) -> list[ParsedRf]:
-    """Walk the markdown line by line, splitting on `## RF-NNN: Title` headers."""
-    rfs: list[ParsedRf] = []
+def parse_specs_markdown(text: str) -> list[ParsedSpec]:
+    """Walk the markdown line by line, splitting on `## SPEC-NNN: Title` headers."""
+    specs: list[ParsedSpec] = []
     current: dict | None = None
     description_lines: list[str] = []
 
@@ -65,8 +65,8 @@ def parse_rfs_markdown(text: str) -> list[ParsedRf]:
         if current is None:
             return
         desc = "\n".join(description_lines).strip()
-        rfs.append(ParsedRf(
-            rf_id=current["rf_id"],
+        specs.append(ParsedSpec(
+            spec_id=current["spec_id"],
             title=current["title"],
             description=desc,
             priority=current.get("priority", "medium"),
@@ -80,7 +80,7 @@ def parse_rfs_markdown(text: str) -> list[ParsedRf]:
         if m:
             _flush()
             current = {
-                "rf_id": _normalize_rf(m.group("rf")),
+                "spec_id": _normalize_spec(m.group("spec")),
                 "title": m.group("title").strip(),
             }
             description_lines = []
@@ -106,4 +106,4 @@ def parse_rfs_markdown(text: str) -> list[ParsedRf]:
         description_lines.append(raw_line)
 
     _flush()
-    return rfs
+    return specs

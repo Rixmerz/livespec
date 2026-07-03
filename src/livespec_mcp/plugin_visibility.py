@@ -1,6 +1,6 @@
 """Per-workspace plugin tool visibility (v0.18).
 
-Multi-tenant MCP servers register RF/docs mutation tools once at boot so
+Multi-tenant MCP servers register Spec/docs mutation tools once at boot so
 they remain callable when a workspace needs them. This middleware trims
 ``tools/list`` and blocks ``tools/call`` when the active workspace has not
 opted into the plugin:
@@ -9,7 +9,7 @@ opted into the plugin:
   surface only (~19 tools).
 - After any tool call with ``workspace=``, the session caches that path
   and subsequent ``tools/list`` reflects ``detect_active_plugins`` for it.
-- ``LIVESPEC_PLUGINS`` env overrides apply globally (all/none/rf/docs).
+- ``LIVESPEC_PLUGINS`` env overrides apply globally (all/none/spec/docs).
 
 Plugin tools stay registered; they are hidden or rejected here — not
 unregistered at startup.
@@ -29,7 +29,7 @@ from livespec_mcp.state import get_state
 from livespec_mcp.tools._errors import mcp_error
 from livespec_mcp.tools.plugins import (
     DOCS_PLUGIN_TOOL_NAMES,
-    RF_MUTATION_TOOL_NAMES,
+    SPEC_MUTATION_TOOL_NAMES,
     detect_active_plugins,
     plugin_name_for_tool,
 )
@@ -57,7 +57,7 @@ def _active_plugins(workspace: str | None) -> set[str]:
     """Plugins visible for list/call gating."""
     if workspace:
         return detect_active_plugins(get_state(workspace))
-    # Global env override without a workspace (all/none/rf/docs) still works:
+    # Global env override without a workspace (all/none/spec/docs) still works:
     if os.environ.get("LIVESPEC_PLUGINS") is not None:
         return detect_active_plugins(get_state(workspace))
     return set()
@@ -65,11 +65,11 @@ def _active_plugins(workspace: str | None) -> set[str]:
 
 def _visible_tool_names(active: set[str]) -> frozenset[str] | None:
     """Return None when every registered tool is visible."""
-    if active == {"rf", "docs"}:
+    if active == {"spec", "docs"}:
         return None
     hidden: set[str] = set()
-    if "rf" not in active:
-        hidden |= RF_MUTATION_TOOL_NAMES
+    if "spec" not in active:
+        hidden |= SPEC_MUTATION_TOOL_NAMES
     if "docs" not in active:
         hidden |= DOCS_PLUGIN_TOOL_NAMES
     return frozenset(hidden) if hidden else None
@@ -78,12 +78,12 @@ def _visible_tool_names(active: set[str]) -> frozenset[str] | None:
 def _plugin_blocked_payload(tool_name: str, workspace: str | None) -> dict[str, Any]:
     plugin = plugin_name_for_tool(tool_name)
     ws_hint = f" for workspace {workspace!r}" if workspace else ""
-    if plugin == "rf":
+    if plugin == "spec":
         return mcp_error(
-            f"RF mutation tool {tool_name!r} is not active{ws_hint}.",
+            f"Spec mutation tool {tool_name!r} is not active{ws_hint}.",
             hint=(
-                "import_requirements_from_markdown is always visible (bootstrap). "
-                "Other RF tools need rf rows or LIVESPEC_PLUGINS=rf (or =all)."
+                "import_specs_from_markdown is always visible (bootstrap). "
+                "Other Spec tools need spec rows or LIVESPEC_PLUGINS=spec (or =all)."
             ),
         )
     return mcp_error(

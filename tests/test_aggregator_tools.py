@@ -11,7 +11,7 @@ from livespec_mcp.server import mcp
 
 @pytest.mark.asyncio
 async def test_find_dead_code_basic(workspace):
-    """A function nobody calls and that has no RF link is reported."""
+    """A function nobody calls and that has no Spec link is reported."""
     pkg = workspace / "pkg"
     pkg.mkdir()
     (pkg / "__init__.py").write_text("")
@@ -23,7 +23,7 @@ async def test_find_dead_code_basic(workspace):
         "    return used()\n"
         "\n"
         "def dead_func():\n"
-        "    # never invoked, no RF link\n"
+        "    # never invoked, no Spec link\n"
         "    return 'orphan'\n"
         "\n"
         "def main():\n"
@@ -76,9 +76,9 @@ async def test_audit_coverage_signals(workspace):
     pkg.mkdir()
     (pkg / "__init__.py").write_text("")
     (pkg / "linked.py").write_text(
-        '"""@rf:RF-001"""\n'
+        '"""@spec:SPEC-001"""\n'
         "def implementer():\n"
-        '    """@rf:RF-001"""\n'
+        '    """@spec:SPEC-001"""\n'
         "    return 1\n"
     )
     (pkg / "unlinked.py").write_text(
@@ -88,26 +88,26 @@ async def test_audit_coverage_signals(workspace):
 
     async with Client(mcp) as c:
         await c.call_tool("index_project", {})
-        # Two RFs: one with implementer, one without
+        # Two Specs: one with implementer, one without
         await c.call_tool(
-            "create_requirement",
-            {"rf_id": "RF-001", "title": "Linked"},
+            "create_spec",
+            {"spec_id": "SPEC-001", "title": "Linked"},
         )
         await c.call_tool(
-            "create_requirement",
-            {"rf_id": "RF-002", "title": "Orphan"},
+            "create_spec",
+            {"spec_id": "SPEC-002", "title": "Orphan"},
         )
-        # Re-scan so RF-001 picks up the @rf: annotation
-        await c.call_tool("scan_rf_annotations", {})
+        # Re-scan so SPEC-001 picks up the @spec: annotation
+        await c.call_tool("scan_spec_annotations", {})
 
         out = (await c.call_tool("audit_coverage", {})).data
 
     assert any("unlinked" in p for p in out["modules_without_rf"]), (
         f"pkg/unlinked.py should appear in modules_without_rf: {out}"
     )
-    rfs_no_impl_ids = {r["rf_id"] for r in out["rfs_without_implementation"]}
-    assert "RF-002" in rfs_no_impl_ids, (
-        f"RF-002 should be reported as without implementation: {out}"
+    specs_no_impl_ids = {r["spec_id"] for r in out["specs_without_implementation"]}
+    assert "SPEC-002" in specs_no_impl_ids, (
+        f"SPEC-002 should be reported as without implementation: {out}"
     )
     # P0.A1: new fields exist and partition `modules_without_rf`
     assert isinstance(out.get("modules_implicitly_covered"), list)
@@ -121,13 +121,13 @@ async def test_audit_coverage_signals(workspace):
 
 @pytest.mark.asyncio
 async def test_audit_coverage_transitive_split(workspace):
-    """P0.A1: a data-layer file with no @rf: should appear in
-    `modules_implicitly_covered` (because an rf-linked caller reaches it),
+    """P0.A1: a data-layer file with no @spec: should appear in
+    `modules_implicitly_covered` (because an spec-linked caller reaches it),
     not `modules_truly_orphan`."""
     pkg = workspace / "pkg"
     pkg.mkdir()
     (pkg / "__init__.py").write_text("")
-    # Data layer — NO @rf: annotation
+    # Data layer — NO @spec: annotation
     (pkg / "store.py").write_text(
         "def query():\n"
         "    return [1, 2, 3]\n"
@@ -137,10 +137,10 @@ async def test_audit_coverage_transitive_split(workspace):
         "from pkg.store import query\n"
         "\n"
         "def handle():\n"
-        '    """@rf:RF-100"""\n'
+        '    """@spec:SPEC-100"""\n'
         "    return query()\n"
     )
-    # Truly orphan — no @rf:, nobody calls it either
+    # Truly orphan — no @spec:, nobody calls it either
     (pkg / "junk.py").write_text(
         "def standalone():\n"
         "    return 'nobody cares'\n"
@@ -149,9 +149,9 @@ async def test_audit_coverage_transitive_split(workspace):
     async with Client(mcp) as c:
         await c.call_tool("index_project", {})
         await c.call_tool(
-            "create_requirement", {"rf_id": "RF-100", "title": "API surface"}
+            "create_spec", {"spec_id": "SPEC-100", "title": "API surface"}
         )
-        await c.call_tool("scan_rf_annotations", {})
+        await c.call_tool("scan_spec_annotations", {})
         out = (await c.call_tool("audit_coverage", {})).data
 
     implicit = set(out["modules_implicitly_covered"])
@@ -161,7 +161,7 @@ async def test_audit_coverage_transitive_split(workspace):
         f"pkg/store.py should be implicitly covered (called by api.handle): {out}"
     )
     assert any("junk.py" in p for p in truly), (
-        f"pkg/junk.py should be truly orphan (no callers, no @rf:): {out}"
+        f"pkg/junk.py should be truly orphan (no callers, no @spec:): {out}"
     )
     assert not any("junk.py" in p for p in implicit), (
         f"junk.py is NOT implicitly covered: {out}"
@@ -172,14 +172,14 @@ async def test_audit_coverage_transitive_split(workspace):
 async def test_audit_coverage_excludes_package_markers(workspace):
     """v0.8 P2 fix #8: __init__.py / package-info.java / mod.rs should
     NOT appear in modules_without_rf — they're package markers, never
-    the right place for `@rf:` annotations."""
+    the right place for `@spec:` annotations."""
     pkg = workspace / "pkg"
     pkg.mkdir()
     (pkg / "__init__.py").write_text("")  # empty package marker
     (pkg / "feature.py").write_text(
-        '"""@rf:RF-100"""\n'
+        '"""@spec:SPEC-100"""\n'
         "def implementer():\n"
-        '    """@rf:RF-100"""\n'
+        '    """@spec:SPEC-100"""\n'
         "    return 1\n"
     )
     sub = pkg / "subpkg"
@@ -189,9 +189,9 @@ async def test_audit_coverage_excludes_package_markers(workspace):
     async with Client(mcp) as c:
         await c.call_tool("index_project", {})
         await c.call_tool(
-            "create_requirement", {"rf_id": "RF-100", "title": "Feature"}
+            "create_spec", {"spec_id": "SPEC-100", "title": "Feature"}
         )
-        await c.call_tool("scan_rf_annotations", {})
+        await c.call_tool("scan_spec_annotations", {})
         out = (await c.call_tool("audit_coverage", {})).data
 
     # Neither __init__.py nor pkg/subpkg/__init__.py should be flagged.
@@ -206,9 +206,9 @@ async def test_audit_coverage_excludes_package_markers(workspace):
 
 @pytest.mark.asyncio
 async def test_audit_coverage_credits_test_coverage(workspace):
-    """v0.8 P2 fix #9: RFs with rf_symbol rows whose relation='tests'
-    show up in `rf_test_coverage` and are counted in
-    `counts.rfs_with_test_coverage`."""
+    """v0.8 P2 fix #9: Specs with spec_symbol rows whose relation='tests'
+    show up in `spec_test_coverage` and are counted in
+    `counts.specs_with_test_coverage`."""
     pkg = workspace / "pkg"
     pkg.mkdir()
     (pkg / "__init__.py").write_text("")
@@ -223,31 +223,31 @@ async def test_audit_coverage_credits_test_coverage(workspace):
     async with Client(mcp) as c:
         await c.call_tool("index_project", {})
         await c.call_tool(
-            "create_requirement", {"rf_id": "RF-200", "title": "Tested"}
+            "create_spec", {"spec_id": "SPEC-200", "title": "Tested"}
         )
         # Link the implementer (relation=implements, default)
         await c.call_tool(
-            "link_rf_symbol",
-            {"rf_id": "RF-200", "symbol_qname": "pkg.feature.implementer"},
+            "link_spec_symbol",
+            {"spec_id": "SPEC-200", "symbol_qname": "pkg.feature.implementer"},
         )
         # Link the test (relation=tests)
         await c.call_tool(
-            "link_rf_symbol",
+            "link_spec_symbol",
             {
-                "rf_id": "RF-200",
+                "spec_id": "SPEC-200",
                 "symbol_qname": "pkg.feature.test_runner",
                 "relation": "tests",
             },
         )
         out = (await c.call_tool("audit_coverage", {})).data
 
-    assert out["counts"]["rfs_with_test_coverage"] == 1, (
-        f"expected RF-200 with 1 test, got counts: {out['counts']}"
+    assert out["counts"]["specs_with_test_coverage"] == 1, (
+        f"expected SPEC-200 with 1 test, got counts: {out['counts']}"
     )
     assert any(
-        r["rf_id"] == "RF-200" and r["test_count"] == 1
-        for r in out["rf_test_coverage"]
-    ), f"RF-200 should appear in rf_test_coverage: {out['rf_test_coverage']}"
+        r["spec_id"] == "SPEC-200" and r["test_count"] == 1
+        for r in out["spec_test_coverage"]
+    ), f"SPEC-200 should appear in spec_test_coverage: {out['spec_test_coverage']}"
 
 
 @pytest.mark.asyncio
@@ -551,7 +551,7 @@ async def test_find_orphan_tests(workspace):
 @pytest.mark.asyncio
 async def test_find_endpoints_detects_plugin_decorator_alias(workspace):
     """v0.14 (F4): a tool decorated via an alias factory
-    (`mutation_tool = mcp.tool if X else _noop`) — the pattern the RF
+    (`mutation_tool = mcp.tool if X else _noop`) — the pattern the Spec
     plugin uses for `@mutation_tool`/`@agentic_tool` — must be surfaced by
     `find_endpoints` (framework=None) even though the stored decorator name
     (`mutation_tool`) isn't a known entry-point last segment."""
@@ -568,7 +568,7 @@ async def test_find_endpoints_detects_plugin_decorator_alias(workspace):
         "    mutation_tool = mcp.tool if mutation else _noop_decorator\n"
         "\n"
         "    @mutation_tool(annotations={'readOnlyHint': False})\n"
-        "    def link_rf_symbol():\n"
+        "    def link_spec_symbol():\n"
         "        return None\n"
         "\n"
         "    @mcp.tool()\n"
@@ -581,7 +581,7 @@ async def test_find_endpoints_detects_plugin_decorator_alias(workspace):
         all_eps = (await c.call_tool("find_endpoints", {})).data
 
     qnames = {e["qualified_name"] for e in all_eps["endpoints"]}
-    assert "app.plugin.register.link_rf_symbol" in qnames, (
+    assert "app.plugin.register.link_spec_symbol" in qnames, (
         f"alias-decorated plugin tool must be reported as endpoint: {qnames}"
     )
     # The plain @mcp.tool one is detected by the existing last-segment path.

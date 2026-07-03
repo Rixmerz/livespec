@@ -1,4 +1,4 @@
-"""RF Explorer ASGI mount + FastAPI autowire."""
+"""Spec Explorer ASGI mount + FastAPI autowire."""
 
 from __future__ import annotations
 
@@ -18,7 +18,7 @@ from livespec_mcp.tools.explorer import write_explorer_bundle
 def _write_minimal_bundle(workspace: Path) -> None:
     out = workspace / ".mcp-docs" / "explorer"
     out.mkdir(parents=True)
-    (out / "index.html").write_text("<html><title>RF Explorer</title></html>", encoding="utf-8")
+    (out / "index.html").write_text("<html><title>Spec Explorer</title></html>", encoding="utf-8")
     (out / "data.json").write_text("{}", encoding="utf-8")
 
 
@@ -29,7 +29,7 @@ def test_mount_explorer_serves_spa_routes(workspace: Path):
 
     client = TestClient(app)
     assert client.get("/explorer", follow_redirects=False).status_code == 307
-    assert "RF Explorer" in client.get("/explorer/").text
+    assert "Spec Explorer" in client.get("/explorer/").text
     assert client.get("/explorer/endpoints").status_code == 200
     assert client.get("/explorer/data.json").json() == {}
 
@@ -79,17 +79,17 @@ def test_write_explorer_bundle_autowires_fastapi(workspace: Path):
 def test_enable_explorer_mounts_with_config_prefix(workspace: Path):
     _write_minimal_bundle(workspace)
     (workspace / ".livespec.toml").write_text(
-        '[explorer]\nmount_path = "/rf-explorer"\n',
+        '[explorer]\nmount_path = "/spec-explorer"\n',
         encoding="utf-8",
     )
     from livespec_mcp.explorer.fastapi import enable_explorer
 
     app = Starlette(routes=[Route("/", lambda r: PlainTextResponse("api"))])
     prefix = enable_explorer(app, workspace=workspace)
-    assert prefix == "/rf-explorer"
+    assert prefix == "/spec-explorer"
 
     client = TestClient(app)
-    assert client.get("/rf-explorer/", follow_redirects=True).status_code == 200
+    assert client.get("/spec-explorer/", follow_redirects=True).status_code == 200
 
 
 def test_explorer_middleware_mounts_without_main_patch(workspace: Path):
@@ -100,7 +100,7 @@ def test_explorer_middleware_mounts_without_main_patch(workspace: Path):
     app = LivespecExplorerMiddleware(inner, workspace=workspace)
     client = TestClient(app)
     assert client.get("/health").text == "ok"
-    assert "RF Explorer" in client.get("/explorer/", follow_redirects=True).text
+    assert "Spec Explorer" in client.get("/explorer/", follow_redirects=True).text
 
 
 def test_explorer_host_app_redirects_index_html_to_mount(workspace: Path):
@@ -111,5 +111,5 @@ def test_explorer_host_app_redirects_index_html_to_mount(workspace: Path):
     client = TestClient(app)
     assert client.get("/", follow_redirects=False).headers["location"] == "/explorer/"
     assert client.get("/index.html", follow_redirects=False).headers["location"] == "/explorer/"
-    assert "RF Explorer" in client.get("/explorer/", follow_redirects=True).text
+    assert "Spec Explorer" in client.get("/explorer/", follow_redirects=True).text
     assert client.get("/explorer/endpoints").status_code == 200

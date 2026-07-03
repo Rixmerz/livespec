@@ -7,7 +7,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## What this project is
 
 **livespec-mcp** is a local-first MCP server that maintains a live call graph,
-RF↔code traceability, and on-demand documentation for any codebase. It speaks
+Spec↔code traceability, and on-demand documentation for any codebase. It speaks
 9 languages with passing extractor tests (Python, Go, Java, JS, TS, Rust,
 Ruby, PHP) plus scoped resolution in 8 of them, and is framework-aware for
 Flask, FastAPI, Click, pytest, FastMCP, Celery, Django, Next.js, Deno Fresh,
@@ -24,18 +24,19 @@ the next 50 unknown repos.
 
 Two non-negotiable beliefs to maintain across sessions:
 
-1. **RFs are first-class, not legacy ceremony.** Functional Requirement
-   ↔ code traceability is how serious software orgs actually run agile/SAFe/
+1. **Specs are first-class, not legacy ceremony.** Spec ↔ code traceability
+   (functional requirements, ADRs, NFRs, and other spec kinds under one
+   taxonomy since v0.20) is how serious software orgs actually run agile/SAFe/
    Scrum-at-Scale at company scale. Regulated industries (finance,
    healthcare, automotive, aerospace) require it. Anytime the temptation
-   appears to demote RF features as "nicho", remember: the niche is
+   appears to demote Spec features as "nicho", remember: the niche is
    serious-software-shops, which is also where the long-term users live.
-   Code intelligence is the universal layer; **RF traceability is the
+   Code intelligence is the universal layer; **Spec traceability is the
    differentiator that makes livespec defensible**.
 
 2. **Agent UX is the actual product.** Tools must answer questions an
    agent will reasonably ask in a real task ("what calls this?", "what
-   breaks if I change this?", "what RFs touch this file?"). If a tool
+   breaks if I change this?", "what Specs touch this file?"). If a tool
    exists primarily for human end-users (bulk doc generation, export to
    markdown), it belongs in a plugin tier, not the default toolkit.
 
@@ -51,8 +52,8 @@ read before starting any feature work in v0.8+.
 ```bash
 uv run pytest -q -m "not embeddings"      # default suite (no model downloads)
 uv run pytest -m embeddings                # add the embeddings smoke (~30s first run)
-uv run livespec-mcp explorer serve .       # RF Explorer at http://127.0.0.1:8765/explorer/
-uv run pytest tests/test_rf_deps.py -v     # single file
+uv run livespec-mcp explorer serve .       # Spec Explorer at http://127.0.0.1:8765/explorer/
+uv run pytest tests/test_rf_deps.py -v     # single file (Spec dependency graph tests)
 uv run pytest tests/test_rf_deps.py::test_link_and_walk_dependencies -v   # single test
 ```
 
@@ -105,21 +106,24 @@ populates new fields.
 ### Layered stack
 
 ```
-tools/          MCP-exposed surface (36 tools: 24 core + 9 RF + 3 docs)
+tools/          MCP-exposed surface (36 tools: 24 core + 9 Spec + 3 docs)
   analysis.py     find_symbol, quick_orient, get_symbol_source, who_calls,
                   who_does_this_call, analyze_impact, audit_coverage,
                   find_dead_code, find_orphan_tests, find_endpoints,
                   git_diff_impact, get_project_overview
-  requirements.py RF agentic queries (list_requirements,
-                  get_requirement_implementation) + brownfield
-                  (propose_requirements_from_codebase) + bulk_link_rf_symbols
+  specs.py        Spec agentic queries (list_specs,
+                  get_spec_implementation) + brownfield
+                  (propose_specs_from_codebase) + bulk_link_spec_symbols
+                  + Spec mutation tools (create/update/delete_spec, etc.
+                  gated by register(mcp, agentic=, mutation=))
   indexing.py     index_project (runs rebuild_chunks + optional embed inside)
   search.py       search (hybrid FTS5 + sqlite-vec RRF) + embed_chunks
   docs.py         shared doc helpers (doc tools live in plugins/docs.py)
-  plugins/rf.py   RF mutation: create/update/delete_requirement,
-                  link_rf_symbol, link/unlink_rf_dependency,
-                  get_rf_dependency_graph, scan_rf_annotations,
-                  scan_docstrings_for_rf_hints, import_requirements_from_markdown
+  plugins/spec.py Spec mutation: create/update/delete_spec,
+                  link_spec_symbol, link/unlink_spec_dependency,
+                  get_spec_dependency_graph, scan_spec_annotations,
+                  scan_docstrings_for_spec_hints, import_specs_from_markdown
+                  (delegates to specs.py:register(mutation=True))
   plugins/docs.py generate_docs, list_docs, export_documentation
   _errors.py      mcp_error() helper — every tool error returns
                   {error, isError, did_you_mean?, hint?}
@@ -134,9 +138,9 @@ domain/         Pure business logic, no MCP coupling
                   resolves edges via _resolve_refs (INSERT OR IGNORE)
   graph.py        NetworkX wrapper + cache by (db_path, project_id, last_run_id)
                   -- v0.6 P3, ~4s -> µs on cache hit
-  matcher.py      @rf: annotation parser (multi-RF, confidence override,
-                  @not_rf negation, verb-anchored level-2 with negation guard)
-  md_rfs.py       markdown spec importer
+  matcher.py      @spec: annotation parser (multi-Spec, confidence override,
+                  @not_spec negation, verb-anchored level-2 with negation guard)
+  md_specs.py     markdown spec importer (v0.20, was md_rfs.py)
   rag.py          AST-aware chunking + FTS5 + optional sqlite-vec via RRF
   watcher.py      watchdog wrapper used by index_project(watch=True) + atexit
                   cleanup (watcher MCP tools dropped in v0.8)
@@ -144,7 +148,7 @@ domain/         Pure business logic, no MCP coupling
 storage/        SQLite persistence
   schema.sql      single-file schema; CREATE TABLE IF NOT EXISTS for everything
   db.py           connection bootstrap + ordered migration framework
-                  (schema_migrations table; MIGRATIONS list append-only, at v8)
+                  (schema_migrations table; MIGRATIONS list append-only, at v11)
 ```
 
 ### Critical contracts (don't break)
@@ -193,22 +197,25 @@ The v0.8 curation pass shipped: battle-test data (3 sessions, 40 calls,
   analyze_impact, git_diff_impact, find_dead_code, find_orphan_tests,
   find_endpoints, get_project_overview, index_project, search,
   embed_chunks, grep_in_indexed_files, agent_scratch, agent_scratch_clear)
-  + RF agentic (audit_coverage, list_requirements,
-  get_requirement_implementation, propose_requirements_from_codebase,
-  bulk_link_rf_symbols, import_requirements_from_markdown)
+  + Spec agentic (audit_coverage, list_specs,
+  get_spec_implementation, propose_specs_from_codebase,
+  bulk_link_spec_symbols, import_specs_from_markdown)
   + export_explorer (always visible, v0.19).
-- **Plugin `livespec-rf` (9 tools)** — RF mutation ceremony: CRUD,
-  link/unlink, RF-RF graph, scans (import moved to core v0.19).
+- **Plugin `livespec-spec` (9 tools)** — Spec mutation ceremony: CRUD,
+  link/unlink, Spec-Spec graph, scans (import moved to core v0.19).
 - **Plugin `livespec-docs` (3 tools)** — generate_docs, list_docs,
   export_documentation.
 - **Dropped (v0.8-v0.9)**: list_files, get_index_status (resource
   `project://index/status`), get_symbol_info, get_call_graph,
   rebuild_chunks (runs inside index_project), watcher trio
   (race-condition trap; `index_project(watch=True)` remains).
+- **Dropped v0.20 (hard cut, no aliases):** all RF-prefixed tool names
+  (`list_requirements`, `create_requirement`, `link_rf_symbol`, etc.) —
+  renamed to their Spec equivalents. See CHANGELOG `[0.20.0]`.
 
 **Plugin loading (v0.18):** plugins register at boot (`register_all_plugins`);
 `PluginVisibilityMiddleware` filters `tools/list` and gates `tools/call` per
-workspace (rf/doc rows, explorer bundle on disk, or `LIVESPEC_PLUGINS` override).
+workspace (spec/doc rows, explorer bundle on disk, or `LIVESPEC_PLUGINS` override).
 Session caches the last `workspace=` from tool calls.
 
 ---
@@ -322,11 +329,11 @@ user wants to override.
 
 - **Don't add features in v0.8.** The ROADMAP says curation pass.
   Anything new must be justified against the tier-1 toolkit goal.
-- **Don't drop RF tools.** They feel nicho but they're the differentiator
+- **Don't drop Spec tools.** They feel nicho but they're the differentiator
   for the serious-software-org segment.
-- **Don't demote `get_requirement_implementation` or `list_requirements`
+- **Don't demote `get_spec_implementation` or `list_specs`
   out of tier-1.** They answer the README's lead questions
-  ("¿Qué código implementa el RF-042?", "qué RFs existen"). Demoting them
+  ("¿Qué código implementa el SPEC-042?", "qué Specs existen"). Demoting them
   recreates the discrepancy that v0.8 alignment fixed.
 - **Don't curate before battle-test.** ROADMAP §6 self-admits the tier
   list is opinion-based. v0.8 lands instrumentation + 5-codebase logged

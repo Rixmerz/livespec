@@ -7,18 +7,18 @@ from fastmcp import FastMCP
 from livespec_mcp import prompts, resources
 from livespec_mcp.instrumentation import AgentLogMiddleware
 from livespec_mcp.plugin_visibility import PluginVisibilityMiddleware
-from livespec_mcp.tools import analysis, indexing, requirements, search
+from livespec_mcp.tools import analysis, indexing, search, specs
 from livespec_mcp.tools.plugins import register_all_plugins
 
 mcp = FastMCP(
     name="livespec-mcp",
     instructions=(
-        "Local-first MCP: call graph, impact analysis, RF<->code traceability. "
+        "Local-first MCP: call graph, impact analysis, Spec<->code traceability. "
         "Every tool has a required parameter `workspace` (see its per-parameter "
         "description and examples in the schema). Pass the absolute path of the "
         "repo the user is editing in this conversation — not a parent folder. "
         "No LIVESPEC_WORKSPACE env. Switch repos by changing `workspace` only. "
-        "Fetch prompt `agent_playbook` for @rf: commenting. "
+        "Fetch prompt `agent_playbook` for @spec: commenting. "
         "Cold-open per repo: index_project(workspace=<repo>) then "
         "get_project_overview(workspace=<same repo>)."
     ),
@@ -29,7 +29,7 @@ mcp.add_middleware(PluginVisibilityMiddleware())
 
 indexing.register(mcp)
 analysis.register(mcp)
-requirements.register(mcp)
+specs.register(mcp)
 search.register(mcp)
 resources.register(mcp)
 prompts.register(mcp)

@@ -1,7 +1,9 @@
 -- livespec-mcp schema v2
--- Four blocks: project, code (file/symbol), graph (edges), RFs+docs.
+-- Four blocks: project, code (file/symbol), graph (edges), Specs+docs.
 -- v2 changes: dropped commit_snapshot (unused), file.size_bytes, rf.source,
 -- index_run.error (write-only / never written).
+-- v0.20: RF renamed to Spec (broader taxonomy via `kind`); see migration
+-- _m011_rename_rf_to_spec in storage/db.py for the upgrade path.
 
 PRAGMA foreign_keys = ON;
 PRAGMA journal_mode = WAL;
@@ -88,7 +90,7 @@ CREATE TABLE IF NOT EXISTS symbol_ref (
 CREATE INDEX IF NOT EXISTS idx_symref_target ON symbol_ref(target_name);
 CREATE INDEX IF NOT EXISTS idx_symref_src ON symbol_ref(src_symbol_id);
 
--- ===== Requirements =====
+-- ===== Specs =====
 CREATE TABLE IF NOT EXISTS module (
     id INTEGER PRIMARY KEY,
     project_id INTEGER NOT NULL REFERENCES project(id) ON DELETE CASCADE,
@@ -97,10 +99,14 @@ CREATE TABLE IF NOT EXISTS module (
     UNIQUE(project_id, name)
 );
 
-CREATE TABLE IF NOT EXISTS rf (
+-- v0.20: Spec supersedes RF. `kind` is free-text (no CHECK, same style as
+-- status/priority): functional_requirement (default) | non_functional_requirement
+-- | adr | design | constraint | epic | other.
+CREATE TABLE IF NOT EXISTS spec (
     id INTEGER PRIMARY KEY,
     project_id INTEGER NOT NULL REFERENCES project(id) ON DELETE CASCADE,
-    rf_id TEXT NOT NULL,             -- e.g. RF-042
+    spec_id TEXT NOT NULL,           -- e.g. SPEC-042
+    kind TEXT NOT NULL DEFAULT 'functional_requirement',
     title TEXT NOT NULL,
     description TEXT,
     module_id INTEGER REFERENCES module(id) ON DELETE SET NULL,
@@ -108,51 +114,51 @@ CREATE TABLE IF NOT EXISTS rf (
     priority TEXT NOT NULL DEFAULT 'medium',-- low | medium | high | critical
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now')),
-    UNIQUE(project_id, rf_id)
+    UNIQUE(project_id, spec_id)
 );
 
-CREATE INDEX IF NOT EXISTS idx_rf_status ON rf(project_id, status);
-CREATE INDEX IF NOT EXISTS idx_rf_module ON rf(module_id);
+CREATE INDEX IF NOT EXISTS idx_spec_status ON spec(project_id, status);
+CREATE INDEX IF NOT EXISTS idx_spec_module ON spec(module_id);
 
-CREATE TABLE IF NOT EXISTS rf_symbol (
+CREATE TABLE IF NOT EXISTS spec_symbol (
     id INTEGER PRIMARY KEY,
-    rf_id INTEGER NOT NULL REFERENCES rf(id) ON DELETE CASCADE,
+    spec_id INTEGER NOT NULL REFERENCES spec(id) ON DELETE CASCADE,
     symbol_id INTEGER NOT NULL REFERENCES symbol(id) ON DELETE CASCADE,
     relation TEXT NOT NULL DEFAULT 'implements',  -- implements | tests | references
     confidence REAL NOT NULL DEFAULT 1.0,
     source TEXT NOT NULL DEFAULT 'manual',        -- manual | annotation | embedding | llm
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
-    UNIQUE(rf_id, symbol_id, relation)
+    UNIQUE(spec_id, symbol_id, relation)
 );
 
-CREATE INDEX IF NOT EXISTS idx_rfsym_rf ON rf_symbol(rf_id);
-CREATE INDEX IF NOT EXISTS idx_rfsym_sym ON rf_symbol(symbol_id);
+CREATE INDEX IF NOT EXISTS idx_specsym_spec ON spec_symbol(spec_id);
+CREATE INDEX IF NOT EXISTS idx_specsym_sym ON spec_symbol(symbol_id);
 
--- v0.5 P2: RF dependency graph. parent depends on child.
+-- v0.5 P2: Spec dependency graph. parent depends on child.
 --   requires:  parent needs child to be implemented first
 --   extends:   parent specializes / refines child
 --   conflicts: parent and child cannot both be active
 -- Self-edges are forbidden via CHECK; cycles are prevented at insert time
--- (the link_requirements tool runs a BFS to reject would-be cycles).
-CREATE TABLE IF NOT EXISTS rf_dependency (
+-- (the link_spec_dependency tool runs a BFS to reject would-be cycles).
+CREATE TABLE IF NOT EXISTS spec_dependency (
     id INTEGER PRIMARY KEY,
-    parent_rf_id INTEGER NOT NULL REFERENCES rf(id) ON DELETE CASCADE,
-    child_rf_id  INTEGER NOT NULL REFERENCES rf(id) ON DELETE CASCADE,
+    parent_spec_id INTEGER NOT NULL REFERENCES spec(id) ON DELETE CASCADE,
+    child_spec_id  INTEGER NOT NULL REFERENCES spec(id) ON DELETE CASCADE,
     kind TEXT NOT NULL DEFAULT 'requires',
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
-    UNIQUE(parent_rf_id, child_rf_id, kind),
-    CHECK (parent_rf_id != child_rf_id)
+    UNIQUE(parent_spec_id, child_spec_id, kind),
+    CHECK (parent_spec_id != child_spec_id)
 );
 
-CREATE INDEX IF NOT EXISTS idx_rfdep_parent ON rf_dependency(parent_rf_id);
-CREATE INDEX IF NOT EXISTS idx_rfdep_child ON rf_dependency(child_rf_id);
+CREATE INDEX IF NOT EXISTS idx_specdep_parent ON spec_dependency(parent_spec_id);
+CREATE INDEX IF NOT EXISTS idx_specdep_child ON spec_dependency(child_spec_id);
 
 -- ===== Docs =====
 CREATE TABLE IF NOT EXISTS doc (
     id INTEGER PRIMARY KEY,
     project_id INTEGER NOT NULL REFERENCES project(id) ON DELETE CASCADE,
-    target_type TEXT NOT NULL,      -- symbol | module | requirement
-    target_key TEXT NOT NULL,       -- qualified_name | module name | rf_id
+    target_type TEXT NOT NULL,      -- symbol | module | spec
+    target_key TEXT NOT NULL,       -- qualified_name | module name | spec_id
     content TEXT NOT NULL,
     body_hash_at_write TEXT,        -- snapshot of symbol body_hash when generated
     signature_hash_at_write TEXT,   -- snapshot of symbol signature_hash when generated
@@ -166,8 +172,8 @@ CREATE INDEX IF NOT EXISTS idx_doc_target ON doc(project_id, target_type, target
 CREATE TABLE IF NOT EXISTS chunk (
     id INTEGER PRIMARY KEY,
     project_id INTEGER NOT NULL REFERENCES project(id) ON DELETE CASCADE,
-    source_type TEXT NOT NULL,         -- symbol | requirement | doc | file
-    source_id INTEGER,                 -- symbol.id or rf.id (nullable for doc)
+    source_type TEXT NOT NULL,         -- symbol | spec | doc | file
+    source_id INTEGER,                 -- symbol.id or spec.id (nullable for doc)
     text_kind TEXT NOT NULL,           -- code | text
     file_path TEXT,
     start_line INTEGER,

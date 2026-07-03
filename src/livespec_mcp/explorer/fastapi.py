@@ -1,4 +1,4 @@
-"""FastAPI / Starlette helpers to mount RF Explorer without editing ``main.py`` by hand.
+"""FastAPI / Starlette helpers to mount Spec Explorer without editing ``main.py`` by hand.
 
 Three integration patterns (pick one):
 
@@ -59,7 +59,7 @@ def enable_explorer(
     workspace: Path | str | None = None,
     prefix: str | None = None,
 ) -> str:
-    """Mount RF Explorer on ``app``. Returns the mount prefix used.
+    """Mount Spec Explorer on ``app``. Returns the mount prefix used.
 
     Typical manual hook — one line after ``FastAPI()`` construction::
 

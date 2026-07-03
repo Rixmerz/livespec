@@ -52,14 +52,14 @@ class RepoConfig:
     ignore: tuple[str, ...] = ()
     languages: frozenset[str] | None = None
     max_file_bytes: int = DEFAULT_MAX_FILE_BYTES
-    # [explorer] — RF Explorer served at /explorer on FastAPI apps
+    # [explorer] — Spec Explorer served at /explorer on FastAPI apps
     explorer_auto_mount: bool = True
     explorer_mount_path: str = "/explorer"
     # [agent] — per-workspace agent instrumentation (off by default)
     agent_log_calls: bool = False
-    # [requirements] — post-index markdown sync + optional links seed
-    requirements_sync_from: tuple[str, ...] = ()
-    requirements_links_seed: str | None = None
+    # [specs] — post-index markdown sync + optional links seed
+    specs_sync_from: tuple[str, ...] = ()
+    specs_links_seed: str | None = None
 
     def as_payload(self) -> dict:
         return {
@@ -73,9 +73,9 @@ class RepoConfig:
             "agent": {
                 "log_calls": self.agent_log_calls,
             },
-            "requirements": {
-                "sync_from": list(self.requirements_sync_from),
-                "links_seed": self.requirements_links_seed,
+            "specs": {
+                "sync_from": list(self.specs_sync_from),
+                "links_seed": self.specs_links_seed,
             },
         }
 
@@ -98,9 +98,9 @@ def load_repo_config(workspace: Path) -> RepoConfig:
         auto_mount = true          # append mount_explorer(app) to FastAPI main (default true)
         mount_path = "/explorer"   # URL prefix served by mount_explorer()
 
-        [requirements]
+        [specs]
         sync_from = ["docs/REQUISITOS_FUNCIONALES.md"]  # re-import on each index_project
-        links_seed = "docs/requirements/rf-links.json"  # optional bulk_link replay
+        links_seed = "docs/requirements/spec-links.json"  # optional bulk_link replay
 
         [agent]
         log_calls = false          # append tool-call lines to .mcp-docs/agent_log.jsonl
@@ -175,21 +175,21 @@ def load_repo_config(workspace: Path) -> RepoConfig:
     if not isinstance(agent_log_calls, bool):
         raise _config_error("[agent].log_calls must be a boolean")
 
-    requirements = data.get("requirements", {})
-    if not isinstance(requirements, dict):
-        raise _config_error("[requirements] must be a table")
-    unknown_req = set(requirements) - {"sync_from", "links_seed"}
-    if unknown_req:
+    specs = data.get("specs", {})
+    if not isinstance(specs, dict):
+        raise _config_error("[specs] must be a table")
+    unknown_specs = set(specs) - {"sync_from", "links_seed"}
+    if unknown_specs:
         raise _config_error(
-            f"unknown [requirements] keys: {sorted(unknown_req)} "
+            f"unknown [specs] keys: {sorted(unknown_specs)} "
             "(valid: sync_from, links_seed)"
         )
-    sync_from = requirements.get("sync_from", [])
+    sync_from = specs.get("sync_from", [])
     if not isinstance(sync_from, list) or not all(isinstance(x, str) for x in sync_from):
-        raise _config_error("[requirements].sync_from must be a list of strings")
-    links_seed = requirements.get("links_seed")
+        raise _config_error("[specs].sync_from must be a list of strings")
+    links_seed = specs.get("links_seed")
     if links_seed is not None and not isinstance(links_seed, str):
-        raise _config_error("[requirements].links_seed must be a string path")
+        raise _config_error("[specs].links_seed must be a string path")
 
     return RepoConfig(
         ignore=tuple(ignore),
@@ -198,6 +198,6 @@ def load_repo_config(workspace: Path) -> RepoConfig:
         explorer_auto_mount=explorer_auto_mount,
         explorer_mount_path=explorer_mount_path,
         agent_log_calls=agent_log_calls,
-        requirements_sync_from=tuple(sync_from),
-        requirements_links_seed=links_seed,
+        specs_sync_from=tuple(sync_from),
+        specs_links_seed=links_seed,
     )

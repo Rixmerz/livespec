@@ -1,8 +1,8 @@
-"""v0.7 B2: propose_requirements_from_codebase — heuristic RF discovery.
+"""v0.7 B2: propose_specs_from_codebase — heuristic Spec discovery.
 
-The killer brownfield feature. For an existing project with no RFs, this
-proposes ~30 RF candidates grouped by module + ranked by PageRank-weighted
-group importance. The agent reviews and accepts via bulk_link_rf_symbols.
+The killer brownfield feature. For an existing project with no Specs, this
+proposes ~30 Spec candidates grouped by module + ranked by PageRank-weighted
+group importance. The agent reviews and accepts via bulk_link_spec_symbols.
 """
 
 from __future__ import annotations
@@ -62,7 +62,7 @@ async def test_propose_requirements_basic(workspace):
         await c.call_tool("index_project", {})
         out = (
             await c.call_tool(
-                "propose_requirements_from_codebase",
+                "propose_specs_from_codebase",
                 {"module_depth": 2, "min_symbols_per_group": 2},
             )
         ).data
@@ -75,7 +75,7 @@ async def test_propose_requirements_basic(workspace):
 
     # Each proposal has the expected shape
     for p in proposals:
-        assert p["proposed_rf_id"].startswith("RF-")
+        assert p["proposed_spec_id"].startswith("SPEC-")
         assert p["module_key"]
         assert p["symbol_count"] > 0
         assert isinstance(p["suggested_symbols"], list)
@@ -86,25 +86,25 @@ async def test_propose_requirements_basic(workspace):
 
 
 @pytest.mark.asyncio
-async def test_propose_requirements_rf_ids_unique_and_continuous(workspace):
-    """Proposed RF ids continue from the highest existing RF id."""
+async def test_propose_requirements_spec_ids_unique_and_continuous(workspace):
+    """Proposed Spec ids continue from the highest existing Spec id."""
     _make_layered_repo(workspace)
     async with Client(mcp) as c:
         await c.call_tool("index_project", {})
-        # Seed two existing RFs so proposals start at RF-003
-        await c.call_tool("create_requirement", {"rf_id": "RF-001", "title": "x"})
-        await c.call_tool("create_requirement", {"rf_id": "RF-002", "title": "y"})
+        # Seed two existing Specs so proposals start at SPEC-003
+        await c.call_tool("create_spec", {"spec_id": "SPEC-001", "title": "x"})
+        await c.call_tool("create_spec", {"spec_id": "SPEC-002", "title": "y"})
         out = (
             await c.call_tool(
-                "propose_requirements_from_codebase",
+                "propose_specs_from_codebase",
                 {"module_depth": 2, "min_symbols_per_group": 2},
             )
         ).data
-    rf_ids = [p["proposed_rf_id"] for p in out["proposals"]]
-    assert len(rf_ids) == len(set(rf_ids)), "proposed_rf_id must be unique"
-    # First proposal should be RF-003
-    if rf_ids:
-        assert rf_ids[0] == "RF-003"
+    spec_ids = [p["proposed_spec_id"] for p in out["proposals"]]
+    assert len(spec_ids) == len(set(spec_ids)), "proposed_spec_id must be unique"
+    # First proposal should be SPEC-003
+    if spec_ids:
+        assert spec_ids[0] == "SPEC-003"
 
 
 @pytest.mark.asyncio
@@ -113,21 +113,21 @@ async def test_propose_skips_already_covered(workspace):
     _make_layered_repo(workspace)
     async with Client(mcp) as c:
         await c.call_tool("index_project", {})
-        await c.call_tool("create_requirement", {"rf_id": "RF-AUTH", "title": "Auth"})
+        await c.call_tool("create_spec", {"spec_id": "Spec-AUTH", "title": "Auth"})
         # Cover 2/3 auth symbols (>50%)
         await c.call_tool(
-            "bulk_link_rf_symbols",
+            "bulk_link_spec_symbols",
             {
                 "mappings": [
-                    {"rf_id": "RF-AUTH", "symbol_qname": "pkg.auth.login.login"},
-                    {"rf_id": "RF-AUTH", "symbol_qname": "pkg.auth.login.verify"},
+                    {"spec_id": "Spec-AUTH", "symbol_qname": "pkg.auth.login.login"},
+                    {"spec_id": "Spec-AUTH", "symbol_qname": "pkg.auth.login.verify"},
                 ]
             },
         )
 
         out = (
             await c.call_tool(
-                "propose_requirements_from_codebase",
+                "propose_specs_from_codebase",
                 {"module_depth": 2, "min_symbols_per_group": 2},
             )
         ).data
@@ -138,7 +138,7 @@ async def test_propose_skips_already_covered(workspace):
         # With skip_already_covered=False, auth resurfaces
         out2 = (
             await c.call_tool(
-                "propose_requirements_from_codebase",
+                "propose_specs_from_codebase",
                 {
                     "module_depth": 2,
                     "min_symbols_per_group": 2,
@@ -177,7 +177,7 @@ async def test_humanize_title_avoids_generic_segments(workspace):
         # depth=3 -> group_key 'app.src.auth_service' -> title 'Auth Service'
         out = (
             await c.call_tool(
-                "propose_requirements_from_codebase",
+                "propose_specs_from_codebase",
                 {"module_depth": 3, "min_symbols_per_group": 2},
             )
         ).data
@@ -191,10 +191,10 @@ async def test_humanize_title_avoids_generic_segments(workspace):
 
 @pytest.mark.asyncio
 async def test_propose_requirements_skips_test_modules(workspace):
-    """v0.8 P2 fix #10: tests/ should not generate RF proposals.
+    """v0.8 P2 fix #10: tests/ should not generate Spec proposals.
 
     Earlier behavior: a tests/ folder with N test functions produced
-    an 'RF-N Test Shortener'-style proposal grouping test fns as a
+    an 'Spec-N Test Shortener'-style proposal grouping test fns as a
     'feature'. Tests exercise features; they are not features themselves.
     """
     pkg = workspace / "pkg"
@@ -218,7 +218,7 @@ async def test_propose_requirements_skips_test_modules(workspace):
         await c.call_tool("index_project", {})
         out = (
             await c.call_tool(
-                "propose_requirements_from_codebase",
+                "propose_specs_from_codebase",
                 {"module_depth": 1, "min_symbols_per_group": 2},
             )
         ).data
@@ -232,11 +232,11 @@ async def test_propose_requirements_skips_test_modules(workspace):
 @pytest.mark.asyncio
 async def test_default_module_depth_does_not_collapse_deep_tree(workspace):
     """F5: default module_depth=3 must not collapse a deep `src.pkg.*`
-    subtree into a single useless RF. The default call (no module_depth)
+    subtree into a single useless Spec. The default call (no module_depth)
     yields more than one proposal with sub-module granularity.
 
     With the old default of 2, `src.pkg.auth` and `src.pkg.payments` both
-    collapsed to group "src.pkg" -> one RF absorbing the whole tree.
+    collapsed to group "src.pkg" -> one Spec absorbing the whole tree.
     """
     src = workspace / "src"
     src.mkdir()
@@ -274,7 +274,7 @@ async def test_default_module_depth_does_not_collapse_deep_tree(workspace):
         # No module_depth -> uses the new default (3).
         out = (
             await c.call_tool(
-                "propose_requirements_from_codebase",
+                "propose_specs_from_codebase",
                 {"min_symbols_per_group": 2},
             )
         ).data
@@ -282,7 +282,7 @@ async def test_default_module_depth_does_not_collapse_deep_tree(workspace):
     assert out["module_depth"] == 3, "default module_depth must be 3"
     proposals = out["proposals"]
     assert len(proposals) > 1, (
-        f"deep tree collapsed into a single RF: {proposals}"
+        f"deep tree collapsed into a single Spec: {proposals}"
     )
     keys = {p["module_key"] for p in proposals}
     # No proposal should be the shallow `src.pkg` that absorbs the whole tree.

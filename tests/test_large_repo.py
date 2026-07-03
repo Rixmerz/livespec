@@ -30,7 +30,7 @@ def _build_python_module(root: Path, idx: int, n_funcs: int) -> None:
         ])
     body.extend([
         f"class Helper_{idx}:",
-        '    """Class with a few methods.\n\n    @rf:RF-AUTO\n    """',
+        '    """Class with a few methods.\n\n    @spec:Spec-AUTO\n    """',
         "    def step(self, x):",
         f"        return fn_{n_funcs - 1}(x)",
         "",

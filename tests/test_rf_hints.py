@@ -1,5 +1,5 @@
-"""v0.7 B6: scan_docstrings_for_rf_hints — brownfield helper that surfaces
-RF candidates from existing docstrings without requiring `@rf:` annotations.
+"""v0.7 B6: scan_docstrings_for_spec_hints — brownfield helper that surfaces
+Spec candidates from existing docstrings without requiring `@spec:` annotations.
 """
 
 from __future__ import annotations
@@ -34,7 +34,7 @@ async def test_scan_docstrings_surfaces_action_verbs(workspace):
 
     async with Client(mcp) as c:
         await c.call_tool("index_project", {})
-        out = (await c.call_tool("scan_docstrings_for_rf_hints", {})).data
+        out = (await c.call_tool("scan_docstrings_for_spec_hints", {})).data
 
     qnames = {h["qualified_name"] for h in out["hints"]}
     assert "pkg.auth.login" in qnames
@@ -54,7 +54,7 @@ async def test_scan_docstrings_surfaces_action_verbs(workspace):
 
 @pytest.mark.asyncio
 async def test_scan_docstrings_skips_already_linked(workspace):
-    """Symbols with an existing rf_symbol link don't appear in hints."""
+    """Symbols with an existing spec_symbol link don't appear in hints."""
     pkg = workspace / "pkg"
     pkg.mkdir()
     (pkg / "__init__.py").write_text("")
@@ -70,12 +70,12 @@ async def test_scan_docstrings_skips_already_linked(workspace):
 
     async with Client(mcp) as c:
         await c.call_tool("index_project", {})
-        await c.call_tool("create_requirement", {"rf_id": "RF-001", "title": "A"})
+        await c.call_tool("create_spec", {"spec_id": "SPEC-001", "title": "A"})
         await c.call_tool(
-            "link_rf_symbol",
-            {"rf_id": "RF-001", "symbol_qname": "pkg.m.linked_fn"},
+            "link_spec_symbol",
+            {"spec_id": "SPEC-001", "symbol_qname": "pkg.m.linked_fn"},
         )
-        out = (await c.call_tool("scan_docstrings_for_rf_hints", {})).data
+        out = (await c.call_tool("scan_docstrings_for_spec_hints", {})).data
 
     qnames = {h["qualified_name"] for h in out["hints"]}
     assert "pkg.m.linked_fn" not in qnames, "already-linked symbols must be excluded"
@@ -96,7 +96,7 @@ async def test_scan_docstrings_summary_only(workspace):
         await c.call_tool("index_project", {})
         out = (
             await c.call_tool(
-                "scan_docstrings_for_rf_hints", {"summary_only": True}
+                "scan_docstrings_for_spec_hints", {"summary_only": True}
             )
         ).data
     assert "count" in out

@@ -5,8 +5,8 @@ on:
     types: [opened, synchronize, reopened]
 
 jobs:
-  rf-impact-comment:
-    name: Post RF diff impact
+  spec-impact-comment:
+    name: Post Spec diff impact
     runs-on: ubuntu-latest
     permissions:
       contents: read

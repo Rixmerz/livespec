@@ -20,8 +20,8 @@ from livespec_mcp.tools.plugins import (
 
 def _seed_rf(state) -> None:
     state.conn.execute(
-        "INSERT INTO rf (project_id, rf_id, title) VALUES (?, ?, ?)",
-        (state.project_id, "RF-001", "seed"),
+        "INSERT INTO spec (project_id, spec_id, title) VALUES (?, ?, ?)",
+        (state.project_id, "SPEC-001", "seed"),
     )
     state.conn.commit()
 
@@ -45,7 +45,7 @@ def test_detect_rf_rows_activate_rf_plugin(workspace, monkeypatch):
     monkeypatch.delenv("LIVESPEC_PLUGINS", raising=False)
     state = get_state()
     _seed_rf(state)
-    assert detect_active_plugins(state) == {"rf"}
+    assert detect_active_plugins(state) == {"spec"}
 
 
 def test_detect_doc_rows_activate_docs_plugin(workspace, monkeypatch):
@@ -69,7 +69,7 @@ def test_detect_both_rows_activate_both_plugins(workspace, monkeypatch):
     state = get_state()
     _seed_rf(state)
     _seed_doc(state)
-    assert detect_active_plugins(state) == {"rf", "docs"}
+    assert detect_active_plugins(state) == {"spec", "docs"}
 
 
 def test_env_none_overrides_db_signal(workspace, monkeypatch):
@@ -91,14 +91,14 @@ def test_env_subset_filters_to_named_plugins(workspace, monkeypatch):
     state = get_state()
     _seed_rf(state)
     _seed_doc(state)
-    monkeypatch.setenv("LIVESPEC_PLUGINS", "rf")
-    assert detect_active_plugins(state) == {"rf"}
+    monkeypatch.setenv("LIVESPEC_PLUGINS", "spec")
+    assert detect_active_plugins(state) == {"spec"}
 
 
 def test_env_unknown_plugin_name_is_ignored(workspace, monkeypatch):
     state = get_state()
-    monkeypatch.setenv("LIVESPEC_PLUGINS", "rf,bogus,docs")
-    assert detect_active_plugins(state) == {"rf", "docs"}
+    monkeypatch.setenv("LIVESPEC_PLUGINS", "spec,bogus,docs")
+    assert detect_active_plugins(state) == {"spec", "docs"}
 
 
 def test_register_active_returns_active_set_and_is_idempotent(
@@ -109,10 +109,10 @@ def test_register_active_returns_active_set_and_is_idempotent(
     monkeypatch.delenv("LIVESPEC_PLUGINS", raising=False)
     mcp = FastMCP(name="test")
     active = register_active(mcp, state)
-    assert active == {"rf"}
+    assert active == {"spec"}
     # v0.8 plugins are no-ops; calling twice must not raise
     again = register_active(mcp, state)
-    assert again == {"rf"}
+    assert again == {"spec"}
 
 
 @pytest.mark.asyncio
@@ -134,48 +134,48 @@ async def test_docs_plugin_registers_doc_tools(workspace, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_rf_plugin_registers_mutation_tools(workspace, monkeypatch):
-    """v0.8 P3.4: when the rf plugin loads, mutation tools become callable.
+    """v0.8 P3.4: when the spec plugin loads, mutation tools become callable.
 
     Verifies the plugin registration plumbing actually wires
-    `requirements.register(mutation=True)` into the mcp instance.
+    `specs.register(mutation=True)` into the mcp instance.
     """
     from fastmcp import Client
 
     state = get_state()
-    monkeypatch.setenv("LIVESPEC_PLUGINS", "rf")
-    test_mcp = FastMCP(name="rf-plugin-test")
+    monkeypatch.setenv("LIVESPEC_PLUGINS", "spec")
+    test_mcp = FastMCP(name="spec-plugin-test")
     register_active(test_mcp, state)
 
     async with Client(test_mcp) as c:
         tools = await c.list_tools()
         names = {t.name for t in tools}
     # Mutation tools that must be present in the plugin surface.
-    # `bulk_link_rf_symbols` was promoted to the agentic surface (default
+    # `bulk_link_spec_symbols` was promoted to the agentic surface (default
     # tier) so agents can wire annotations on languages where the
     # in-source extractor doesn't yet read tags — it is therefore NOT
     # re-registered by the plugin.
     expected_mutation = {
-        "create_requirement", "update_requirement", "delete_requirement",
-        "link_rf_symbol",
-        "link_rf_dependency", "unlink_rf_dependency",
-        "get_rf_dependency_graph",
-        "scan_rf_annotations", "scan_docstrings_for_rf_hints",
-        "import_requirements_from_markdown",
+        "create_spec", "update_spec", "delete_spec",
+        "link_spec_symbol",
+        "link_spec_dependency", "unlink_spec_dependency",
+        "get_spec_dependency_graph",
+        "scan_spec_annotations", "scan_docstrings_for_spec_hints",
+        "import_specs_from_markdown",
     }
     missing = expected_mutation - names
     assert not missing, f"plugin failed to register: {missing}"
     # Agentic tools must NOT be re-registered by the plugin
-    assert "list_requirements" not in names
-    assert "get_requirement_implementation" not in names
-    assert "bulk_link_rf_symbols" not in names
+    assert "list_specs" not in names
+    assert "get_spec_implementation" not in names
+    assert "bulk_link_spec_symbols" not in names
 
 
 def test_detect_survives_missing_table(workspace, monkeypatch):
     """If a plugin's table doesn't exist (older schema), probe returns False."""
     state = get_state()
     monkeypatch.delenv("LIVESPEC_PLUGINS", raising=False)
-    state.conn.execute("DROP TABLE rf_symbol")
-    state.conn.execute("DROP TABLE rf_dependency")
-    state.conn.execute("DROP TABLE rf")
+    state.conn.execute("DROP TABLE spec_symbol")
+    state.conn.execute("DROP TABLE spec_dependency")
+    state.conn.execute("DROP TABLE spec")
     state.conn.commit()
-    assert "rf" not in detect_active_plugins(state)
+    assert "spec" not in detect_active_plugins(state)

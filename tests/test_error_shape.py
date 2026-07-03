@@ -58,7 +58,7 @@ async def test_unknown_rf_error_shape(workspace):
         await c.call_tool("index_project", {})
         out = (
             await c.call_tool(
-                "get_requirement_implementation", {"rf_id": "RF-DOES-NOT-EXIST"}
+                "get_spec_implementation", {"spec_id": "Spec-DOES-NOT-EXIST"}
             )
         ).data
         _assert_canonical_error(out, must_have_hint=True)
@@ -76,14 +76,14 @@ async def test_unknown_symbol_error_shape(sample_repo):
 
 
 @pytest.mark.asyncio
-async def test_self_link_rf_dependency_error_shape(workspace):
+async def test_self_link_spec_dependency_error_shape(workspace):
     async with Client(mcp) as c:
         await c.call_tool("index_project", {})
-        await c.call_tool("create_requirement", {"rf_id": "RF-A", "title": "A"})
+        await c.call_tool("create_spec", {"spec_id": "Spec-A", "title": "A"})
         out = (
             await c.call_tool(
-                "link_rf_dependency",
-                {"parent_rf_id": "RF-A", "child_rf_id": "RF-A"},
+                "link_spec_dependency",
+                {"parent_spec_id": "Spec-A", "child_spec_id": "Spec-A"},
             )
         ).data
         _assert_canonical_error(out)
@@ -93,15 +93,15 @@ async def test_self_link_rf_dependency_error_shape(workspace):
 async def test_cycle_error_shape_includes_hint(workspace):
     async with Client(mcp) as c:
         await c.call_tool("index_project", {})
-        for r in ("RF-1", "RF-2"):
-            await c.call_tool("create_requirement", {"rf_id": r, "title": r})
+        for r in ("SPEC-1", "SPEC-2"):
+            await c.call_tool("create_spec", {"spec_id": r, "title": r})
         await c.call_tool(
-            "link_rf_dependency", {"parent_rf_id": "RF-1", "child_rf_id": "RF-2"}
+            "link_spec_dependency", {"parent_spec_id": "SPEC-1", "child_spec_id": "SPEC-2"}
         )
         out = (
             await c.call_tool(
-                "link_rf_dependency",
-                {"parent_rf_id": "RF-2", "child_rf_id": "RF-1"},
+                "link_spec_dependency",
+                {"parent_spec_id": "SPEC-2", "child_spec_id": "SPEC-1"},
             )
         ).data
         _assert_canonical_error(out, must_have_hint=True)

@@ -7,6 +7,13 @@
 > **Por qué existe:** después de cinco releases sustanciales, el proyecto está
 > en un punto donde "agregar más features" rinde menos que "podar y validar".
 > Esta es la dirección recomendada para v0.8+.
+>
+> **Nota v0.20 (nomenclatura histórica):** este documento fue escrito antes del
+> rename RF → Spec (v0.20, hard cut). Todo lo que dice `rf`/`RF`/`requirement`
+> abajo se mapea 1:1 a `spec`/`Spec` en el código actual (`list_requirements` →
+> `list_specs`, `rf` table → `spec` table, etc.) — se preserva sin traducir
+> porque es un reflejo histórico punto-en-el-tiempo, igual que CHANGELOG. Ver
+> CLAUDE.md y CHANGELOG `[0.20.0]` para el estado y la nomenclatura actuales.
 
 ---
 

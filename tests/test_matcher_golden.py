@@ -28,7 +28,7 @@ def _load() -> list[dict]:
 
 
 def _hit_to_dict(h) -> dict:
-    return {"rf_id": h.rf_id, "relation": h.relation, "confidence": h.confidence}
+    return {"spec_id": h.spec_id, "relation": h.relation, "confidence": h.confidence}
 
 
 def test_matcher_golden_dataset():
@@ -40,9 +40,9 @@ def test_matcher_golden_dataset():
         expected = case["expected"]
         got = sorted(
             (_hit_to_dict(h) for h in parse_annotations(text)),
-            key=lambda d: (d["rf_id"], d["relation"]),
+            key=lambda d: (d["spec_id"], d["relation"]),
         )
-        exp_sorted = sorted(expected, key=lambda d: (d["rf_id"], d["relation"]))
+        exp_sorted = sorted(expected, key=lambda d: (d["spec_id"], d["relation"]))
         if got != exp_sorted:
             failures.append(
                 f"\n  input:    {text!r}"

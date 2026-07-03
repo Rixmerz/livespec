@@ -1,7 +1,7 @@
-"""v0.7 B1: bulk_link_rf_symbols — batch RF↔symbol links in one round-trip.
+"""v0.7 B1: bulk_link_spec_symbols — batch Spec↔symbol links in one round-trip.
 
 Cuts brownfield migration friction: instead of N round-trips for N
-mappings (each one a `link_rf_symbol` call), the agent sends one list
+mappings (each one a `link_spec_symbol` call), the agent sends one list
 and gets per-entry results.
 """
 
@@ -29,17 +29,17 @@ async def test_bulk_link_happy_path(workspace):
 
     async with Client(mcp) as c:
         await c.call_tool("index_project", {})
-        for rf in ("RF-001", "RF-002"):
-            await c.call_tool("create_requirement", {"rf_id": rf, "title": rf})
+        for spec in ("SPEC-001", "SPEC-002"):
+            await c.call_tool("create_spec", {"spec_id": spec, "title": spec})
 
         out = (
             await c.call_tool(
-                "bulk_link_rf_symbols",
+                "bulk_link_spec_symbols",
                 {
                     "mappings": [
-                        {"rf_id": "RF-001", "symbol_qname": "pkg.auth.login"},
-                        {"rf_id": "RF-001", "symbol_qname": "pkg.auth.verify"},
-                        {"rf_id": "RF-002", "symbol_qname": "pkg.api.handle",
+                        {"spec_id": "SPEC-001", "symbol_qname": "pkg.auth.login"},
+                        {"spec_id": "SPEC-001", "symbol_qname": "pkg.auth.verify"},
+                        {"spec_id": "SPEC-002", "symbol_qname": "pkg.api.handle",
                          "confidence": 0.85, "source": "embedding"},
                     ]
                 },
@@ -63,10 +63,10 @@ async def test_bulk_link_idempotent(workspace):
 
     async with Client(mcp) as c:
         await c.call_tool("index_project", {})
-        await c.call_tool("create_requirement", {"rf_id": "RF-A", "title": "A"})
-        m = [{"rf_id": "RF-A", "symbol_qname": "pkg.m.f"}]
-        out1 = (await c.call_tool("bulk_link_rf_symbols", {"mappings": m})).data
-        out2 = (await c.call_tool("bulk_link_rf_symbols", {"mappings": m})).data
+        await c.call_tool("create_spec", {"spec_id": "Spec-A", "title": "A"})
+        m = [{"spec_id": "Spec-A", "symbol_qname": "pkg.m.f"}]
+        out1 = (await c.call_tool("bulk_link_spec_symbols", {"mappings": m})).data
+        out2 = (await c.call_tool("bulk_link_spec_symbols", {"mappings": m})).data
     assert out1["linked"] == 1
     assert out2["linked"] == 0
     assert out2["skipped"] == 1
@@ -84,17 +84,17 @@ async def test_bulk_link_partial_failure(workspace):
 
     async with Client(mcp) as c:
         await c.call_tool("index_project", {})
-        await c.call_tool("create_requirement", {"rf_id": "RF-A", "title": "A"})
+        await c.call_tool("create_spec", {"spec_id": "Spec-A", "title": "A"})
 
         out = (
             await c.call_tool(
-                "bulk_link_rf_symbols",
+                "bulk_link_spec_symbols",
                 {
                     "mappings": [
-                        {"rf_id": "RF-A", "symbol_qname": "pkg.m.f"},
-                        {"rf_id": "RF-NONE", "symbol_qname": "pkg.m.f"},
-                        {"rf_id": "RF-A", "symbol_qname": "pkg.m.does_not_exist"},
-                        {"rf_id": "", "symbol_qname": "pkg.m.f"},  # missing
+                        {"spec_id": "Spec-A", "symbol_qname": "pkg.m.f"},
+                        {"spec_id": "Spec-NONE", "symbol_qname": "pkg.m.f"},
+                        {"spec_id": "Spec-A", "symbol_qname": "pkg.m.does_not_exist"},
+                        {"spec_id": "", "symbol_qname": "pkg.m.f"},  # missing
                     ]
                 },
             )
@@ -104,7 +104,7 @@ async def test_bulk_link_partial_failure(workspace):
     assert out["linked"] == 1
     assert out["failed"] == 3
     error_msgs = [r["error"] for r in out["results"] if r["error"]]
-    assert any("RF-NONE" in e for e in error_msgs)
+    assert any("Spec-NONE" in e for e in error_msgs)
     assert any("does_not_exist" in e for e in error_msgs)
     assert any("required" in e for e in error_msgs)
 
@@ -112,9 +112,9 @@ async def test_bulk_link_partial_failure(workspace):
 @pytest.mark.asyncio
 async def test_manual_links_survive_force_reindex(workspace):
     """Data-loss regression: `index_project(force=True)` cascades through
-    `symbol` → `rf_symbol`, which used to silently wipe links created by
-    `bulk_link_rf_symbols` / `link_rf_symbol`. The indexer now snapshots
-    non-annotation rf_symbol rows before re-extract and restores them by
+    `symbol` → `spec_symbol`, which used to silently wipe links created by
+    `bulk_link_spec_symbols` / `link_spec_symbol`. The indexer now snapshots
+    non-annotation spec_symbol rows before re-extract and restores them by
     qname after symbols are re-inserted."""
     pkg = workspace / "pkg"
     pkg.mkdir()
@@ -124,13 +124,13 @@ async def test_manual_links_survive_force_reindex(workspace):
 
     async with Client(mcp) as c:
         await c.call_tool("index_project", {})
-        await c.call_tool("create_requirement", {"rf_id": "RF-001", "title": "auth"})
-        await c.call_tool("create_requirement", {"rf_id": "RF-002", "title": "api"})
+        await c.call_tool("create_spec", {"spec_id": "SPEC-001", "title": "auth"})
+        await c.call_tool("create_spec", {"spec_id": "SPEC-002", "title": "api"})
         bl = (await c.call_tool(
-            "bulk_link_rf_symbols",
+            "bulk_link_spec_symbols",
             {"mappings": [
-                {"rf_id": "RF-001", "symbol_qname": "pkg.auth.login"},
-                {"rf_id": "RF-002", "symbol_qname": "pkg.api.handle",
+                {"spec_id": "SPEC-001", "symbol_qname": "pkg.auth.login"},
+                {"spec_id": "SPEC-002", "symbol_qname": "pkg.api.handle",
                  "confidence": 0.85, "source": "embedding"},
             ]},
         )).data
@@ -141,10 +141,10 @@ async def test_manual_links_survive_force_reindex(workspace):
         assert idx["manual_links_restored"] == 2
 
         impl_001 = (await c.call_tool(
-            "get_requirement_implementation", {"rf_id": "RF-001"}
+            "get_spec_implementation", {"spec_id": "SPEC-001"}
         )).data
         impl_002 = (await c.call_tool(
-            "get_requirement_implementation", {"rf_id": "RF-002"}
+            "get_spec_implementation", {"spec_id": "SPEC-002"}
         )).data
 
     qnames_001 = {s["qualified_name"] for s in impl_001["symbols"]}

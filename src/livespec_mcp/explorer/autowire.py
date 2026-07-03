@@ -75,7 +75,7 @@ def wire_explorer_mount(
 
     block = (
         "\n\n"
-        "# livespec: RF Explorer at "
+        "# livespec: Spec Explorer at "
         f"{mount_path} (auto-wired by export_explorer / index_project)\n"
         "try:\n"
         "    from livespec_mcp.explorer import mount_explorer\n"

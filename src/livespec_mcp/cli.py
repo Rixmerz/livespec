@@ -7,7 +7,7 @@ pre-commit hooks, CI) without an MCP host in the middle:
 
     livespec-mcp index <path> [--force] [--embed]   # index + chunks, JSON out
     livespec-mcp status <path>                      # index status, JSON out
-    livespec-mcp explorer serve [path] [--port 8765]  # RF Explorer at /explorer/
+    livespec-mcp explorer serve [path] [--port 8765]  # Spec Explorer at /explorer/
     livespec-mcp fastapi init [path]                  # index + Explorer + Cursor assets
     livespec-mcp serve                              # explicit server form
 
@@ -66,7 +66,7 @@ def main(argv: list[str] | None = None) -> int:
     p_status = sub.add_parser("status", help="print index status JSON for a repo")
     p_status.add_argument("path", help="absolute or relative path to the repo root")
 
-    p_explorer = sub.add_parser("explorer", help="RF Explorer local preview")
+    p_explorer = sub.add_parser("explorer", help="Spec Explorer local preview")
     p_explorer_sub = p_explorer.add_subparsers(dest="explorer_cmd", required=True)
     p_explorer_serve = p_explorer_sub.add_parser(
         "serve", help="HTTP server at /explorer (default port 8765)"
@@ -87,7 +87,7 @@ def main(argv: list[str] | None = None) -> int:
 
     p_fastapi = sub.add_parser(
         "fastapi",
-        help="FastAPI + RF Explorer onboarding",
+        help="FastAPI + Spec Explorer onboarding",
     )
     p_fastapi_sub = p_fastapi.add_subparsers(dest="fastapi_cmd", required=True)
     p_fastapi_init = p_fastapi_sub.add_parser(
