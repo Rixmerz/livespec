@@ -1610,7 +1610,7 @@ def compute_coverage(st: AppState) -> dict[str, Any]:
         pass
 
     counts = {
-        "modules_without_rf": len(modules_no_spec),
+        "modules_without_spec": len(modules_no_spec),
         "modules_implicitly_covered": len(modules_implicit),
         "modules_truly_orphan": len(modules_truly_orphan),
         "modules_unsupported_language": len(modules_unsupported_language),
@@ -1622,7 +1622,7 @@ def compute_coverage(st: AppState) -> dict[str, Any]:
     }
     return {
         "counts": counts,
-        "modules_without_rf": modules_no_spec,
+        "modules_without_spec": modules_no_spec,
         "modules_implicitly_covered": modules_implicit,
         "modules_truly_orphan": modules_truly_orphan,
         "modules_unsupported_language": modules_unsupported_language,
@@ -2942,12 +2942,12 @@ def register(mcp: FastMCP) -> None:
         """Spec coverage audit: what's missing / under-confident.
 
         Six signals:
-        - `modules_without_rf`: files whose symbols have no DIRECT `spec_symbol` link
-        - `modules_implicitly_covered`: subset of `modules_without_rf` whose
+        - `modules_without_spec`: files whose symbols have no DIRECT `spec_symbol` link
+        - `modules_implicitly_covered`: subset of `modules_without_spec` whose
           symbols are called transitively by a spec-linked symbol — covered
           indirectly through the call graph (e.g. a data layer reached via
           API handlers that carry the `@spec:` annotation)
-        - `modules_truly_orphan`: subset of `modules_without_rf` with NO direct
+        - `modules_truly_orphan`: subset of `modules_without_spec` with NO direct
           link AND no transitive coverage — the actually-actionable list
         - `modules_unsupported_language`: files in languages whose extractor
           does not yet read in-source `@spec:` annotations (everything outside
@@ -2976,7 +2976,7 @@ def register(mcp: FastMCP) -> None:
 
         v0.8 P2 fix #8: package-marker files (`__init__.py`,
         `package-info.java`, `mod.rs`) are auto-excluded from
-        `modules_without_rf` — `@spec:` annotations on a no-op import
+        `modules_without_spec` — `@spec:` annotations on a no-op import
         marker would never be the right place anyway.
         """
         st = get_state(workspace)
@@ -2984,7 +2984,7 @@ def register(mcp: FastMCP) -> None:
         # v0.7 B3: pagination over the shared compute helper.
         cov = compute_coverage(st)
         counts = cov["counts"]
-        modules_no_rf = cov["modules_without_rf"]
+        modules_no_spec = cov["modules_without_spec"]
         modules_implicit = cov["modules_implicitly_covered"]
         modules_truly_orphan = cov["modules_truly_orphan"]
         modules_unsupported_language = cov["modules_unsupported_language"]
@@ -3000,7 +3000,7 @@ def register(mcp: FastMCP) -> None:
             nxt = c + n if c + n < len(items) else None
             return sliced, nxt
 
-        mw_p, mw_next = _page(modules_no_rf)
+        mw_p, mw_next = _page(modules_no_spec)
         mi_p, mi_next = _page(modules_implicit)
         mt_p, mt_next = _page(modules_truly_orphan)
         mu_p, mu_next = _page(modules_unsupported_language)
@@ -3010,7 +3010,7 @@ def register(mcp: FastMCP) -> None:
         speccov_p, speccov_next = _page(spec_coverage)
         return {
             "counts": counts,
-            "modules_without_rf": mw_p,
+            "modules_without_spec": mw_p,
             "modules_implicitly_covered": mi_p,
             "modules_truly_orphan": mt_p,
             "modules_unsupported_language": mu_p,
@@ -3021,7 +3021,7 @@ def register(mcp: FastMCP) -> None:
             "avg_test_coverage": cov["avg_test_coverage"],
             "specs_with_any_test_coverage": cov["specs_with_any_test_coverage"],
             "next_cursor": {
-                "modules_without_rf": mw_next,
+                "modules_without_spec": mw_next,
                 "modules_implicitly_covered": mi_next,
                 "modules_truly_orphan": mt_next,
                 "modules_unsupported_language": mu_next,

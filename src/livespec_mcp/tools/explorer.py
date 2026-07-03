@@ -2423,7 +2423,7 @@ function buildEndpoints() {
 
 // ---- Gaps ----
 const TOTAL_LABELS = {
-  modules_without_rf: 'Modules without Spec',
+  modules_without_spec: 'Modules without Spec',
   modules_implicitly_covered: 'Implicitly covered',
   modules_truly_orphan: 'Truly orphan',
   modules_unsupported_language: 'Unsupported language',
@@ -2442,7 +2442,7 @@ function buildGaps() {
   Object.entries(g.totals).forEach(([k, v]) => {
     const label = TOTAL_LABELS[k] || k.replace(/_/g, ' ');
     let cls = '';
-    if (k === 'modules_truly_orphan' || k === 'modules_without_rf') cls = ' flag';
+    if (k === 'modules_truly_orphan' || k === 'modules_without_spec') cls = ' flag';
     if (k === 'specs_with_test_coverage' && v > 0) cls = ' good';
     if (k === 'specs_without_implementation' && v > 0) cls = ' flag';
     h += `<div class="kpi${cls}"><div class="n">${esc(v)}</div><div class="k">${esc(label)}</div></div>`;
