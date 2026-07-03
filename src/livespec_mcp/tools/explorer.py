@@ -20,7 +20,7 @@ data.json schema:
                     "with_endpoints", "with_dependencies",
                     "implemented_pct", "verified", "avg_coverage",
                     "avg_test_coverage"},
-      "specs": [{"id", "title", "status", "dev_state", "description",
+      "specs": [{"id", "title", "status", "kind", "dev_state", "description",
                         "symbols": [{"qname", "signature"|null, "file", "line"}],
                         "endpoints": [str], "depends_on": [str],
                         "coverage": float|null,
@@ -238,7 +238,7 @@ def compute_explorer_data(
 
     # --- Specs + per-Spec symbols (with signatures) ---------------
     spec_rows = conn.execute(
-        """SELECT id, spec_id, title, description, status, priority
+        """SELECT id, spec_id, title, description, status, priority, kind
            FROM spec WHERE project_id=? ORDER BY spec_id""",
         (pid,),
     ).fetchall()
@@ -352,6 +352,7 @@ def compute_explorer_data(
                 "id": spec_id,
                 "title": spec["title"],
                 "status": spec["status"],
+                "kind": spec["kind"],
                 "dev_state": dev_state,
                 "description": spec["description"] or "",
                 "symbols": symbols,
@@ -1681,6 +1682,21 @@ const DS_BLURB = {
   verified: 'Backed by real test coverage — tests reach the implementing code (call-graph-derived) or are explicitly linked.',
 };
 const dsClass = s => 'ds-' + (DEV_STATES.includes(s) ? s : 'not_started');
+
+// ---- Spec kind taxonomy (v0.20) ----
+const KIND_LABEL = {
+  functional_requirement: 'FR',
+  non_functional_requirement: 'NFR',
+  adr: 'ADR',
+  design: 'Design',
+  constraint: 'Constraint',
+  epic: 'Epic',
+  other: 'Other',
+};
+function kindChip(k) {
+  const label = KIND_LABEL[k] || k || 'FR';
+  return `<span class="chip kind muted" title="Spec kind">${esc(label)}</span>`;
+}
 function statePill(s, big) {
   const cls = dsClass(s);
   return `<span class="state-pill ${big ? 'big ' : ''}${cls}">` +
@@ -1795,7 +1811,8 @@ function renderSpine(filter) {
   const matches = DATA.specs.filter(spec => {
     if (dsFilter !== 'all' && spec.dev_state !== dsFilter) return false;
     return !q || spec.id.toLowerCase().includes(q) || (spec.title || '').toLowerCase().includes(q) ||
-      (spec.description || '').toLowerCase().includes(q);
+      (spec.description || '').toLowerCase().includes(q) ||
+      (KIND_LABEL[spec.kind] || spec.kind || '').toLowerCase().includes(q);
   });
   if (!DATA.specs.length) {
     nav.innerHTML = '<div class="none">No specs linked yet.<br>See the Endpoints &amp; Coverage gaps tabs.</div>';
@@ -1814,6 +1831,7 @@ function renderSpine(filter) {
     const summary = DS_BLURB[spec.dev_state] || '';
     b.innerHTML =
       `<div class="top"><span class="rid">${esc(spec.id)}</span>` +
+      kindChip(spec.kind) +
       statePill(spec.dev_state, false) + '</div>' +
       `<div class="ti">${esc(spec.title)}</div>` +
       `<div class="sub">${esc(summary)}</div>` +
@@ -1842,6 +1860,7 @@ function selectSpec(id) {
     `<h2 class="title">${esc(spec.title)}</h2></div>`;
 
   h += '<div class="meta-row">' + statePill(spec.dev_state, true) +
+    kindChip(spec.kind) +
     `<span class="chip status muted" title="Declared status (manually maintained)"><span class="dot ${statusClass(spec.status)}"></span>declared: ${esc(spec.status || 'none')}</span>` +
     (statusLooksStale(spec) ? '<span class="stale-flag" title="The declared status has not caught up with the code evidence">⚠ declared status not updated</span>' : '') +
     '</div>';

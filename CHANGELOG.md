@@ -36,6 +36,12 @@ follows [SemVer](https://semver.org/).
   `analyze_impact(target_type="requirement")` → `target_type="spec"`.
   `generate_docs(target_type="requirement")` → `target_type="spec"`.
 - **`list_specs`** gains a `kind` filter alongside `status`/`module`/`priority`.
+- **Markdown importer parses `kind`:** `**Kind:** adr` / `**Tipo:** nfr` (Spanish/
+  English synonyms for all 7 kinds) sets `spec.kind` on import; defaults to
+  `functional_requirement` when omitted, same as before.
+- **Explorer bundle surfaces `kind`:** `data.json` specs now carry `kind`; the
+  UI renders a compact FR/NFR/ADR/Design/... chip on the spine card and detail
+  header, and `kind` is searchable in the spec filter box.
 - **Plugin `livespec-rf` renamed to `livespec-spec`.**
 - **Config:** `.livespec.toml` `[requirements]` table renamed to `[specs]`
   (`sync_from`, `links_seed` keys unchanged).
