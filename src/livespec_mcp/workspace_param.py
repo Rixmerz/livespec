@@ -11,21 +11,19 @@ from pydantic import Field
 WORKSPACE_DESCRIPTION = (
     "REQUIRED on every call. Absolute path to the single repository root for the "
     "project you are analyzing in this turn — pick the repo the user is editing "
-    "(same folder as the open Cursor workspace when one repo is open), not a "
+    "(same folder as the open editor workspace when one repo is open), not a "
     "parent directory that holds several unrelated projects. "
-    "Change only this argument to switch repos; no MCP restart and no "
-    "LIVESPEC_WORKSPACE env var. "
-    "Examples on this machine: <sample-api>, "
-    "<repo>, <sample-repo>."
+    "Change only this argument to switch repos; no MCP restart needed. "
+    "Example: /home/user/projects/my-app."
 )
 
 # Optional extra paragraph for high-traffic tool docstrings (complements the tool
 # description; the parameter schema still carries WORKSPACE_DESCRIPTION).
 WORKSPACE_DOCSTRING_NOTE = (
     "\n\n**workspace (required):** Pass the absolute repo root for the project "
-    "the user is working on in this turn (same folder as the open Cursor workspace "
-    "when they have a single repo open). Example for sample-api: "
-    "`workspace=\"<sample-api>\"`. "
+    "the user is working on in this turn (same folder as the open editor workspace "
+    "when they have a single repo open), e.g. "
+    '`workspace="/home/user/projects/my-app"`. '
     "Never call this tool without `workspace`."
 )
 
@@ -42,9 +40,8 @@ Workspace = Annotated[
         description=WORKSPACE_DESCRIPTION,
         min_length=1,
         examples=[
-            "<sample-api>",
-            "<repo>",
-            "<sample-repo>",
+            "/home/user/projects/my-app",
+            "/Users/dev/work/api-server",
         ],
     ),
 ]

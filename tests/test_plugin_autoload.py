@@ -179,3 +179,13 @@ def test_detect_survives_missing_table(workspace, monkeypatch):
     state.conn.execute("DROP TABLE spec")
     state.conn.commit()
     assert "spec" not in detect_active_plugins(state)
+
+
+def test_env_unknown_only_value_falls_back_to_detection(workspace, monkeypatch):
+    """A typo like LIVESPEC_PLUGINS=specs must not silently hide every plugin:
+    with no valid names in the override, DB detection wins (v0.20)."""
+    state = get_state()
+    monkeypatch.setenv("LIVESPEC_PLUGINS", "specs")
+    assert detect_active_plugins(state) == set()  # no rows yet
+    _seed_rf(state)
+    assert detect_active_plugins(state) == {"spec"}

@@ -69,6 +69,42 @@ follows [SemVer](https://semver.org/).
   Migration v11 handles existing databases transparently on next
   `index_project`; callers must update tool/field names in one pass.
 
+### Fixed — packaging & boot (audit batch P1)
+- **Package builds again**: the duplicate `force-include` of `templates/`
+  (already shipped via `packages`) hard-failed `uv build` / any install
+  from sdist or git. The force-include now ships only
+  `docs/AGENT_PLAYBOOK.md` into the wheel. CI gained a `ruff + uv build`
+  job that verifies wheel contents (schema.sql + playbook) so packaging
+  regressions fail fast.
+- **`LIVESPEC_PLUGINS` no longer bricks fresh sessions**: with the env var
+  set and no cached session workspace, `tools/list` used to construct
+  state with `workspace=None` and die with `WorkspaceRequiredError`
+  before the override was ever read — which also blocked every
+  subsequent `tools/call`. The override is now parsed directly without
+  touching state.
+- **Unknown `LIVESPEC_PLUGINS` values fall back to DB detection** (with a
+  logged warning) instead of silently hiding every plugin on a typo like
+  `specs`.
+- **`agent_playbook` prompt works on installed (non-checkout) deployments**:
+  it now loads the packaged copy via `importlib.resources`, falling back
+  to `docs/` in checkouts. Previously site-packages installs always got
+  the "playbook file missing" stub.
+- **Instrumentation middleware no longer masks workspace errors**: calls
+  without a `workspace` used to trigger an unconditional
+  `mkdir .mcp-docs-agent-log-fallback` in the server CWD — replacing the
+  actionable "workspace is required" error with `Permission denied` on
+  read-only CWDs and littering junk dirs on writable ones. Workspace-less
+  calls now dispatch untouched; a malformed `.livespec.toml` also no
+  longer fails every tool call through the logging-enabled check.
+- **CLI**: `--version` flag; `sqlite3.DatabaseError` (corrupted
+  `docs.db`) and `PermissionError` (read-only workspace) now exit with
+  actionable one-line errors instead of tracebacks.
+- **Dependencies**: dropped unused `rank-bm25`; pinned `fastmcp>=3,<4`
+  (the middleware imports `fastmcp` internals that a 4.x could move).
+- Generic `workspace` parameter examples in every tool schema (the
+  author's personal machine paths shipped in the public schema before).
+- sdist no longer packages `.coverage`, stray PNGs, or `.playwright-mcp/`.
+
 ## [0.19.0] - 2026-06-30
 
 ### Changed — brownfield RF bootstrap

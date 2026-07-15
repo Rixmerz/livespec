@@ -7,7 +7,7 @@ from fastmcp import Client, FastMCP
 
 from livespec_mcp.plugin_visibility import PluginVisibilityMiddleware
 from livespec_mcp.state import get_state
-from livespec_mcp.tools import analysis, indexing, specs, search
+from livespec_mcp.tools import analysis, indexing, search, specs
 from livespec_mcp.tools.plugins import register_all_plugins
 
 
@@ -99,3 +99,22 @@ async def test_env_all_shows_plugins_without_workspace_touch(workspace, monkeypa
         names = {t.name for t in await c.list_tools()}
     assert "create_spec" in names
     assert "export_explorer" in names
+
+
+def test_env_override_without_workspace_never_touches_state(monkeypatch):
+    """C5 regression (v0.20): tools/list with LIVESPEC_PLUGINS set and no
+    cached session workspace must parse the env var directly. The old path
+    called get_state(None), which raises WorkspaceRequiredError before any
+    workspace could be cached — permanently bricking fresh sessions."""
+    from livespec_mcp import plugin_visibility as pv
+
+    def _boom(_ws):
+        raise AssertionError("get_state must not be called without a workspace")
+
+    monkeypatch.setattr(pv, "get_state", _boom)
+    monkeypatch.setenv("LIVESPEC_PLUGINS", "all")
+    assert pv._active_plugins(None) == {"spec", "docs"}
+    monkeypatch.setenv("LIVESPEC_PLUGINS", "none")
+    assert pv._active_plugins(None) == set()
+    monkeypatch.setenv("LIVESPEC_PLUGINS", "spec")
+    assert pv._active_plugins(None) == {"spec"}

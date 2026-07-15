@@ -6,7 +6,7 @@ they remain callable when a workspace needs them. This middleware trims
 opted into the plugin:
 
 - No ``LIVESPEC_PLUGINS`` override and no session workspace hint → core
-  surface only (~19 tools).
+  surface only (24 tools).
 - After any tool call with ``workspace=``, the session caches that path
   and subsequent ``tools/list`` reflects ``detect_active_plugins`` for it.
 - ``LIVESPEC_PLUGINS`` env overrides apply globally (all/none/spec/docs).
@@ -30,6 +30,7 @@ from livespec_mcp.tools._errors import mcp_error
 from livespec_mcp.tools.plugins import (
     DOCS_PLUGIN_TOOL_NAMES,
     SPEC_MUTATION_TOOL_NAMES,
+    _parse_override,
     detect_active_plugins,
     plugin_name_for_tool,
 )
@@ -57,9 +58,14 @@ def _active_plugins(workspace: str | None) -> set[str]:
     """Plugins visible for list/call gating."""
     if workspace:
         return detect_active_plugins(get_state(workspace))
-    # Global env override without a workspace (all/none/spec/docs) still works:
-    if os.environ.get("LIVESPEC_PLUGINS") is not None:
-        return detect_active_plugins(get_state(workspace))
+    # Global env override without a workspace (all/none/spec/docs). Parse the
+    # env var directly — building state here would raise WorkspaceRequiredError
+    # on tools/list before any workspace is cached, bricking the session.
+    raw = os.environ.get("LIVESPEC_PLUGINS")
+    if raw is not None:
+        override = _parse_override(raw)
+        if override is not None:
+            return override
     return set()
 
 
