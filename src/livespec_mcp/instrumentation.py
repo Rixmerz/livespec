@@ -97,15 +97,19 @@ class AgentLogMiddleware(Middleware):
     def __init__(self, log_filename: str = _LOG_FILENAME) -> None:
         self._log_filename = log_filename
 
-    def _workspace_root(self, workspace_arg: Any) -> Path:
-        """Resolve workspace root for config + log path."""
+    def _workspace_root(self, workspace_arg: Any) -> Path | None:
+        """Resolve workspace root for config + log path; ``None`` when absent.
+
+        Never touches the filesystem: a missing/invalid workspace must surface
+        the tool's own actionable error, not a logging side effect (a mkdir
+        here used to mask "workspace is required" with Permission denied on
+        read-only cwds and litter ``.mcp-docs-agent-log-fallback`` dirs).
+        """
         arg = workspace_arg if isinstance(workspace_arg, str) and workspace_arg.strip() else None
         try:
             return _resolve_workspace(arg)
-        except WorkspaceRequiredError:
-            fallback = Path.cwd() / ".mcp-docs-agent-log-fallback"
-            fallback.mkdir(parents=True, exist_ok=True)
-            return fallback
+        except (WorkspaceRequiredError, FileNotFoundError, OSError):
+            return None
 
     def _log_path(self, ws_root: Path) -> Path:
         return ws_root / ".mcp-docs" / self._log_filename
@@ -116,8 +120,18 @@ class AgentLogMiddleware(Middleware):
         args: dict[str, Any] = dict(getattr(msg, "arguments", None) or {})
         ws_arg = args.get("workspace")
         ws_root = self._workspace_root(ws_arg)
+        if ws_root is None:
+            # No workspace to attach a log to — dispatch untouched so the tool
+            # reports the missing-workspace error itself.
+            return await call_next(context)
 
-        if not _logging_enabled(ws_root):
+        try:
+            enabled = _logging_enabled(ws_root)
+        except Exception:
+            # A malformed .livespec.toml must fail index_project with its own
+            # actionable error, not every tool call via this middleware.
+            enabled = False
+        if not enabled:
             return await call_next(context)
 
         log_path = self._log_path(ws_root)

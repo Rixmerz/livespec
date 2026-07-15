@@ -92,7 +92,7 @@ def init_fastapi_project(
     if index:
         try:
             from livespec_mcp.state import get_state
-            from livespec_mcp.tools.indexing import run_index_pipeline, _maybe_regenerate_explorer
+            from livespec_mcp.tools.indexing import _maybe_regenerate_explorer, run_index_pipeline
 
             st = get_state(str(root))
             run_index_pipeline(st, force=False, embed=False)

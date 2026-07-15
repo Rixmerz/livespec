@@ -10,7 +10,6 @@ from livespec_mcp.explorer.fastapi import (
     enable_explorer,
     explorer_lifespan,
 )
-
 from livespec_mcp.explorer.install import init_fastapi_project
 
 __all__ = [

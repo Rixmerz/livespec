@@ -23,6 +23,7 @@ hooks. Tools physically migrate into them in subsequent breaking phases
 
 from __future__ import annotations
 
+import logging
 import os
 
 from fastmcp import FastMCP
@@ -101,7 +102,20 @@ def _parse_override(raw: str) -> set[str] | None:
         return set()
     if "all" in parts:
         return set(KNOWN_PLUGINS)
-    return parts & set(KNOWN_PLUGINS)
+    known = parts & set(KNOWN_PLUGINS)
+    unknown = parts - set(KNOWN_PLUGINS)
+    if unknown:
+        logging.getLogger(__name__).warning(
+            "LIVESPEC_PLUGINS contains unknown plugin name(s) %s — valid values: "
+            "none, all, %s",
+            sorted(unknown),
+            ", ".join(KNOWN_PLUGINS),
+        )
+    if not known:
+        # Nothing valid in the override (likely a typo like 'specs'): fall back
+        # to DB detection instead of silently hiding every plugin.
+        return None
+    return known
 
 
 def detect_active_plugins(state: AppState) -> set[str]:

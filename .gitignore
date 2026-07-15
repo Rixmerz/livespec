@@ -9,6 +9,8 @@ dist/
 build/
 *.egg-info/
 .mcp-docs/
+.mcp-docs-agent-log-fallback/
+.coverage
 .env
 .DS_Store
 .claude/

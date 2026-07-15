@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import sqlite3
 import sys
 from typing import Any
 
@@ -51,6 +52,11 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="livespec-mcp",
         description="Code intelligence MCP server + headless indexing CLI.",
+    )
+    from livespec_mcp import __version__
+
+    parser.add_argument(
+        "--version", action="version", version=f"livespec-mcp {__version__}"
     )
     sub = parser.add_subparsers(dest="cmd", required=True)
 
@@ -160,6 +166,20 @@ def main(argv: list[str] | None = None) -> int:
             payload = _cmd_status(args.path)
     except (FileNotFoundError, ValueError) as e:
         print(f"error: {e}", file=sys.stderr)
+        return 1
+    except sqlite3.DatabaseError as e:
+        print(
+            f"error: index database unreadable ({e}). "
+            f"Delete <repo>/.mcp-docs/docs.db and re-run `livespec-mcp index`.",
+            file=sys.stderr,
+        )
+        return 1
+    except PermissionError as e:
+        print(
+            f"error: cannot write workspace state ({e}). "
+            f"Check permissions on <repo>/.mcp-docs/.",
+            file=sys.stderr,
+        )
         return 1
     print(json.dumps(payload, indent=2))
     return 0

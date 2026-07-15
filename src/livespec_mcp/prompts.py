@@ -2,21 +2,31 @@
 
 from __future__ import annotations
 
+from importlib import resources
 from pathlib import Path
 
 from fastmcp import FastMCP
 
+# Checkout/editable installs read docs/; wheel installs ship a packaged copy
+# under livespec_mcp/templates/ (pyproject force-include) because parents[2]
+# resolves to site-packages' parent there, where docs/ does not exist.
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _AGENT_PLAYBOOK = _REPO_ROOT / "docs" / "AGENT_PLAYBOOK.md"
 
 
 def _load_agent_playbook() -> str:
-    if not _AGENT_PLAYBOOK.is_file():
-        return (
-            "Agent playbook file missing. See docs/AGENT_QUICKSTART.md and README.md "
-            "in the livespec-mcp repository."
-        )
-    return _AGENT_PLAYBOOK.read_text(encoding="utf-8")
+    try:
+        res = resources.files("livespec_mcp") / "templates" / "AGENT_PLAYBOOK.md"
+        if res.is_file():
+            return res.read_text(encoding="utf-8")
+    except (OSError, ModuleNotFoundError):
+        pass
+    if _AGENT_PLAYBOOK.is_file():
+        return _AGENT_PLAYBOOK.read_text(encoding="utf-8")
+    return (
+        "Agent playbook file missing. See docs/AGENT_QUICKSTART.md and README.md "
+        "in the livespec-mcp repository."
+    )
 
 
 def register(mcp: FastMCP) -> None:
