@@ -15,6 +15,12 @@ CREATE TABLE IF NOT EXISTS project (
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+-- One project per root. The UNIQUE index is created by migration v12 (which
+-- dedupes legacy rows first); it is intentionally NOT declared here because
+-- this schema runs via executescript before migrations, and a pre-framework
+-- DB whose `project` table predates the `root` column would fail the index
+-- create. get_or_create_project relies on it for a race-safe INSERT OR IGNORE.
+
 -- Migration state: persistent flags so a one-time re-extract can be queued
 -- by a schema migration and consumed by the next index_project run.
 CREATE TABLE IF NOT EXISTS _migration_state (
@@ -84,6 +90,7 @@ CREATE TABLE IF NOT EXISTS symbol_ref (
     src_symbol_id INTEGER NOT NULL REFERENCES symbol(id) ON DELETE CASCADE,
     target_name TEXT NOT NULL,
     ref_type TEXT NOT NULL DEFAULT 'call',
+    scope_module TEXT,             -- v0.6 P0.4: import-aware resolution hint (added by migration v4)
     line INTEGER
 );
 
@@ -153,6 +160,33 @@ CREATE TABLE IF NOT EXISTS spec_dependency (
 CREATE INDEX IF NOT EXISTS idx_specdep_parent ON spec_dependency(parent_spec_id);
 CREATE INDEX IF NOT EXISTS idx_specdep_child ON spec_dependency(child_spec_id);
 
+-- v0.16: Spec test-coverage trend. One row per spec per audit_coverage run
+-- plus a '__rollup__' row. Created here so a fresh DB matches a migrated one
+-- (migration v9 created it under the legacy rf_ name, v11 renamed it).
+CREATE TABLE IF NOT EXISTS spec_coverage_snapshot (
+    id INTEGER PRIMARY KEY,
+    project_id INTEGER NOT NULL REFERENCES project(id) ON DELETE CASCADE,
+    ts TEXT NOT NULL,
+    spec_id TEXT NOT NULL,
+    ratio REAL,
+    verified_count INTEGER
+);
+
+CREATE INDEX IF NOT EXISTS idx_spec_cov_snap
+    ON spec_coverage_snapshot(project_id, spec_id, ts);
+
+-- v0.18: per-project agent scratch notes keyed by symbol qname (migration v10).
+CREATE TABLE IF NOT EXISTS agent_scratch (
+    id INTEGER PRIMARY KEY,
+    project_id INTEGER NOT NULL REFERENCES project(id) ON DELETE CASCADE,
+    qname TEXT NOT NULL,
+    note TEXT NOT NULL,
+    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(project_id, qname)
+);
+
+CREATE INDEX IF NOT EXISTS idx_agent_scratch_project ON agent_scratch(project_id);
+
 -- ===== Docs =====
 CREATE TABLE IF NOT EXISTS doc (
     id INTEGER PRIMARY KEY,
@@ -198,7 +232,11 @@ END;
 CREATE TRIGGER IF NOT EXISTS chunk_ad AFTER DELETE ON chunk BEGIN
     INSERT INTO chunk_fts(chunk_fts, rowid, text) VALUES('delete', old.id, old.text);
 END;
-CREATE TRIGGER IF NOT EXISTS chunk_au AFTER UPDATE ON chunk BEGIN
+-- Only rewrite FTS when the text actually changed. `embed_pending` does a
+-- per-chunk `UPDATE chunk SET embedded_at=...` that must NOT churn FTS
+-- (thousands of pointless delete+reinserts per embed run otherwise).
+CREATE TRIGGER IF NOT EXISTS chunk_au AFTER UPDATE ON chunk
+WHEN old.text IS NOT new.text BEGIN
     INSERT INTO chunk_fts(chunk_fts, rowid, text) VALUES('delete', old.id, old.text);
     INSERT INTO chunk_fts(rowid, text) VALUES (new.id, new.text);
 END;

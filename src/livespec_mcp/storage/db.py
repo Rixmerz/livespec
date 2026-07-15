@@ -32,6 +32,12 @@ def connect(db_path: Path) -> sqlite3.Connection:
     conn.execute("PRAGMA foreign_keys = ON")
     conn.execute("PRAGMA journal_mode = WAL")
     conn.execute("PRAGMA synchronous = NORMAL")
+    # WAL gives concurrent readers for free but still allows only one writer.
+    # Cross-process writers (the `livespec-mcp index` CLI, `explorer install`)
+    # and a cold full index that holds the write lock for minutes would
+    # otherwise hit `database is locked` after Python's 5s default. Wait up
+    # to 30s for the lock instead of erroring.
+    conn.execute("PRAGMA busy_timeout = 30000")
     conn.executescript(_schema_sql())
     _run_migrations(conn)
     return conn
@@ -269,6 +275,69 @@ def _m011_rename_rf_to_spec(conn: sqlite3.Connection) -> None:
         )
 
 
+def _m012_unique_project_root(conn: sqlite3.Connection) -> None:
+    """v0.20: enforce UNIQUE(project.root).
+
+    ``get_or_create_project`` was SELECT-then-INSERT with no constraint, so a
+    race (two threads, or the MCP server + `livespec-mcp index` CLI in another
+    process) could create two ``project`` rows for the same root — after which
+    a bare ``SELECT ... WHERE root=? LIMIT 1`` returned an arbitrary one and
+    silently split symbols, specs, and coverage across two project_ids.
+
+    Dedup any existing duplicates first (repoint child rows to the lowest id,
+    delete the rest), then add the UNIQUE index so future inserts collapse via
+    ``INSERT OR IGNORE``.
+    """
+    if not _has_column(conn, "project", "root"):
+        # Contrived pre-framework DBs may predate the `root` column entirely.
+        # Nothing to enforce uniqueness on — record the migration and move on.
+        return
+    dupes = conn.execute(
+        """SELECT root, MIN(id) AS keep_id, COUNT(*) AS n
+           FROM project GROUP BY root HAVING n > 1"""
+    ).fetchall()
+    # Child tables that carry a project_id and could have been split.
+    child_tables = (
+        "file", "module", "spec", "doc", "chunk", "index_run",
+        "agent_scratch", "spec_coverage_snapshot",
+    )
+    for row in dupes:
+        root, keep_id = row["root"], int(row["keep_id"])
+        others = [
+            int(r["id"])
+            for r in conn.execute(
+                "SELECT id FROM project WHERE root=? AND id != ?", (root, keep_id)
+            )
+        ]
+        for other_id in others:
+            for table in child_tables:
+                if _table_exists(conn, table) and _has_column(conn, table, "project_id"):
+                    conn.execute(
+                        f"UPDATE OR IGNORE {table} SET project_id=? WHERE project_id=?",
+                        (keep_id, other_id),
+                    )
+            conn.execute("DELETE FROM project WHERE id=?", (other_id,))
+    conn.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_project_root ON project(root)"
+    )
+
+
+def _m013_chunk_au_guard(conn: sqlite3.Connection) -> None:
+    """v0.20: the chunk_au trigger fired the full FTS delete+reinsert on ANY
+    UPDATE, so `embed_pending`'s per-chunk `SET embedded_at=...` rewrote the
+    entire FTS index thousands of times per embed run. Recreate the trigger
+    to only touch FTS when the text actually changed."""
+    conn.execute("DROP TRIGGER IF EXISTS chunk_au")
+    conn.execute(
+        """CREATE TRIGGER IF NOT EXISTS chunk_au AFTER UPDATE ON chunk
+           WHEN old.text IS NOT new.text BEGIN
+               INSERT INTO chunk_fts(chunk_fts, rowid, text)
+                   VALUES('delete', old.id, old.text);
+               INSERT INTO chunk_fts(rowid, text) VALUES (new.id, new.text);
+           END"""
+    )
+
+
 # Ordered registry. Append-only — never reuse a version number.
 MIGRATIONS: list[Migration] = [
     (1, "drop_dead_tables", _m001_drop_dead_tables),
@@ -282,6 +351,8 @@ MIGRATIONS: list[Migration] = [
     (9, "rf_coverage_snapshot", _m009_rf_coverage_snapshot),
     (10, "agent_scratch", _m010_agent_scratch),
     (11, "rename_rf_to_spec", _m011_rename_rf_to_spec),
+    (12, "unique_project_root", _m012_unique_project_root),
+    (13, "chunk_au_guard", _m013_chunk_au_guard),
 ]
 
 
@@ -294,22 +365,43 @@ def _run_migrations(conn: sqlite3.Connection) -> None:
     for version, name, fn in MIGRATIONS:
         if version in applied:
             continue
-        fn(conn)
-        conn.execute(
-            "INSERT INTO schema_migrations(version, name) VALUES(?, ?)",
-            (version, name),
-        )
+        # Each migration + its bookkeeping row is one atomic unit. SQLite has
+        # transactional DDL, so a crash mid-migration rolls the whole step
+        # back — critical for destructive renames like _m011 whose guard is
+        # skip-on-rerun (a half-applied rename would strand data forever).
+        with transaction(conn):
+            fn(conn)
+            conn.execute(
+                "INSERT INTO schema_migrations(version, name) VALUES(?, ?)",
+                (version, name),
+            )
 
 
 def consume_reextract_flag(conn: sqlite3.Connection) -> bool:
-    """Return True (and clear) if a migration queued a forced re-extract."""
+    """Return True (and clear) if a migration queued a forced re-extract.
+
+    Prefer :func:`peek_reextract_flag` + :func:`clear_reextract_flag` in the
+    indexer so the flag survives a crashed/rolled-back run — clearing it up
+    front used to leave migration-added columns (visibility, decorators) NULL
+    forever if the forced run then failed.
+    """
+    if peek_reextract_flag(conn):
+        clear_reextract_flag(conn)
+        return True
+    return False
+
+
+def peek_reextract_flag(conn: sqlite3.Connection) -> bool:
+    """True if a migration queued a forced re-extract, WITHOUT clearing it."""
     row = conn.execute(
         "SELECT value FROM _migration_state WHERE key='needs_reextract'"
     ).fetchone()
-    if row and row["value"] == "1":
-        conn.execute("DELETE FROM _migration_state WHERE key='needs_reextract'")
-        return True
-    return False
+    return bool(row and row["value"] == "1")
+
+
+def clear_reextract_flag(conn: sqlite3.Connection) -> None:
+    """Clear the forced-re-extract flag (call only after a successful index)."""
+    conn.execute("DELETE FROM _migration_state WHERE key='needs_reextract'")
 
 
 @contextmanager
@@ -325,11 +417,19 @@ def transaction(conn: sqlite3.Connection) -> Iterator[sqlite3.Connection]:
 
 def get_or_create_project(conn: sqlite3.Connection, name: str, root: str) -> int:
     row = conn.execute(
-        "SELECT id FROM project WHERE root = ? LIMIT 1", (root,)
+        "SELECT id FROM project WHERE root = ? ORDER BY id LIMIT 1", (root,)
     ).fetchone()
     if row:
         return int(row["id"])
-    cur = conn.execute(
-        "INSERT INTO project(name, root) VALUES (?, ?)", (name, root)
+    # INSERT OR IGNORE + re-SELECT: with the UNIQUE(root) index (migration v12)
+    # a lost race collapses to the winning row instead of creating a duplicate
+    # project that would silently split all project-scoped data. ORDER BY id
+    # makes the resolution deterministic even on a pre-v12 DB with existing
+    # duplicates that the migration hasn't yet deduped.
+    conn.execute(
+        "INSERT OR IGNORE INTO project(name, root) VALUES (?, ?)", (name, root)
     )
-    return int(cur.lastrowid)
+    row = conn.execute(
+        "SELECT id FROM project WHERE root = ? ORDER BY id LIMIT 1", (root,)
+    ).fetchone()
+    return int(row["id"])

@@ -68,7 +68,10 @@ def run_index_pipeline(st: AppState, *, force: bool = False, embed: bool = False
         existing = st.conn.execute(
             "SELECT COUNT(*) c FROM chunk WHERE project_id=?", (st.project_id,)
         ).fetchone()["c"]
-        if force or stats.files_changed or existing == 0:
+        # A deletion-only change increments nothing in files_changed, but its
+        # chunks (FTS + vectors) must be pruned — otherwise search keeps
+        # returning hits for deleted files. stats.files_deleted covers that.
+        if force or stats.files_changed or stats.files_deleted or existing == 0:
             chunk_stats: dict[str, Any] = dict(rebuild_chunks(st.conn, st.project_id))
         else:
             chunk_stats = {"skipped": "no file changes"}
@@ -182,11 +185,30 @@ def register(mcp: FastMCP) -> None:
         if watch:
             from livespec_mcp.domain.watcher import Watcher, register_watcher
 
-            def _do_reindex() -> None:
-                with st.lock():
-                    run_index(st.settings, st.conn)
+            settings = st.settings
+            db_path = settings.db_path
 
-            ws_path = st.settings.workspace
+            def _do_reindex() -> None:
+                # Run on a DEDICATED connection, not st.conn. The watcher fires
+                # from a background thread; sharing the tool threads' connection
+                # let its BEGIN/COMMIT interleave with concurrent tool calls —
+                # dirty reads mid-index and, worse, unlocked writes joining the
+                # indexer transaction and being silently rolled back. A private
+                # WAL connection isolates the reindex; other connections see the
+                # result once it commits. Invalidate the graph cache after so the
+                # freshly-indexed graph is picked up on the next analysis call.
+                from livespec_mcp.domain.graph import invalidate_graph_cache
+                from livespec_mcp.storage.db import connect
+
+                conn = connect(db_path)
+                try:
+                    stats = run_index(settings, conn)
+                finally:
+                    conn.close()
+                if stats.files_changed or stats.files_deleted:
+                    invalidate_graph_cache()
+
+            ws_path = settings.workspace
             w = Watcher(workspace=ws_path, on_reindex=_do_reindex, debounce_seconds=2.0)
             register_watcher(ws_path, w)
             w.start()

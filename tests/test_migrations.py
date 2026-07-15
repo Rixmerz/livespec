@@ -137,3 +137,65 @@ def test_v11_rename_rf_to_spec_preserves_data(tmp_path: Path):
             "INSERT INTO spec_symbol(spec_id, symbol_id) VALUES (999, 1)"
         )
     conn.close()
+
+
+def test_project_root_unique_collapses_duplicates(tmp_path: Path):
+    """v0.20 H5: get_or_create_project must be race-safe — a repeated call and
+    a raw duplicate INSERT both collapse to one row via UNIQUE(root)."""
+    from livespec_mcp.storage.db import get_or_create_project
+
+    conn = connect(tmp_path / "p.db")
+    a = get_or_create_project(conn, name="p", root="/tmp/p")
+    b = get_or_create_project(conn, name="p", root="/tmp/p")
+    assert a == b
+    # The UNIQUE index exists and rejects a second physical row for the root.
+    idx = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='index' AND name='idx_project_root'"
+    ).fetchone()
+    assert idx is not None
+    conn.execute("INSERT OR IGNORE INTO project(name, root) VALUES ('p2', '/tmp/p')")
+    n = conn.execute("SELECT COUNT(*) c FROM project WHERE root='/tmp/p'").fetchone()["c"]
+    assert n == 1
+    conn.close()
+
+
+def test_m012_dedupes_preexisting_duplicate_projects(tmp_path: Path):
+    """A DB that already split into two project rows for one root (created
+    before v12) converges: child rows repoint to the surviving id, the
+    duplicate project is dropped, and the UNIQUE index is added."""
+    db = tmp_path / "dupe.db"
+    # Build a v11-era DB (no idx_project_root yet), then inject a duplicate.
+    conn = connect(db)
+    conn.execute("DROP INDEX IF EXISTS idx_project_root")
+    conn.execute("DELETE FROM schema_migrations WHERE version IN (12, 13)")
+    conn.execute("INSERT INTO project(id, name, root) VALUES (1, 'p', '/tmp/dup')")
+    conn.execute("INSERT INTO project(id, name, root) VALUES (2, 'p', '/tmp/dup')")
+    conn.execute("INSERT INTO file(project_id, path, language, content_hash, line_count, mtime)"
+                 " VALUES (2, 'a.py', 'python', 'h', 1, 0.0)")
+    conn.close()
+
+    conn = connect(db)  # re-run migrations -> v12 dedupes
+    projects = conn.execute("SELECT id FROM project WHERE root='/tmp/dup'").fetchall()
+    assert len(projects) == 1 and int(projects[0]["id"]) == 1
+    # the file row was repointed to the surviving project id
+    fp = conn.execute("SELECT project_id FROM file WHERE path='a.py'").fetchone()
+    assert int(fp["project_id"]) == 1
+    conn.close()
+
+
+def test_reextract_flag_survives_until_cleared(tmp_path: Path):
+    """v0.20 M18: peek does not clear; clear is explicit (so a crashed index
+    leaves the flag set instead of losing the forced re-extract)."""
+    from livespec_mcp.storage.db import (
+        clear_reextract_flag,
+        peek_reextract_flag,
+        _flag_reextract,
+    )
+
+    conn = connect(tmp_path / "r.db")
+    _flag_reextract(conn)
+    assert peek_reextract_flag(conn) is True
+    assert peek_reextract_flag(conn) is True  # idempotent, not consumed
+    clear_reextract_flag(conn)
+    assert peek_reextract_flag(conn) is False
+    conn.close()
