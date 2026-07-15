@@ -105,6 +105,53 @@ follows [SemVer](https://semver.org/).
   author's personal machine paths shipped in the public schema before).
 - sdist no longer packages `.coverage`, stray PNGs, or `.playwright-mcp/`.
 
+### Fixed — storage & concurrency (audit batch P2)
+- **Migrations are now transactional** (schema migration framework): each
+  migration + its `schema_migrations` bookkeeping row commit as one unit.
+  A crash mid-`_m011` (the RF→Spec rename) previously left the DB
+  half-renamed — with the guard being skip-on-rerun, the populated legacy
+  tables were stranded and empty `spec*` shells served every query forever.
+- **`UNIQUE(project.root)`** (migration v12): `get_or_create_project` was
+  SELECT-then-INSERT with no constraint, so a race (two threads, or the
+  MCP server + `livespec-mcp index` CLI in another process) created
+  duplicate `project` rows and silently split symbols/specs/coverage
+  across two `project_id`s. The migration dedupes existing duplicates
+  (repointing child rows), the resolver is now `INSERT OR IGNORE` +
+  re-SELECT, and `AppState.project_id` is cached after first resolution.
+- **Graph cache no longer serves a half-built graph**: the cache generation
+  now keys on the latest *finished* index run with `files_changed > 0`.
+  Previously a `load_graph` during an in-flight index could cache partial
+  (uncommitted) state under the key that stayed current after the run,
+  and every no-op reindex (each watcher tick) needlessly rebuilt the
+  ~4s / 183MB graph.
+- **Watcher isolation**: `index_project(watch=True)` now reindexes on a
+  dedicated WAL connection instead of the shared tool connection —
+  removing dirty reads and the "unlocked write joins the indexer
+  transaction and gets silently rolled back" hazard. On LRU eviction /
+  `reset_state`, a workspace's watcher is stopped before its connection
+  is closed (it used to keep firing reindexes against a closed DB).
+- **`needs_reextract` survives a failed run**: the forced-re-extract flag
+  is now cleared inside the commit transaction only after a successful
+  index, instead of up front. A crashed forced run no longer leaves
+  migration-added columns (`visibility`, `decorators`) NULL forever.
+- **Deletion-only reindex prunes chunks**: `git rm`-ing a file now rebuilds
+  chunks so FTS + vector search stop returning hits for deleted files.
+- **Index run is atomic**: ref resolution, annotation scan, manual-link
+  restore, counts, and the run-finish `UPDATE` now run inside the same
+  transaction as the symbol writes (previously autocommit — thousands of
+  per-statement WAL commits, and a crash mid-resolve left content hashes
+  updated but edges unresolved, which the next incremental run skipped).
+- **`PRAGMA busy_timeout = 30000`**: cross-process writers no longer hit
+  `database is locked` after 5s during a cold index.
+- **schema.sql now defines** `symbol_ref.scope_module`,
+  `spec_coverage_snapshot`, and `agent_scratch` so a fresh install and a
+  migrated DB converge (they were migration-only before).
+- **`chunk_au` FTS trigger** only fires on real text changes
+  (`WHEN old.text IS NOT new.text`), ending the FTS write-amplification
+  where every `embed_pending` timestamp UPDATE rewrote the chunk in FTS5.
+- Guarded the `mtime` `stat()` against a file vanishing mid-index (it was
+  outside the read try/except and could abort the whole run).
+
 ## [0.19.0] - 2026-06-30
 
 ### Changed — brownfield RF bootstrap

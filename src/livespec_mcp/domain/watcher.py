@@ -140,6 +140,22 @@ def register_watcher(workspace: Path, watcher: Watcher) -> None:
         _registry[workspace] = watcher
 
 
+def stop_watcher(workspace: Path) -> bool:
+    """Stop and unregister the watcher for one workspace. Returns True if one
+    was running. Called on LRU eviction / reset so a watcher never keeps
+    firing reindexes against a workspace whose AppState (and connection) was
+    torn down underneath it."""
+    with _registry_lock:
+        w = _registry.pop(workspace, None)
+    if w is None:
+        return False
+    try:
+        w.stop()
+    except Exception:
+        logger.exception("failed to stop watcher for %s", workspace)
+    return True
+
+
 def stop_all_watchers() -> int:
     """Stop and unregister every active watcher. Idempotent. Returns the
     number of watchers stopped.

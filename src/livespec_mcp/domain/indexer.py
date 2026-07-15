@@ -23,7 +23,12 @@ from pathspec import GitIgnoreSpec
 from livespec_mcp.config import RepoConfig, Settings, load_repo_config
 from livespec_mcp.domain.extractors import ExtractResult, extract
 from livespec_mcp.domain.languages import EXTRACTOR_SUPPORTED, detect_language
-from livespec_mcp.storage.db import consume_reextract_flag, get_or_create_project, transaction
+from livespec_mcp.storage.db import (
+    clear_reextract_flag,
+    get_or_create_project,
+    peek_reextract_flag,
+    transaction,
+)
 
 DEFAULT_IGNORES = {
     ".git", ".hg", ".svn", "node_modules", "__pycache__", ".venv", "venv",
@@ -38,6 +43,7 @@ class IndexStats:
     files_total: int = 0
     files_changed: int = 0
     files_skipped: int = 0
+    files_deleted: bool = False
     symbols_total: int = 0
     edges_total: int = 0
     spec_links_created: int = 0
@@ -161,7 +167,10 @@ def index_project(
 
     # P0.2: a recent migration may have flagged that this DB needs a one-time
     # full re-extract (e.g. upgrading from v0.2 where symbol_ref didn't exist).
-    if consume_reextract_flag(conn):
+    # Peek (don't clear) so a crashed/rolled-back run leaves the flag set — it
+    # is cleared inside the commit transaction only after the run succeeds.
+    needs_reextract = peek_reextract_flag(conn)
+    if needs_reextract:
         force = True
 
     run_id = conn.execute(
@@ -227,11 +236,13 @@ def index_project(
             seen.add(rel)
             try:
                 raw = p.read_bytes()
+                mtime = p.stat().st_mtime
             except OSError:
+                # File vanished between the walk and this read (e.g. a git
+                # checkout mid-index). Skip it — must not abort the whole run.
                 stats.files_skipped += 1
                 continue
             content_hash = _hash_bytes(raw)
-            mtime = p.stat().st_mtime
             prev = existing.get(rel)
             if not force and prev and prev["content_hash"] == content_hash:
                 continue  # unchanged
@@ -262,88 +273,99 @@ def index_project(
             if rel not in seen:
                 conn.execute("DELETE FROM file WHERE id = ?", (row["id"],))
                 files_deleted = True
+        stats.files_deleted = files_deleted
 
-    # Re-resolve refs. v0.9: when partial changes are detected (no force,
-    # no deletions, prior index_run exists), walk only the affected ref
-    # subset — refs whose src is in a changed file OR whose target_name
-    # matches a name re-inserted in a changed file. Falls back to the
-    # full walk on `force=True`, file deletions (their target names need
-    # global cleanup), or the very first index run on this project.
-    if stats.files_changed > 0 or force:
-        prior_runs = conn.execute(
-            "SELECT COUNT(*) c FROM index_run WHERE project_id=? AND finished_at IS NOT NULL",
-            (project_id,),
-        ).fetchone()["c"]
-        use_targeted = (
-            not force
-            and not files_deleted
-            and bool(changed_file_ids)
-            and int(prior_runs) > 0
-        )
-        _resolve_refs(
-            conn,
-            project_id=project_id,
-            changed_file_ids=changed_file_ids if use_targeted else None,
-        )
-        # P0.1: also re-link Spec annotations from docstrings. Cheap, idempotent
-        # (INSERT OR IGNORE), and prevents traceability from going silently
-        # stale when an edited symbol's old spec_symbol row is cascaded away.
-        from livespec_mcp.domain.matcher import scan_annotations
-        stats.spec_links_created = scan_annotations(conn, project_id=project_id)
+        # Re-resolve refs. v0.9: when partial changes are detected (no force,
+        # no deletions, prior index_run exists), walk only the affected ref
+        # subset — refs whose src is in a changed file OR whose target_name
+        # matches a name re-inserted in a changed file. Falls back to the
+        # full walk on `force=True`, file deletions (their target names need
+        # global cleanup), or the very first index run on this project. The
+        # whole resolve/annotation/restore phase now runs inside the SAME
+        # transaction as the symbol writes so the run is atomic — a crash
+        # mid-resolve rolls back cleanly instead of committing new content
+        # hashes while leaving edges unresolved (which the next incremental
+        # run would then skip forever).
+        if stats.files_changed > 0 or force or files_deleted:
+            prior_runs = conn.execute(
+                "SELECT COUNT(*) c FROM index_run WHERE project_id=? AND finished_at IS NOT NULL",
+                (project_id,),
+            ).fetchone()["c"]
+            use_targeted = (
+                not force
+                and not files_deleted
+                and bool(changed_file_ids)
+                and int(prior_runs) > 0
+            )
+            _resolve_refs(
+                conn,
+                project_id=project_id,
+                changed_file_ids=changed_file_ids if use_targeted else None,
+            )
+            # P0.1: also re-link Spec annotations from docstrings. Cheap, idempotent
+            # (INSERT OR IGNORE), and prevents traceability from going silently
+            # stale when an edited symbol's old spec_symbol row is cascaded away.
+            from livespec_mcp.domain.matcher import scan_annotations
+            stats.spec_links_created = scan_annotations(conn, project_id=project_id)
 
-        # Restore manual spec_symbol links wiped by the symbol cascade. We
-        # re-resolve symbol qname → new symbol_id and INSERT OR IGNORE,
-        # so links whose target symbol now lives at a new id come back,
-        # and links whose symbol qname disappeared from the codebase
-        # silently drop (the symbol no longer exists — nothing to link).
-        if manual_links_snapshot:
-            # Batch (v0.14): one set-based INSERT..SELECT instead of two
-            # queries per snapshot row. MIN(s.id) keeps the old LIMIT 1
-            # semantics when a qname exists in more than one file.
+            # Restore manual spec_symbol links wiped by the symbol cascade. We
+            # re-resolve symbol qname → new symbol_id and INSERT OR IGNORE,
+            # so links whose target symbol now lives at a new id come back,
+            # and links whose symbol qname disappeared from the codebase
+            # silently drop (the symbol no longer exists — nothing to link).
+            if manual_links_snapshot:
+                # Batch (v0.14): one set-based INSERT..SELECT instead of two
+                # queries per snapshot row. MIN(s.id) keeps the old LIMIT 1
+                # semantics when a qname exists in more than one file.
+                conn.execute(
+                    """CREATE TEMP TABLE IF NOT EXISTS _manual_links(
+                           spec_id_str TEXT, qname TEXT, relation TEXT,
+                           confidence REAL, source TEXT)"""
+                )
+                conn.execute("DELETE FROM _manual_links")
+                conn.executemany(
+                    "INSERT INTO _manual_links VALUES(?,?,?,?,?)", manual_links_snapshot
+                )
+                cur = conn.execute(
+                    """INSERT OR IGNORE INTO spec_symbol(spec_id, symbol_id, relation, confidence, source)
+                       SELECT sp.id, MIN(s.id), m.relation, m.confidence, m.source
+                       FROM _manual_links m
+                       JOIN spec sp ON sp.spec_id = m.spec_id_str AND sp.project_id = ?
+                       JOIN symbol s ON s.qualified_name = m.qname
+                       JOIN file f ON f.id = s.file_id AND f.project_id = ?
+                       GROUP BY sp.id, m.qname, m.relation, m.confidence, m.source""",
+                    (project_id, project_id),
+                )
+                stats.manual_links_restored = max(cur.rowcount, 0)
+                conn.execute("DELETE FROM _manual_links")
+
+        stats.edges_total = int(
             conn.execute(
-                """CREATE TEMP TABLE IF NOT EXISTS _manual_links(
-                       spec_id_str TEXT, qname TEXT, relation TEXT,
-                       confidence REAL, source TEXT)"""
-            )
-            conn.execute("DELETE FROM _manual_links")
-            conn.executemany(
-                "INSERT INTO _manual_links VALUES(?,?,?,?,?)", manual_links_snapshot
-            )
-            cur = conn.execute(
-                """INSERT OR IGNORE INTO spec_symbol(spec_id, symbol_id, relation, confidence, source)
-                   SELECT sp.id, MIN(s.id), m.relation, m.confidence, m.source
-                   FROM _manual_links m
-                   JOIN spec sp ON sp.spec_id = m.spec_id_str AND sp.project_id = ?
-                   JOIN symbol s ON s.qualified_name = m.qname
-                   JOIN file f ON f.id = s.file_id AND f.project_id = ?
-                   GROUP BY sp.id, m.qname, m.relation, m.confidence, m.source""",
-                (project_id, project_id),
-            )
-            stats.manual_links_restored = max(cur.rowcount, 0)
-            conn.execute("DELETE FROM _manual_links")
-
-    stats.edges_total = int(
-        conn.execute(
-            """SELECT COUNT(*) c FROM symbol_edge e
-               JOIN symbol s ON s.id = e.src_symbol_id
-               JOIN file f ON f.id = s.file_id
-               WHERE f.project_id = ?""",
+                """SELECT COUNT(*) c FROM symbol_edge e
+                   JOIN symbol s ON s.id = e.src_symbol_id
+                   JOIN file f ON f.id = s.file_id
+                   WHERE f.project_id = ?""",
+                (project_id,),
+            ).fetchone()["c"]
+        )
+        sym_total = conn.execute(
+            "SELECT COUNT(*) c FROM symbol s JOIN file f ON f.id=s.file_id WHERE f.project_id=?",
             (project_id,),
         ).fetchone()["c"]
-    )
-    sym_total = conn.execute(
-        "SELECT COUNT(*) c FROM symbol s JOIN file f ON f.id=s.file_id WHERE f.project_id=?",
-        (project_id,),
-    ).fetchone()["c"]
-    stats.symbols_total = int(sym_total)
+        stats.symbols_total = int(sym_total)
 
-    conn.execute(
-        """UPDATE index_run
-           SET finished_at = datetime('now'),
-               files_total = ?, files_changed = ?, symbols_total = ?, edges_total = ?
-           WHERE id = ?""",
-        (stats.files_total, stats.files_changed, stats.symbols_total, stats.edges_total, run_id),
-    )
+        # Finish the run + clear the re-extract flag inside the transaction so
+        # finished_at (which the graph cache and recovery logic key on) and the
+        # flag clear commit atomically with the data they describe.
+        conn.execute(
+            """UPDATE index_run
+               SET finished_at = datetime('now'),
+                   files_total = ?, files_changed = ?, symbols_total = ?, edges_total = ?
+               WHERE id = ?""",
+            (stats.files_total, stats.files_changed, stats.symbols_total, stats.edges_total, run_id),
+        )
+        if needs_reextract:
+            clear_reextract_flag(conn)
     return stats
 
 

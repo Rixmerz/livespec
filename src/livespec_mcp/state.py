@@ -36,12 +36,19 @@ class AppState:
     settings: Settings
     conn: sqlite3.Connection
     _lock: threading.Lock
+    _project_id: int | None = None
 
     @property
     def project_id(self) -> int:
-        return get_or_create_project(
-            self.conn, name=self.settings.workspace.name, root=str(self.settings.workspace)
-        )
+        # Cache after first resolution: this property is read several times per
+        # tool call, and get_or_create_project runs a SELECT (plus a possible
+        # INSERT) each time. The (project, root) mapping is stable for the life
+        # of an AppState — the workspace path is the cache key.
+        if self._project_id is None:
+            self._project_id = get_or_create_project(
+                self.conn, name=self.settings.workspace.name, root=str(self.settings.workspace)
+            )
+        return self._project_id
 
     def lock(self) -> threading.Lock:
         return self._lock
@@ -89,12 +96,29 @@ def get_state(workspace: str | Path | None = None) -> AppState:
         new_state = AppState(settings=settings, conn=conn, _lock=threading.Lock())
         _cache[ws] = new_state
         if len(_cache) > _LRU_MAX:
-            _, evicted = _cache.popitem(last=False)
+            evicted_ws, evicted = _cache.popitem(last=False)
+            # Stop any live watcher FIRST — otherwise its debounced reindex
+            # keeps firing against the connection we are about to close and
+            # dies with "Cannot operate on a closed database", silently
+            # killing the "live" index for that workspace.
+            _stop_watcher_for(evicted_ws)
             try:
                 evicted.conn.close()
             except Exception:
                 pass
         return new_state
+
+
+def _stop_watcher_for(workspace: Path) -> None:
+    """Stop a workspace's watcher on eviction/reset. Imported lazily so the
+    watcher module (and watchdog) load only when a watcher was actually
+    started."""
+    try:
+        from livespec_mcp.domain.watcher import stop_watcher
+
+        stop_watcher(workspace)
+    except Exception:
+        pass
 
 
 def get_mru_state() -> AppState | None:
@@ -113,7 +137,8 @@ def get_mru_state() -> AppState | None:
 def reset_state() -> None:
     """For tests: drop every cached workspace."""
     with _cache_lock:
-        for st in _cache.values():
+        for ws, st in _cache.items():
+            _stop_watcher_for(ws)
             try:
                 st.conn.close()
             except Exception:

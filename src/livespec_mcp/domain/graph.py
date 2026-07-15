@@ -28,8 +28,19 @@ _GRAPH_CACHE_MAX = 8  # one per active workspace; LRU-ish via insertion order
 
 
 def _latest_run_id(conn: sqlite3.Connection, project_id: int) -> int:
+    # Cache generation = the latest FINISHED run that actually changed files.
+    # Two reasons for both filters:
+    #  - finished_at IS NOT NULL: the indexer inserts the run row at the START
+    #    (before symbol writes), so keying on the raw max id would let a load
+    #    during an in-flight index cache a half-built graph under the key that
+    #    stays current after the run finishes.
+    #  - files_changed > 0: a no-op reindex (every watcher tick on a quiet repo
+    #    inserts a finished run with files_changed=0) must not invalidate the
+    #    ~4s / 183MB graph when the symbol/edge tables did not move.
     row = conn.execute(
-        "SELECT id FROM index_run WHERE project_id=? ORDER BY id DESC LIMIT 1",
+        """SELECT id FROM index_run
+           WHERE project_id=? AND finished_at IS NOT NULL AND files_changed > 0
+           ORDER BY id DESC LIMIT 1""",
         (project_id,),
     ).fetchone()
     return int(row["id"]) if row else 0
