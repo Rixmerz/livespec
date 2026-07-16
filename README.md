@@ -198,8 +198,10 @@ fresh index.
 Three steps to serve the Spec Explorer from your API — no manual wiring unless
 you disable autowire:
 
-1. **Install** livespec-mcp in the same environment as your app
-   (`pip install livespec-mcp` or `uv add livespec-mcp`).
+1. **Install** livespec-mcp in the same environment as your app. It is not
+   on PyPI yet — install from source:
+   `uv pip install "git+https://github.com/Rixmerz/livespec-mcp"` (or clone
+   and `uv pip install -e .`).
 
 2. **Index once** (MCP tool or CLI). If the repo has `app = FastAPI(...)` in
    `main.py` or `app.py`, `index_project` auto-builds `.mcp-docs/explorer/`
@@ -505,7 +507,7 @@ In-memory FastMCP `Client(mcp)` so tests run without subprocess or network.
 
 livespec ships two user shapes deliberately:
 
-- **Agents** see the 17-tool default surface and the agentic-read Spec tools
+- **Agents** see the 24-tool default surface and the agentic-read Spec tools
   (`list_specs`, `get_spec_implementation`,
   `propose_specs_from_codebase`, `audit_coverage`). The composite
   `quick_orient` is the canonical first-contact tool — it returns
@@ -547,4 +549,4 @@ data trumped the prior intuition.
 | 20 — v0.15–0.17 | ✅ | RF Explorer static bundle (`export_explorer`), derived RF test coverage + explorer meters, Changes/drill-down/trend/freshness, reproducible self-RFs (`livespec-rf-links.json`) |
 | 21 — v0.18 | ✅ | `PluginVisibilityMiddleware` (per-workspace tool menu, 19→33 after index). `livespec-mcp explorer serve` + FastAPI `mount_explorer` autowire. Explorer landing + Swagger API tab. Search: FTS snake_case + offline vector fallback. **342** default tests |
 | 22 — v0.19 | ✅ | FastAPI HTTP paths + Explorer Try-it; `fastapi init`; brownfield RF bootstrap (`import_requirements_from_markdown` always visible, `[requirements].sync_from`, duplicate-spec warnings); agent tools + PR RF comment CI. **368** default tests |
-| 23 — v0.20 | ✅ | **Breaking (hard cut):** RF → Spec nomenclature + taxonomy. `rf`/`rf_symbol`/`rf_dependency` tables renamed to `spec`/`spec_symbol`/`spec_dependency` with a new `kind` column (`functional_requirement`, `non_functional_requirement`, `adr`, `design`, `constraint`, `epic`, `other`); migration v11 preserves existing `RF-NNN` ids. `@rf:`/`@not_rf` annotations renamed to `@spec:`/`@not_spec`. All RF-prefixed tools renamed (`list_requirements`→`list_specs`, `create_requirement`→`create_spec`, etc.), `livespec-rf` plugin renamed to `livespec-spec`. No aliases — single breaking release. **370** default tests |
+| 23 — v0.20 | ✅ | **Breaking (hard cut):** RF → Spec nomenclature + taxonomy. `rf`/`rf_symbol`/`rf_dependency` tables renamed to `spec`/`spec_symbol`/`spec_dependency` with a new `kind` column (`functional_requirement`, `non_functional_requirement`, `adr`, `design`, `constraint`, `epic`, `other`); migration v11 preserves existing `RF-NNN` ids. `@rf:`/`@not_rf` annotations renamed to `@spec:`/`@not_spec`. All RF-prefixed tools renamed (`list_requirements`→`list_specs`, `create_requirement`→`create_spec`, etc.), `livespec-rf` plugin renamed to `livespec-spec`. No aliases — single breaking release. Followed by an 8-dimension audit whose ~50 fixes landed across six batches (packaging, storage/concurrency, domain correctness, tools, performance, docs). **403** default tests |

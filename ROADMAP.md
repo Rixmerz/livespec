@@ -17,6 +17,46 @@
 
 ---
 
+## 0. Estado v0.20 (addendum, reemplaza al "Estado v0.7" del final)
+
+v0.20 cerró con: (a) el hard-cut RF→Spec + taxonomía `kind`, y (b) una
+auditoría exhaustiva de 8 dimensiones cuyos ~50 hallazgos se corrigieron en
+seis tandas (P1 packaging/boot, P2 storage/concurrencia, P3 correctness del
+domain, P4 capa tools, P5 performance, P6 tests/docs). El build vuelve a
+compilar (`uv build` en CI), las migraciones son transaccionales, hay
+`UNIQUE(project.root)`, el watcher corre aislado, y los hotspots de Django
+(coverage O(V+E), PageRank cacheado, chunking que preserva embeddings) están
+resueltos. Suite: ~403 tests.
+
+### Próximo pilar: **features cross-project (polyrepo / microservicios)**
+
+Un "feature" real abarca varias piezas — front + back, o N microservicios —
+pero hoy livespec es **estrictamente mono-proyecto por repo**: una DB por
+workspace (`<repo>/.mcp-docs/docs.db`), y todo vínculo (`spec_symbol`,
+`symbol_edge`, `spec_dependency`) es una FK dentro de una sola DB. Un Spec del
+backend no puede enlazar un símbolo del frontend, y el call graph no cruza
+repos. Esto choca con la tesis del proyecto (traceability para orgs serias =
+justamente polyrepo/microservicios). Plan en dos fases separables:
+
+- **(A) Membresía cross-project de un Spec.** Que un Spec enlace símbolos de
+  varios proyectos. Barato: el esquema ya soporta múltiples `project` por DB
+  (multi-tenant desde v0.12); apuntar varios roots a una DB compartida
+  (convención de dir padre o `[workspace] group_db` en `.livespec.toml`) hace
+  que `spec_symbol` cruce proyectos dentro del mismo archivo, sin tocar los FK.
+  **Prerrequisito:** el hardening de scoping de la auditoría ya está hecho
+  (H5 `UNIQUE(root)`, M18 `needs_reextract` per-project pendiente, M1
+  `vec_search` scopeado).
+- **(B) Aristas cross-repo "en rutas".** La ruta HTTP es la llave de join
+  entre el call-site del frontend y el handler del backend. Reusa el patrón
+  existente `symbol_ref → _resolve_refs → symbol_edge`: agregar `route_ref`
+  (fetch/axios/OpenAPI del front) → `_resolve_routes` (normalización de
+  plantilla de ruta por framework) → nuevo `edge_type='invokes_route'`
+  cross-project. Empezar solo con HTTP; generalizar "ruta" a "identidad de
+  contrato" (gRPC, colas, GraphQL) después. Confianza/peso ya modelan la
+  incertidumbre de URLs dinámicas.
+
+---
+
 ## 1. Diagnóstico honesto: estado actual (post-v0.7)
 
 ### Lo que está sólido

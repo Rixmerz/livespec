@@ -62,14 +62,18 @@ client cached the short tool list.
 | What implements SPEC-NNN? | `get_spec_implementation(spec_id)` | One round-trip |
 | Coverage gaps | `audit_coverage()` | Orphans, low-confidence links |
 | Brownfield Spec ideas | `propose_specs_from_codebase()` | Heuristic; user approves before create |
-| Docstring Spec hints | `scan_docstrings_for_spec_hints()` | No writes |
 | Dead code candidates | `find_dead_code()` | Respects entry points / `pub` / frameworks |
 | HTTP/CLI entry points | `find_endpoints(framework?)` | Prefer `summary_only=True` if full JSON breaks |
 | Batch link (escape hatch) | `bulk_link_spec_symbols(mappings)` | Configs, SQL, langs without `@spec:` extractor |
 
 ### `livespec-spec` plugin — *mutate Spec state* (operator)
 
-`create_spec`, `update_spec`, `delete_spec`, `link_spec_symbol`, `link_spec_dependency`, `scan_spec_annotations`, `import_specs_from_markdown`, …
+`create_spec`, `update_spec`, `delete_spec`, `link_spec_symbol`, `link_spec_dependency`, `scan_spec_annotations`, `scan_docstrings_for_spec_hints`, … (`import_specs_from_markdown` is always-visible core, not gated).
+
+> The spec-mutation tools above are **plugin-gated**: they appear only once
+> the workspace has spec rows or `LIVESPEC_PLUGINS=spec` (or `=all`) is set.
+> `scan_docstrings_for_spec_hints()` is one of them — do not expect it on a
+> spec-less repo without the override.
 
 Run `scan_spec_annotations()` after bulk doc edits; it also runs automatically at end of `index_project()`.
 

@@ -6,6 +6,8 @@ follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.20.0] - 2026-07-16
+
 ### Breaking — RF → Spec nomenclature + taxonomy (hard cut, no aliases)
 - **Taxonomy:** `RF` (Functional Requirement) generalized to `Spec`, a
   broader concept with a `kind` column: `functional_requirement`,
