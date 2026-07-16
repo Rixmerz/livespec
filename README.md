@@ -198,10 +198,8 @@ fresh index.
 Three steps to serve the Spec Explorer from your API — no manual wiring unless
 you disable autowire:
 
-1. **Install** livespec-mcp in the same environment as your app. It is not
-   on PyPI yet — install from source:
-   `uv pip install "git+https://github.com/Rixmerz/livespec-mcp"` (or clone
-   and `uv pip install -e .`).
+1. **Install** livespec-mcp in the same environment as your app
+   (`pip install livespec-mcp` or `uv add livespec-mcp`).
 
 2. **Index once** (MCP tool or CLI). If the repo has `app = FastAPI(...)` in
    `main.py` or `app.py`, `index_project` auto-builds `.mcp-docs/explorer/`
