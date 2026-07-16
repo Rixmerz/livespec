@@ -82,6 +82,7 @@ def run_index_pipeline(st: AppState, *, force: bool = False, embed: bool = False
         "files_total": stats.files_total,
         "files_changed": stats.files_changed,
         "files_skipped": stats.files_skipped,
+        "files_deleted": stats.files_deleted,
         "symbols_total": stats.symbols_total,
         "edges_total": stats.edges_total,
         "spec_links_created": stats.spec_links_created,
@@ -123,6 +124,11 @@ def _maybe_regenerate_explorer(st: AppState, explorer: bool) -> bool:
     existing bundle, or FastAPI entry autodetect on first index). Any failure
     is logged and swallowed — a bad explorer build must never break the index
     pipeline. Returns whether the bundle was (re)written.
+
+    Refreshes on EVERY index (not gated on code changes) because specs/links
+    can change without any file changing; the cost of the refresh itself was
+    cut by the v0.20 coverage-BFS inversion (H3) and the single
+    compute_endpoints pass, so an always-fresh bundle stays affordable.
     """
     if not _should_build_explorer(st, explorer):
         return False

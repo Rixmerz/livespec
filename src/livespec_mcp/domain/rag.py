@@ -243,7 +243,17 @@ def embed_texts(texts: list[str], kind: str) -> list[list[float]]:
 # ---------- Vector store (sqlite-vec) ----------
 
 
+# Connections that have already loaded the sqlite-vec extension. Keyed by
+# id(conn); the extension persists for the life of the connection, so
+# re-loading it on every search (vec_search + the lanes payload) was pure
+# overhead. A closed connection's id may be reused, but re-loading an
+# already-loaded extension is harmless — this is a fast-path cache, not a lock.
+_VEC_LOADED: set[int] = set()
+
+
 def have_sqlite_vec(conn: sqlite3.Connection) -> bool:
+    if id(conn) in _VEC_LOADED:
+        return True
     try:
         import sqlite_vec
     except ImportError:
@@ -252,6 +262,7 @@ def have_sqlite_vec(conn: sqlite3.Connection) -> bool:
         conn.enable_load_extension(True)
         sqlite_vec.load(conn)
         conn.enable_load_extension(False)
+        _VEC_LOADED.add(id(conn))
         return True
     except Exception:
         return False
@@ -332,35 +343,49 @@ def upsert_chunks(conn: sqlite3.Connection, project_id: int, chunks: Iterable[Ch
 
 
 def rebuild_chunks(conn: sqlite3.Connection, project_id: int) -> dict[str, int]:
-    """Re-chunk every symbol and Spec for the project. Idempotent."""
-    # Wipe existing chunks
-    conn.execute("DELETE FROM chunk WHERE project_id=?", (project_id,))
+    """Re-chunk every symbol and Spec for the project. Idempotent.
 
+    Preserves embeddings across rebuilds: instead of ``DELETE`` + re-insert
+    (which reset every ``embedded_at`` to NULL and forced a full re-embed on
+    any change), it upserts each source — ``upsert_chunks`` REUSES a source's
+    existing rows verbatim when its chunk set is unchanged — and then deletes
+    only the chunks whose source no longer exists. Reads each file ONCE (all
+    its symbols share the read) rather than once per symbol.
+    """
     workspace = Path(
         conn.execute("SELECT root FROM project WHERE id=?", (project_id,)).fetchone()["root"]
     )
 
     sym_count = 0
     spec_count = 0
+    kept_ids: list[int] = []
 
-    # Symbols
+    # Symbols — grouped by file so each file is read exactly once.
     rows = conn.execute(
         """SELECT s.id, s.qualified_name, s.kind, s.signature, s.docstring,
                   s.start_line, s.end_line, f.path AS file_path
            FROM symbol s JOIN file f ON f.id=s.file_id
-           WHERE f.project_id=?""",
+           WHERE f.project_id=?
+           ORDER BY f.path""",
         (project_id,),
     ).fetchall()
+    by_file: OrderedDict[str, list] = OrderedDict()
     for r in rows:
-        path = workspace / r["file_path"]
+        by_file.setdefault(r["file_path"], []).append(r)
+    for file_path, file_rows in by_file.items():
         try:
-            lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
-            body = "\n".join(lines[max(r["start_line"] - 1, 0) : min(r["end_line"], len(lines))])
+            lines = (workspace / file_path).read_text(
+                encoding="utf-8", errors="replace"
+            ).splitlines()
         except OSError:
-            body = ""
-        chunks = chunk_symbol(r, body)
-        upsert_chunks(conn, project_id, chunks)
-        sym_count += len(chunks)
+            lines = []
+        for r in file_rows:
+            body = "\n".join(
+                lines[max(r["start_line"] - 1, 0) : min(r["end_line"], len(lines))]
+            )
+            chunks = chunk_symbol(r, body)
+            kept_ids.extend(upsert_chunks(conn, project_id, chunks))
+            sym_count += len(chunks)
 
     # Specs
     specs = conn.execute(
@@ -368,10 +393,36 @@ def rebuild_chunks(conn: sqlite3.Connection, project_id: int) -> dict[str, int]:
     ).fetchall()
     for r in specs:
         chunks = chunk_spec(r)
-        upsert_chunks(conn, project_id, chunks)
+        kept_ids.extend(upsert_chunks(conn, project_id, chunks))
         spec_count += len(chunks)
 
+    # Delete chunks whose source disappeared (deleted symbols/specs). Uses a
+    # temp table so it stays under SQLite's host-parameter cap on big repos.
+    conn.execute("CREATE TEMP TABLE IF NOT EXISTS _kept_chunks(id INTEGER PRIMARY KEY)")
+    conn.execute("DELETE FROM _kept_chunks")
+    conn.executemany("INSERT OR IGNORE INTO _kept_chunks(id) VALUES(?)", [(i,) for i in kept_ids])
+    conn.execute(
+        "DELETE FROM chunk WHERE project_id=? AND id NOT IN (SELECT id FROM _kept_chunks)",
+        (project_id,),
+    )
+    conn.execute("DELETE FROM _kept_chunks")
+
+    # Prune orphaned vectors (chunk_vec_* rows whose chunk was deleted) so the
+    # vec index doesn't grow monotonically and eat KNN slots. Best-effort.
+    _prune_orphan_vectors(conn)
+
     return {"symbol_chunks": sym_count, "spec_chunks": spec_count}
+
+
+def _prune_orphan_vectors(conn: sqlite3.Connection) -> None:
+    for tbl in ("chunk_vec_code", "chunk_vec_text"):
+        try:
+            conn.execute(
+                f"DELETE FROM {tbl} WHERE chunk_id NOT IN (SELECT id FROM chunk)"
+            )
+        except sqlite3.OperationalError:
+            # vec table absent (sqlite-vec not loaded) — nothing to prune.
+            pass
 
 
 def embed_pending(conn: sqlite3.Connection, project_id: int) -> dict[str, int]:

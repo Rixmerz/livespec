@@ -31,7 +31,7 @@ def test_runtime_registered_names_direct(tmp_path):
         "    pre_save.connect(MyHandler)\n"
         "    app.add_middleware(MyMiddleware)\n"
     )
-    names = _runtime_registered_names(str(f))
+    names = _runtime_registered_names(str(f), f.stat().st_mtime)
     assert "MyLookup" in names
     assert "MyHandler" in names
     assert "MyMiddleware" in names
@@ -43,7 +43,7 @@ def test_runtime_registered_names_keyword_arg(tmp_path):
         "def on_event(): pass\n"
         "event.subscribe(handler=on_event)\n"
     )
-    names = _runtime_registered_names(str(f))
+    names = _runtime_registered_names(str(f), f.stat().st_mtime)
     assert "on_event" in names
 
 
@@ -53,7 +53,7 @@ def test_runtime_registered_names_string_arg_not_collected(tmp_path):
     f.write_text(
         'app.add_middleware("path.to.X")\n'
     )
-    names = _runtime_registered_names(str(f))
+    names = _runtime_registered_names(str(f), f.stat().st_mtime)
     # "path.to.X" is a string — should produce no protected names
     assert len(names) == 0
 
@@ -64,14 +64,14 @@ def test_runtime_registered_names_non_registration_verb_not_collected(tmp_path):
         "class MyThing: pass\n"
         "mylist.append(MyThing)\n"
     )
-    names = _runtime_registered_names(str(f))
+    names = _runtime_registered_names(str(f), f.stat().st_mtime)
     assert "MyThing" not in names
 
 
 def test_runtime_registered_names_parse_failure(tmp_path):
     f = tmp_path / "bad.py"
     f.write_text("def (\n")  # SyntaxError
-    assert _runtime_registered_names(str(f)) == frozenset()
+    assert _runtime_registered_names(str(f), f.stat().st_mtime) == frozenset()
 
 
 def test_runtime_registered_names_multiple_positional_args(tmp_path):
@@ -81,7 +81,7 @@ def test_runtime_registered_names_multiple_positional_args(tmp_path):
         "class Bar: pass\n"
         "registry.register(Foo, Bar)\n"
     )
-    names = _runtime_registered_names(str(f))
+    names = _runtime_registered_names(str(f), f.stat().st_mtime)
     assert "Foo" in names
     assert "Bar" in names
 

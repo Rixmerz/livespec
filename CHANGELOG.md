@@ -251,6 +251,30 @@ follows [SemVer](https://semver.org/).
   `relation='implements'` query) and a non-numeric `confidence` with a
   shaped per-mapping error instead of a raw `ValueError`.
 
+### Performance (audit batch P5)
+- **Chunk rebuild preserves embeddings**: `rebuild_chunks` no longer
+  `DELETE`s every chunk up front (which reset every `embedded_at` to NULL
+  and forced a full re-embed on any edit). It upserts each source — reusing
+  a source's rows verbatim when unchanged — then deletes only chunks whose
+  source disappeared, and reads each file ONCE (all its symbols share the
+  read) instead of once per symbol. Orphaned `chunk_vec_*` rows (vectors for
+  deleted chunks) are pruned so the vec index stops growing monotonically.
+- **Coverage audit is O(V+E), not per-symbol cones**: the implicit-coverage
+  split in `audit_coverage` now runs a single multi-source forward BFS from
+  the spec-linked symbols instead of a depth-10 backward cone per symbol per
+  orphan file (minutes → sub-second on a spec-adopting Django), and batches
+  the file→symbol lookup into one scan instead of a query per file.
+- **PageRank cached per graph**: `quick_orient`, `get_project_overview`, and
+  `propose_specs_from_codebase` share a memoized PageRank on the (already
+  run-cached) `GraphView` — it was recomputed on every call (measured 5.4s
+  on Django's 465K-edge graph).
+- **`find_dead_code` parses each file once**: the five Python dead-code scan
+  helpers now share one `(path, mtime)`-keyed AST-parse cache (was ~5 parses
+  per file, ~11K per call on Django) and re-parse after an edit + re-index
+  (the old path-only cache went stale).
+- **sqlite-vec loads once per connection** instead of on every `vec_search`
+  and lanes-payload call.
+
 ## [0.19.0] - 2026-06-30
 
 ### Changed — brownfield RF bootstrap

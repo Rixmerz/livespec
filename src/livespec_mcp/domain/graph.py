@@ -13,6 +13,19 @@ import networkx as nx
 class GraphView:
     g: nx.DiGraph
     sym_meta: dict[int, dict]  # symbol_id -> {name, qname, kind, file_path, lines}
+    # Lazily-computed, cached unpersonalized PageRank. PageRank is a pure
+    # function of the graph (measured 5.4s on Django's 465K-edge graph) and
+    # was recomputed on every quick_orient / get_project_overview /
+    # propose_specs call. Cached here so it is computed at most once per
+    # GraphView (which is itself cached per finished index run).
+    _pagerank: dict[int, float] | None = None
+
+
+def graph_pagerank(view: GraphView) -> dict[int, float]:
+    """Cached unpersonalized PageRank for a GraphView."""
+    if view._pagerank is None:
+        view._pagerank = page_rank(view.g)
+    return view._pagerank
 
 
 # v0.6 P3: graph cache. Building the NetworkX object from SQL costs ~4s on a
