@@ -249,7 +249,8 @@ def compute_explorer_data(
     # Coverage audit (single load): reused for the per-Spec REAL test coverage
     # (v0.15) below AND the orphan/gaps section later. This is the ONLY
     # graph-backed coverage computation in this builder — no second load.
-    cov = compute_coverage(st)
+    # record=False: a bundle rebuild must not append a trend snapshot (M19).
+    cov = compute_coverage(st, record=False)
     # spec_id -> {test_coverage_ratio, coverage_source, tested_symbols,
     # total_symbols} from compute_coverage's spec_coverage list.
     spec_cov_by_id: dict[str, dict[str, Any]] = {
@@ -289,6 +290,21 @@ def compute_explorer_data(
         if child not in depends_on[parent]:
             depends_on[parent].append(child)
         topo_edges.append({"from": parent, "to": child, "kind": r["kind"]})
+
+    # v0.20 M15: the real endpoint-handler qname set, computed ONCE up front so
+    # each Spec's `endpoints` can be the intersection of its symbols with the
+    # actual endpoint surface. The old filter (`spec_id in
+    # qname_to_specids[qname]`) was always true for a spec's own symbols, so
+    # every linked symbol was mislabeled an "owned endpoint" and
+    # `dashboard.with_endpoints` was inflated.
+    # Computed once and reused by the full endpoints section below (was
+    # computed twice — a real cost on a large repo where it ast-parses files).
+    raw_endpoints = compute_endpoints(st, framework=None)
+    _endpoint_handler_qnames = {
+        ep.get("qualified_name")
+        for ep in raw_endpoints
+        if ep.get("qualified_name")
+    }
 
     specs: list[dict[str, Any]] = []
     total_spec_symbols = 0
@@ -339,13 +355,10 @@ def compute_explorer_data(
         uncovered_symbols = list(rc["uncovered_symbols"]) if rc else []
         uncovered_symbols_count = int(rc["uncovered_symbols_count"]) if rc else 0
         dev_state = _derive_dev_state(len(symbols), coverage, test_coverage_ratio)
-        # Endpoints owned by this Spec: endpoint handler qnames linked to it.
+        # Endpoints owned by this Spec: this Spec's linked symbols that are
+        # ACTUALLY endpoint handlers (intersect with the real endpoint set).
         owned_endpoints = sorted(
-            {
-                sr["qname"]
-                for sr in sym_rows
-                if spec_id in qname_to_specids.get(sr["qname"], [])
-            }
+            {sr["qname"] for sr in sym_rows if sr["qname"] in _endpoint_handler_qnames}
         )
         specs.append(
             {
@@ -374,7 +387,7 @@ def compute_explorer_data(
     # `kind` (tool/resource/prompt/fixture/other) from its decorator, then
     # split fixtures out of the API surface so the headline count reflects
     # the real surface (tools + resources + prompts + framework routes).
-    raw_endpoints = compute_endpoints(st, framework=None)
+    # raw_endpoints computed once above (reused here).
     endpoints: list[dict[str, Any]] = []
     fixtures: list[dict[str, Any]] = []
     # qname -> signature lookup for endpoint handlers

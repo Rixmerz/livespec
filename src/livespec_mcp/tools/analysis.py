@@ -44,6 +44,42 @@ _INFRA_NAME_SUFFIXES = ("_state", "_settings", "_config", "_session")
 _PAYLOAD_WARN_BYTES = 500 * 1024
 _DEFAULT_META_BYTES = 400
 
+# SQLite caps host parameters at 999 (older builds) / 32766 (modern). A depth-5
+# caller cone on a huge repo can exceed it, raising a raw OperationalError from
+# an `IN (?, ?, ...)` clause. Chunk such queries under a cap safe on every build.
+_SQL_IN_CHUNK = 900
+
+
+def _like_escape(s: str) -> str:
+    """Escape LIKE wildcards so a literal query matches literally.
+
+    Pair with ``LIKE ? ESCAPE '\\'`` in the SQL. Escapes the backslash first.
+    """
+    return s.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
+def _select_in_chunks(
+    conn,
+    sql_template: str,
+    ids,
+    *,
+    prefix_params: tuple = (),
+    suffix_params: tuple = (),
+) -> list:
+    """Run ``sql_template`` (containing one ``{in}`` marker) over ``ids`` in
+    parameter-safe chunks and return all rows. Bound params are ordered
+    ``prefix_params + chunk_ids + suffix_params`` for each chunk."""
+    ids = list(ids)
+    if not ids:
+        return []
+    out: list = []
+    for i in range(0, len(ids), _SQL_IN_CHUNK):
+        batch = ids[i : i + _SQL_IN_CHUNK]
+        ph = ",".join("?" * len(batch))
+        sql = sql_template.replace("{in}", ph)
+        out.extend(conn.execute(sql, (*prefix_params, *batch, *suffix_params)).fetchall())
+    return out
+
 
 def _payload_warning(
     total_count: int,
@@ -89,6 +125,10 @@ def _grep_indexed_files_core(
     if kind:
         sql += " AND language=?"
         params.append(kind)
+    # Stable ORDER BY: the cursor slices this list, so an unordered scan
+    # (rowid order churns after re-index) would skip/duplicate rows across
+    # a paginated walk that spans a reindex.
+    sql += " ORDER BY path"
     file_rows = st.conn.execute(sql, params).fetchall()
 
     try:
@@ -1424,7 +1464,7 @@ def compute_spec_test_coverage(
     return out
 
 
-def compute_coverage(st: AppState) -> dict[str, Any]:
+def compute_coverage(st: AppState, *, record: bool = True) -> dict[str, Any]:
     """Module-level shared computation: the full unpaginated coverage audit.
 
     Both ``audit_coverage`` (the paginated tool wrapper) and
@@ -1596,22 +1636,25 @@ def compute_coverage(st: AppState) -> dict[str, Any]:
     # v0.16 D: record one coverage trend snapshot per audit. The avg +
     # verified-Spec count + per-Spec ratios are appended to spec_coverage_snapshot
     # so the explorer can plot coverage over time. Best-effort: a recording
-    # failure must never break the audit itself.
-    try:
-        from datetime import UTC, datetime
+    # failure must never break the audit itself. v0.20 M19: skip recording on
+    # summary_only / cursor pages / explorer regen (record=False) so a
+    # readOnlyHint tool doesn't write on every paginated fetch or bundle build.
+    if record:
+        try:
+            from datetime import UTC, datetime
 
-        from livespec_mcp.storage import trends
+            from livespec_mcp.storage import trends
 
-        trends.record_snapshot(
-            st.conn,
-            pid,
-            per_spec={d["spec_id"]: d["test_coverage_ratio"] for d in spec_coverage},
-            avg=avg_test_coverage if spec_coverage else None,
-            verified_count=specs_with_any_test_coverage,
-            ts=datetime.now(UTC).isoformat(),
-        )
-    except Exception:
-        pass
+            trends.record_snapshot(
+                st.conn,
+                pid,
+                per_spec={d["spec_id"]: d["test_coverage_ratio"] for d in spec_coverage},
+                avg=avg_test_coverage if spec_coverage else None,
+                verified_count=specs_with_any_test_coverage,
+                ts=datetime.now(UTC).isoformat(),
+            )
+        except Exception:
+            pass
 
     counts = {
         "modules_without_spec": len(modules_no_spec),
@@ -1653,7 +1696,17 @@ def _git_diff_changed_files(
     """
     try:
         proc = subprocess.run(
-            ["git", "-C", ws_root, "diff", "--name-only", f"{base_ref}..{head_ref}"],
+            # --name-status -M: detect renames so the OLD path (which holds the
+            #   indexed symbols) is included alongside the new one — a plain
+            #   --name-only rename shows only the new path, dropping the whole
+            #   caller cone / affected specs for that file.
+            # --end-of-options: a ref beginning with '-' can otherwise be
+            #   parsed as a git option (e.g. --output=... → arbitrary file
+            #   write). This guards the caller-supplied range token.
+            [
+                "git", "-C", ws_root, "diff", "--name-status", "-M",
+                "--end-of-options", f"{base_ref}..{head_ref}",
+            ],
             capture_output=True,
             text=True,
             check=True,
@@ -1701,7 +1754,27 @@ def _git_diff_changed_files(
             hint="narrow the ref range or check for a runaway git hook",
         )
 
-    return [p for p in proc.stdout.splitlines() if p.strip()], None
+    # Parse --name-status: "<status>\t<path>" or, for renames/copies,
+    # "R<score>\t<old>\t<new>". Include both old and new for rename/copy so the
+    # old path's indexed symbols still resolve.
+    changed: list[str] = []
+    seen: set[str] = set()
+    for line in proc.stdout.splitlines():
+        if not line.strip():
+            continue
+        parts = line.split("\t")
+        status = parts[0]
+        paths = parts[1:]
+        if status[:1] in ("R", "C") and len(paths) >= 2:
+            candidates = [paths[0], paths[1]]
+        else:
+            candidates = paths[:1]
+        for p in candidates:
+            p = p.strip()
+            if p and p not in seen:
+                seen.add(p)
+                changed.append(p)
+    return changed, None
 
 
 def compute_diff_spec_impact(
@@ -1778,14 +1851,15 @@ def compute_diff_spec_impact(
         return empty
 
     # Map every touched symbol id -> the Specs that link it.
-    placeholders = ",".join("?" * len(all_touched))
     sym_to_specs: dict[int, list[str]] = {}
     spec_titles: dict[str, str] = {}
-    for r in st.conn.execute(
-        f"""SELECT rs.symbol_id, r.spec_id, r.title
+    for r in _select_in_chunks(
+        st.conn,
+        """SELECT rs.symbol_id, r.spec_id, r.title
             FROM spec_symbol rs JOIN spec r ON r.id = rs.spec_id
-            WHERE r.project_id=? AND rs.symbol_id IN ({placeholders})""",
-        [pid, *list(all_touched)],
+            WHERE r.project_id=? AND rs.symbol_id IN ({in})""",
+        all_touched,
+        prefix_params=(pid,),
     ):
         sym_to_specs.setdefault(int(r["symbol_id"]), []).append(r["spec_id"])
         spec_titles[r["spec_id"]] = r["title"]
@@ -2026,29 +2100,34 @@ def register(mcp: FastMCP) -> None:
         separators.""" + WORKSPACE_DOCSTRING_NOTE
         st = get_state(workspace)
         pid = st.project_id
+        # Clamp limit: a negative value becomes SQLite `LIMIT -1` (unbounded).
+        safe_limit = max(1, min(int(limit), 1000))
 
         # Normalize separators so `::` queries match `.`-separated stored
         # qnames and vice-versa. SQLite's LIKE doesn't support regex, so we
         # use the REPLACE() function on the column to compare normalized
-        # forms. The query is normalized in Python before binding.
+        # forms. The query is normalized in Python before binding. Escape LIKE
+        # wildcards (% and _) so a literal query containing them matches
+        # literally instead of acting as a wildcard.
         normalized_query = query.replace("::", ".").replace("/", ".")
-        like = f"%{normalized_query}%"
+        raw_like = f"%{_like_escape(query)}%"
+        norm_like = f"%{_like_escape(normalized_query)}%"
         sql = [
             """SELECT s.id, s.name, s.qualified_name, s.kind, s.signature,
                       s.start_line, s.end_line, f.path as file_path
                FROM symbol s JOIN file f ON f.id=s.file_id
                WHERE f.project_id=? AND (
-                   s.name LIKE ?
-                   OR s.qualified_name LIKE ?
-                   OR REPLACE(s.qualified_name, '::', '.') LIKE ?
+                   s.name LIKE ? ESCAPE '\\'
+                   OR s.qualified_name LIKE ? ESCAPE '\\'
+                   OR REPLACE(s.qualified_name, '::', '.') LIKE ? ESCAPE '\\'
                )"""
         ]
-        args: list[Any] = [pid, f"%{query}%", f"%{query}%", like]
+        args: list[Any] = [pid, raw_like, raw_like, norm_like]
         if kind:
             sql.append("AND s.kind = ?")
             args.append(kind)
         sql.append("ORDER BY length(s.qualified_name) LIMIT ?")
-        args.append(limit)
+        args.append(safe_limit)
         rows = st.conn.execute(" ".join(sql), args).fetchall()
         out: dict[str, Any] = {"matches": [dict(r) for r in rows]}
         if not rows:
@@ -2301,6 +2380,14 @@ def register(mcp: FastMCP) -> None:
             except (json.JSONDecodeError, TypeError):
                 pass
 
+        # v0.20 M16: surface any agent_scratch note for this qname so notes
+        # written via agent_scratch() are actually readable (the tool was
+        # write-only before — nothing ever SELECTed them back).
+        scratch_row = st.conn.execute(
+            "SELECT note, updated_at FROM agent_scratch WHERE project_id=? AND qname=?",
+            (pid, sym["qualified_name"]),
+        ).fetchone()
+
         return {
             "qualified_name": sym["qualified_name"],
             "kind": sym["kind"],
@@ -2316,6 +2403,11 @@ def register(mcp: FastMCP) -> None:
             "top_callers": _topn(callers_all),
             "top_callees": _topn(callees_all),
             "specs": [dict(r) for r in specs],
+            "scratch_note": (
+                {"note": scratch_row["note"], "updated_at": scratch_row["updated_at"]}
+                if scratch_row
+                else None
+            ),
         }
 
     @mcp.tool(annotations={"readOnlyHint": True, "idempotentHint": True})
@@ -2356,15 +2448,15 @@ def register(mcp: FastMCP) -> None:
         def specs_for_symbols(ids: set[int]) -> list[dict]:
             if not ids:
                 return []
-            placeholders = ",".join("?" * len(ids))
             return [
                 dict(r)
-                for r in st.conn.execute(
-                    f"""SELECT DISTINCT r.spec_id, r.title, r.status, r.priority
+                for r in _select_in_chunks(
+                    st.conn,
+                    """SELECT DISTINCT r.spec_id, r.title, r.status, r.priority
                         FROM spec_symbol rs JOIN spec r ON r.id=rs.spec_id
-                        WHERE rs.symbol_id IN ({placeholders})""",
-                    list(ids),
-                ).fetchall()
+                        WHERE rs.symbol_id IN ({in})""",
+                    ids,
+                )
             ]
 
         def _paginate_meta(ids: set[int]) -> tuple[list[dict], int, int | None]:
@@ -2499,11 +2591,11 @@ def register(mcp: FastMCP) -> None:
             # All Spec ids whose impact contributes to this analysis: target +
             # the set of Specs that transitively depend on it (cascade).
             all_spec_ids = {int(spec["id"])} | dependent_spec_ids
-            placeholders = ",".join("?" * len(all_spec_ids))
-            sid_rows = st.conn.execute(
-                f"SELECT DISTINCT symbol_id FROM spec_symbol WHERE spec_id IN ({placeholders})",
-                list(all_spec_ids),
-            ).fetchall()
+            sid_rows = _select_in_chunks(
+                st.conn,
+                "SELECT DISTINCT symbol_id FROM spec_symbol WHERE spec_id IN ({in})",
+                all_spec_ids,
+            )
             sids = [int(r["symbol_id"]) for r in sid_rows]
 
             if not sids:
@@ -2517,28 +2609,66 @@ def register(mcp: FastMCP) -> None:
             backward: set[int] = set()
             for sid in sids:
                 if sid in view.g:
-                    forward |= descendants_within(view.g, sid, max_depth)
-                    backward |= ancestors_within(view.g, sid, max_depth)
+                    # v0.20 H13: honor min_weight like the symbol/file branches
+                    # so weight-0.5 resolver fan-out doesn't bloat the cone.
+                    forward |= descendants_within(view.g, sid, max_depth, min_weight=min_weight)
+                    backward |= ancestors_within(view.g, sid, max_depth, min_weight=min_weight)
 
             dep_spec_meta: list[dict[str, Any]] = []
             if dependent_spec_ids:
-                dep_placeholders = ",".join("?" * len(dependent_spec_ids))
                 dep_spec_meta = [
                     dict(r)
-                    for r in st.conn.execute(
-                        f"""SELECT spec_id, title, status, priority FROM spec
-                            WHERE id IN ({dep_placeholders})""",
-                        list(dependent_spec_ids),
+                    for r in _select_in_chunks(
+                        st.conn,
+                        """SELECT spec_id, title, status, priority FROM spec
+                            WHERE id IN ({in})""",
+                        dependent_spec_ids,
                     )
                 ]
 
-            return {
-                "spec_id": spec["spec_id"],
-                "dependent_specs": dep_spec_meta,
-                "implementing_symbols": [view.sym_meta[n] for n in sids if n in view.sym_meta],
-                "downstream": [view.sym_meta[n] for n in forward if n in view.sym_meta],
-                "upstream_callers": [view.sym_meta[n] for n in backward if n in view.sym_meta],
-            }
+            impl_ids = {n for n in sids if n in view.sym_meta}
+            # v0.20 H13: the spec branch was returning three FULL unpaginated
+            # symbol lists (depth-5 cones unioned over every linked symbol AND
+            # every dependent spec) — the exact 4-7M-char payload class the v0.7
+            # pagination contract exists to prevent. Honor summary_only + the
+            # limit/cursor page + exact counts, like the symbol/file branches.
+            if summary_only:
+                return {
+                    "spec_id": spec["spec_id"],
+                    "dependent_specs": dep_spec_meta,
+                    "counts": {
+                        "implementing_symbols": len(impl_ids),
+                        "downstream": len([n for n in forward if n in view.sym_meta]),
+                        "upstream_callers": len([n for n in backward if n in view.sym_meta]),
+                    },
+                }
+            impl_page, impl_total, impl_next = _paginate_meta(impl_ids)
+            down_page, down_total, down_next = _paginate_meta(forward)
+            up_page, up_total, up_next = _paginate_meta(backward)
+            warn = _payload_warning(
+                max(impl_total, down_total, up_total),
+                limit=limit,
+                summary_only=summary_only,
+            )
+            return _attach_payload_warning(
+                {
+                    "spec_id": spec["spec_id"],
+                    "dependent_specs": dep_spec_meta,
+                    "implementing_symbols": impl_page,
+                    "downstream": down_page,
+                    "upstream_callers": up_page,
+                    "counts": {
+                        "implementing_symbols": impl_total,
+                        "downstream": down_total,
+                        "upstream_callers": up_total,
+                    },
+                    "next_cursor": next(
+                        (c for c in (impl_next, down_next, up_next) if c is not None),
+                        None,
+                    ),
+                },
+                warn,
+            )
         return mcp_error(
             f"Unknown target_type '{target_type}'",
             hint="target_type must be one of: 'symbol', 'file', 'spec'",
@@ -2985,8 +3115,10 @@ def register(mcp: FastMCP) -> None:
         """
         st = get_state(workspace)
 
-        # v0.7 B3: pagination over the shared compute helper.
-        cov = compute_coverage(st)
+        # v0.7 B3: pagination over the shared compute helper. v0.20 M19: only
+        # record a trend snapshot on the primary (first-page, full) fetch —
+        # not on summary_only or cursor pages.
+        cov = compute_coverage(st, record=(cursor == 0 and not summary_only))
         counts = cov["counts"]
         modules_no_spec = cov["modules_without_spec"]
         modules_implicit = cov["modules_implicitly_covered"]
@@ -3088,7 +3220,8 @@ def register(mcp: FastMCP) -> None:
         test_rows = st.conn.execute(
             """SELECT s.id, s.qualified_name, s.kind, f.path AS file_path
                FROM symbol s JOIN file f ON f.id=s.file_id
-               WHERE f.project_id=? AND s.kind IN ('function', 'method')""",
+               WHERE f.project_id=? AND s.kind IN ('function', 'method')
+               ORDER BY f.path, s.start_line, s.qualified_name""",
             (pid,),
         ).fetchall()
         test_syms = [dict(r) for r in test_rows if is_test_path(r["file_path"])]
@@ -3219,12 +3352,12 @@ def register(mcp: FastMCP) -> None:
         all_touched = changed_sym_ids | impacted
         affected_specs: list[dict[str, Any]] = []
         if all_touched:
-            placeholders = ",".join("?" * len(all_touched))
-            for r in st.conn.execute(
-                f"""SELECT DISTINCT r.spec_id, r.title, r.status, r.priority
+            for r in _select_in_chunks(
+                st.conn,
+                """SELECT DISTINCT r.spec_id, r.title, r.status, r.priority
                     FROM spec_symbol rs JOIN spec r ON r.id = rs.spec_id
-                    WHERE rs.symbol_id IN ({placeholders})""",
-                list(all_touched),
+                    WHERE rs.symbol_id IN ({in})""",
+                all_touched,
             ):
                 affected_specs.append(dict(r))
 
@@ -3256,13 +3389,14 @@ def register(mcp: FastMCP) -> None:
 
         suggested_tests_set: set[str] = set()
         if all_touched:
-            placeholders = ",".join("?" * len(all_touched))
-            for r in st.conn.execute(
-                f"""SELECT DISTINCT f.path FROM symbol_edge e
+            for r in _select_in_chunks(
+                st.conn,
+                """SELECT DISTINCT f.path FROM symbol_edge e
                     JOIN symbol s ON s.id = e.src_symbol_id
                     JOIN file f ON f.id = s.file_id
-                    WHERE f.project_id=? AND e.dst_symbol_id IN ({placeholders})""",
-                [pid, *list(all_touched)],
+                    WHERE f.project_id=? AND e.dst_symbol_id IN ({in})""",
+                all_touched,
+                prefix_params=(pid,),
             ):
                 if _looks_like_test_file(r["path"]):
                     suggested_tests_set.add(r["path"])

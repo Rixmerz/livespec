@@ -8,6 +8,11 @@ from typing import Any
 
 from livespec_mcp.domain.md_specs import parse_specs_markdown
 
+# spec_symbol.relation is a free-text column, but the query surface only knows
+# these three — a typo like 'implement' would store silently and be invisible
+# to every relation='implements'/'tests'/'references' filter.
+_VALID_RELATIONS = frozenset({"implements", "tests", "references"})
+
 
 def scan_duplicate_spec_markdown_specs(
     workspace: Path,
@@ -159,7 +164,35 @@ def bulk_link_spec_symbols_impl(st: Any, mappings: list[dict[str, Any]]) -> dict
             n_failed += 1
             continue
         relation = m.get("relation", "implements")
-        confidence = float(m.get("confidence", 1.0))
+        if relation not in _VALID_RELATIONS:
+            results.append(
+                {
+                    "spec_id": spec_id,
+                    "symbol_qname": symbol_qname,
+                    "ok": False,
+                    "linked": False,
+                    "error": (
+                        f"invalid relation '{relation}' — must be one of "
+                        f"{sorted(_VALID_RELATIONS)}"
+                    ),
+                }
+            )
+            n_failed += 1
+            continue
+        try:
+            confidence = float(m.get("confidence", 1.0))
+        except (TypeError, ValueError):
+            results.append(
+                {
+                    "spec_id": spec_id,
+                    "symbol_qname": symbol_qname,
+                    "ok": False,
+                    "linked": False,
+                    "error": f"confidence must be a number, got {m.get('confidence')!r}",
+                }
+            )
+            n_failed += 1
+            continue
         source = m.get("source", "manual")
         spec = st.conn.execute(
             "SELECT id FROM spec WHERE project_id=? AND spec_id=?", (pid, spec_id)

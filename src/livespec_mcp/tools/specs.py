@@ -13,6 +13,7 @@ Spec-link naming (v0.20 renamed RF -> Spec; taxonomy expanded via `kind`):
 from __future__ import annotations
 
 import re
+import sqlite3
 from collections import deque
 from typing import Any, Literal
 
@@ -62,16 +63,19 @@ _GENERIC_MODULE_NAMES = {
 
 
 def _next_spec_id(conn, project_id: int) -> str:
-    row = conn.execute(
-        "SELECT spec_id FROM spec WHERE project_id=? ORDER BY id DESC LIMIT 1",
-        (project_id,),
-    ).fetchone()
-    n = 1
-    if row:
-        digits = "".join(c for c in row["spec_id"] if c.isdigit())
+    # Next id = MAX numeric suffix across the project + 1. Reading the
+    # LAST-INSERTED row instead collided whenever specs were imported out of
+    # numeric order (markdown import, or legacy RF-042 ids preserved by
+    # migration v11) — e.g. last-inserted SPEC-001b next to an existing
+    # SPEC-002 produced a duplicate SPEC-002.
+    best = 0
+    for r in conn.execute(
+        "SELECT spec_id FROM spec WHERE project_id=?", (project_id,)
+    ):
+        digits = "".join(c for c in r["spec_id"] if c.isdigit())
         if digits:
-            n = int(digits) + 1
-    return f"SPEC-{n:03d}"
+            best = max(best, int(digits))
+    return f"SPEC-{best + 1:03d}"
 
 
 def _noop_decorator(**_kwargs: Any):
@@ -143,11 +147,19 @@ def register(
                     "INSERT INTO module(project_id, name) VALUES(?,?)", (pid, module)
                 )
                 module_id = int(cur.lastrowid)
-        cur = st.conn.execute(
-            """INSERT INTO spec(project_id, spec_id, kind, title, description, module_id, status, priority)
-               VALUES(?,?,?,?,?,?,?,?)""",
-            (pid, sid, kind, title, description, module_id, status, priority),
-        )
+        try:
+            cur = st.conn.execute(
+                """INSERT INTO spec(project_id, spec_id, kind, title, description, module_id, status, priority)
+                   VALUES(?,?,?,?,?,?,?,?)""",
+                (pid, sid, kind, title, description, module_id, status, priority),
+            )
+        except sqlite3.IntegrityError:
+            # UNIQUE(project_id, spec_id) — surface a shaped error instead of a
+            # raw sqlite internals string leaking to the client.
+            return mcp_error(
+                f"Spec '{sid}' already exists in this project.",
+                hint="use update_spec to modify it, or omit spec_id to auto-number",
+            )
         return {"id": int(cur.lastrowid), "spec_id": sid, "kind": kind, "title": title}
 
     @mutation_tool(annotations={"readOnlyHint": False, "idempotentHint": True})
@@ -231,11 +243,17 @@ def register(
         if module:
             sql.append("AND m.name=?")
             args.append(module)
-        sql.append("ORDER BY sp.spec_id LIMIT ?")
-        args.append(limit)
-        rows = [dict(r) for r in st.conn.execute(" ".join(sql), args).fetchall()]
+        # Apply has_implementation in SQL BEFORE the LIMIT — filtering in Python
+        # after the slice let a page silently shrink to 0 while matching specs
+        # existed beyond the limit.
         if has_implementation is not None:
-            rows = [r for r in rows if (r["link_count"] > 0) == has_implementation]
+            op = ">" if has_implementation else "="
+            sql.append(
+                f"AND (SELECT COUNT(*) FROM spec_symbol ss WHERE ss.spec_id=sp.id) {op} 0"
+            )
+        sql.append("ORDER BY sp.spec_id LIMIT ?")
+        args.append(max(1, min(int(limit), 1000)))
+        rows = [dict(r) for r in st.conn.execute(" ".join(sql), args).fetchall()]
         return {"specs": rows}
 
     def _do_link_spec_symbol(
@@ -909,23 +927,23 @@ def register(
         if direction in ("backward", "both"):
             walk(root_id, forward=False)
 
-        # Resolve metadata for visited specs
-        if visited:
-            placeholders = ",".join("?" * len(visited))
-            spec_meta = {
-                int(r["id"]): {
+        # Resolve metadata for visited specs (chunked to stay under SQLite's
+        # host-parameter cap on a very large dependency graph).
+        spec_meta: dict[int, dict[str, Any]] = {}
+        visited_ids = list(visited)
+        for i in range(0, len(visited_ids), 900):
+            batch = visited_ids[i : i + 900]
+            ph = ",".join("?" * len(batch))
+            for r in st.conn.execute(
+                f"SELECT id, spec_id, title, status, priority FROM spec WHERE id IN ({ph})",
+                batch,
+            ):
+                spec_meta[int(r["id"])] = {
                     "spec_id": r["spec_id"],
                     "title": r["title"],
                     "status": r["status"],
                     "priority": r["priority"],
                 }
-                for r in st.conn.execute(
-                    f"SELECT id, spec_id, title, status, priority FROM spec WHERE id IN ({placeholders})",
-                    list(visited),
-                )
-            }
-        else:
-            spec_meta = {}
 
         # Dedupe edges
         edge_keys: set[tuple[int, int, str]] = set()
