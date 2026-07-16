@@ -32,8 +32,8 @@ from livespec_mcp.domain.graph import (
     GraphView,
     ancestors_within,
     descendants_within,
+    graph_pagerank,
     load_graph,
-    page_rank,
 )
 from livespec_mcp.state import AppState, get_state
 from livespec_mcp.tools._errors import mcp_error
@@ -385,8 +385,24 @@ def _collect_module_refs(node: ast.AST, into: set[str]) -> None:
             _collect_module_refs(child, into)
 
 
-@lru_cache(maxsize=128)
-def _used_nested_def_names(file_path_abs: str) -> frozenset[str]:
+@lru_cache(maxsize=4096)
+def _cached_ast_parse(file_path_abs: str, mtime: float):
+    """Parse a Python file ONCE per (path, mtime).
+
+    The dead-code scan helpers below each used to read + ``ast.parse`` the same
+    file independently — ~5 parses per file, ~11K parses per ``find_dead_code``
+    on Django — and cached by path alone, so results went stale after an edit.
+    They now share this cache. ``mtime`` (from the DB ``file.mtime``, taken at
+    index time) is part of the key so an edit + re-index reparses.
+    """
+    try:
+        source = Path(file_path_abs).read_text(encoding="utf-8", errors="replace")
+        return ast.parse(source)
+    except (OSError, SyntaxError, ValueError):
+        return None
+
+
+def _used_nested_def_names(file_path_abs: str, mtime: float) -> frozenset[str]:
     """Names of function/class defs nested inside another function whose
     name is referenced within the enclosing function's body.
 
@@ -408,10 +424,8 @@ def _used_nested_def_names(file_path_abs: str) -> frozenset[str]:
     `_module_level_referenced_names`: parse failure → empty set,
     Python-only.
     """
-    try:
-        source = Path(file_path_abs).read_text(encoding="utf-8", errors="replace")
-        tree = ast.parse(source)
-    except (OSError, SyntaxError, ValueError):
+    tree = _cached_ast_parse(file_path_abs, mtime)
+    if tree is None:
         return frozenset()
 
     used: set[str] = set()
@@ -484,8 +498,7 @@ def _used_nested_def_names(file_path_abs: str) -> frozenset[str]:
     return frozenset(used)
 
 
-@lru_cache(maxsize=128)
-def _publicly_exported_names(file_path_abs: str) -> frozenset[str]:
+def _publicly_exported_names(file_path_abs: str, mtime: float) -> frozenset[str]:
     """Names a Python file exposes as part of its public surface.
 
     v0.10: handles two patterns the static caller graph doesn't see:
@@ -510,10 +523,8 @@ def _publicly_exported_names(file_path_abs: str) -> frozenset[str]:
 
     Cached. Non-Python files / parse failures return empty.
     """
-    try:
-        source = Path(file_path_abs).read_text(encoding="utf-8", errors="replace")
-        tree = ast.parse(source)
-    except (OSError, SyntaxError, ValueError):
+    tree = _cached_ast_parse(file_path_abs, mtime)
+    if tree is None:
         return frozenset()
     out: set[str] = set()
     for node in tree.body:
@@ -577,8 +588,7 @@ _REGISTRATION_VERBS: frozenset[str] = frozenset({
 })
 
 
-@lru_cache(maxsize=128)
-def _runtime_registered_names(file_path_abs: str) -> frozenset[str]:
+def _runtime_registered_names(file_path_abs: str, mtime: float) -> frozenset[str]:
     """Names passed as arguments to known runtime-registration method calls.
 
     v0.11 P3: covers the pattern where a class or function is handed to a
@@ -602,10 +612,8 @@ def _runtime_registered_names(file_path_abs: str) -> frozenset[str]:
 
     Cached. Non-Python files / parse failures return empty frozenset.
     """
-    try:
-        source = Path(file_path_abs).read_text(encoding="utf-8", errors="replace")
-        tree = ast.parse(source)
-    except (OSError, SyntaxError, ValueError):
+    tree = _cached_ast_parse(file_path_abs, mtime)
+    if tree is None:
         return frozenset()
 
     out: set[str] = set()
@@ -630,8 +638,7 @@ def _runtime_registered_names(file_path_abs: str) -> frozenset[str]:
     return frozenset(out)
 
 
-@lru_cache(maxsize=128)
-def _entry_point_decorator_aliases(file_path_abs: str) -> frozenset[str]:
+def _entry_point_decorator_aliases(file_path_abs: str, mtime: float) -> frozenset[str]:
     """Alias names assigned to entry-point decorator factories, lowercased.
 
     v0.13 P0: the plugin-framework pattern
@@ -649,10 +656,8 @@ def _entry_point_decorator_aliases(file_path_abs: str) -> frozenset[str]:
 
     Cached. Non-Python files / parse failures return empty frozenset.
     """
-    try:
-        source = Path(file_path_abs).read_text(encoding="utf-8", errors="replace")
-        tree = ast.parse(source)
-    except (OSError, SyntaxError, ValueError):
+    tree = _cached_ast_parse(file_path_abs, mtime)
+    if tree is None:
         return frozenset()
 
     def _lastseg(node: ast.AST) -> str | None:
@@ -772,8 +777,7 @@ def _treesitter_used_nested_def_names(file_path_abs: str, language: str) -> froz
     return frozenset(used)
 
 
-@lru_cache(maxsize=128)
-def _module_level_referenced_names(file_path_abs: str) -> frozenset[str]:
+def _module_level_referenced_names(file_path_abs: str, mtime: float) -> frozenset[str]:
     """Names referenced at Python module top-level (outside any function /
     class body). Captures three patterns that fool the "zero callers ⇒
     dead code" heuristic:
@@ -790,10 +794,8 @@ def _module_level_referenced_names(file_path_abs: str) -> frozenset[str]:
     other-language extractor work lands later). On parse failure we
     return empty rather than raising — find_dead_code keeps working.
     """
-    try:
-        source = Path(file_path_abs).read_text(encoding="utf-8", errors="replace")
-        tree = ast.parse(source)
-    except (OSError, SyntaxError, ValueError):
+    tree = _cached_ast_parse(file_path_abs, mtime)
+    if tree is None:
         return frozenset()
     refs: set[str] = set()
     for top_node in tree.body:
@@ -1072,12 +1074,14 @@ def compute_endpoints(
         workspace_path = st.settings.workspace
         alias_lastsegs: set[str] = set()
         for path_row in st.conn.execute(
-            "SELECT f.path FROM file f WHERE f.project_id=? AND f.path LIKE '%.py'",
+            "SELECT f.path, f.mtime FROM file f WHERE f.project_id=? AND f.path LIKE '%.py'",
             (pid,),
         ):
             try:
                 abs_path = str(workspace_path / path_row["path"])
-                alias_lastsegs |= _entry_point_decorator_aliases(abs_path)
+                alias_lastsegs |= _entry_point_decorator_aliases(
+                    abs_path, float(path_row["mtime"])
+                )
             except Exception:
                 continue
 
@@ -1542,24 +1546,39 @@ def compute_coverage(st: AppState, *, record: bool = True) -> dict[str, Any]:
                 (pid,),
             )
         }
+        # Inverted traversal (v0.20 H3): a file is implicitly covered iff one
+        # of its symbols sits in the FORWARD cone of a spec-linked symbol (i.e.
+        # a spec-linked symbol transitively calls into it). One multi-source
+        # forward BFS from all spec-linked symbols gives that reachable set in
+        # O(V+E) — instead of a depth-10 BACKWARD cone per symbol per orphan
+        # file (O(files x symbols x BFS), minutes on a spec-adopting Django).
+        reached: set[int] = set()
+        if spec_linked_sids:
+            seen_r = {s for s in spec_linked_sids if s in view.g}
+            frontier_r: deque[tuple[int, int]] = deque((s, 0) for s in seen_r)
+            while frontier_r:
+                node, d = frontier_r.popleft()
+                if d >= 10:
+                    continue
+                for succ in view.g.successors(node):
+                    if succ not in seen_r:
+                        seen_r.add(succ)
+                        frontier_r.append((succ, d + 1))
+            reached = seen_r
+        # Batch the file→symbol lookup: one scan instead of a query per file.
+        no_spec_set = set(modules_no_spec)
+        sids_by_path: dict[str, set[int]] = {}
+        for r in st.conn.execute(
+            """SELECT f.path AS path, s.id AS id FROM symbol s
+               JOIN file f ON f.id=s.file_id
+               WHERE f.project_id=?""",
+            (pid,),
+        ):
+            p = r["path"]
+            if p in no_spec_set:
+                sids_by_path.setdefault(p, set()).add(int(r["id"]))
         for path in modules_no_spec:
-            file_sids = {
-                int(r["id"])
-                for r in st.conn.execute(
-                    """SELECT s.id FROM symbol s
-                       JOIN file f ON f.id=s.file_id
-                       WHERE f.project_id=? AND f.path=?""",
-                    (pid, path),
-                )
-            }
-            covered = False
-            if spec_linked_sids and file_sids:
-                for sid in file_sids:
-                    if sid not in view.g:
-                        continue
-                    if ancestors_within(view.g, sid, 10) & spec_linked_sids:
-                        covered = True
-                        break
+            covered = bool(sids_by_path.get(path, ()) and (sids_by_path[path] & reached))
             (modules_implicit if covered else modules_truly_orphan).append(path)
 
     specs_no_impl = [
@@ -1929,7 +1948,7 @@ def compute_project_overview(
         else _structural_pattern_names(st.conn, pid, _STRUCTURAL_NAME_FILE_THRESHOLD)
     )
     view = load_graph(st.conn, pid)
-    ranks = page_rank(view.g)
+    ranks = graph_pagerank(view)
     ordered = sorted(ranks.items(), key=lambda x: x[1], reverse=True)
     top_syms: list[dict[str, Any]] = []
     for sid, score in ordered:
@@ -2314,7 +2333,7 @@ def register(mcp: FastMCP) -> None:
             return symbol_not_found_error(st.conn, pid, qname)
         sid = int(sym["id"])
         view = load_graph(st.conn, pid)
-        ranks = page_rank(view.g) if sid in view.g else {}
+        ranks = graph_pagerank(view) if sid in view.g else {}
 
         # v0.9 P3: filter out resolver fan-out (weight 0.5 — short-name
         # collisions the static analyzer couldn't disambiguate). Surfaced
@@ -2805,23 +2824,27 @@ def register(mcp: FastMCP) -> None:
         decorator_aliases: set[str] = set()
         workspace_path = st.settings.workspace
         for path_row in st.conn.execute(
-            "SELECT f.path FROM file f WHERE f.project_id=? AND f.path LIKE '%.py'",
+            "SELECT f.path, f.mtime FROM file f WHERE f.project_id=? AND f.path LIKE '%.py'",
             (pid,),
         ):
             try:
                 abs_path = str(workspace_path / path_row["path"])
-                global_module_refs |= _module_level_referenced_names(abs_path)
-                decorator_aliases |= _entry_point_decorator_aliases(abs_path)
+                # mtime (from the DB, taken at index time) keys the shared parse
+                # cache so the five scans below parse each file once, not five
+                # times, and reparse after an edit + re-index.
+                mtime = float(path_row["mtime"])
+                global_module_refs |= _module_level_referenced_names(abs_path, mtime)
+                decorator_aliases |= _entry_point_decorator_aliases(abs_path, mtime)
                 # v0.10: explicit public-surface markers (re-exports +
                 # __all__) protect library-side classes that have no
                 # in-tree caller because their callers are user code.
-                global_module_refs |= _publicly_exported_names(abs_path)
+                global_module_refs |= _publicly_exported_names(abs_path, mtime)
                 # v0.11 P3: runtime-registration patterns — class/fn passed
                 # to a framework method so the framework calls it later.
                 # Covers Field.register_lookup(MyLookup), signal.connect(h),
                 # app.add_middleware(M), etc.
-                global_module_refs |= _runtime_registered_names(abs_path)
-                nested_uses = _used_nested_def_names(abs_path)
+                global_module_refs |= _runtime_registered_names(abs_path, mtime)
+                nested_uses = _used_nested_def_names(abs_path, mtime)
                 if nested_uses:
                     nested_uses_by_file[path_row["path"]] = nested_uses
             except Exception:

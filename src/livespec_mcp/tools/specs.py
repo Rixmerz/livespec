@@ -19,7 +19,7 @@ from typing import Any, Literal
 
 from fastmcp import FastMCP
 
-from livespec_mcp.domain.graph import load_graph, page_rank
+from livespec_mcp.domain.graph import graph_pagerank, load_graph
 from livespec_mcp.domain.matcher import scan_annotations
 from livespec_mcp.state import get_state
 from livespec_mcp.tools._errors import mcp_error
@@ -484,7 +484,7 @@ def register(
         st = get_state(workspace)
         pid = st.project_id
         view = load_graph(st.conn, pid)
-        ranks = page_rank(view.g)
+        ranks = graph_pagerank(view)
 
         # Already-linked symbol IDs (for skip_already_covered)
         linked_sids = {
