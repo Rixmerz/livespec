@@ -14,6 +14,7 @@ import fnmatch
 import json
 import re
 import subprocess
+from collections import deque
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, Literal
@@ -1323,16 +1324,19 @@ def compute_spec_test_coverage(
 
     # Step 2: multi-source forward BFS, bounded depth, computed ONCE.
     tested_symbols: set[int] = set()
-    frontier: list[tuple[int, int]] = [
+    frontier: deque[tuple[int, int]] = deque(
         (sid, 0) for sid in test_sids if sid in g
-    ]
+    )
     # Seed: a test symbol is itself "covered" trivially, but we only care
     # about what tests REACH — production impl symbols downstream. We still
     # add the seeds so an impl symbol that is *itself* a test symbol (rare)
     # is counted. Forward edges expand from there up to _TEST_REACH_DEPTH.
+    # FIFO (popleft) = true BFS so shortest-path depth wins; a LIFO frontier
+    # would pin a node at a longer path's depth and skip its within-budget
+    # descendants, falsely marking reachable specs untested.
     tested_symbols.update(sid for sid, _ in frontier)
     while frontier:
-        node, depth = frontier.pop()
+        node, depth = frontier.popleft()
         if depth >= _TEST_REACH_DEPTH:
             continue
         for succ in g.successors(node):

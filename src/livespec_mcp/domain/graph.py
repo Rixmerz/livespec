@@ -146,10 +146,18 @@ def descendants_within(
     drop that noise from the traversal. Default 0.0 keeps the legacy
     behavior (every edge counted).
     """
+    # True BFS (FIFO) so every node is first reached by its SHORTEST path.
+    # A LIFO frontier (DFS) with a global `seen` set marked at enqueue time
+    # would record a node at whatever depth discovered it first — if that was
+    # a longer path at/near max_depth, its within-budget descendants reached
+    # via a shorter path were never expanded, silently under-reporting the
+    # blast radius of who_calls / analyze_impact / coverage.
+    from collections import deque
+
     seen: set[int] = set()
-    frontier: list[tuple[int, int]] = [(source, 0)]
+    frontier: deque[tuple[int, int]] = deque([(source, 0)])
     while frontier:
-        node, d = frontier.pop()
+        node, d = frontier.popleft()
         if d >= max_depth:
             continue
         for succ in g.successors(node):

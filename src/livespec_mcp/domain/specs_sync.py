@@ -3,21 +3,10 @@
 from __future__ import annotations
 
 import json
-import re
 from pathlib import Path
 from typing import Any
 
 from livespec_mcp.domain.md_specs import parse_specs_markdown
-
-_SPEC_HEADER_SCAN = re.compile(
-    r"^##+\s+(SPEC[-_]?\d+)\s*[:\-]",
-    re.MULTILINE | re.IGNORECASE,
-)
-
-
-def _normalize_spec(raw: str) -> str:
-    digits = "".join(c for c in raw if c.isdigit())
-    return f"SPEC-{int(digits):03d}" if digits else raw.upper()
 
 
 def scan_duplicate_spec_markdown_specs(
@@ -45,8 +34,11 @@ def scan_duplicate_spec_markdown_specs(
         except OSError:
             continue
         scanned += 1
-        for m in _SPEC_HEADER_SCAN.finditer(text):
-            spec_id = _normalize_spec(m.group(1))
+        # Reuse the real parser so this heuristic agrees with it — in
+        # particular it skips `## SPEC-NNN:` headers shown inside ``` fenced
+        # code blocks, which would otherwise raise phantom duplicate warnings.
+        for spec in parse_specs_markdown(text):
+            spec_id = spec.spec_id
             by_spec.setdefault(spec_id, [])
             if rel not in by_spec[spec_id]:
                 by_spec[spec_id].append(rel)
@@ -253,14 +245,17 @@ def apply_links_seed(st: Any, seed_path: str | Path) -> dict[str, Any]:
         qname = entry.get("qname") or entry.get("symbol_qname")
         if not spec_id or not qname:
             continue
-        mappings.append(
-            {
-                "spec_id": spec_id,
-                "symbol_qname": qname,
-                "relation": entry.get("relation", "implements"),
-                "source": entry.get("source", "manual"),
-            }
-        )
+        mapping = {
+            "spec_id": spec_id,
+            "symbol_qname": qname,
+            "relation": entry.get("relation", "implements"),
+            "source": entry.get("source", "manual"),
+        }
+        # Preserve a per-entry confidence if the seed carries one — dropping it
+        # forced every seeded link to 1.0 regardless of what was recorded.
+        if "confidence" in entry:
+            mapping["confidence"] = entry["confidence"]
+        mappings.append(mapping)
     return bulk_link_spec_symbols_impl(st, mappings)
 
 

@@ -152,6 +152,56 @@ follows [SemVer](https://semver.org/).
 - Guarded the `mtime` `stat()` against a file vanishing mid-index (it was
   outside the read try/except and could abort the whole run).
 
+### Fixed — domain correctness (audit batch P3)
+- **Impact traversal is BFS, not DFS** (`descendants_within` and the two
+  inline copies in `compute_spec_test_coverage` and the spec dependency
+  walk): a node reachable within `max_depth` via a short path is no longer
+  dropped because a longer path discovered it first. `who_calls`,
+  `who_does_this_call`, `analyze_impact`, `find_orphan_tests`, and coverage
+  were under-reporting blast radius / falsely flagging specs untested.
+- **Multi-chunk symbols keep all their chunks**: `upsert_chunks` grouped
+  the delete-then-insert per source instead of deleting inside the loop —
+  previously a symbol that split into N chunks kept only the last one
+  (and returned aliased rowids), making large symbols searchable by only
+  their final fragment. Unchanged symbols now reuse their rows (preserving
+  embeddings) instead of re-inserting.
+- **Transient parse errors no longer destroy Spec↔code links**: when a
+  Python file fails to parse (saved mid-edit), the indexer preserves its
+  existing symbols (and the `spec_symbol` links riding on them) and retries
+  on the next index instead of wiping them via cascade.
+- **Conditionally-defined Python symbols are extracted**: functions/classes
+  under `if TYPE_CHECKING:`, `try/except` import shims, `with`, `for`,
+  `while`, and `match` bodies were invisible (missing symbols + false
+  dead-code positives on their callers).
+- **Chained method calls each record an edge**: `promise.then(h).catch(e)`
+  now emits refs for both `then` and `catch` (the old text-split dropped
+  every non-first segment of a call chain — pervasive in JS/TS/Java).
+- **`.tsx` files get import scoping and exported visibility** (they were
+  excluded from the JS/TS import + visibility scans, so every ref in a
+  `.tsx` file was unscoped and no React component was ever `exported`).
+- **`@spec:` annotation verb boundary**: `@specifically`, `@testsuite`,
+  `@seed` no longer create confidence-1.0 Spec links (the verb matched as
+  a prefix of a longer word). Negation list gained
+  `cannot/can't/won't/isn't/shouldn't/wouldn't`.
+- **Nested-def calls attributed once**: a call inside an inner function/
+  method is no longer also attributed to every enclosing symbol (a class no
+  longer appears to call what its methods call), shrinking edge inflation.
+- **Markdown spec importer** ignores `## SPEC-NNN:` headers inside fenced
+  code blocks (no more phantom specs) and only treats a line as metadata
+  when a key sits at its start (prose like "must show status: active" is no
+  longer swallowed and mis-parsed).
+- **`body_hash` drifts on whitespace inside string literals** (`"pad "` vs
+  `"pad"`) — it was stripping string-content tokens.
+- **Vector search over-fetches proportionally** in a multi-project DB so
+  the KNN's post-JOIN project filter can't starve results.
+- **Edge weights refresh monotonically** (`ON CONFLICT DO UPDATE SET
+  weight = MAX(...)`) so a disambiguated edge upgrades from 0.5 to 1.0
+  without ever downgrading or deleting (resolver stays INSERT-only).
+- **Watcher relevance check is workspace-relative**: a workspace under a
+  path segment like `build/` or `.work/` no longer rejects every event and
+  silently goes dead. Off-by-one in split-chunk line ranges corrected;
+  seeded-link `confidence` is preserved instead of forced to 1.0.
+
 ## [0.19.0] - 2026-06-30
 
 ### Changed — brownfield RF bootstrap

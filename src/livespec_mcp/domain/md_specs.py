@@ -92,8 +92,30 @@ def parse_specs_markdown(text: str) -> list[ParsedSpec]:
             kind=current.get("kind", "functional_requirement"),
         ))
 
+    in_fence = False
+    fence_marker = ""
+
     for raw_line in text.splitlines():
         line = raw_line.rstrip()
+        stripped = line.lstrip()
+
+        # Fenced code blocks: never parse headers/metadata inside ``` / ~~~
+        # so a `## SPEC-099:` shown as an EXAMPLE in a code block doesn't
+        # become a phantom spec. Fence content stays in the description.
+        if stripped.startswith("```") or stripped.startswith("~~~"):
+            marker = stripped[:3]
+            if not in_fence:
+                in_fence, fence_marker = True, marker
+            elif stripped.startswith(fence_marker):
+                in_fence, fence_marker = False, ""
+            if current is not None:
+                description_lines.append(raw_line)
+            continue
+        if in_fence:
+            if current is not None:
+                description_lines.append(raw_line)
+            continue
+
         m = _HEADER_RE.match(line)
         if m:
             _flush()
@@ -108,10 +130,13 @@ def parse_specs_markdown(text: str) -> list[ParsedSpec]:
         # Metadata lines (Prioridad, Módulo, Status) — accumulate; do not include
         # in description. Strip markdown bold/italic markers first so the regex
         # doesn't have to handle every `**Name:**` / `**Name**: ` permutation.
+        # Only treat a line as metadata when a key sits at its START (after
+        # bullets/markers) — otherwise prose like "must show status: active
+        # users" would be swallowed and mis-set a field.
         cleaned = line.replace("**", "").replace("__", "")
-        meta_hits = list(_META_RE.finditer(cleaned))
-        if meta_hits:
-            for h in meta_hits:
+        meta_start = cleaned.lstrip(" \t-*·•>")
+        if _META_RE.match(meta_start):
+            for h in _META_RE.finditer(cleaned):
                 key = h.group(1).lower()
                 value = h.group("value").strip().rstrip(".").lower()
                 if key in ("prioridad", "priority"):

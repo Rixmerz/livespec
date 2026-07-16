@@ -38,8 +38,18 @@ class WatcherStats:
     last_run_files_changed: int = 0
 
 
-def _is_relevant(path: Path) -> bool:
-    if any(part in DEFAULT_IGNORES or part.startswith(".") for part in path.parts):
+def _is_relevant(path: Path, workspace: Path | None = None) -> bool:
+    # Check ignore/hidden segments RELATIVE to the workspace. Testing the
+    # absolute path's parts made a workspace under e.g. ~/dev/build/app or
+    # ~/.work/repo reject every event (a "build"/".work" ancestor segment),
+    # silently killing the watcher with no error.
+    parts: tuple[str, ...] = path.parts
+    if workspace is not None:
+        try:
+            parts = path.relative_to(workspace).parts
+        except ValueError:
+            parts = path.parts
+    if any(part in DEFAULT_IGNORES or part.startswith(".") for part in parts):
         return False
     return detect_language(path) is not None
 
@@ -55,7 +65,7 @@ class _Handler(FileSystemEventHandler):
             p = Path(event.src_path)
         except Exception:
             return
-        if not _is_relevant(p):
+        if not _is_relevant(p, self.watcher.workspace):
             return
         self.watcher.notify(p)
 

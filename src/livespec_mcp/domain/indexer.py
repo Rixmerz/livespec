@@ -255,6 +255,21 @@ def index_project(
                 stats.files_skipped += 1
                 continue
             _, result = extract(p, source, settings.workspace)
+            # C4: a transient parse failure (file saved mid-edit) must NOT wipe
+            # the file's existing symbols — the cascade would take their
+            # spec_symbol links with them and the restore can't re-resolve a
+            # symbol that momentarily doesn't exist, permanently destroying
+            # manual traceability. Leave the old symbols in place and DON'T
+            # advance content_hash, so the next index retries once it parses.
+            if (
+                result.parse_error
+                and not result.symbols
+                and prev is not None
+                and _file_has_symbols(conn, int(prev["id"]))
+            ):
+                stats.files_changed -= 1  # undo the increment above; nothing changed
+                stats.files_skipped += 1
+                continue
             line_count = source.count("\n") + 1
             file_id = _upsert_file(
                 conn,
@@ -367,6 +382,15 @@ def index_project(
         if needs_reextract:
             clear_reextract_flag(conn)
     return stats
+
+
+def _file_has_symbols(conn: sqlite3.Connection, file_id: int) -> bool:
+    return (
+        conn.execute(
+            "SELECT 1 FROM symbol WHERE file_id=? LIMIT 1", (file_id,)
+        ).fetchone()
+        is not None
+    )
 
 
 def _upsert_file(
@@ -585,9 +609,16 @@ def _resolve_refs(
             if key in seen_pairs:
                 continue
             seen_pairs.add(key)
+            # Never DELETE (edges from unchanged files must survive); but DO
+            # refresh the weight monotonically so a previously-ambiguous edge
+            # (0.5 fan-out) upgrades once disambiguation makes it unambiguous.
+            # MAX avoids a stray targeted re-resolve DOWNGRADING a confirmed
+            # 1.0 edge back to 0.5.
             conn.execute(
-                """INSERT OR IGNORE INTO symbol_edge(src_symbol_id, dst_symbol_id, edge_type, weight)
-                   VALUES(?,?,?,?)""",
+                """INSERT INTO symbol_edge(src_symbol_id, dst_symbol_id, edge_type, weight)
+                   VALUES(?,?,?,?)
+                   ON CONFLICT(src_symbol_id, dst_symbol_id, edge_type)
+                   DO UPDATE SET weight = MAX(symbol_edge.weight, excluded.weight)""",
                 (src_id, tid, "calls", weight),
             )
             edge_count += 1
