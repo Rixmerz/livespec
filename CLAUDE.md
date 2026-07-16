@@ -294,9 +294,11 @@ Keep older release sections as `3a`, `3b` etc. for traceability.
 
 ### Workspace argument
 
-Every tool accepts an optional `workspace: str` parameter. When omitted,
-the server resolves to `LIVESPEC_WORKSPACE` env var or cwd. The state
-module (`state.py`) caches one `AppState` per absolute workspace path
+Every tool takes a `workspace: str` parameter that is **required** (since
+v0.12) — pass the absolute repo root on every call. There is **no**
+`LIVESPEC_WORKSPACE`/cwd fallback; omitting it returns a shaped
+`mcp_error` (a pre-validating middleware, v0.20). The state module
+(`state.py`) caches one `AppState` per absolute workspace path
 (LRU=8). The `use_workspace` tool was deprecated in v0.2 and removed in
 v0.6 — pass `workspace=` directly.
 

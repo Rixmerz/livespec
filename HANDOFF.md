@@ -26,7 +26,7 @@
 - **Python `ast`** para extracción Python de alta precisión + scoped resolution por imports
 - **NetworkX 3.x** para call graph + PageRank (con fallback pure-Python si scipy no está)
 - **xxhash** para content/body/signature hashing
-- **rank-bm25** para FTS5 BM25 lane
+- FTS5 BM25 lane usa el bm25 nativo de SQLite (la dep `rank-bm25` se removió en v0.20 — nunca se importaba)
 - **watchdog>=4.0** para file watcher
 - **fastembed + sqlite-vec** OPCIONALES via `pip install -e ".[embeddings]"` — modelos `jinaai/jina-embeddings-v2-base-code` (768d code) + `sentence-transformers/paraphrase-multilingual-mpnet-base-v2` (768d text)
 - **hypothesis + psutil** en `[dev]` extras
@@ -35,57 +35,66 @@ Todo el stack es local-first: 0 servicios externos, 0 API keys obligatorias, 0 D
 
 ---
 
-## 3. Estado actual: v0.20.0 (pre-release) — RF → Spec nomenclatura + taxonomía (hard cut)
+## 3. Estado actual: v0.20.0 — RF→Spec + auditoría exhaustiva aplicada
 
-**Base:** sobre HEAD `10e439d` (v0.19.0) en `main`, aún **sin commitear/pushear**
-en esta sesión — 77 archivos tocados (+1864/-3903 líneas). pyproject sigue en
-**0.19.0** (bump a 0.20.0 pendiente — P6, "solo cuando se decida cortar" el
-release). Tests **370 passed** (`-m "not embeddings"`).
+**HEAD:** ver `git rev-parse --short HEAD` (batch de auditoría landeado sobre
+`46167e4`). pyproject **0.20.0**. Schema **v13**. Tests **403 passed**
+(`-m "not embeddings"`) + tests embeddings-gated (requieren descarga de modelo).
+CHANGELOG promovido a `[0.20.0] - 2026-07-16`.
 
-**Pendiente inmediato:** commitear + pushear este batch a `main` (direct push,
-preferencia guardada), luego P6 cuando el usuario decida cortar el release:
-promover CHANGELOG `[Unreleased]`→`[0.20.0]`, bump `pyproject.toml`, tag +
-GitHub release.
+**Qué landeó:** además del hard-cut RF→Spec (nomenclatura + taxonomía `kind`,
+migración v11, ids `RF-NNN` preservados), se corrió una **auditoría exhaustiva
+de 8 dimensiones** y se aplicaron sus ~50 hallazgos en seis tandas commiteadas
+(un commit por fase, direct push a `main`):
 
-**Qué es esto:** refactor de nomenclatura de punta a punta: `RF` (Functional
-Requirement) generaliza a `Spec` con taxonomía (`kind`: `functional_requirement`,
-`non_functional_requirement`, `adr`, `design`, `constraint`, `epic`, `other`).
-**Hard cut** — un solo release breaking, sin aliases ni wrappers deprecados.
-Ejecutado en 6 fases (P0-P5 completas, P6 = bump+tag pendiente de decisión):
+- **P1 — packaging & boot** (`5a97979`): arreglado el build (`force-include`
+  duplicado hacía fallar `uv build`); `LIVESPEC_PLUGINS` ya no brickea
+  `tools/list`; instrumentación no enmascara el error de workspace; el prompt
+  `agent_playbook` se empaqueta y carga vía `importlib.resources`; CLI
+  `--version` + errores shaped; `fastmcp<4`; drop `rank-bm25`; CI con job
+  `ruff + uv build` que verifica el contenido del wheel.
+- **P2 — storage & concurrencia** (`80e0d95`): migraciones transaccionales;
+  `UNIQUE(project.root)` (mig v12) + dedup; cache del grafo keyed en runs
+  *finished* con `files_changed>0`; watcher aislado en su propia conexión +
+  parado al evictar; `needs_reextract` limpiado solo tras éxito; `busy_timeout`;
+  `chunk_au` con guard (mig v13); schema.sql completo (converge fresh↔migrado).
+- **P3 — correctness domain** (`3cf740f`): BFS real (deque) en
+  `descendants_within` + 2 copias inline; `upsert_chunks` sin DELETE-en-loop;
+  parse fallido preserva símbolos+links; extractor Python entra a
+  if/try/except/with/for/while/match; cadenas de métodos; `.tsx` en
+  imports/visibility; boundary del verbo en matcher; md_specs fences +
+  meta anclada; watcher path relativo; body_hash con whitespace en strings.
+- **P4 — capa tools** (`4e2439d`): `analyze_impact(spec)` paginado; git
+  `--name-status -M` (renames) + `--end-of-options`; `IN(...)` chunkeado;
+  middleware que shape-a errores de workspace; `create_spec` MAX+1 +
+  IntegrityError shaped; `ORDER BY` estable en cursores; endpoints por spec
+  intersectados; `agent_scratch` leíble vía `quick_orient`; snapshot solo en
+  fetch primario; `list_specs.has_implementation` en SQL; find_symbol LIKE
+  escape + limit clamp; bulk_link valida relation/confidence.
+- **P5 — performance** (`9d3ad2a`): rebuild_chunks preserva embeddings +
+  lee cada archivo una vez + limpia vectores huérfanos; coverage O(V+E)
+  (BFS invertido); PageRank cacheado en GraphView; find_dead_code parsea
+  cada archivo una vez (cache por (path,mtime)); sqlite-vec una vez por conn.
+- **P6 — tests & docs** (este commit): correcciones de superficies que mentían
+  (CLAUDE.md workspace obligatorio, AGENT_PLAYBOOK tool gated, README install
+  desde source, fastmcp.json, conteos de tools 24/stale); tests de contrato
+  faltantes (update_spec/delete_spec CRUD, resiliencia a source malformado,
+  C4 e2e); ROADMAP §0 con el pilar **cross-project** (features polyrepo/
+  microservicios — ver ROADMAP para el plan en 2 fases A/B).
 
-- **P0 (schema):** `rf`→`spec`, `rf_symbol`→`spec_symbol`,
-  `rf_dependency`→`spec_dependency`, `rf_coverage_snapshot`→
-  `spec_coverage_snapshot`; migración **v11** (`_m011_rename_rf_to_spec`)
-  preserva ids `RF-NNN` existentes y agrega columna `kind`.
-- **P1 (domain):** `matcher.py` (`@spec:`/`@not_spec`), `md_rfs.py`→
-  `md_specs.py` (headings `## SPEC-NNN:`), `requirements_sync.py`→
-  `specs_sync.py`.
-- **P2 (tools):** 13 tools MCP renombradas (`list_requirements`→`list_specs`,
-  `create_requirement`→`create_spec`, etc.), `analyze_impact`/`audit_coverage`/
-  `git_diff_impact` payload keys (`dependent_specs`, `specs_touched`,
-  `spec_coverage`), plugin `livespec-rf`→`livespec-spec`, `server.py`.
-- **P3 (explorer):** `tools/explorer.py` — `data.json` fields + labels/ids/CSS
-  del HTML/JS embebido (`#specnav`, `.spine .spec`, etc.). Re-generar bundle
-  con `export_explorer` tras el merge.
-- **P4 (tests):** pase mecánico sobre ~40 archivos de test + fixes puntuales
-  (migración v11 "undo" en el test, `Spec-`→`SPEC-` mixed-case, `AGENT_PLAYBOOK.md`
-  reescrito). Suite verde: **370 passed**.
-- **P5 (docs):** README (pitch, tour, tools, resources, roadmap row v0.20),
-  CLAUDE.md (arquitectura + tool tiers), ROADMAP.md (nota histórica al tope,
-  cuerpo intacto — es reflexión punto-en-el-tiempo), CHANGELOG `[Unreleased]`,
-  scripts renombrados (`apply_rf_links.py`→`apply_spec_links.py`,
-  `sync_livespec_rfs.py`→`sync_livespec_specs.py`, `pr_diff_impact.py` y
-  `validate_mcp.py`/`dogfood_v019.py` actualizados), seed propio del proyecto
-  (`docs/requirements/livespec-rfs.md`→`livespec-specs.md`,
-  `livespec-rf-links.json`→`livespec-spec-links.json`, verificado
-  end-to-end: 12 specs importados, 109/109 links aplicados sin fallos),
-  `.github/workflows/livespec-pr-comment.yml`, `pyproject.toml` description.
+**Regresiones cubiertas:** `tests/test_audit_p{3,4,5,6}_regressions.py` +
+adiciones a `test_migrations.py`, `test_plugin_visibility.py`,
+`test_plugin_autoload.py`.
 
-**Decisión de IDs:** los `RF-NNN` existentes NO se renumeran (siguen siendo
-válidos como `spec_id`); specs nuevas generan `SPEC-NNN`. Formato mixto
-intencional para no romper referencias históricas — ver nota en CHANGELOG.
+**Gate:** `uv run pytest -q -m "not embeddings"` → **403 passed**.
 
-**Gate:** `uv run pytest -q -m "not embeddings"` → **370 passed**.
+**Pendiente:** tag `v0.20.0` + GitHub release (bookkeeping); opcional PyPI.
+
+### v0.20.0 batch RF→Spec (referencia — landeó en `46167e4` y anteriores)
+
+Hard cut RF→Spec en 6 fases mecánicas (schema v11, 13 tools renombradas,
+payload keys, explorer, tests, docs). Ids `RF-NNN` preservados; specs nuevas
+generan `SPEC-NNN`. Ver CHANGELOG `[0.20.0]`.
 
 ### v0.19.0 resumen (referencia)
 
