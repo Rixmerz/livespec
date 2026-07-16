@@ -28,7 +28,9 @@ from dataclasses import dataclass
 _PREFIX_HEAD_RE = re.compile(
     r"""^\s*[#*]?\s*                       # optional comment leader
         @(?P<verb>not_spec|!spec|spec|implements?|tests?|see|references?)
-        \s*[:= ]?\s*
+        (?=[:=\s]|$)                       # verb boundary: reject @specifically,
+                                           # @testsuite, @seed (prefix-of-a-word)
+        \s*[:=]?\s*
         (?P<rest>[^\n\r]+)""",
     re.IGNORECASE | re.MULTILINE | re.VERBOSE,
 )
@@ -50,7 +52,8 @@ _VERB_RE = re.compile(
     re.IGNORECASE | re.VERBOSE,
 )
 _NEGATION_RE = re.compile(
-    r"\b(not|no|never|doesn'?t|do\s+not|without|skip|TODO|FIXME)\b",
+    r"\b(not|no|never|cannot|can'?t|won'?t|isn'?t|shouldn'?t|wouldn'?t|"
+    r"doesn'?t|do\s+not|without|skip|TODO|FIXME)\b",
     re.IGNORECASE,
 )
 

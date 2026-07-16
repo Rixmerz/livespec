@@ -187,9 +187,9 @@ def test_reextract_flag_survives_until_cleared(tmp_path: Path):
     """v0.20 M18: peek does not clear; clear is explicit (so a crashed index
     leaves the flag set instead of losing the forced re-extract)."""
     from livespec_mcp.storage.db import (
+        _flag_reextract,
         clear_reextract_flag,
         peek_reextract_flag,
-        _flag_reextract,
     )
 
     conn = connect(tmp_path / "r.db")

@@ -13,6 +13,7 @@ Spec-link naming (v0.20 renamed RF -> Spec; taxonomy expanded via `kind`):
 from __future__ import annotations
 
 import re
+from collections import deque
 from typing import Any, Literal
 
 from fastmcp import FastMCP
@@ -876,9 +877,12 @@ def register(
         edges: list[tuple[int, int, str]] = []
 
         def walk(start: int, forward: bool) -> None:
-            frontier = [(start, 0)]
+            # BFS (popleft): reach each spec at its shortest dependency depth
+            # so a node found first via a longer chain isn't pinned past
+            # max_depth and its nearer dependencies dropped.
+            frontier: deque[tuple[int, int]] = deque([(start, 0)])
             while frontier:
-                node, depth = frontier.pop()
+                node, depth = frontier.popleft()
                 if depth >= max_depth:
                     continue
                 if forward:

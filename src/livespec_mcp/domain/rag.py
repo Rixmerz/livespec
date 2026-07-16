@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import re
 import sqlite3
+from collections import OrderedDict
 from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
@@ -96,12 +97,15 @@ def chunk_symbol(symbol_row: sqlite3.Row, source_text: str | None) -> list[Chunk
                     text=text,
                     file_path=symbol_row["file_path"],
                     start_line=chunk_start,
-                    end_line=line,
+                    # `line` currently points at the START of the overflow piece
+                    # (the +2 for the "\n\n" separator is added at loop end); the
+                    # buffered piece's last real line is two before it.
+                    end_line=max(chunk_start, line - 2),
                 )
             )
             buf = [piece]
             buf_tokens = t
-            chunk_start = line + 1
+            chunk_start = line
         else:
             buf.append(piece)
             buf_tokens += t
@@ -273,39 +277,57 @@ def ensure_vec_tables(conn: sqlite3.Connection) -> None:
 
 
 def upsert_chunks(conn: sqlite3.Connection, project_id: int, chunks: Iterable[Chunk]) -> list[int]:
-    ids: list[int] = []
+    """Replace a source's chunks only when its full chunk set changed.
+
+    Group by (source_type, source_id) FIRST. The old per-chunk loop deleted
+    "prior chunks for this source" on every non-matching chunk — so for a
+    symbol that splits into N chunks, chunk 2's delete wiped chunk 1 that the
+    same loop had just inserted, leaving only the LAST chunk (and aliased
+    rowids in the returned list). Comparing the whole hash sequence per source
+    also lets an unchanged symbol keep its existing rows (and their
+    ``embedded_at``) instead of re-inserting.
+    """
+    grouped: OrderedDict[tuple[str, int | None], list[Chunk]] = OrderedDict()
     for ch in chunks:
-        h = ch.content_hash
+        grouped.setdefault((ch.source_type, ch.source_id), []).append(ch)
+
+    ids: list[int] = []
+    for (source_type, source_id), group in grouped.items():
         existing = conn.execute(
-            """SELECT id FROM chunk
-               WHERE project_id=? AND source_type=? AND source_id IS ? AND content_hash=?""",
-            (project_id, ch.source_type, ch.source_id, h),
-        ).fetchone()
-        if existing:
-            ids.append(int(existing["id"]))
+            """SELECT id, content_hash FROM chunk
+               WHERE project_id=? AND source_type=? AND source_id IS ?
+               ORDER BY id""",
+            (project_id, source_type, source_id),
+        ).fetchall()
+        incoming_hashes = [c.content_hash for c in group]
+        if [r["content_hash"] for r in existing] == incoming_hashes:
+            # Identical chunk set in the same order — reuse rows verbatim so
+            # embeddings survive (no FTS churn, no re-embed).
+            ids.extend(int(r["id"]) for r in existing)
             continue
-        # Replace any prior chunks for this source
+        # Changed set: replace all of this source's chunks in one shot.
         conn.execute(
             "DELETE FROM chunk WHERE project_id=? AND source_type=? AND source_id IS ?",
-            (project_id, ch.source_type, ch.source_id),
+            (project_id, source_type, source_id),
         )
-        cur = conn.execute(
-            """INSERT INTO chunk(project_id, source_type, source_id, text_kind, file_path,
-                start_line, end_line, text, content_hash)
-               VALUES(?,?,?,?,?,?,?,?,?)""",
-            (
-                project_id,
-                ch.source_type,
-                ch.source_id,
-                ch.text_kind,
-                ch.file_path,
-                ch.start_line,
-                ch.end_line,
-                ch.text,
-                h,
-            ),
-        )
-        ids.append(int(cur.lastrowid))
+        for ch in group:
+            cur = conn.execute(
+                """INSERT INTO chunk(project_id, source_type, source_id, text_kind, file_path,
+                    start_line, end_line, text, content_hash)
+                   VALUES(?,?,?,?,?,?,?,?,?)""",
+                (
+                    project_id,
+                    ch.source_type,
+                    ch.source_id,
+                    ch.text_kind,
+                    ch.file_path,
+                    ch.start_line,
+                    ch.end_line,
+                    ch.text,
+                    ch.content_hash,
+                ),
+            )
+            ids.append(int(cur.lastrowid))
     return ids
 
 
@@ -459,6 +481,27 @@ def fts_search(
     return out
 
 
+def _vec_k(conn: sqlite3.Connection, project_id: int, limit: int) -> int:
+    """How many nearest neighbors to ask sqlite-vec for.
+
+    The vec tables have no project column, so ``v.embedding MATCH ? AND k=?``
+    returns the globally-nearest k across ALL projects and the JOIN filters to
+    this project afterwards. In a single-project DB (the common case) k=limit*2
+    is plenty; in a multi-project DB it could return far fewer than ``limit``
+    for this project, so over-fetch in proportion to this project's share of
+    chunks (bounded, so a hostile split can't blow up the KNN)."""
+    total = conn.execute("SELECT COUNT(*) c FROM chunk").fetchone()["c"] or 1
+    mine = conn.execute(
+        "SELECT COUNT(*) c FROM chunk WHERE project_id=?", (project_id,)
+    ).fetchone()["c"] or 1
+    if mine >= total:
+        return limit * 2
+    import math
+
+    factor = math.ceil(total / mine)
+    return min(limit * max(2, factor), total, 2000)
+
+
 def vec_search(
     conn: sqlite3.Connection, project_id: int, query: str, limit: int, scope: str
 ) -> list[tuple[int, float, dict]]:
@@ -466,6 +509,7 @@ def vec_search(
     if not have_embeddings() or not have_sqlite_vec(conn):
         return []
     ensure_vec_tables(conn)
+    k = _vec_k(conn, project_id, limit)
     try:
         code_q = (
             list(embed_texts([query], "code")[0]) if scope in ("all", "code") else None
@@ -487,7 +531,7 @@ def vec_search(
                FROM chunk_vec_code v JOIN chunk c ON c.id = v.chunk_id
                WHERE v.embedding MATCH ? AND k = ?
                  AND c.project_id = ?""",
-            (_floats_blob(code_q), limit * 2, project_id),
+            (_floats_blob(code_q), k, project_id),
         ).fetchall()
         for r in rows:
             score = 1.0 / (1.0 + float(r["distance"]))
@@ -500,7 +544,7 @@ def vec_search(
                FROM chunk_vec_text v JOIN chunk c ON c.id = v.chunk_id
                WHERE v.embedding MATCH ? AND k = ?
                  AND c.project_id = ?""",
-            (_floats_blob(text_q), limit * 2, project_id),
+            (_floats_blob(text_q), k, project_id),
         ).fetchall()
         for r in rows:
             score = 1.0 / (1.0 + float(r["distance"]))

@@ -46,6 +46,25 @@ class ExtractResult:
     # P0.4: per-file imports map. local_name -> source_module (qualified name of
     # the module providing it). Used by the resolver to scope short-name lookups.
     imports: dict[str, str] = field(default_factory=dict)
+    # True when the source could not be parsed (Python ast.parse SyntaxError).
+    # The indexer uses this to PRESERVE the file's existing symbols instead of
+    # wiping them (and their spec_symbol links) on a transient parse failure —
+    # e.g. a file saved mid-edit. tree-sitter is error-recovering, so this is
+    # effectively Python-only.
+    parse_error: bool = False
+
+
+# Compound statements whose bodies can hold conditionally-defined symbols.
+# `visit()` descends into these without changing scope so a def under
+# `if TYPE_CHECKING:` / a try-import shim / a version guard is still extracted.
+_COMPOUND_STMTS: tuple[type, ...] = (
+    ast.If, ast.Try, ast.With, ast.AsyncWith, ast.For, ast.AsyncFor, ast.While,
+    ast.ExceptHandler,  # `except ...: def fallback()` import shims
+)
+if hasattr(ast, "Match"):  # py3.10+ — descend Match and its case bodies
+    _COMPOUND_STMTS = (*_COMPOUND_STMTS, ast.Match, ast.match_case)
+if hasattr(ast, "TryStar"):  # py3.11+
+    _COMPOUND_STMTS = (*_COMPOUND_STMTS, ast.TryStar)
 
 
 # ---------- Python via ast ----------
@@ -73,6 +92,7 @@ def _py_extract(source: str, module_name: str) -> ExtractResult:
     try:
         tree = ast.parse(source)
     except SyntaxError:
+        out.parse_error = True
         return out
 
     # P0.4: collect imports for resolver scoping. Maps `local_name` -> source module.
@@ -145,13 +165,31 @@ def _py_extract(source: str, module_name: str) -> ExtractResult:
             elif isinstance(child, ast.ClassDef):
                 qn = add_class(child, parent_qname)
                 visit(child, qn, in_class=True)
+            elif isinstance(child, _COMPOUND_STMTS):
+                # Descend into if/try/with/for/while/match bodies WITHOUT
+                # changing scope, so conditionally defined functions/classes
+                # (``if TYPE_CHECKING:``, ``try: import X ... except: def X``,
+                # version-guarded ``if sys.version_info...`` shims) are still
+                # extracted. Without this they were invisible — missing symbols
+                # and false dead-code positives on their callers.
+                visit(child, parent_qname, in_class)
 
     visit(tree, None, in_class=False)
     return out
 
 
 def _collect_calls(func_node: ast.AST, src_qname: str, out: ExtractResult) -> None:
-    for node in ast.walk(func_node):
+    # Walk this symbol's body but STOP at nested def/class boundaries — their
+    # call sites belong to the nested symbol (extracted separately), not to
+    # every enclosing def. ast.walk() would descend into them and attribute an
+    # inner call to each ancestor, inflating the edge table and making
+    # who_calls report a class/outer that never issues the call.
+    stack: list[ast.AST] = list(ast.iter_child_nodes(func_node))
+    while stack:
+        node = stack.pop()
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            continue
+        stack.extend(ast.iter_child_nodes(node))
         if isinstance(node, ast.Call):
             target = _call_target_name(node.func)
             if target:
@@ -343,7 +381,7 @@ def _extract_visibility(node, src_bytes: bytes, language: str) -> str | None:
                 # Strip whitespace; preserve `pub`, `pub(crate)`, `pub(super)`, `pub(in path)`.
                 return txt.strip()
         return "private"
-    if language in ("javascript", "typescript"):
+    if language in ("javascript", "typescript", "tsx"):
         # Walk siblings — `export` typically wraps the declaration in an
         # export_statement node, so check the parent.
         parent = node.parent if hasattr(node, "parent") else None
@@ -394,8 +432,18 @@ def _normalize_ts_body(node, src_bytes: bytes) -> str:
         if ntype == "comment" or "comment" in ntype:
             return
         if not n.children:
-            txt = src_bytes[n.start_byte : n.end_byte].decode("utf-8", errors="replace")
-            txt = txt.strip()
+            raw = src_bytes[n.start_byte : n.end_byte].decode("utf-8", errors="replace")
+            # Whitespace INSIDE a string/char/template literal is semantic —
+            # `"pad "` vs `"pad"` must drift the hash — so only strip tokens
+            # that are not string content.
+            parent_type = n.parent.type if n.parent is not None else ""
+            in_literal = (
+                "string" in ntype
+                or "string" in parent_type
+                or "template" in parent_type
+                or "char" in parent_type
+            )
+            txt = raw if in_literal else raw.strip()
             if txt:
                 parts.append(txt)
             return
@@ -650,7 +698,7 @@ def _ts_extract(
     src_bytes = source.encode("utf-8", errors="replace")
     tree = parser.parse(src_bytes)
 
-    if language in ("javascript", "typescript"):
+    if language in ("javascript", "typescript", "tsx"):
         out.imports.update(_ts_collect_imports(tree.root_node, src_bytes, current_dir))
     elif language == "go":
         out.imports.update(_go_collect_imports(tree.root_node, src_bytes))
@@ -923,6 +971,27 @@ def scan_hono_routes(source: str, language: str) -> list[dict]:
     return routes
 
 
+def _ts_leftmost_ident(node, text) -> str | None:
+    """Walk a member/call chain down to its base identifier for import scoping.
+
+    `promise.then(h).catch` → object `promise.then(h)` (call) → function
+    `promise.then` (member) → object `promise` (identifier) ⇒ 'promise'.
+    """
+    cur = node
+    for _ in range(64):  # guard against pathological nesting
+        if cur is None:
+            return None
+        if cur.type in ("identifier", "shorthand_property_identifier", "type_identifier"):
+            return text(cur).strip() or None
+        nxt = None
+        if hasattr(cur, "child_by_field_name"):
+            nxt = cur.child_by_field_name("object") or cur.child_by_field_name("function")
+        if nxt is None:
+            nxt = cur.children[0] if getattr(cur, "children", None) else None
+        cur = nxt
+    return None
+
+
 def _ts_collect_calls(def_node, src_qname: str, src_bytes: bytes, out: ExtractResult) -> None:
     def text(n) -> str:
         return src_bytes[n.start_byte : n.end_byte].decode("utf-8", errors="replace")
@@ -948,6 +1017,21 @@ def _ts_collect_calls(def_node, src_qname: str, src_bytes: bytes, out: ExtractRe
         for field_name in ("function", "name", "method"):
             child = call_node.child_by_field_name(field_name) if hasattr(call_node, "child_by_field_name") else None
             if child is not None:
+                # Member/property callee: `a.b.c(...)`, and crucially chained
+                # calls `promise.then(h).catch(e)`. The CALLED name is the
+                # outermost `property`; the old `text(child).split("(")[0]`
+                # returned an INNER segment ("then") for a chain, dropping the
+                # real target ("catch") entirely.
+                prop = (
+                    child.child_by_field_name("property")
+                    if hasattr(child, "child_by_field_name")
+                    else None
+                )
+                if prop is not None:
+                    target = text(prop).strip()
+                    if target:
+                        leftmost = _ts_leftmost_ident(child, text) or receiver_text or target
+                        return target, leftmost
                 t = text(child).split("(")[0].strip()
                 if "." in t or "::" in t:
                     parts = [p for p in _SEP.split(t) if p]
@@ -1078,6 +1162,14 @@ def _ts_collect_calls(def_node, src_qname: str, src_bytes: bytes, out: ExtractRe
         elif node.type in _JSX_OPEN_TYPES:
             _jsx_component_ref(node)
         for c in node.children:
+            # Don't descend into a nested def/class/method — it is extracted and
+            # collected as its OWN symbol, so recursing here would attribute its
+            # call sites to this enclosing symbol too (a class absorbing every
+            # method-body call, a function absorbing a nested function). Inline
+            # anonymous arrows/callbacks (not def-typed) are still walked, so
+            # their calls correctly belong to the enclosing symbol.
+            if c is not def_node and c.type in _DEF_NODE_TYPES:
+                continue
             walk(c)
 
     walk(def_node)
