@@ -1,0 +1,3 @@
+{
+  "ignore_paths": ["\\.(png|jpe?g|gif|ico|webp|svg|pdf|woff2?|ttf|otf)$"]
+}
