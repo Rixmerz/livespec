@@ -202,6 +202,55 @@ follows [SemVer](https://semver.org/).
   silently goes dead. Off-by-one in split-chunk line ranges corrected;
   seeded-link `confidence` is preserved instead of forced to 1.0.
 
+### Fixed — tools layer (audit batch P4)
+- **`analyze_impact(target_type="spec")` honors the pagination contract**:
+  it returned three FULL unpaginated symbol lists (depth-5 cones unioned
+  over every linked and dependent-spec symbol) — the 4-7M-char payload
+  class the v0.7 contract exists to prevent. Now paginated
+  (`limit`/`cursor`), `summary_only` returns counts, and `min_weight` is
+  applied like the symbol/file branches.
+- **`git_diff_impact` detects renames**: it now uses
+  `git diff --name-status -M` and includes a rename's OLD path (where the
+  indexed symbols live), so the caller cone / affected specs / suggested
+  tests for a renamed+edited file aren't silently dropped.
+- **git ref option injection closed**: `--end-of-options` guards the
+  caller-supplied `base_ref`/`head_ref` range so a ref beginning with `-`
+  can't be parsed as a git option (e.g. `--output=` → file write).
+- **Unbounded `IN (...)` queries chunked**: a depth-5 cone larger than
+  SQLite's host-parameter cap (999 / 32766) no longer raises a raw
+  `OperationalError`; the seven affected queries run in parameter-safe
+  chunks.
+- **Workspace errors are shaped**: a missing / non-existent `workspace`
+  now returns `{error, isError, hint}` (a new pre-validating middleware)
+  instead of a raw protocol error — the most common agent mistake.
+- **`create_spec`**: auto-numbering uses MAX(spec_id)+1 (was
+  last-inserted, which collided on out-of-order/imported ids), and a
+  duplicate id returns a shaped error instead of leaking
+  `sqlite3.IntegrityError`.
+- **Stable cursor ordering**: `find_orphan_tests` and
+  `grep_in_indexed_files` now `ORDER BY` a stable key so a paginated walk
+  spanning a re-index can't skip/duplicate rows.
+- **Explorer per-Spec `endpoints`** are the intersection of a Spec's
+  symbols with the real endpoint surface (the old filter was always true,
+  labeling every linked symbol an owned endpoint and inflating
+  `dashboard.with_endpoints`). `compute_endpoints` is now computed once
+  per bundle build instead of twice.
+- **`agent_scratch` notes are readable**: `quick_orient` now surfaces a
+  symbol's scratch note (the tool was write-only — nothing ever read the
+  notes back).
+- **`audit_coverage` stops writing on read**: the coverage trend snapshot
+  is recorded only on the primary (first-page, full) fetch, not on
+  `summary_only`, cursor pages, or every Explorer bundle rebuild.
+- **`list_specs` `has_implementation`** is filtered in SQL before the
+  LIMIT (a page could silently shrink to 0 while matching specs existed
+  beyond the limit).
+- **`find_symbol`** escapes LIKE wildcards (a query with `%`/`_` matches
+  literally) and clamps a negative `limit` (was `LIMIT -1` = unbounded).
+- **`bulk_link_spec_symbols`** rejects an invalid `relation` (a typo like
+  `implement` used to store silently, invisible to every
+  `relation='implements'` query) and a non-numeric `confidence` with a
+  shaped per-mapping error instead of a raw `ValueError`.
+
 ## [0.19.0] - 2026-06-30
 
 ### Changed — brownfield RF bootstrap
