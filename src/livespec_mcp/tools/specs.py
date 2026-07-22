@@ -275,11 +275,9 @@ def register(
                 f"Spec '{spec_id}' not found",
                 hint="check `list_specs()` for known spec ids",
             )
-        sym = st.conn.execute(
-            """SELECT s.id FROM symbol s JOIN file f ON f.id=s.file_id
-               WHERE f.project_id=? AND s.qualified_name=? LIMIT 1""",
-            (pid, symbol_qname),
-        ).fetchone()
+        # Group-aware: home project first, then the rest of a shared group DB
+        # (ungrouped → home only, identical to the previous behaviour).
+        sym = st.resolve_symbol(symbol_qname)
         if not sym:
             return symbol_not_found_error(st.conn, pid, symbol_qname)
         if unlink:

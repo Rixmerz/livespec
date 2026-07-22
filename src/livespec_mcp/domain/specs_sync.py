@@ -259,11 +259,9 @@ def bulk_link_spec_symbols_impl(st: Any, mappings: list[dict[str, Any]]) -> dict
             )
             n_failed += 1
             continue
-        sym = st.conn.execute(
-            """SELECT s.id, s.kind FROM symbol s JOIN file f ON f.id=s.file_id
-               WHERE f.project_id=? AND s.qualified_name=? LIMIT 1""",
-            (pid, symbol_qname),
-        ).fetchone()
+        # Group-aware resolution: home project first, then the rest of a
+        # shared group DB (ungrouped → home only, unchanged).
+        sym = st.resolve_symbol(symbol_qname)
         if not sym:
             hint = None
             if symbol_qname.count(".") == 2 and symbol_qname.startswith("tests."):

@@ -7,6 +7,17 @@ follows [SemVer](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- **Cross-project Spec membership via a shared group DB (P1).** A new
+  `.livespec.toml` `[workspace] group_db = "..."` key routes several repo
+  roots into one database (each keeps its own `project_id`), so a Spec in one
+  repo can `link_spec_symbol` / `bulk_link_spec_symbols` a symbol that lives
+  in another repo of the group, and `get_spec_implementation` surfaces code
+  from every repo. Symbol resolution is home-project-first, then the rest of
+  the group. Fully backward-compatible: absent `group_db` → byte-identical
+  single-repo behaviour (the DB stays at `<repo>/.mcp-docs/docs.db`, resolution
+  stays home-only). Docs/Explorer remain per-repo. First half of the
+  polyrepo/microservices pillar; the cross-repo *call graph* (route edges)
+  follows.
 - **OpenSpec (Fission-AI) interop in `import_specs_from_markdown`.** The tool
   now auto-detects and ingests the OpenSpec markdown dialect
   (`### Requirement: <name>` anchors with SHALL prose + `#### Scenario:`
