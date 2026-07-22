@@ -7,6 +7,24 @@ follows [SemVer](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- **Cross-repo route edges (P2) — the call graph crosses the front↔back
+  boundary.** The extractor now records HTTP route "sites" into a new
+  `route_ref` table (schema migration v14): `role='server'` for backend
+  handlers (`@app.get('/x')`, `@app.route('/x', methods=[...])`) and
+  `role='client'` for call sites that hit a route (`fetch('/x')`,
+  `axios.get('/x')`, `requests.get('/x')`, `httpx.post('/x')`).
+  `_resolve_routes` matches them by a normalized path (every framework's
+  param syntax — `<int:id>` / `{id}` / `:id` — and bare numeric segments
+  collapse to `{}`) and writes `symbol_edge` rows with
+  `edge_type='invokes_route'` (weight 0.9 on an exact method match, 0.8 when
+  one side's method is unknown; no edge on a method mismatch). Matching is
+  **DB-wide**, so it is cross-repo under a shared `group_db` (P1) and
+  intra-repo in a monorepo. Surfaced by `who_calls` (new `route_callers`:
+  frontend callers of a backend endpoint) and `who_does_this_call` (new
+  `invokes_endpoints`). Answers *"I changed this endpoint — what frontend
+  breaks?"* across repos, which neither LSP nor spec-authoring tools can. HTTP
+  only for now; the TS/Hono server side and gRPC/queues follow. INSERT OR
+  IGNORE / weight-MAX resolver invariant preserved.
 - **Cross-project Spec membership via a shared group DB (P1).** A new
   `.livespec.toml` `[workspace] group_db = "..."` key routes several repo
   roots into one database (each keeps its own `project_id`), so a Spec in one

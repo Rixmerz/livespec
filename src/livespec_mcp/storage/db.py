@@ -338,6 +338,36 @@ def _m013_chunk_au_guard(conn: sqlite3.Connection) -> None:
     )
 
 
+def _m014_route_ref(conn: sqlite3.Connection) -> None:
+    """v0.21 P2: route_ref table for cross-repo route edges.
+
+    New table (schema.sql already created it on fresh DBs). On an existing DB,
+    create it here and queue a forced re-extract so the new client/server
+    route rows populate on the next index_project without needing --force."""
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS route_ref (
+            id INTEGER PRIMARY KEY,
+            symbol_id INTEGER NOT NULL REFERENCES symbol(id) ON DELETE CASCADE,
+            role TEXT NOT NULL,
+            method TEXT,
+            path TEXT NOT NULL,
+            norm_path TEXT NOT NULL,
+            line INTEGER
+        )"""
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_route_ref_symbol ON route_ref(symbol_id)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_route_ref_match ON route_ref(role, norm_path)"
+    )
+    # Only queue a re-extract on a DB that already has symbols (an existing
+    # project). A brand-new DB runs every migration inside the first connect()
+    # before any indexing — no need to force anything there.
+    if conn.execute("SELECT 1 FROM symbol LIMIT 1").fetchone() is not None:
+        _flag_reextract(conn)
+
+
 # Ordered registry. Append-only — never reuse a version number.
 MIGRATIONS: list[Migration] = [
     (1, "drop_dead_tables", _m001_drop_dead_tables),
@@ -353,6 +383,7 @@ MIGRATIONS: list[Migration] = [
     (11, "rename_rf_to_spec", _m011_rename_rf_to_spec),
     (12, "unique_project_root", _m012_unique_project_root),
     (13, "chunk_au_guard", _m013_chunk_au_guard),
+    (14, "route_ref", _m014_route_ref),
 ]
 
 

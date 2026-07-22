@@ -40,9 +40,25 @@ class ExtractedRef:
 
 
 @dataclass
+class ExtractedRoute:
+    """v0.21 P2: one side of a cross-repo route edge.
+
+    role='server' — an HTTP handler (`@app.get('/x')`); role='client' — a call
+    site that hits a route (`fetch('/x')`, `requests.get('/x')`). The resolver
+    joins client↔server by normalized path.
+    """
+    src_qname: str
+    role: str          # 'client' | 'server'
+    method: str | None
+    path: str
+    line: int
+
+
+@dataclass
 class ExtractResult:
     symbols: list[ExtractedSymbol] = field(default_factory=list)
     refs: list[ExtractedRef] = field(default_factory=list)
+    routes: list[ExtractedRoute] = field(default_factory=list)
     # P0.4: per-file imports map. local_name -> source_module (qualified name of
     # the module providing it). Used by the resolver to scope short-name lookups.
     imports: dict[str, str] = field(default_factory=dict)
@@ -129,6 +145,20 @@ def _py_extract(source: str, module_name: str) -> ExtractResult:
                 decorators=_py_decorator_names(node),
             )
         )
+        # v0.21 P2: server-side route — record every HTTP handler decorator so
+        # the resolver can join it to a frontend call site by path.
+        for dec in getattr(node, "decorator_list", []) or []:
+            method, path = _http_route_from_decorator_call(dec)
+            if path is not None:
+                out.routes.append(
+                    ExtractedRoute(
+                        src_qname=qname,
+                        role="server",
+                        method=method,
+                        path=path,
+                        line=start,
+                    )
+                )
         _collect_calls(node, qname, out)
         return qname
 
@@ -191,6 +221,18 @@ def _collect_calls(func_node: ast.AST, src_qname: str, out: ExtractResult) -> No
             continue
         stack.extend(ast.iter_child_nodes(node))
         if isinstance(node, ast.Call):
+            client = _py_client_route(node)
+            if client is not None:
+                method, path = client
+                out.routes.append(
+                    ExtractedRoute(
+                        src_qname=src_qname,
+                        role="client",
+                        method=method,
+                        path=path,
+                        line=getattr(node, "lineno", 0),
+                    )
+                )
             target = _call_target_name(node.func)
             if target:
                 # P0.4: if the target name was imported in this file, tag the
@@ -211,6 +253,42 @@ def _collect_calls(func_node: ast.AST, src_qname: str, out: ExtractResult) -> No
                         scope_module=scope,
                     )
                 )
+
+
+_HTTP_CLIENT_VERBS = frozenset({"get", "post", "put", "delete", "patch", "head", "options"})
+# TS/JS: object identifiers that denote an HTTP client, so `axios.get('/x')` is
+# a client call but Hono's `app.get('/x', handler)` (object `app`) is not. The
+# allowlist is a first filter only — the definitive server-vs-client
+# discriminator is a trailing handler arg (see `_TS_HANDLER_ARG_TYPES`), since
+# router variables are commonly named `api`/`client`/`request` too.
+_TS_HTTP_CLIENT_OBJS = frozenset({
+    "axios", "api", "http", "https", "client", "request", "httpclient", "$http", "fetch",
+})
+# tree-sitter node types for a route-handler argument: a function/arrow, or a
+# bare identifier naming a handler. Their presence after the URL marks a SERVER
+# route registration (`api.get('/x', handler)`), never a client call.
+_TS_HANDLER_ARG_TYPES = frozenset({
+    "arrow_function", "function_expression", "function", "generator_function",
+    "identifier",
+})
+
+
+def _py_client_route(call: ast.Call) -> tuple[str | None, str] | None:
+    """Detect a Python HTTP client call — ``requests.get('/x')`` /
+    ``httpx.post('/x')`` / ``session.get('/x')`` — returning (method, path).
+
+    Conservative: the attribute must be an HTTP verb AND the first positional
+    arg a string literal that looks like a path/URL (``/...`` or ``http...``),
+    so ``some_dict.get('key')`` never registers as a route."""
+    fn = call.func
+    if not isinstance(fn, ast.Attribute) or fn.attr.lower() not in _HTTP_CLIENT_VERBS:
+        return None
+    if not call.args:
+        return None
+    path = _ast_str_constant(call.args[0])
+    if not path or not (path.startswith("/") or path.startswith("http")):
+        return None
+    return fn.attr.upper(), path
 
 
 def _leftmost_name(node: ast.AST) -> str | None:
@@ -273,6 +351,49 @@ _HTTP_VERB_DECORATOR_LASTSEGS = frozenset({
 HTTP_ROUTE_DECORATOR_LASTSEGS = _HTTP_VERB_DECORATOR_LASTSEGS | frozenset({
     "route", "api_route", "websocket",
 })
+
+# v0.21 P2: route path normalization — the join key between a frontend call
+# site and a backend handler. Every framework's path-param syntax collapses to
+# a single `{}` placeholder so `/users/<int:id>` (Flask), `/users/{id}`
+# (FastAPI/Hono) and `/users/:id` (Express/React-router) all match, and a
+# concrete client call `/users/123` matches the template too.
+_ROUTE_PARAM_PATTERNS = (
+    _re_rs.compile(r"<[^>]+>"),                    # Flask <int:id>, <id>
+    _re_rs.compile(r"\{[^}]+\}"),                  # FastAPI / Hono {id}
+    _re_rs.compile(r":[A-Za-z_][A-Za-z0-9_]*"),    # Express / React-router :id
+    _re_rs.compile(r"\*+"),                        # wildcards
+)
+_URL_SCHEME_RE = _re_rs.compile(r"^[a-zA-Z][a-zA-Z0-9+.\-]*://[^/]+(/.*)?$")
+
+
+def normalize_route_path(raw: str | None) -> str:
+    """Canonicalize a route/URL string into a match key.
+
+    Strips scheme+host and query/fragment, collapses every path parameter (and
+    bare numeric segments) to ``{}``, dedups slashes, and enforces a leading
+    slash with no trailing slash (root ``/`` excepted). Returns ``""`` for an
+    empty/None input so the resolver can skip it.
+    """
+    if not raw:
+        return ""
+    s = raw.strip()
+    m = _URL_SCHEME_RE.match(s)
+    if m:
+        s = m.group(1) or "/"
+    s = s.split("?", 1)[0].split("#", 1)[0]
+    for pat in _ROUTE_PARAM_PATTERNS:
+        s = pat.sub("{}", s)
+    norm_parts = [
+        "{}" if (seg and seg != "{}" and seg.isdigit()) else seg
+        for seg in s.split("/")
+    ]
+    s = "/".join(norm_parts)
+    s = _re_rs.sub(r"/{2,}", "/", s)
+    if not s.startswith("/"):
+        s = "/" + s
+    if len(s) > 1 and s.endswith("/"):
+        s = s.rstrip("/")
+    return s
 
 
 def _ast_str_constant(node: ast.AST) -> str | None:
@@ -1136,8 +1257,71 @@ def _ts_collect_calls(def_node, src_qname: str, src_bytes: bytes, out: ExtractRe
             )
         )
 
+    def _client_route(call_node):
+        """v0.21 P2: (method, path) for a fetch/axios client call, else None.
+
+        Conservative: bare ``fetch(...)`` / ``axios(...)``, or ``<client>.verb(...)``
+        where the object is a known HTTP-client identifier — so Hono's
+        ``app.get('/x', handler)`` (server) never registers as a client call."""
+        fn = call_node.child_by_field_name("function") if hasattr(call_node, "child_by_field_name") else None
+        if fn is None:
+            return None
+        method: str | None = None
+        if fn.type == "identifier":
+            if text(fn) not in ("fetch", "axios"):
+                return None
+        elif fn.type == "member_expression":
+            prop = fn.child_by_field_name("property")
+            obj = fn.child_by_field_name("object")
+            if prop is None or obj is None:
+                return None
+            verb = text(prop).lower()
+            if verb not in _HTTP_CLIENT_VERBS:
+                return None
+            obj_name = (_ts_leftmost_ident(fn, text) or text(obj)).lower().lstrip("$")
+            if obj_name not in _TS_HTTP_CLIENT_OBJS:
+                return None
+            method = verb.upper()
+        else:
+            return None
+        args_node = call_node.child_by_field_name("arguments")
+        if args_node is None:
+            return None
+        positional = [
+            a for a in args_node.children
+            if a.type not in ("(", ")", ",", "comment")
+        ]
+        if not positional or positional[0].type not in ("string", "template_string"):
+            return None
+        raw = text(positional[0])
+        path = raw[1:-1] if len(raw) >= 2 else raw
+        if not (path.startswith("/") or path.startswith("http")):
+            return None
+        # A later positional handler arg (named function or arrow) means this is
+        # a SERVER route registration — `api.get('/x', handler)` / Express /
+        # Hono — not a client call. This is the definitive discriminator: the
+        # object-name allowlist alone is leaky (a router is commonly named
+        # `api`/`client`/`request`), but a client call passes only a URL (and
+        # maybe a config OBJECT), never a handler function/identifier. Client
+        # calls with a bare-identifier config var are rare; precision wins.
+        if any(a.type in _TS_HANDLER_ARG_TYPES for a in positional[1:]):
+            return None
+        return method, path
+
     def walk(node):
         if node.type in _CALL_NODE_TYPES:
+            route = _client_route(node)
+            if route is not None:
+                method, path = route
+                out.routes.append(
+                    ExtractedRoute(
+                        src_qname=src_qname,
+                        role="client",
+                        method=method,
+                        path=path,
+                        line=node.start_point[0] + 1,
+                    )
+                )
             tgt, leftmost = call_target_and_leftmost(node)
             if tgt:
                 # P1.A1: scope_module from imports map. Direct hit on target name

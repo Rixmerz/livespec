@@ -316,8 +316,13 @@ Always registered (including markdown Spec import + Explorer export).
 #### Code intelligence (14)
 - `find_symbol(query, kind, limit)` — separator-agnostic name lookup.
 - `get_symbol_source(qname)` — body slice only (lighter than full info).
-- `who_calls(qname, max_depth=1)` — backward cone, slim agentic alias.
+- `who_calls(qname, max_depth=1)` — backward cone, slim agentic alias. Adds
+  `route_callers` when the symbol is an HTTP endpoint that a frontend calls
+  over a route (cross-repo via `group_db`) — *"I changed this endpoint, what
+  frontend breaks?"*.
 - `who_does_this_call(qname, max_depth=1)` — forward-direction counterpart.
+  Adds `invokes_endpoints`: backend routes this symbol hits via
+  `fetch`/`axios`/`requests`.
 - `quick_orient(qname)` — composite snapshot: metadata + docstring lead +
   top-5 callers/callees by PageRank + linked Specs + entry-point flag.
   Replaces 3-4 calls with one when an agent first lands on a symbol.
