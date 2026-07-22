@@ -1,0 +1,15 @@
+{
+  "name": "livespec-local",
+  "description": "Local marketplace for the livespec Claude Code plugin (code intelligence + Spec traceability).",
+  "owner": {
+    "name": "Juan Pablo Diaz",
+    "email": "juanpablo516@gmail.com"
+  },
+  "plugins": [
+    {
+      "name": "livespec",
+      "source": "./plugin",
+      "description": "Code intelligence + Spec traceability: livespec-mcp server, specialized subagent, and preloaded Skill."
+    }
+  ]
+}
