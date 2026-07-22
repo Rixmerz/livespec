@@ -24,6 +24,12 @@ import re
 from dataclasses import dataclass
 
 _HEADER_RE = re.compile(r"^##+\s+(?P<spec>SPEC[-_]?\d+)\s*[:\-]\s*(?P<title>.+?)\s*$")
+# OpenSpec (Fission-AI) interop: `### Requirement: <name>` anchors one spec;
+# `## ADDED|MODIFIED|REMOVED Requirements` are the change-delta section headers.
+_OSPEC_REQ_RE = re.compile(r"^###\s+Requirement:\s*(?P<name>.+?)\s*$")
+_OSPEC_DELTA_RE = re.compile(
+    r"^##\s+(?P<verb>ADDED|MODIFIED|REMOVED|RENAMED)\s+Requirements\b", re.IGNORECASE
+)
 # Match `Prioridad: value` after stripping markdown bold markers.
 _META_RE = re.compile(
     r"\b(prioridad|priority|módulo|modulo|module|status|estado|kind|tipo)\s*[:=]\s*"
@@ -152,3 +158,142 @@ def parse_specs_markdown(text: str) -> list[ParsedSpec]:
 
     _flush()
     return specs
+
+
+# ---------- OpenSpec (Fission-AI) interop ----------
+
+
+def _slugify(text: str) -> str:
+    """Deterministic, filesystem-free slug for a requirement name.
+
+    Lowercase, non-alphanumeric runs collapse to a single hyphen, edges
+    trimmed. Stable across re-imports so idempotency holds (same requirement
+    name → same slug → UPDATE, not a duplicate INSERT)."""
+    slug = re.sub(r"[^a-z0-9]+", "-", text.strip().lower()).strip("-")
+    return slug or "requirement"
+
+
+def _ospec_spec_id(name: str, capability: str | None) -> str:
+    """Slug spec_id for an OpenSpec requirement.
+
+    OpenSpec identifies requirements by name within a capability, not by a
+    numeric id. We derive a readable, stable slug id (free-text `spec_id`
+    column allows it, same as legacy ``RF-042`` values). The capability
+    prefix disambiguates same-named requirements across capabilities.
+    """
+    name_slug = _slugify(name)
+    if capability:
+        return f"{_slugify(capability)}-{name_slug}"
+    return name_slug
+
+
+def parse_openspec_markdown(
+    text: str, *, capability: str | None = None
+) -> list[ParsedSpec]:
+    """Parse an OpenSpec-format markdown file into ``ParsedSpec`` objects.
+
+    Anchors on ``### Requirement: <name>`` headings. The prose + any
+    ``#### Scenario:`` blocks under a requirement become its description
+    verbatim (SHALL statements and WHEN/THEN scenarios are preserved).
+
+    Change-delta sections drive status: requirements under
+    ``## REMOVED Requirements`` are imported as ``deprecated``; everything
+    else (``## ADDED``/``## MODIFIED`` and plain canonical ``## Requirements``
+    specs) is ``active``. ``kind`` defaults to ``functional_requirement`` —
+    OpenSpec requirements are functional by nature; reclassify with
+    ``update_spec`` if needed.
+    """
+    specs: list[ParsedSpec] = []
+    current: dict | None = None
+    description_lines: list[str] = []
+    delta_status = "active"  # canonical specs (no delta header) are active
+
+    def _flush() -> None:
+        if current is None:
+            return
+        desc = "\n".join(description_lines).strip()
+        specs.append(
+            ParsedSpec(
+                spec_id=current["spec_id"],
+                title=current["title"],
+                description=desc,
+                priority="medium",
+                status=current["status"],
+                module=capability,
+                kind="functional_requirement",
+            )
+        )
+
+    in_fence = False
+    fence_marker = ""
+
+    for raw_line in text.splitlines():
+        line = raw_line.rstrip()
+        stripped = line.lstrip()
+
+        if stripped.startswith("```") or stripped.startswith("~~~"):
+            marker = stripped[:3]
+            if not in_fence:
+                in_fence, fence_marker = True, marker
+            elif stripped.startswith(fence_marker):
+                in_fence, fence_marker = False, ""
+            if current is not None:
+                description_lines.append(raw_line)
+            continue
+        if in_fence:
+            if current is not None:
+                description_lines.append(raw_line)
+            continue
+
+        delta = _OSPEC_DELTA_RE.match(line)
+        if delta:
+            # Section header ends the current requirement and sets the status
+            # applied to requirements that follow, until the next such header.
+            _flush()
+            current = None
+            description_lines = []
+            delta_status = (
+                "deprecated" if delta.group("verb").upper() == "REMOVED" else "active"
+            )
+            continue
+
+        req = _OSPEC_REQ_RE.match(line)
+        if req:
+            _flush()
+            name = req.group("name").strip()
+            current = {
+                "spec_id": _ospec_spec_id(name, capability),
+                "title": name,
+                "status": delta_status,
+            }
+            description_lines = []
+            continue
+
+        # Any other level-2/3 heading closes the current requirement body so
+        # unrelated sections (## Purpose, ## Why) don't leak into the spec.
+        if current is not None and re.match(r"^##(?!#)|^###(?!#)", stripped):
+            _flush()
+            current = None
+            description_lines = []
+            continue
+
+        if current is not None:
+            description_lines.append(raw_line)
+
+    _flush()
+    return specs
+
+
+def detect_spec_format(text: str) -> str:
+    """Return ``"openspec"`` or ``"livespec"`` for a markdown spec file.
+
+    OpenSpec files use ``### Requirement:`` anchors and have no
+    ``## SPEC-NNN:`` headers; livespec's native format is the inverse. When a
+    file has both (unusual), the native ``## SPEC-NNN:`` format wins so
+    existing imports never change behaviour.
+    """
+    has_livespec = any(_HEADER_RE.match(ln) for ln in text.splitlines())
+    has_openspec = bool(re.search(r"^###\s+Requirement:", text, re.MULTILINE))
+    if has_openspec and not has_livespec:
+        return "openspec"
+    return "livespec"

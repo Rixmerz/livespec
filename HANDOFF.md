@@ -35,7 +35,26 @@ Todo el stack es local-first: 0 servicios externos, 0 API keys obligatorias, 0 D
 
 ---
 
-## 3. Estado actual: v0.20.0 — RF→Spec + auditoría exhaustiva aplicada
+## 3. Estado actual
+
+### 3.0 En curso (post-0.20): cross-project + SDD interop
+
+Stream de trabajo abierto tras un análisis estratégico (competencia con
+indexadores/memory MCP, y con OpenSpec de Fission-AI). Decisiones: livespec
+compite en el eje **code-graph + intent + cross-repo**, NO en RAG/memory (eje
+cedido a Grep nativo) ni LSP (cedido a vise). Batches:
+
+- **Interop OpenSpec** (LANDED): `import_specs_from_markdown` ahora auto-detecta
+  e ingiere el formato OpenSpec (`### Requirement:` + `#### Scenario:`), con
+  param `fmt` y soporte de árbol `openspec/`. Tests **408 passed**. Ver
+  CHANGELOG `[Unreleased]`. Wedge: ser la capa de trazabilidad/grafo debajo de
+  los tools SDD (OpenSpec/spec-kit/Kiro), en vez de competirles la autoría.
+- **Pendiente (próximos batches):** P1 grouped DB (membresía cross-project de
+  un Spec vía DB compartida), P3 curación (`search`/`embed_chunks` → plugin
+  RAG) + hardening del resolver (falsos negativos + exponer confidence), P2
+  route edges cross-repo (`edge_type='invokes_route'`, el grande).
+
+### 3.1 v0.20.0 — RF→Spec + auditoría exhaustiva aplicada (referencia)
 
 **HEAD:** ver `git rev-parse --short HEAD` (batch de auditoría landeado sobre
 `46167e4`). pyproject **0.20.0**. Schema **v13**. Tests **403 passed**

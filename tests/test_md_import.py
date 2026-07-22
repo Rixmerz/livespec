@@ -5,7 +5,11 @@ from __future__ import annotations
 import pytest
 from fastmcp import Client
 
-from livespec_mcp.domain.md_specs import parse_specs_markdown
+from livespec_mcp.domain.md_specs import (
+    detect_spec_format,
+    parse_openspec_markdown,
+    parse_specs_markdown,
+)
 from livespec_mcp.server import mcp
 
 SAMPLE = """\
@@ -117,3 +121,105 @@ async def test_import_is_idempotent(sample_repo):
         assert first["created"] == 4
         assert second["created"] == 0
         assert second["updated"] == 4
+
+
+# ---------- OpenSpec (Fission-AI) interop ----------
+
+OPENSPEC_SAMPLE = """\
+# Theming Specification
+
+## Purpose
+Let users control the app's appearance.
+
+## ADDED Requirements
+
+### Requirement: Theme selection
+The app SHALL let users switch between light and dark themes,
+defaulting to the system preference.
+
+#### Scenario: User toggles dark mode
+- **WHEN** the user clicks the theme toggle
+- **THEN** the app switches to dark mode and persists the choice
+
+### Requirement: High contrast mode
+The app SHALL offer a high-contrast palette for accessibility.
+
+## REMOVED Requirements
+
+### Requirement: Legacy theme cookie
+The app used a legacy cookie that is no longer supported.
+"""
+
+
+def test_detect_format():
+    assert detect_spec_format(OPENSPEC_SAMPLE) == "openspec"
+    assert detect_spec_format(SAMPLE) == "livespec"
+    # Mixed → native SPEC-NNN wins so existing imports never change behaviour.
+    assert detect_spec_format(SAMPLE + "\n### Requirement: X\ndesc\n") == "livespec"
+
+
+def test_parse_openspec_basic():
+    specs = parse_openspec_markdown(OPENSPEC_SAMPLE, capability="theming")
+    by_id = {s.spec_id: s for s in specs}
+    assert len(specs) == 3
+
+    theme = by_id["theming-theme-selection"]
+    assert theme.title == "Theme selection"
+    assert theme.status == "active"
+    assert theme.kind == "functional_requirement"
+    assert theme.module == "theming"
+    assert "SHALL let users switch" in theme.description
+    # Scenario block is preserved verbatim in the description.
+    assert "WHEN" in theme.description and "THEN" in theme.description
+    # The ## Purpose section must not leak into any requirement.
+    assert "control the app" not in theme.description
+
+    # A requirement under `## REMOVED Requirements` imports as deprecated.
+    assert by_id["theming-legacy-theme-cookie"].status == "deprecated"
+
+
+@pytest.mark.asyncio
+async def test_import_openspec_file(sample_repo):
+    md = sample_repo / "spec.md"
+    md.write_text(OPENSPEC_SAMPLE)
+    async with Client(mcp) as c:
+        result = (
+            await c.call_tool("import_specs_from_markdown", {"path": "spec.md"})
+        ).data
+        assert result["parsed"] == 3
+        assert result["created"] == 3
+
+        listed = (await c.call_tool("list_specs", {})).data
+        by_id = {r["spec_id"]: r for r in listed["specs"]}
+        assert "theme-selection" in by_id  # no capability prefix for a bare file
+        assert by_id["legacy-theme-cookie"]["status"] == "deprecated"
+
+
+@pytest.mark.asyncio
+async def test_import_openspec_tree(sample_repo):
+    tree = sample_repo / "openspec" / "specs" / "theming"
+    tree.mkdir(parents=True)
+    (tree / "spec.md").write_text(OPENSPEC_SAMPLE)
+    async with Client(mcp) as c:
+        result = (
+            await c.call_tool(
+                "import_specs_from_markdown", {"path": "openspec"}
+            )
+        ).data
+        assert result["created"] == 3
+        listed = (await c.call_tool("list_specs", {})).data
+        by_id = {r["spec_id"]: r for r in listed["specs"]}
+        # Capability prefix comes from the `theming/` folder name.
+        assert "theming-theme-selection" in by_id
+
+
+@pytest.mark.asyncio
+async def test_import_rejects_bad_fmt(sample_repo):
+    (sample_repo / "spec.md").write_text(OPENSPEC_SAMPLE)
+    async with Client(mcp) as c:
+        result = (
+            await c.call_tool(
+                "import_specs_from_markdown", {"path": "spec.md", "fmt": "nope"}
+            )
+        ).data
+        assert result.get("isError") is True

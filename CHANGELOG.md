@@ -6,6 +6,19 @@ follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- **OpenSpec (Fission-AI) interop in `import_specs_from_markdown`.** The tool
+  now auto-detects and ingests the OpenSpec markdown dialect
+  (`### Requirement: <name>` anchors with SHALL prose + `#### Scenario:`
+  WHEN/THEN blocks) alongside the native `## SPEC-NNN:` format. The
+  requirement name becomes the spec title, a deterministic slug becomes the
+  `spec_id`, and requirements under `## REMOVED Requirements` import as
+  `deprecated` (else `active`). A `fmt` parameter (`"auto"` default |
+  `"livespec"` | `"openspec"`) forces the dialect, and pointing `path` at an
+  `openspec/` **directory** walks its whole `specs/`/`changes/` tree
+  (capability = folder name → `module`). Positions livespec as the
+  traceability/graph layer beneath spec-driven-development authoring tools.
+
 ## [0.20.0] - 2026-07-16
 
 ### Breaking — RF → Spec nomenclature + taxonomy (hard cut, no aliases)
