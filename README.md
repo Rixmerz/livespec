@@ -288,6 +288,13 @@ Always registered (including markdown Spec import + Explorer export).
   sync_from = ["docs/REQUISITOS_FUNCIONALES.md"]  # re-import after every index_project
   links_seed = "docs/requirements/livespec-spec-links.json"  # optional bulk_link seed
 
+  [workspace]
+  group_db = "../.livespec-group/docs.db"  # cross-project: several repo roots
+                                           # share one DB so a Spec can link
+                                           # symbols across repos (each keeps
+                                           # its own project_id). Absent = the
+                                           # per-repo .mcp-docs/docs.db.
+
   [explorer]
   mount_path = "/explorer"              # FastAPI mount prefix for autowire
   ```
@@ -357,9 +364,13 @@ Always registered (including markdown Spec import + Explorer export).
   in-source annotation extractor doesn't reach (configs, SQL, YAML).
   Idempotent: re-linking an existing pair is a no-op. Test symbols must be
   **functions** (`tests.pkg.test_mod.test_fn`), not modules (`tests.pkg.test_mod`).
-- `import_specs_from_markdown(path)` — bulk-create/update Specs from
-  `## SPEC-NNN: Title` Markdown specs. Always visible; warns on duplicate
-  Spec headings across different markdown files. Idempotent.
+- `import_specs_from_markdown(path, fmt="auto")` — bulk-create/update Specs
+  from Markdown. Auto-detects two dialects: the native `## SPEC-NNN: Title`
+  format and **OpenSpec** (Fission-AI) `### Requirement:` / `#### Scenario:`
+  specs — point `path` at a single file or at an `openspec/` directory to walk
+  its whole tree. Positions livespec as the traceability/graph layer beneath
+  spec-driven-development authoring tools. Always visible; warns on duplicate
+  Spec headings; idempotent.
 - `list_specs(status, module, priority, kind, has_implementation)` —
   Spec discovery surface.
 - `get_spec_implementation(spec_id)` — answers
