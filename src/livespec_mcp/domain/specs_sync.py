@@ -6,7 +6,11 @@ import json
 from pathlib import Path
 from typing import Any
 
-from livespec_mcp.domain.md_specs import parse_specs_markdown
+from livespec_mcp.domain.md_specs import (
+    detect_spec_format,
+    parse_openspec_markdown,
+    parse_specs_markdown,
+)
 
 # spec_symbol.relation is a free-text column, but the query surface only knows
 # these three — a typo like 'implement' would store silently and be invisible
@@ -63,21 +67,67 @@ def scan_duplicate_spec_markdown_specs(
     return warnings
 
 
+def _parse_openspec_tree(root: Path) -> list:
+    """Walk an OpenSpec directory (``openspec/`` or a ``specs/`` subtree) and
+    parse every markdown file as OpenSpec format.
+
+    Capability = the file's parent directory name (OpenSpec lays specs out as
+    ``specs/<capability>/spec.md``). Later files win on spec_id collision so a
+    re-import is deterministic. ``changes/`` deltas and ``archive/`` are
+    included — both describe requirements that exist in the codebase.
+    """
+    parsed: list = []
+    seen: dict[str, int] = {}  # spec_id -> index into parsed (last wins)
+    for md in sorted(root.rglob("*.md")):
+        if any(part in {".git", ".venv", "venv", "node_modules"} for part in md.parts):
+            continue
+        parent = md.parent.name
+        capability = None if parent in {"specs", "openspec", root.name} else parent
+        try:
+            text = md.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        for spec in parse_openspec_markdown(text, capability=capability):
+            if spec.spec_id in seen:
+                parsed[seen[spec.spec_id]] = spec
+            else:
+                seen[spec.spec_id] = len(parsed)
+                parsed.append(spec)
+    return parsed
+
+
 def import_specs_from_markdown_file(
     st: Any,
     path: str | Path,
     *,
+    fmt: str = "auto",
     check_duplicates: bool = True,
 ) -> dict[str, Any]:
-    """Shared import logic for MCP tool and index post-hook."""
+    """Shared import logic for MCP tool and index post-hook.
+
+    ``fmt`` selects the source dialect: ``"livespec"`` (native
+    ``## SPEC-NNN:`` headers), ``"openspec"`` (Fission-AI OpenSpec
+    ``### Requirement:`` anchors), or ``"auto"`` (default — sniff per file,
+    and treat a directory ``path`` as an OpenSpec tree).
+    """
     pid = st.project_id
     p = Path(path)
     if not p.is_absolute():
         p = st.settings.workspace / p
     if not p.exists():
         raise FileNotFoundError(str(p))
-    text = p.read_text(encoding="utf-8", errors="replace")
-    parsed = parse_specs_markdown(text)
+    if p.is_dir():
+        # A directory is only meaningful as an OpenSpec tree — the native
+        # format is single-file.
+        parsed = _parse_openspec_tree(p)
+    else:
+        text = p.read_text(encoding="utf-8", errors="replace")
+        chosen = detect_spec_format(text) if fmt == "auto" else fmt
+        parsed = (
+            parse_openspec_markdown(text)
+            if chosen == "openspec"
+            else parse_specs_markdown(text)
+        )
     created = 0
     updated = 0
     for pspec in parsed:

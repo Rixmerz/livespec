@@ -398,26 +398,41 @@ def register(
     @mutation_tool(annotations={"readOnlyHint": False, "idempotentHint": True})
     def import_specs_from_markdown(
         path: str,
+        fmt: str = "auto",
         workspace: Workspace | None = None,
     ) -> dict[str, Any]:
-        """Bulk-create / update Specs from a Markdown spec file.
+        """Bulk-create / update Specs from Markdown — native or OpenSpec format.
 
-        Format expected: `## SPEC-NNN: Title` headers, with `**Prioridad:** alta`
-        and `**Módulo:** auth` metadata lines (Spanish or English variants).
-        Idempotent: re-import updates existing Specs in place rather than
-        duplicating. Imported specs default to `kind=functional_requirement`
-        (the markdown format has no `kind` column yet — use `update_spec` to
-        reclassify).
+        Two dialects, auto-detected per file:
+        - **livespec** (native): `## SPEC-NNN: Title` headers with
+          `**Prioridad:** alta` / `**Módulo:** auth` metadata (ES/EN variants).
+        - **openspec** (Fission-AI OpenSpec interop): `### Requirement: <name>`
+          anchors with SHALL prose + `#### Scenario:` WHEN/THEN blocks. The
+          requirement name becomes the title; a slug becomes the spec_id;
+          `## REMOVED Requirements` → status `deprecated`, else `active`.
+          Point `path` at a single file, or at an `openspec/` directory to
+          walk its whole `specs/`/`changes/` tree (capability = folder name).
+
+        `fmt` forces a dialect (`"livespec"` | `"openspec"`); default `"auto"`
+        sniffs each file and treats a directory as an OpenSpec tree. Idempotent:
+        re-import updates in place. OpenSpec specs default to
+        `kind=functional_requirement` — reclassify with `update_spec`.
 
         Path is resolved relative to the workspace root if not absolute.
         """
+        if fmt not in ("auto", "livespec", "openspec"):
+            return mcp_error(
+                f"invalid fmt: {fmt!r}",
+                did_you_mean=["auto", "livespec", "openspec"],
+                hint="fmt selects the markdown dialect; default 'auto' sniffs per file",
+            )
         st = get_state(workspace)
         try:
             from livespec_mcp.domain.specs_sync import (
                 import_specs_from_markdown_file,
             )
 
-            return import_specs_from_markdown_file(st, path)
+            return import_specs_from_markdown_file(st, path, fmt=fmt)
         except FileNotFoundError:
             return mcp_error(
                 f"file not found: {path}",
