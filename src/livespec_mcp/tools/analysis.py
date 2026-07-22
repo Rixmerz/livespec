@@ -2099,6 +2099,36 @@ def symbol_not_found_error(conn, project_id: int, identifier: str) -> dict:
     )
 
 
+def _route_edge_peers(conn, symbol_id: int, *, incoming: bool) -> list[dict]:
+    """v0.21 P2: ``invokes_route`` peers of a symbol, via a direct symbol_edge
+    query (spans a shared group DB — symbol ids are global within a database).
+
+    incoming=True → frontend call sites that hit this symbol as an HTTP
+    endpoint; incoming=False → backend endpoints this symbol calls.
+    """
+    if incoming:
+        join_col, filter_col = "e.src_symbol_id", "e.dst_symbol_id"
+    else:
+        join_col, filter_col = "e.dst_symbol_id", "e.src_symbol_id"
+    rows = conn.execute(
+        f"""SELECT s.qualified_name, f.path, e.weight
+            FROM symbol_edge e
+            JOIN symbol s ON s.id = {join_col}
+            JOIN file f ON f.id = s.file_id
+            WHERE {filter_col} = ? AND e.edge_type = 'invokes_route'
+            ORDER BY e.weight DESC, s.qualified_name""",
+        (symbol_id,),
+    ).fetchall()
+    return [
+        {
+            "qualified_name": r["qualified_name"],
+            "file": r["path"],
+            "confidence": round(float(r["weight"]), 3),
+        }
+        for r in rows
+    ]
+
+
 def register(mcp: FastMCP) -> None:
     @mcp.tool(annotations={"readOnlyHint": True, "idempotentHint": True})
     def find_symbol(
@@ -2250,14 +2280,21 @@ def register(mcp: FastMCP) -> None:
         )
         page = meta_sorted[cursor : cursor + limit]
         next_cursor = cursor + limit if cursor + limit < len(meta_sorted) else None
+        payload = {
+            "root": sym["qualified_name"],
+            "max_depth": max_depth,
+            "callers": page,
+            "count": total,
+            "next_cursor": next_cursor,
+        }
+        # v0.21 P2: cross-repo route callers — frontend call sites that hit this
+        # symbol as an HTTP endpoint (invokes_route edges). Direct symbol_edge
+        # query so it spans a shared group DB without the NetworkX graph.
+        route_callers = _route_edge_peers(st.conn, sid, incoming=True)
+        if route_callers:
+            payload["route_callers"] = route_callers
         return _attach_payload_warning(
-            {
-                "root": sym["qualified_name"],
-                "max_depth": max_depth,
-                "callers": page,
-                "count": total,
-                "next_cursor": next_cursor,
-            },
+            payload,
             _payload_warning(total, limit=limit, summary_only=summary_only),
         )
 
@@ -2302,13 +2339,19 @@ def register(mcp: FastMCP) -> None:
         )
         page = meta_sorted[cursor : cursor + limit]
         next_cursor = cursor + limit if cursor + limit < len(meta_sorted) else None
-        return {
+        payload = {
             "root": sym["qualified_name"],
             "max_depth": max_depth,
             "callees": page,
             "count": total,
             "next_cursor": next_cursor,
         }
+        # v0.21 P2: backend endpoints this symbol invokes over HTTP
+        # (invokes_route edges) — the cross-repo forward direction.
+        endpoints = _route_edge_peers(st.conn, sid, incoming=False)
+        if endpoints:
+            payload["invokes_endpoints"] = endpoints
+        return payload
 
     @mcp.tool(annotations={"readOnlyHint": True, "idempotentHint": True})
     def quick_orient(

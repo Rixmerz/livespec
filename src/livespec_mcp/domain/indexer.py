@@ -21,7 +21,11 @@ import xxhash
 from pathspec import GitIgnoreSpec
 
 from livespec_mcp.config import RepoConfig, Settings, load_repo_config
-from livespec_mcp.domain.extractors import ExtractResult, extract
+from livespec_mcp.domain.extractors import (
+    ExtractResult,
+    extract,
+    normalize_route_path,
+)
 from livespec_mcp.domain.languages import EXTRACTOR_SUPPORTED, detect_language
 from livespec_mcp.storage.db import (
     clear_reextract_flag,
@@ -317,6 +321,10 @@ def index_project(
                 project_id=project_id,
                 changed_file_ids=changed_file_ids if use_targeted else None,
             )
+            # v0.21 P2: join frontend call sites to backend handlers by route.
+            # DB-wide (not project-scoped): a shared group DB makes this
+            # cross-repo; a per-repo DB links a monorepo's own front+back.
+            _resolve_routes(conn)
             # P0.1: also re-link Spec annotations from docstrings. Cheap, idempotent
             # (INSERT OR IGNORE), and prevents traceability from going silently
             # stale when an edited symbol's old spec_symbol row is cascaded away.
@@ -477,6 +485,81 @@ def _replace_symbols(conn: sqlite3.Connection, *, file_id: int, result: ExtractR
                VALUES(?,?,?,?,?)""",
             (src_id, r.target_name, r.ref_type, r.line, r.scope_module),
         )
+    # v0.21 P2: persist route sites (client fetch/axios/requests + server
+    # handlers). Cascade on symbol delete keeps these consistent on re-extract,
+    # exactly like symbol_ref.
+    for rt in result.routes:
+        src_id = qname_to_id.get(rt.src_qname)
+        if src_id is None:
+            continue
+        conn.execute(
+            """INSERT INTO route_ref(symbol_id, role, method, path, norm_path, line)
+               VALUES(?,?,?,?,?,?)""",
+            (src_id, rt.role, rt.method, rt.path, normalize_route_path(rt.path), rt.line),
+        )
+
+
+def _route_edge_weight(client_method: str | None, server_method: str | None) -> float | None:
+    """Confidence for a client↔server route match, or None if incompatible.
+
+    Method mismatch (both known and different) → no edge. Both known & equal →
+    0.9. One side unknown (fetch without a method, or a `@app.route` without an
+    explicit verb) → 0.8 — still a strong path match, just method-agnostic.
+    Server verbs like ROUTE / WEBSOCKET / ON count as unknown for matching."""
+    c = (client_method or "").upper() or None
+    s = (server_method or "").upper() or None
+    if s in {"ROUTE", "WEBSOCKET", "ON", "ALL"}:
+        s = None
+    if c and s:
+        return 0.9 if c == s else None
+    return 0.8
+
+
+def _resolve_routes(conn: sqlite3.Connection) -> int:
+    """Join client route sites to server handlers by normalized path, DB-wide.
+
+    Writes ``invokes_route`` edges (client symbol → server symbol) into
+    symbol_edge. DB-wide by design: one DB may hold several projects only via a
+    shared ``[workspace] group_db`` (state.py routes each workspace to its own
+    DB otherwise), so matching across every project in the connection is
+    exactly "match within the group" — cross-repo when grouped, intra-repo
+    (monorepo front+back) otherwise.
+
+    INSERT OR IGNORE / weight-MAX only — never DELETE, same invariant as
+    ``_resolve_refs``. A route site whose symbol was wiped in a re-extract was
+    cascaded out of route_ref already; surviving sites re-resolve against the
+    new symbol ids.
+    """
+    servers: dict[str, list[tuple[int, str | None]]] = {}
+    for r in conn.execute(
+        "SELECT symbol_id, method, norm_path FROM route_ref WHERE role='server'"
+    ):
+        if r["norm_path"]:
+            servers.setdefault(r["norm_path"], []).append(
+                (int(r["symbol_id"]), r["method"])
+            )
+    if not servers:
+        return 0
+    edge_count = 0
+    for c in conn.execute(
+        "SELECT symbol_id, method, norm_path FROM route_ref WHERE role='client'"
+    ):
+        for server_id, server_method in servers.get(c["norm_path"], []):
+            src_id = int(c["symbol_id"])
+            if server_id == src_id:
+                continue
+            weight = _route_edge_weight(c["method"], server_method)
+            if weight is None:
+                continue
+            conn.execute(
+                """INSERT INTO symbol_edge(src_symbol_id, dst_symbol_id, edge_type, weight)
+                   VALUES(?,?, 'invokes_route', ?)
+                   ON CONFLICT(src_symbol_id, dst_symbol_id, edge_type)
+                   DO UPDATE SET weight = MAX(symbol_edge.weight, excluded.weight)""",
+                (src_id, server_id, weight),
+            )
+            edge_count += 1
+    return edge_count
 
 
 def _resolve_refs(

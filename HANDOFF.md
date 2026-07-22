@@ -55,10 +55,23 @@ cedido a Grep nativo) ni LSP (cedido a vise). Batches:
   home-first→grupo. Guard total: sin `group_db` → comportamiento idéntico.
   Tests **413 passed**. Ver `state.py:resolve_symbol/group_project_ids`,
   `config.py:group_db`, `test_grouped_db.py`.
-- **Pendiente (próximos batches):** P3 curación (`search`/`embed_chunks` →
-  plugin RAG) + hardening del resolver (falsos negativos + exponer confidence),
-  P2 route edges cross-repo (`edge_type='invokes_route'`, el grande — segunda
-  mitad del pilar polyrepo).
+- **P2 route edges cross-repo** (LANDED): segunda mitad del pilar polyrepo — el
+  call graph cruza front↔back. `route_ref` (mig v14, `role` client/server),
+  extractor emite sitios de ruta (`fetch`/`axios`/`requests` + `@app.get`),
+  `_resolve_routes(conn)` matchea por `norm_path` DB-wide → `edge_type=
+  'invokes_route'`. Surface: `who_calls.route_callers` / `who_does_this_call.
+  invokes_endpoints` por query directa a `symbol_edge` (sin tocar el grafo
+  NetworkX). HTTP-only; server TS/Hono + gRPC/colas = P2b. Tests **431 passed**.
+  Orquestado con la flota vise (`vise:tester` +8 casos; `vise:reviewer`
+  confirmó los contratos y destapó 1 defecto de precisión — routers TS
+  `api`/`client` con arg handler se mal-clasificaban como client; arreglado con
+  discriminador de arg-handler + test de regresión). Ver
+  `indexer.py:_resolve_routes`, `extractors.py:normalize_route_path` +
+  `_TS_HANDLER_ARG_TYPES`, `test_route_edges.py`.
+- **Diferido con criterio:** P3 curación (`search`/`embed_chunks` → plugin) — el
+  ROADMAP prohíbe curar sin battle-test data. Hardening del resolver: el
+  `min_weight` ya modela confianza; exponer peso por-arista en el grafo pide
+  cambiar la API de traversal (invasivo, valor incremental).
 
 ### 3.1 v0.20.0 — RF→Spec + auditoría exhaustiva aplicada (referencia)
 

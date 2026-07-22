@@ -97,6 +97,28 @@ CREATE TABLE IF NOT EXISTS symbol_ref (
 CREATE INDEX IF NOT EXISTS idx_symref_target ON symbol_ref(target_name);
 CREATE INDEX IF NOT EXISTS idx_symref_src ON symbol_ref(src_symbol_id);
 
+-- v0.21 P2: cross-repo route edges. HTTP routes are the join key between a
+-- frontend call site (`fetch('/api/x')`) and a backend handler
+-- (`@app.get('/api/x')`). Both are captured as route_ref rows (role='client'
+-- vs 'server'); `_resolve_routes` matches them by `norm_path` DB-wide and
+-- writes `invokes_route` edges into symbol_edge. DB-wide matching is what
+-- makes it cross-project: a shared group DB (`[workspace] group_db`) holds
+-- several repos, so a client in one repo links a server in another; a
+-- per-repo DB has one project, so it links a monorepo's own front+back.
+-- Cascade on symbol delete keeps this consistent across re-extract.
+CREATE TABLE IF NOT EXISTS route_ref (
+    id INTEGER PRIMARY KEY,
+    symbol_id INTEGER NOT NULL REFERENCES symbol(id) ON DELETE CASCADE,
+    role TEXT NOT NULL,             -- 'client' (fetch/axios/requests call) | 'server' (route handler)
+    method TEXT,                    -- GET/POST/... or NULL (unknown/any)
+    path TEXT NOT NULL,             -- raw route/URL string as written
+    norm_path TEXT NOT NULL,        -- normalized join key: params -> {}, leading '/', no trailing '/'
+    line INTEGER
+);
+
+CREATE INDEX IF NOT EXISTS idx_route_ref_symbol ON route_ref(symbol_id);
+CREATE INDEX IF NOT EXISTS idx_route_ref_match ON route_ref(role, norm_path);
+
 -- ===== Specs =====
 CREATE TABLE IF NOT EXISTS module (
     id INTEGER PRIMARY KEY,
