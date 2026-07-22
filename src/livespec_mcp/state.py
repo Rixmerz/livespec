@@ -19,16 +19,47 @@ v0.6: the ``use_workspace`` MCP tool was removed.
 from __future__ import annotations
 
 import sqlite3
+import sys
 import threading
 from collections import OrderedDict
 from dataclasses import dataclass
 from pathlib import Path
 
-from livespec_mcp.config import Settings
+from livespec_mcp.config import REPO_CONFIG_FILENAME, Settings
 from livespec_mcp.storage.db import connect, get_or_create_project
 from livespec_mcp.workspace_param import WorkspaceRequiredError
 
+if sys.version_info >= (3, 11):
+    import tomllib
+else:  # pragma: no cover — py3.10 fallback
+    import tomli as tomllib
+
 _LRU_MAX = 8
+
+
+def _read_group_db(workspace: Path) -> Path | None:
+    """Tolerantly read ``[workspace] group_db`` from ``.livespec.toml``.
+
+    Returns the resolved shared-DB path, or None when unset/absent/malformed.
+    Deliberately tolerant: this runs on **every** ``get_state`` (i.e. every
+    tool call), so a typoed config must not brick unrelated tools — full
+    validation still happens loudly in ``load_repo_config`` during
+    ``index_project``. Relative paths resolve against the workspace root.
+    """
+    path = workspace / REPO_CONFIG_FILENAME
+    if not path.is_file():
+        return None
+    try:
+        data = tomllib.loads(path.read_text(encoding="utf-8"))
+        raw = data.get("workspace", {}).get("group_db")
+        if not isinstance(raw, str) or not raw.strip():
+            return None
+        gp = Path(raw).expanduser()
+        if not gp.is_absolute():
+            gp = (workspace / gp).resolve()
+        return gp
+    except Exception:
+        return None
 
 
 @dataclass
@@ -52,6 +83,43 @@ class AppState:
 
     def lock(self) -> threading.Lock:
         return self._lock
+
+    def group_project_ids(self) -> list[int]:
+        """Project ids to search for symbols, home project first.
+
+        For an ungrouped workspace this is just ``[project_id]`` (identical to
+        pre-group behaviour). For a shared group DB it is the home project
+        followed by every other project in the same database — a shared DB
+        *is* the group.
+        """
+        if not self.settings.grouped:
+            return [self.project_id]
+        ids = [self.project_id]
+        ids.extend(
+            int(r["id"])
+            for r in self.conn.execute(
+                "SELECT id FROM project WHERE id != ? ORDER BY id", (self.project_id,)
+            )
+        )
+        return ids
+
+    def resolve_symbol(self, qname: str) -> sqlite3.Row | None:
+        """Resolve a qualified name to a symbol row (id, kind), preferring the
+        home project, then the rest of the group. Returns None if unknown.
+
+        Ungrouped workspaces resolve within the home project only — byte-for-
+        byte the previous ``WHERE f.project_id=?`` behaviour."""
+        ids = self.group_project_ids()
+        placeholders = ",".join("?" for _ in ids)
+        # Home-project-first ordering so a symbol that exists locally always
+        # wins over a same-named symbol in another repo of the group.
+        order = " ".join(f"WHEN {pid} THEN {i}" for i, pid in enumerate(ids))
+        return self.conn.execute(
+            f"""SELECT s.id, s.kind FROM symbol s JOIN file f ON f.id=s.file_id
+                WHERE f.project_id IN ({placeholders}) AND s.qualified_name=?
+                ORDER BY CASE f.project_id {order} END LIMIT 1""",
+            (*ids, qname),
+        ).fetchone()
 
 
 _cache: OrderedDict[Path, AppState] = OrderedDict()
@@ -84,12 +152,16 @@ def get_state(workspace: str | Path | None = None) -> AppState:
         if st is not None:
             _cache.move_to_end(ws)  # mark as most-recent
             return st
-        # New workspace — build state, evict LRU if needed
+        # New workspace — build state, evict LRU if needed.
+        # A `[workspace] group_db` reroutes only the DB to a shared file (each
+        # repo keeps its own project_id inside it); docs/explorer stay per-repo.
+        group_db = _read_group_db(ws)
         settings = Settings(
             workspace=ws,
             state_dir=ws / ".mcp-docs",
-            db_path=ws / ".mcp-docs" / "docs.db",
+            db_path=group_db if group_db is not None else ws / ".mcp-docs" / "docs.db",
             docs_dir=ws / ".mcp-docs" / "docs",
+            grouped=group_db is not None,
         )
         settings.ensure_dirs()
         conn = connect(settings.db_path)

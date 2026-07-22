@@ -44,15 +44,21 @@ indexadores/memory MCP, y con OpenSpec de Fission-AI). Decisiones: livespec
 compite en el eje **code-graph + intent + cross-repo**, NO en RAG/memory (eje
 cedido a Grep nativo) ni LSP (cedido a vise). Batches:
 
-- **Interop OpenSpec** (LANDED): `import_specs_from_markdown` ahora auto-detecta
-  e ingiere el formato OpenSpec (`### Requirement:` + `#### Scenario:`), con
-  param `fmt` y soporte de árbol `openspec/`. Tests **408 passed**. Ver
-  CHANGELOG `[Unreleased]`. Wedge: ser la capa de trazabilidad/grafo debajo de
-  los tools SDD (OpenSpec/spec-kit/Kiro), en vez de competirles la autoría.
-- **Pendiente (próximos batches):** P1 grouped DB (membresía cross-project de
-  un Spec vía DB compartida), P3 curación (`search`/`embed_chunks` → plugin
-  RAG) + hardening del resolver (falsos negativos + exponer confidence), P2
-  route edges cross-repo (`edge_type='invokes_route'`, el grande).
+- **Interop OpenSpec** (LANDED `27257a7`): `import_specs_from_markdown`
+  auto-detecta e ingiere el formato OpenSpec (`### Requirement:` +
+  `#### Scenario:`), con param `fmt` y soporte de árbol `openspec/`. Wedge: ser
+  la capa de trazabilidad/grafo debajo de los tools SDD (OpenSpec/spec-kit/
+  Kiro), en vez de competirles la autoría.
+- **P1 grouped DB** (LANDED): `.livespec.toml [workspace] group_db` rutea varios
+  roots a una DB compartida (cada uno su `project_id`); un Spec de un repo
+  linkea/surface símbolos de otro repo del grupo. `st.resolve_symbol` es
+  home-first→grupo. Guard total: sin `group_db` → comportamiento idéntico.
+  Tests **413 passed**. Ver `state.py:resolve_symbol/group_project_ids`,
+  `config.py:group_db`, `test_grouped_db.py`.
+- **Pendiente (próximos batches):** P3 curación (`search`/`embed_chunks` →
+  plugin RAG) + hardening del resolver (falsos negativos + exponer confidence),
+  P2 route edges cross-repo (`edge_type='invokes_route'`, el grande — segunda
+  mitad del pilar polyrepo).
 
 ### 3.1 v0.20.0 — RF→Spec + auditoría exhaustiva aplicada (referencia)
 

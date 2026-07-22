@@ -25,6 +25,9 @@ class Settings:
     state_dir: Path
     db_path: Path
     docs_dir: Path
+    # True when db_path is a shared group DB (`[workspace] group_db`) holding
+    # several repo roots — spec-symbol resolution then spans the whole group.
+    grouped: bool = False
 
     def ensure_dirs(self) -> None:
         self.state_dir.mkdir(parents=True, exist_ok=True)
@@ -60,6 +63,10 @@ class RepoConfig:
     # [specs] — post-index markdown sync + optional links seed
     specs_sync_from: tuple[str, ...] = ()
     specs_links_seed: str | None = None
+    # [workspace] — cross-project grouping: a shared DB path lets several repo
+    # roots live in one database (each its own project_id) so a Spec can link
+    # symbols across repos. Relative paths resolve against the workspace root.
+    group_db: str | None = None
 
     def as_payload(self) -> dict:
         return {
@@ -76,6 +83,9 @@ class RepoConfig:
             "specs": {
                 "sync_from": list(self.specs_sync_from),
                 "links_seed": self.specs_links_seed,
+            },
+            "workspace": {
+                "group_db": self.group_db,
             },
         }
 
@@ -191,6 +201,18 @@ def load_repo_config(workspace: Path) -> RepoConfig:
     if links_seed is not None and not isinstance(links_seed, str):
         raise _config_error("[specs].links_seed must be a string path")
 
+    workspace_tbl = data.get("workspace", {})
+    if not isinstance(workspace_tbl, dict):
+        raise _config_error("[workspace] must be a table")
+    unknown_ws = set(workspace_tbl) - {"group_db"}
+    if unknown_ws:
+        raise _config_error(
+            f"unknown [workspace] keys: {sorted(unknown_ws)} (valid: group_db)"
+        )
+    group_db = workspace_tbl.get("group_db")
+    if group_db is not None and (not isinstance(group_db, str) or not group_db.strip()):
+        raise _config_error("[workspace].group_db must be a non-empty string path")
+
     return RepoConfig(
         ignore=tuple(ignore),
         languages=frozenset(languages) if languages else None,
@@ -200,4 +222,5 @@ def load_repo_config(workspace: Path) -> RepoConfig:
         agent_log_calls=agent_log_calls,
         specs_sync_from=tuple(sync_from),
         specs_links_seed=links_seed,
+        group_db=group_db,
     )
