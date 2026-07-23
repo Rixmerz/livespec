@@ -68,6 +68,16 @@ cedido a Grep nativo) ni LSP (cedido a vise). Batches:
   discriminador de arg-handler + test de regresión). Ver
   `indexer.py:_resolve_routes`, `extractors.py:normalize_route_path` +
   `_TS_HANDLER_ARG_TYPES`, `test_route_edges.py`.
+- **Dogfood fix — callback edges Python** (LANDED): dogfooding livespec sobre sí
+  mismo marcó `index_project._do_reindex` (pasado como `Watcher(on_reindex=…)`)
+  como falso dead-code. Causa: el extractor Python no capturaba funciones
+  pasadas como argumento (el lado TS sí). Fix: `_emit_py_callback_refs` emite
+  `callback_arg` refs, scopeado a callees de registro/scheduling o keywords
+  callback-ish (`target=`/`key=`/`on_*`) para no inflar el grafo. Mejora todo
+  el call-graph, no solo dead-code. Tests **436 passed**
+  (`test_callback_edges.py`). NOTA: el MCP conectado corre `uvx livespec-mcp`
+  (v0.20 de PyPI), así que el dogfood en vivo no refleja fixes locales hasta
+  publicar — validado por la suite local.
 - **Diferido con criterio:** P3 curación (`search`/`embed_chunks` → plugin) — el
   ROADMAP prohíbe curar sin battle-test data. Hardening del resolver: el
   `min_weight` ya modela confianza; exponer peso por-arista en el grafo pide

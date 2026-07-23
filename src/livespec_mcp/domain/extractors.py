@@ -221,6 +221,7 @@ def _collect_calls(func_node: ast.AST, src_qname: str, out: ExtractResult) -> No
             continue
         stack.extend(ast.iter_child_nodes(node))
         if isinstance(node, ast.Call):
+            _emit_py_callback_refs(node, src_qname, out)
             client = _py_client_route(node)
             if client is not None:
                 method, path = client
@@ -253,6 +254,57 @@ def _collect_calls(func_node: ast.AST, src_qname: str, out: ExtractResult) -> No
                         scope_module=scope,
                     )
                 )
+
+
+# v0.21: Python callback-argument refs. A function passed as an argument is
+# invoked later by the callee (`atexit.register(cleanup)`, `Thread(target=fn)`,
+# `Watcher(on_reindex=cb)`, `sorted(xs, key=fn)`) — without a ref it looks dead.
+# Mirror the TS `callback_arg` handling, but conservatively scoped so we don't
+# emit a ref for every bare-Name data argument: only when the CALLEE is a known
+# registration/scheduling call, or the KEYWORD name signals a callback.
+_PY_CALLBACK_REG_NAMES = frozenset({
+    "register", "connect", "subscribe", "signal", "add_callback",
+    "add_done_callback", "add_signal_handler", "call_soon", "call_later",
+    "submit", "apply_async", "add_handler", "addhandler",
+})
+_PY_CALLBACK_KW_NAMES = frozenset({
+    "target", "key", "callback", "hook", "fn", "func", "handler",
+    "default_factory", "on_reindex",
+})
+
+def _emit_py_callback_refs(node: ast.Call, src_qname: str, out: ExtractResult) -> None:
+    """Emit ``callback_arg`` refs for a function passed as an argument.
+
+    Conservative (mirrors the TS side): a bare-``Name`` argument only counts as
+    a callback when the callee is a known registration/scheduling call
+    (``atexit.register(fn)``, ``executor.submit(task)``) OR it is a keyword whose
+    name signals a callback (``target=``, ``key=``, ``on_reindex=``, ``on_*``).
+    The resolver's name index self-limits these to actually-defined symbols, and
+    ambiguous multi-candidate matches land at the default-filtered weight 0.5.
+    """
+    callee = _call_target_name(node.func)
+    callee_is_reg = callee is not None and callee.lower() in _PY_CALLBACK_REG_NAMES
+
+    def _emit(name_node: ast.AST) -> None:
+        if isinstance(name_node, ast.Name):
+            out.refs.append(
+                ExtractedRef(
+                    src_qname=src_qname,
+                    target_name=name_node.id,
+                    line=getattr(name_node, "lineno", getattr(node, "lineno", 0)),
+                    ref_type="callback_arg",
+                    scope_module=out.imports.get(name_node.id),
+                )
+            )
+
+    if callee_is_reg:
+        for a in node.args:
+            _emit(a)
+    for kw in node.keywords:
+        if kw.arg is None:  # **kwargs splat
+            continue
+        if callee_is_reg or kw.arg in _PY_CALLBACK_KW_NAMES or kw.arg.startswith("on_"):
+            _emit(kw.value)
 
 
 _HTTP_CLIENT_VERBS = frozenset({"get", "post", "put", "delete", "patch", "head", "options"})
