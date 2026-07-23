@@ -6,6 +6,19 @@ follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+- **Python callback arguments now create real caller edges — kills a
+  false-positive dead-code class.** Found by dogfooding livespec on itself: a
+  function passed as an argument (`Watcher(on_reindex=cb)`,
+  `atexit.register(cleanup)`, `sorted(xs, key=fn)`) was never recorded as a
+  reference, so it had zero callers and `find_dead_code` flagged it dead (and
+  `who_calls`/`analyze_impact` missed the edge). The extractor now emits a
+  `callback_arg` ref — mirroring the TS side — conservatively scoped to known
+  registration/scheduling callees (`register`/`connect`/`submit`/…) or
+  callback-signalling keyword names (`target=`/`key=`/`on_*`), so plain data
+  arguments don't inflate the graph. Improves the accuracy of every call-graph
+  tool, not just dead-code.
+
 ### Added
 - **Cross-repo route edges (P2) — the call graph crosses the front↔back
   boundary.** The extractor now records HTTP route "sites" into a new
