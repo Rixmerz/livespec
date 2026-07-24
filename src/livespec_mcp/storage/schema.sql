@@ -180,6 +180,25 @@ CREATE TABLE IF NOT EXISTS spec_scenario (
 
 CREATE INDEX IF NOT EXISTS idx_spec_scenario_spec ON spec_scenario(spec_id);
 
+-- v0.22 P3 (OpenSpec interop): scenario-level traceability. OpenSpec reasons
+-- about behaviour per scenario, so this links code symbols to an individual
+-- `#### Scenario:` (not just the whole requirement) — enabling per-scenario
+-- "which code/test verifies this WHEN/THEN?" queries. Same shape/relations as
+-- spec_symbol; cascades on scenario or symbol delete.
+CREATE TABLE IF NOT EXISTS scenario_symbol (
+    id INTEGER PRIMARY KEY,
+    scenario_id INTEGER NOT NULL REFERENCES spec_scenario(id) ON DELETE CASCADE,
+    symbol_id INTEGER NOT NULL REFERENCES symbol(id) ON DELETE CASCADE,
+    relation TEXT NOT NULL DEFAULT 'implements',  -- implements | tests | references
+    confidence REAL NOT NULL DEFAULT 1.0,
+    source TEXT NOT NULL DEFAULT 'manual',        -- manual | annotation | embedding | llm
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(scenario_id, symbol_id, relation)
+);
+
+CREATE INDEX IF NOT EXISTS idx_scenario_symbol_scenario ON scenario_symbol(scenario_id);
+CREATE INDEX IF NOT EXISTS idx_scenario_symbol_symbol ON scenario_symbol(symbol_id);
+
 -- v0.5 P2: Spec dependency graph. parent depends on child.
 --   requires:  parent needs child to be implemented first
 --   extends:   parent specializes / refines child

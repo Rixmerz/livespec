@@ -70,22 +70,40 @@ def scan_duplicate_spec_markdown_specs(
 def _sync_spec_scenarios(
     conn: Any, spec_pk: int, scenarios: list[tuple[str, str]]
 ) -> None:
-    """Replace a spec's ``spec_scenario`` rows from a parsed scenario list.
+    """Reconcile a spec's ``spec_scenario`` rows against a parsed scenario list.
 
     No-op when ``scenarios`` is empty so a native ``## SPEC-NNN:`` re-import
     (which never carries scenarios) does not wipe scenarios that an OpenSpec
-    import populated for the same spec_id. When non-empty, the set is replaced
-    wholesale (delete + insert) so the DB mirrors the markdown exactly —
-    idempotent on re-import."""
+    import populated for the same spec_id.
+
+    **Upsert, not replace:** scenarios are matched by ``(spec_id, name)`` and
+    updated in place; scenarios no longer present are deleted. This preserves
+    each scenario's ``id`` across re-imports so ``scenario_symbol`` traceability
+    links survive a re-sync (a delete+reinsert would cascade them away)."""
     if not scenarios:
         return
-    conn.execute("DELETE FROM spec_scenario WHERE spec_id=?", (spec_pk,))
+    keep: set[str] = set()
     for ordinal, (name, body) in enumerate(scenarios):
-        conn.execute(
-            """INSERT OR IGNORE INTO spec_scenario(spec_id, name, body, ordinal)
-               VALUES(?,?,?,?)""",
-            (spec_pk, name, body, ordinal),
-        )
+        keep.add(name)
+        row = conn.execute(
+            "SELECT id FROM spec_scenario WHERE spec_id=? AND name=?", (spec_pk, name)
+        ).fetchone()
+        if row:
+            conn.execute(
+                "UPDATE spec_scenario SET body=?, ordinal=? WHERE id=?",
+                (body, ordinal, int(row["id"])),
+            )
+        else:
+            conn.execute(
+                "INSERT INTO spec_scenario(spec_id, name, body, ordinal) VALUES(?,?,?,?)",
+                (spec_pk, name, body, ordinal),
+            )
+    existing = conn.execute(
+        "SELECT id, name FROM spec_scenario WHERE spec_id=?", (spec_pk,)
+    ).fetchall()
+    for r in existing:
+        if r["name"] not in keep:
+            conn.execute("DELETE FROM spec_scenario WHERE id=?", (int(r["id"]),))
 
 
 def _parse_openspec_tree(root: Path) -> list:

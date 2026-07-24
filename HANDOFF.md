@@ -65,13 +65,19 @@ cedido a Grep nativo) ni LSP (cedido a vise). Batches:
      `list_spec_changes`/`get_spec_change` inspeccionan; `apply_spec_change`
      funde deltas en las specs canónicas (ADDED/MODIFIED/RENAMED upsert+activa,
      REMOVED deprecia); `archive_spec_change` cierra. Config
-     `[specs].openspec_dir` re-sincroniza tras cada `index_project`. Tools
-     36→43 (29 core + 11 spec + 3 docs). Módulos nuevos:
+     `[specs].openspec_dir` re-sincroniza tras cada `index_project`.
+  4. **Scenario-level traceability** (mig v17 `scenario_symbol`):
+     `link_scenario_symbol` liga código/tests a un `#### Scenario:` puntual;
+     `get_spec_implementation` devuelve `symbols`+`verified` por scenario y
+     `coverage.scenarios_verified`. `_sync_spec_scenarios` pasó a upsert
+     (matchea `(spec,name)`) para que los links sobrevivan un re-import.
+  - Tools 36→44 (29 core + 12 spec + 3 docs). Módulos nuevos:
      `domain/openspec_{export,validate,changes,discover}.py`;
-     `test_openspec_interop.py` (10 tests). **Gate del área:** 88 passed (10
-     nuevos + 78 del área spec/config/tool). NOTA: en este entorno hay 62 fallos
-     preexistentes por versión de `tree-sitter-language-pack` (extractores JSX/
-     Rust), ajenos a este cambio (confirmado con `git stash` sobre HEAD base).
+     `test_openspec_interop.py` (16 tests). **CI verde** en py3.10/3.11/3.12 +
+     ruff/build (primer run destapó un bug pre-existente py3.10:
+     `datetime.UTC` es 3.11+ → `audit_coverage` nunca grababa snapshot en 3.10;
+     fix `timezone.utc`). NOTA: los 62 fallos locales de tree-sitter eran del
+     entorno sandbox (CI los corre limpios, 445 passed).
 - **P1 grouped DB** (LANDED): `.livespec.toml [workspace] group_db` rutea varios
   roots a una DB compartida (cada uno su `project_id`); un Spec de un repo
   linkea/surface símbolos de otro repo del grupo. `st.resolve_symbol` es

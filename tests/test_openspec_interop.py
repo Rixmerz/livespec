@@ -220,6 +220,105 @@ async def test_change_lifecycle(sample_repo):
         assert len(listed["changes"]) == 1
 
 
+# ---------- scenario-level traceability ----------
+
+
+@pytest.mark.asyncio
+async def test_scenario_level_traceability(sample_repo):
+    (sample_repo / "spec.md").write_text(CANONICAL)
+    async with Client(mcp) as c:
+        await c.call_tool("index_project", {})
+        await c.call_tool("import_specs_from_markdown", {"path": "spec.md"})
+        linked = (
+            await c.call_tool(
+                "link_scenario_symbol",
+                {
+                    "spec_id": "theme-selection",
+                    "scenario_name": "User toggles dark mode",
+                    "symbol_qname": "pkg.auth.login",
+                },
+            )
+        ).data
+        assert linked["linked"] is True
+
+        impl = (
+            await c.call_tool(
+                "get_spec_implementation", {"spec_id": "theme-selection"}
+            )
+        ).data
+        scen = impl["scenarios"][0]
+        assert scen["verified"] is True
+        assert scen["symbols"][0]["qualified_name"] == "pkg.auth.login"
+        assert impl["coverage"]["scenarios_verified"] == 1
+
+        # Re-import must PRESERVE the scenario link (upsert, not delete+insert).
+        await c.call_tool("import_specs_from_markdown", {"path": "spec.md"})
+        impl2 = (
+            await c.call_tool(
+                "get_spec_implementation", {"spec_id": "theme-selection"}
+            )
+        ).data
+        assert impl2["scenarios"][0]["verified"] is True
+
+        # Unlink.
+        await c.call_tool(
+            "link_scenario_symbol",
+            {
+                "spec_id": "theme-selection",
+                "scenario_name": "User toggles dark mode",
+                "symbol_qname": "pkg.auth.login",
+                "unlink": True,
+            },
+        )
+        impl3 = (
+            await c.call_tool(
+                "get_spec_implementation", {"spec_id": "theme-selection"}
+            )
+        ).data
+        assert impl3["scenarios"][0]["verified"] is False
+
+
+@pytest.mark.asyncio
+async def test_link_scenario_bad_name_errors(sample_repo):
+    (sample_repo / "spec.md").write_text(CANONICAL)
+    async with Client(mcp) as c:
+        await c.call_tool("index_project", {})
+        await c.call_tool("import_specs_from_markdown", {"path": "spec.md"})
+        res = (
+            await c.call_tool(
+                "link_scenario_symbol",
+                {
+                    "spec_id": "theme-selection",
+                    "scenario_name": "does not exist",
+                    "symbol_qname": "pkg.auth.login",
+                },
+            )
+        ).data
+        assert res.get("isError") is True
+
+
+@pytest.mark.asyncio
+async def test_export_includes_archived_change(sample_repo):
+    root = sample_repo / "openspec"
+    (root / "specs" / "theming").mkdir(parents=True)
+    (root / "specs" / "theming" / "spec.md").write_text(CANONICAL)
+    change = root / "changes" / "add-high-contrast"
+    (change / "specs" / "theming").mkdir(parents=True)
+    (change / "proposal.md").write_text(CHANGE_PROPOSAL)
+    (change / "specs" / "theming" / "spec.md").write_text(CHANGE_DELTA)
+    async with Client(mcp) as c:
+        await c.call_tool("sync_openspec", {})
+        await c.call_tool("archive_spec_change", {"name": "add-high-contrast"})
+        result = (await c.call_tool("export_openspec", {"out_dir": "out"})).data
+        assert result["changes_written"] == 1
+
+    arch = sample_repo / "out" / "archive" / "add-high-contrast"
+    assert (arch / "proposal.md").is_file()
+    delta = (arch / "specs" / "theming" / "spec.md").read_text()
+    assert "## ADDED Requirements" in delta
+    assert "### Requirement: High contrast mode" in delta
+
+
 @pytest.mark.asyncio
 async def test_sync_openspec_missing_dir_errors(sample_repo):
     async with Client(mcp) as c:

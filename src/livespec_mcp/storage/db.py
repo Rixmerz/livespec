@@ -433,6 +433,30 @@ def _m016_spec_change(conn: sqlite3.Connection) -> None:
     )
 
 
+def _m017_scenario_symbol(conn: sqlite3.Connection) -> None:
+    """v0.22 P3 (OpenSpec interop): scenario_symbol table for scenario-level
+    traceability (link code symbols to an individual `#### Scenario:`, not just
+    the whole requirement). New empty table — no re-extract needed."""
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS scenario_symbol (
+            id INTEGER PRIMARY KEY,
+            scenario_id INTEGER NOT NULL REFERENCES spec_scenario(id) ON DELETE CASCADE,
+            symbol_id INTEGER NOT NULL REFERENCES symbol(id) ON DELETE CASCADE,
+            relation TEXT NOT NULL DEFAULT 'implements',
+            confidence REAL NOT NULL DEFAULT 1.0,
+            source TEXT NOT NULL DEFAULT 'manual',
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            UNIQUE(scenario_id, symbol_id, relation)
+        )"""
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_scenario_symbol_scenario ON scenario_symbol(scenario_id)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_scenario_symbol_symbol ON scenario_symbol(symbol_id)"
+    )
+
+
 # Ordered registry. Append-only — never reuse a version number.
 MIGRATIONS: list[Migration] = [
     (1, "drop_dead_tables", _m001_drop_dead_tables),
@@ -451,6 +475,7 @@ MIGRATIONS: list[Migration] = [
     (14, "route_ref", _m014_route_ref),
     (15, "spec_scenario", _m015_spec_scenario),
     (16, "spec_change", _m016_spec_change),
+    (17, "scenario_symbol", _m017_scenario_symbol),
 ]
 
 

@@ -39,6 +39,7 @@ SPEC_MUTATION_TOOL_NAMES = frozenset(
         "update_spec",
         "delete_spec",
         "link_spec_symbol",
+        "link_scenario_symbol",
         "link_spec_dependency",
         "unlink_spec_dependency",
         "get_spec_dependency_graph",

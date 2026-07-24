@@ -244,7 +244,7 @@ Writes:
 Appends `mount_explorer(app, prefix="/explorer")` to `main.py`/`app.py` when found.
 Flags: `--no-index`, `--no-wire`, `--no-cursor`.
 
-## Tools (43 total: 29 core + 11 Spec plugin + 3 docs plugin)
+## Tools (44 total: 29 core + 12 Spec plugin + 3 docs plugin)
 
 Every tool requires `workspace` (absolute project root). Pass it on each call;
 omitting it is an error (no env fallback). LRU cache (8 workspaces) — one MCP
@@ -256,7 +256,7 @@ hides Spec mutation / doc tools from `tools/list` until the workspace has
 `LIVESPEC_PLUGINS`. **`import_specs_from_markdown`** and
 **`export_explorer`** are always visible (brownfield bootstrap — no
 chicken-and-egg). After the first `workspace=` call on a repo with Specs +
-explorer, the menu grows to **43** tools. Reconnect the MCP host if your
+explorer, the menu grows to **44** tools. Reconnect the MCP host if your
 client cached an old tool list.
 
 ### Default surface — code intel + Spec agentic (29)
@@ -389,7 +389,9 @@ Always registered (including markdown Spec import + Explorer export).
 
 Make livespec a first-class citizen of an [OpenSpec](https://github.com/Fission-AI/OpenSpec)
 `openspec/` repo. Scenarios (`#### Scenario:` WHEN/THEN) are first-class rows
-since v0.22 — `get_spec_implementation` returns them and `list_specs` counts them.
+since v0.22 — `get_spec_implementation` returns them (with per-scenario linked
+`symbols` + a `verified` flag) and `list_specs` counts them. Link code/tests to
+an individual scenario with `link_scenario_symbol` (Spec plugin).
 
 - `sync_openspec(openspec_dir?)` — import an entire OpenSpec tree in one call:
   canonical requirements from `specs/` **and** every change under `changes/`
@@ -410,7 +412,7 @@ since v0.22 — `get_spec_implementation` returns them and `list_specs` counts t
   autowire on export/index. Preview: `livespec-mcp explorer serve` →
   `http://127.0.0.1:8765/explorer/`.
 
-### `livespec-spec` plugin — Spec mutation (11)
+### `livespec-spec` plugin — Spec mutation (12)
 
 Visible in `tools/list` when the workspace DB has `spec` rows, or when
 `LIVESPEC_PLUGINS` includes `spec`. Tools an *operator* runs to mutate Spec state.
@@ -423,6 +425,10 @@ setting `LIVESPEC_PLUGINS`.
   `delete_spec(spec_id)` — cascade-removes spec_symbol links.
 - `link_spec_symbol(spec_id, symbol_qname, relation, confidence, source, unlink)` —
   link / unlink a single Spec↔symbol pair.
+- `link_scenario_symbol(spec_id, scenario_name, symbol_qname, ...)` —
+  scenario-level traceability: link code/tests to an individual OpenSpec
+  `#### Scenario:` (finer than the whole requirement). Surfaced per-scenario in
+  `get_spec_implementation` (`verified` + linked `symbols`).
 - `link_spec_dependency(parent_spec_id, child_spec_id, kind='requires')` /
   `unlink_spec_dependency` / `get_spec_dependency_graph` — Spec→Spec graph.
   `kind` ∈ {requires, extends, conflicts}; cycles rejected at insert time.

@@ -317,6 +317,58 @@ def register(
             spec_id, symbol_qname, relation, confidence, source, unlink, workspace
         )
 
+    @mutation_tool(annotations={"readOnlyHint": False, "idempotentHint": True})
+    def link_scenario_symbol(
+        spec_id: str,
+        scenario_name: str,
+        symbol_qname: str,
+        relation: Literal["implements", "tests", "references"] = "implements",
+        confidence: float = 1.0,
+        source: Literal["manual", "annotation", "embedding", "llm"] = "manual",
+        unlink: bool = False,
+        workspace: Workspace | None = None,
+    ) -> dict[str, Any]:
+        """Link (or unlink) a single OpenSpec `#### Scenario:` to a code symbol.
+
+        Scenario-level traceability: answers "which code/test verifies *this*
+        WHEN/THEN scenario?" — finer than `link_spec_symbol` (whole requirement).
+        The scenario is resolved by `(spec_id, scenario_name)`; see the scenario
+        names in `get_spec_implementation`. `unlink=True` removes the link.
+        """
+        st = get_state(workspace)
+        pid = st.project_id
+        scen = st.conn.execute(
+            """SELECT sc.id FROM spec_scenario sc JOIN spec sp ON sp.id=sc.spec_id
+               WHERE sp.project_id=? AND sp.spec_id=? AND sc.name=?""",
+            (pid, spec_id, scenario_name),
+        ).fetchone()
+        if not scen:
+            return mcp_error(
+                f"scenario {scenario_name!r} not found on spec {spec_id!r}",
+                hint="check scenario names via `get_spec_implementation(spec_id)`",
+            )
+        sym = st.resolve_symbol(symbol_qname)
+        if not sym:
+            return symbol_not_found_error(st.conn, pid, symbol_qname)
+        if unlink:
+            st.conn.execute(
+                "DELETE FROM scenario_symbol WHERE scenario_id=? AND symbol_id=? AND relation=?",
+                (int(scen["id"]), int(sym["id"]), relation),
+            )
+            return {"unlinked": True, "spec_id": spec_id, "scenario": scenario_name}
+        st.conn.execute(
+            """INSERT OR REPLACE INTO scenario_symbol(scenario_id, symbol_id, relation, confidence, source)
+               VALUES(?,?,?,?,?)""",
+            (int(scen["id"]), int(sym["id"]), relation, confidence, source),
+        )
+        return {
+            "linked": True,
+            "spec_id": spec_id,
+            "scenario": scenario_name,
+            "symbol": symbol_qname,
+            "relation": relation,
+        }
+
     @agentic_tool(annotations={"readOnlyHint": False, "idempotentHint": True})
     def bulk_link_spec_symbols(
         mappings: list[dict[str, Any]],
@@ -387,13 +439,36 @@ def register(
             (spec["id"],),
         ).fetchall()
         files = sorted({r["path"] for r in rows})
-        scenarios = [
-            {"name": s["name"], "body": s["body"]}
-            for s in st.conn.execute(
-                "SELECT name, body FROM spec_scenario WHERE spec_id=? ORDER BY ordinal, id",
-                (spec["id"],),
+        scenarios = []
+        for s in st.conn.execute(
+            "SELECT id, name, body FROM spec_scenario WHERE spec_id=? ORDER BY ordinal, id",
+            (spec["id"],),
+        ):
+            # Scenario-level traceability: symbols linked to this specific
+            # WHEN/THEN scenario (not just the parent requirement).
+            scen_syms = [
+                {
+                    "qualified_name": r["qualified_name"],
+                    "relation": r["relation"],
+                    "confidence": r["confidence"],
+                    "source": r["source"],
+                }
+                for r in st.conn.execute(
+                    """SELECT sym.qualified_name, ssy.relation, ssy.confidence, ssy.source
+                       FROM scenario_symbol ssy JOIN symbol sym ON sym.id=ssy.symbol_id
+                       WHERE ssy.scenario_id=?
+                       ORDER BY ssy.confidence DESC, sym.qualified_name""",
+                    (int(s["id"]),),
+                )
+            ]
+            scenarios.append(
+                {
+                    "name": s["name"],
+                    "body": s["body"],
+                    "symbols": scen_syms,
+                    "verified": len(scen_syms) > 0,
+                }
             )
-        ]
         return {
             "spec": {
                 "spec_id": spec["spec_id"],
@@ -414,6 +489,7 @@ def register(
                 "symbol_count": len(rows),
                 "file_count": len(files),
                 "scenario_count": len(scenarios),
+                "scenarios_verified": sum(1 for s in scenarios if s["verified"]),
             },
         }
 

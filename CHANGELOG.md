@@ -52,13 +52,21 @@ follows [SemVer](https://semver.org/).
     `apply_spec_change` folds deltas into the canonical spec set (ADDED/
     MODIFIED/RENAMED upsert+activate, REMOVED deprecate); `archive_spec_change`
     marks a change done.
+  - **Scenario-level traceability** (schema migration v17, `scenario_symbol`).
+    New `link_scenario_symbol(spec_id, scenario_name, symbol_qname, ...)` links
+    code/tests to an individual `#### Scenario:` (not just the whole
+    requirement) — OpenSpec reasons per scenario. `get_spec_implementation` now
+    returns each scenario's linked `symbols` + a `verified` flag, and
+    `coverage.scenarios_verified`. Scenario reconciliation on re-import is an
+    upsert (matched by `(spec, name)`) so these links survive a re-sync.
   - **Config:** new `[specs].openspec_dir` re-syncs an OpenSpec tree after every
     `index_project`. **Ergonomics:** `capability` accepted as an alias for
     `module` in `list_specs` and returned by `get_spec_implementation`.
-  - Tool count 36 → 43 (29 core + 11 Spec plugin + 3 docs). New agentic core
+  - Tool count 36 → 44 (29 core + 12 Spec plugin + 3 docs). New agentic core
     tools: `export_openspec`, `validate_openspec`, `list_spec_changes`,
     `get_spec_change`; new always-visible bootstrap tool `sync_openspec`; new
-    Spec-plugin tools `apply_spec_change`, `archive_spec_change`.
+    Spec-plugin tools `apply_spec_change`, `archive_spec_change`,
+    `link_scenario_symbol`.
 - **Cross-repo route edges (P2) — the call graph crosses the front↔back
   boundary.** The extractor now records HTTP route "sites" into a new
   `route_ref` table (schema migration v14): `role='server'` for backend

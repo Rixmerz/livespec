@@ -106,7 +106,7 @@ populates new fields.
 ### Layered stack
 
 ```
-tools/          MCP-exposed surface (43 tools: 29 core + 11 Spec + 3 docs)
+tools/          MCP-exposed surface (44 tools: 29 core + 12 Spec + 3 docs)
   analysis.py     find_symbol, quick_orient, get_symbol_source, who_calls,
                   who_does_this_call, analyze_impact, audit_coverage,
                   find_dead_code, find_orphan_tests, find_endpoints,
