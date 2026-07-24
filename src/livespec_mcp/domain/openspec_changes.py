@@ -282,16 +282,30 @@ def archive_change(st: Any, name: str) -> dict[str, Any]:
 
 
 def import_changes_tree(st: Any, root: Path) -> dict[str, Any]:
-    """Ingest every change under ``<root>/changes/`` and ``<root>/archive/``."""
+    """Ingest active + archived change proposals from an OpenSpec ``root``.
+
+    Active changes live at ``<root>/changes/<name>/``. Archives are found at
+    BOTH ``<root>/changes/archive/<name>/`` (the layout the current OpenSpec CLI
+    writes) and ``<root>/archive/<name>/`` (older/alternate) — real repos use the
+    former, so the ``archive`` subdir under ``changes/`` must NOT be mistaken for
+    a change itself."""
     root = Path(root)
     results: list[dict[str, Any]] = []
-    for base, status in (("changes", "proposed"), ("archive", "archived")):
-        base_dir = root / base
-        if not base_dir.is_dir():
+
+    changes_dir = root / "changes"
+    if changes_dir.is_dir():
+        for child in sorted(changes_dir.iterdir()):
+            # Skip the nested archive/ folder — it is not a change.
+            if not child.is_dir() or child.name in _SKIP_DIRS or child.name == "archive":
+                continue
+            results.append(ingest_change(st, parse_change_dir(child), status="proposed"))
+
+    for archive_dir in (root / "changes" / "archive", root / "archive"):
+        if not archive_dir.is_dir():
             continue
-        for child in sorted(base_dir.iterdir()):
+        for child in sorted(archive_dir.iterdir()):
             if not child.is_dir() or child.name in _SKIP_DIRS:
                 continue
-            parsed = parse_change_dir(child)
-            results.append(ingest_change(st, parsed, status=status))
+            results.append(ingest_change(st, parse_change_dir(child), status="archived"))
+
     return {"changes": results, "count": len(results)}
