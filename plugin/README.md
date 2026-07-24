@@ -1,15 +1,17 @@
 # livespec — Claude Code plugin
 
-Packages the **livespec-mcp** server as a Claude Code plugin, plus a specialized
+Packages the **livespec** MCP server as a Claude Code plugin, plus a specialized
 subagent and a preloaded Skill so agents make better decisions about *how* to use
-the tools.
+the tools. (The MCP server is distributed as the `livespec-mcp` package /
+`uvx livespec-mcp` command; the plugin — and everything an agent sees — is
+`livespec`.)
 
 ## What's inside
 
 ```
 plugin/
 ├── .claude-plugin/plugin.json   # plugin manifest
-├── .mcp.json                    # runs the livespec-mcp server (uvx livespec-mcp)
+├── .mcp.json                    # runs the livespec MCP server (uvx livespec-mcp)
 ├── agents/livespec.md           # specialized subagent; preloads the livespec Skill
 ├── skills/livespec/SKILL.md     # operating manual: tool map, workspace rule, contracts
 └── commands/livespec-onboard.md # /livespec-onboard [repo] — cold-open + orientation

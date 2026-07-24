@@ -2,7 +2,7 @@
 name: livespec
 description: >-
   Specialized code-intelligence and Spec-traceability agent backed by the
-  livespec-mcp server. Use PROACTIVELY when a task needs to understand an
+  livespec MCP server. Use PROACTIVELY when a task needs to understand an
   unfamiliar codebase, answer "what calls this?" / "what breaks if I change X?",
   find dead code or endpoints, or trace which code implements a Spec (FR/ADR/NFR).
   Give it the absolute repo root and the question; it indexes, orients, and reports.

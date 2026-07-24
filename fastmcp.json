@@ -1,6 +1,6 @@
 {
   "$schema": "https://gofastmcp.com/public/schemas/fastmcp.json/v1.json",
-  "name": "livespec-mcp",
+  "name": "livespec",
   "version": "0.20.0",
   "description": "Code intelligence for AI agents: call graph, impact analysis, and bidirectional Spec<->code traceability",
   "entrypoint": "src/livespec_mcp/server.py:mcp",

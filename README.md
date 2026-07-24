@@ -1,9 +1,15 @@
-# livespec-mcp
+# livespec
 
 **Code intelligence for AI agents** — call graph, impact analysis, and
 bidirectional **Spec ↔ code** traceability (functional requirements, ADRs,
-NFRs, and other spec kinds). Local-first, zero external services, runs as
-an MCP server next to your editor.
+NFRs, and other spec kinds). Local-first, zero external services.
+
+Ships as a **Claude Code plugin** bundling three things: the **MCP server**
+(the tools), a specialized **subagent**, and a preloaded **Skill** (the
+operating manual). Everything an agent sees — the plugin, subagent, Skill, and
+MCP tool namespace — is `livespec`. The MCP server is still distributed as the
+`livespec-mcp` package (`uvx livespec-mcp` / `pip install livespec-mcp`); that
+package/command name is unchanged.
 
 Battle-tested on real codebases. Four releases of compounding wins
 on the same Django 5.1.4 queries:
@@ -155,7 +161,7 @@ livespec-mcp status /path/to/repo                      # index status JSON
   "mcpServers": {
     "livespec": {
       "command": "uv",
-      "args": ["--directory", "/path/to/livespec-mcp", "run", "livespec-mcp"]
+      "args": ["--directory", "/path/to/livespec", "run", "livespec-mcp"]
     }
   }
 }
@@ -515,7 +521,7 @@ measured with the in-process middleware
 | Repo | Files / Symbols | `index_project` cold | `quick_orient` p95 | `get_project_overview` p95 |
 |---|---:|---:|---:|---:|
 | url-shortener-demo (Python) | 4 / 23 | ~50 ms | <5 ms | ~10 ms |
-| livespec-mcp itself (Python+8 langs) | 84 / 495 | ~400 ms | ~60 ms | ~75 ms |
+| livespec itself (Python+8 langs) | 84 / 495 | ~400 ms | ~60 ms | ~75 ms |
 | jig (Python) | 130 / 1173 | ~600 ms | ~50 ms | ~80 ms |
 | Django (Python, stress) | 2898 / 39789 | ~25 s | <100 ms | ~250 ms |
 | warp subset (Rust, stress) | 5K / 50K | ~30 s | <100 ms | ~300 ms |
