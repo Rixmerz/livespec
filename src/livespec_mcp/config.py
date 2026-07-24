@@ -63,6 +63,9 @@ class RepoConfig:
     # [specs] — post-index markdown sync + optional links seed
     specs_sync_from: tuple[str, ...] = ()
     specs_links_seed: str | None = None
+    # [specs] openspec_dir — an OpenSpec tree re-synced (specs + changes) after
+    # each index_project. Relative paths resolve against the workspace root.
+    specs_openspec_dir: str | None = None
     # [workspace] — cross-project grouping: a shared DB path lets several repo
     # roots live in one database (each its own project_id) so a Spec can link
     # symbols across repos. Relative paths resolve against the workspace root.
@@ -83,6 +86,7 @@ class RepoConfig:
             "specs": {
                 "sync_from": list(self.specs_sync_from),
                 "links_seed": self.specs_links_seed,
+                "openspec_dir": self.specs_openspec_dir,
             },
             "workspace": {
                 "group_db": self.group_db,
@@ -188,11 +192,11 @@ def load_repo_config(workspace: Path) -> RepoConfig:
     specs = data.get("specs", {})
     if not isinstance(specs, dict):
         raise _config_error("[specs] must be a table")
-    unknown_specs = set(specs) - {"sync_from", "links_seed"}
+    unknown_specs = set(specs) - {"sync_from", "links_seed", "openspec_dir"}
     if unknown_specs:
         raise _config_error(
             f"unknown [specs] keys: {sorted(unknown_specs)} "
-            "(valid: sync_from, links_seed)"
+            "(valid: sync_from, links_seed, openspec_dir)"
         )
     sync_from = specs.get("sync_from", [])
     if not isinstance(sync_from, list) or not all(isinstance(x, str) for x in sync_from):
@@ -200,6 +204,11 @@ def load_repo_config(workspace: Path) -> RepoConfig:
     links_seed = specs.get("links_seed")
     if links_seed is not None and not isinstance(links_seed, str):
         raise _config_error("[specs].links_seed must be a string path")
+    openspec_dir = specs.get("openspec_dir")
+    if openspec_dir is not None and (
+        not isinstance(openspec_dir, str) or not openspec_dir.strip()
+    ):
+        raise _config_error("[specs].openspec_dir must be a non-empty string path")
 
     workspace_tbl = data.get("workspace", {})
     if not isinstance(workspace_tbl, dict):
@@ -222,5 +231,6 @@ def load_repo_config(workspace: Path) -> RepoConfig:
         agent_log_calls=agent_log_calls,
         specs_sync_from=tuple(sync_from),
         specs_links_seed=links_seed,
+        specs_openspec_dir=openspec_dir,
         group_db=group_db,
     )

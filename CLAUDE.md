@@ -106,7 +106,7 @@ populates new fields.
 ### Layered stack
 
 ```
-tools/          MCP-exposed surface (36 tools: 24 core + 9 Spec + 3 docs)
+tools/          MCP-exposed surface (44 tools: 29 core + 12 Spec + 3 docs)
   analysis.py     find_symbol, quick_orient, get_symbol_source, who_calls,
                   who_does_this_call, analyze_impact, audit_coverage,
                   find_dead_code, find_orphan_tests, find_endpoints,
@@ -192,7 +192,7 @@ produce duplicate symbols at the same line. Keep the first occurrence
 The v0.8 curation pass shipped: battle-test data (3 sessions, 40 calls,
 11 bug fixes) drove the tier split. Current state:
 
-- **24 core tools** always registered: code intel (find_symbol,
+- **29 core tools** always registered: code intel (find_symbol,
   quick_orient, get_symbol_source, who_calls, who_does_this_call,
   analyze_impact, git_diff_impact, find_dead_code, find_orphan_tests,
   find_endpoints, get_project_overview, index_project, search,
@@ -200,9 +200,12 @@ The v0.8 curation pass shipped: battle-test data (3 sessions, 40 calls,
   + Spec agentic (audit_coverage, list_specs,
   get_spec_implementation, propose_specs_from_codebase,
   bulk_link_spec_symbols, import_specs_from_markdown)
+  + OpenSpec interop (sync_openspec, export_openspec, validate_openspec,
+  list_spec_changes, get_spec_change — v0.22)
   + export_explorer (always visible, v0.19).
-- **Plugin `livespec-spec` (9 tools)** — Spec mutation ceremony: CRUD,
-  link/unlink, Spec-Spec graph, scans (import moved to core v0.19).
+- **Plugin `livespec-spec` (11 tools)** — Spec mutation ceremony: CRUD,
+  link/unlink, Spec-Spec graph, scans (import moved to core v0.19),
+  OpenSpec change lifecycle (apply_spec_change, archive_spec_change — v0.22).
 - **Plugin `livespec-docs` (3 tools)** — generate_docs, list_docs,
   export_documentation.
 - **Dropped (v0.8-v0.9)**: list_files, get_index_status (resource

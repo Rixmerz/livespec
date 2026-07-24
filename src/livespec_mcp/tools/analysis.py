@@ -1660,7 +1660,11 @@ def compute_coverage(st: AppState, *, record: bool = True) -> dict[str, Any]:
     # readOnlyHint tool doesn't write on every paginated fetch or bundle build.
     if record:
         try:
-            from datetime import UTC, datetime
+            # `datetime.UTC` is Python 3.11+; the project supports >=3.10, where
+            # `from datetime import UTC` raises ImportError — silently swallowed
+            # by the except below, so audit_coverage never recorded a snapshot on
+            # 3.10 (empty trend). `timezone.utc` works on every supported version.
+            from datetime import datetime, timezone
 
             from livespec_mcp.storage import trends
 
@@ -1670,7 +1674,7 @@ def compute_coverage(st: AppState, *, record: bool = True) -> dict[str, Any]:
                 per_spec={d["spec_id"]: d["test_coverage_ratio"] for d in spec_coverage},
                 avg=avg_test_coverage if spec_coverage else None,
                 verified_count=specs_with_any_test_coverage,
-                ts=datetime.now(UTC).isoformat(),
+                ts=datetime.now(timezone.utc).isoformat(),
             )
         except Exception:
             pass

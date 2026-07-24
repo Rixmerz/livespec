@@ -368,6 +368,95 @@ def _m014_route_ref(conn: sqlite3.Connection) -> None:
         _flag_reextract(conn)
 
 
+def _m015_spec_scenario(conn: sqlite3.Connection) -> None:
+    """v0.22 P1 (OpenSpec interop): spec_scenario table.
+
+    Scenarios are OpenSpec's atomic testable unit (one `#### Scenario:`
+    WHEN/THEN block per requirement). Previously they were flattened into
+    ``spec.description``; this promotes them to first-class rows so the
+    round-trip exporter re-emits them structurally and ``validate_openspec``
+    can enforce the requirement-must-have-a-scenario invariant. New empty
+    table — no re-extract needed (populated on next spec import)."""
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS spec_scenario (
+            id INTEGER PRIMARY KEY,
+            spec_id INTEGER NOT NULL REFERENCES spec(id) ON DELETE CASCADE,
+            name TEXT NOT NULL,
+            body TEXT NOT NULL DEFAULT '',
+            ordinal INTEGER NOT NULL DEFAULT 0,
+            UNIQUE(spec_id, name)
+        )"""
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_spec_scenario_spec ON spec_scenario(spec_id)"
+    )
+
+
+def _m016_spec_change(conn: sqlite3.Connection) -> None:
+    """v0.22 P2 (OpenSpec interop): spec_change + spec_change_delta tables.
+
+    Models OpenSpec's ``openspec/changes/<name>/`` package (proposal/design/
+    tasks + delta requirements) so the propose -> apply -> archive lifecycle is
+    representable. New empty tables — no re-extract needed."""
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS spec_change (
+            id INTEGER PRIMARY KEY,
+            project_id INTEGER NOT NULL REFERENCES project(id) ON DELETE CASCADE,
+            name TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'proposed',
+            proposal TEXT,
+            design TEXT,
+            tasks TEXT,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+            UNIQUE(project_id, name)
+        )"""
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_spec_change_project ON spec_change(project_id, status)"
+    )
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS spec_change_delta (
+            id INTEGER PRIMARY KEY,
+            change_id INTEGER NOT NULL REFERENCES spec_change(id) ON DELETE CASCADE,
+            operation TEXT NOT NULL,
+            capability TEXT,
+            spec_id TEXT NOT NULL,
+            title TEXT NOT NULL,
+            description TEXT,
+            ordinal INTEGER NOT NULL DEFAULT 0,
+            UNIQUE(change_id, spec_id, operation)
+        )"""
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_change_delta_change ON spec_change_delta(change_id)"
+    )
+
+
+def _m017_scenario_symbol(conn: sqlite3.Connection) -> None:
+    """v0.22 P3 (OpenSpec interop): scenario_symbol table for scenario-level
+    traceability (link code symbols to an individual `#### Scenario:`, not just
+    the whole requirement). New empty table — no re-extract needed."""
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS scenario_symbol (
+            id INTEGER PRIMARY KEY,
+            scenario_id INTEGER NOT NULL REFERENCES spec_scenario(id) ON DELETE CASCADE,
+            symbol_id INTEGER NOT NULL REFERENCES symbol(id) ON DELETE CASCADE,
+            relation TEXT NOT NULL DEFAULT 'implements',
+            confidence REAL NOT NULL DEFAULT 1.0,
+            source TEXT NOT NULL DEFAULT 'manual',
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            UNIQUE(scenario_id, symbol_id, relation)
+        )"""
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_scenario_symbol_scenario ON scenario_symbol(scenario_id)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_scenario_symbol_symbol ON scenario_symbol(symbol_id)"
+    )
+
+
 # Ordered registry. Append-only — never reuse a version number.
 MIGRATIONS: list[Migration] = [
     (1, "drop_dead_tables", _m001_drop_dead_tables),
@@ -384,6 +473,9 @@ MIGRATIONS: list[Migration] = [
     (12, "unique_project_root", _m012_unique_project_root),
     (13, "chunk_au_guard", _m013_chunk_au_guard),
     (14, "route_ref", _m014_route_ref),
+    (15, "spec_scenario", _m015_spec_scenario),
+    (16, "spec_change", _m016_spec_change),
+    (17, "scenario_symbol", _m017_scenario_symbol),
 ]
 
 

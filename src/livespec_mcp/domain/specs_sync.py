@@ -67,6 +67,45 @@ def scan_duplicate_spec_markdown_specs(
     return warnings
 
 
+def _sync_spec_scenarios(
+    conn: Any, spec_pk: int, scenarios: list[tuple[str, str]]
+) -> None:
+    """Reconcile a spec's ``spec_scenario`` rows against a parsed scenario list.
+
+    No-op when ``scenarios`` is empty so a native ``## SPEC-NNN:`` re-import
+    (which never carries scenarios) does not wipe scenarios that an OpenSpec
+    import populated for the same spec_id.
+
+    **Upsert, not replace:** scenarios are matched by ``(spec_id, name)`` and
+    updated in place; scenarios no longer present are deleted. This preserves
+    each scenario's ``id`` across re-imports so ``scenario_symbol`` traceability
+    links survive a re-sync (a delete+reinsert would cascade them away)."""
+    if not scenarios:
+        return
+    keep: set[str] = set()
+    for ordinal, (name, body) in enumerate(scenarios):
+        keep.add(name)
+        row = conn.execute(
+            "SELECT id FROM spec_scenario WHERE spec_id=? AND name=?", (spec_pk, name)
+        ).fetchone()
+        if row:
+            conn.execute(
+                "UPDATE spec_scenario SET body=?, ordinal=? WHERE id=?",
+                (body, ordinal, int(row["id"])),
+            )
+        else:
+            conn.execute(
+                "INSERT INTO spec_scenario(spec_id, name, body, ordinal) VALUES(?,?,?,?)",
+                (spec_pk, name, body, ordinal),
+            )
+    existing = conn.execute(
+        "SELECT id, name FROM spec_scenario WHERE spec_id=?", (spec_pk,)
+    ).fetchall()
+    for r in existing:
+        if r["name"] not in keep:
+            conn.execute("DELETE FROM spec_scenario WHERE id=?", (int(r["id"]),))
+
+
 def _parse_openspec_tree(root: Path) -> list:
     """Walk an OpenSpec directory (``openspec/`` or a ``specs/`` subtree) and
     parse every markdown file as OpenSpec format.
@@ -147,6 +186,7 @@ def import_specs_from_markdown_file(
             "SELECT id FROM spec WHERE project_id=? AND spec_id=?", (pid, pspec.spec_id)
         ).fetchone()
         if existing:
+            spec_pk = int(existing["id"])
             st.conn.execute(
                 """UPDATE spec SET title=?, description=?, status=?, priority=?,
                    module_id=?, kind=?, updated_at=datetime('now') WHERE id=?""",
@@ -157,12 +197,12 @@ def import_specs_from_markdown_file(
                     pspec.priority,
                     module_id,
                     pspec.kind,
-                    existing["id"],
+                    spec_pk,
                 ),
             )
             updated += 1
         else:
-            st.conn.execute(
+            cur = st.conn.execute(
                 """INSERT INTO spec(project_id, spec_id, title, description, module_id, status, priority, kind)
                    VALUES(?,?,?,?,?,?,?,?)""",
                 (
@@ -176,7 +216,9 @@ def import_specs_from_markdown_file(
                     pspec.kind,
                 ),
             )
+            spec_pk = int(cur.lastrowid)
             created += 1
+        _sync_spec_scenarios(st.conn, spec_pk, pspec.scenarios)
     st.conn.commit()
     out: dict[str, Any] = {
         "source": str(p),
@@ -345,7 +387,11 @@ def sync_specs_from_config(st: Any) -> dict[str, Any] | None:
     from livespec_mcp.config import load_repo_config
 
     cfg = load_repo_config(st.settings.workspace)
-    if not cfg.specs_sync_from and not cfg.specs_links_seed:
+    if (
+        not cfg.specs_sync_from
+        and not cfg.specs_links_seed
+        and not cfg.specs_openspec_dir
+    ):
         return None
     result: dict[str, Any] = {"imports": [], "links": None}
     for rel in cfg.specs_sync_from:
@@ -353,6 +399,20 @@ def sync_specs_from_config(st: Any) -> dict[str, Any] | None:
             result["imports"].append(import_specs_from_markdown_file(st, rel))
         except FileNotFoundError as e:
             result["imports"].append({"path": rel, "error": str(e)})
+    if cfg.specs_openspec_dir:
+        from livespec_mcp.domain.openspec_discover import (
+            discover_openspec_root,
+            sync_openspec_tree,
+        )
+
+        root = discover_openspec_root(st.settings.workspace, cfg.specs_openspec_dir)
+        if root is None:
+            result["openspec"] = {
+                "path": cfg.specs_openspec_dir,
+                "error": "OpenSpec directory not found",
+            }
+        else:
+            result["openspec"] = sync_openspec_tree(st, root)
     if cfg.specs_links_seed:
         try:
             result["links"] = apply_links_seed(st, cfg.specs_links_seed)
