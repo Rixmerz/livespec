@@ -1,6 +1,6 @@
-# livespec-mcp — Self-Specs (SPEC-001 .. SPEC-012)
+# livespec — Self-Specs (SPEC-001 .. SPEC-013)
 
-These are livespec-mcp's own specs (functional requirements), dogfooded by
+These are livespec's own specs (functional requirements), dogfooded by
 the project on itself. They live here (committed) so they are reproducible
 from a fresh clone — the live `.mcp-docs/docs.db` is gitignored and only
 exists locally.
@@ -13,13 +13,13 @@ exists locally.
    index_project(workspace="/abs/path/to/livespec-mcp")
    ```
 
-2. **Recreate the 12 Spec definitions** from this markdown file:
+2. **Recreate the 13 Spec definitions** from this markdown file:
 
    ```
    import_specs_from_markdown(path="docs/requirements/livespec-specs.md")
    ```
 
-   This re-parses SPEC-001..SPEC-012 (id, title, description) and upserts
+   This re-parses SPEC-001..SPEC-013 (id, title, description) and upserts
    them into the local `docs.db`. Idempotent — safe to re-run.
 
 3. **Recreate the implements/tests LINKS** from the committed seed
@@ -130,3 +130,16 @@ releases.
 Provide a headless `livespec-mcp index` / `livespec-mcp status` entry
 point that shares the same indexing pipeline as the MCP server, for use
 in CI or scripted environments without an MCP host.
+
+## SPEC-013: OpenSpec (Fission-AI) interoperability
+**Prioridad:** media · **Módulo:** specs
+
+Be a first-class citizen of an OpenSpec `openspec/` repo: import a whole
+tree (canonical `specs/` requirements plus `changes/` and `archive/`
+proposals) via `sync_openspec`, model scenarios (`#### Scenario:`) and
+change deltas (ADDED/MODIFIED/REMOVED/RENAMED) as first-class rows,
+validate structural rules (`validate_openspec`, mirroring
+`openspec validate --strict`), apply the change lifecycle
+(`apply_spec_change`/`archive_spec_change`, RENAMED migrating traceability),
+trace code to individual scenarios (`link_scenario_symbol`), and write the
+tree back out (`export_openspec`) — closing the round-trip.

@@ -7,6 +7,15 @@ follows [SemVer](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- **`livespec` console command** — an additive alias of `livespec-mcp` so the
+  command matches the product name. After a local install both invoke the same
+  entry point. The distribution name and `uvx livespec-mcp` are unchanged (no
+  break to existing installs/MCP configs).
+- **Self-spec `SPEC-013` (OpenSpec interoperability)** — the OpenSpec interop
+  modules/tools are now dogfooded on livespec itself (added to
+  `docs/requirements/livespec-specs.md` + the `livespec-spec-links.json` seed;
+  38 verified links, all resolving).
+
 - **OpenSpec interop — Tier 2 depth.** Three functional gaps from the v0.22
   compatibility pass are now closed:
   - **`RENAMED` deltas** (`## RENAMED Requirements` FROM/TO). The parser reads
@@ -24,6 +33,9 @@ follows [SemVer](https://semver.org/).
   - Note: OpenSpec's `openspec/config.yaml` (schema/context/rules) is
     deliberately not generated on export — it is tool-managed config, not
     derivable from the spec set.
+
+### Changed
+- Self-spec dogfood files rebranded to `livespec` (headers, SPEC-013 count).
 
 ## [0.22.0] - 2026-07-24
 
