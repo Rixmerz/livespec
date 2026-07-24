@@ -244,7 +244,7 @@ Writes:
 Appends `mount_explorer(app, prefix="/explorer")` to `main.py`/`app.py` when found.
 Flags: `--no-index`, `--no-wire`, `--no-cursor`.
 
-## Tools (36 total: 24 core + 9 Spec plugin + 3 docs plugin)
+## Tools (44 total: 29 core + 12 Spec plugin + 3 docs plugin)
 
 Every tool requires `workspace` (absolute project root). Pass it on each call;
 omitting it is an error (no env fallback). LRU cache (8 workspaces) — one MCP
@@ -256,10 +256,10 @@ hides Spec mutation / doc tools from `tools/list` until the workspace has
 `LIVESPEC_PLUGINS`. **`import_specs_from_markdown`** and
 **`export_explorer`** are always visible (brownfield bootstrap — no
 chicken-and-egg). After the first `workspace=` call on a repo with Specs +
-explorer, the menu grows to **36** tools. Reconnect the MCP host if your
+explorer, the menu grows to **44** tools. Reconnect the MCP host if your
 client cached an old tool list.
 
-### Default surface — code intel + Spec agentic (24)
+### Default surface — code intel + Spec agentic (29)
 
 These tools answer the questions an agent ASKS on an unfamiliar codebase.
 Always registered (including markdown Spec import + Explorer export).
@@ -385,6 +385,26 @@ Always registered (including markdown Spec import + Explorer export).
   on a Spec-empty repo. Groups symbols by module + PageRank, proposes
   Spec candidates with humanized title + suggested_symbols.
 
+#### OpenSpec interop — round-trip + change lifecycle (5, v0.22)
+
+Make livespec a first-class citizen of an [OpenSpec](https://github.com/Fission-AI/OpenSpec)
+`openspec/` repo. Scenarios (`#### Scenario:` WHEN/THEN) are first-class rows
+since v0.22 — `get_spec_implementation` returns them (with per-scenario linked
+`symbols` + a `verified` flag) and `list_specs` counts them. Link code/tests to
+an individual scenario with `link_scenario_symbol` (Spec plugin).
+
+- `sync_openspec(openspec_dir?)` — import an entire OpenSpec tree in one call:
+  canonical requirements from `specs/` **and** every change under `changes/`
+  (proposed) / `archive/` (archived); reads `openspec.json`. Always visible
+  (bootstrap). For a single file use `import_specs_from_markdown`.
+- `export_openspec(out_dir="openspec", include_changes=True)` — the inverse:
+  write the DB back to `specs/<capability>/spec.md` (+ `changes/`, `archive/`).
+  Closes the round-trip. Capability == the spec's `module`.
+- `validate_openspec(strict=False)` — mirror `openspec validate [--strict]`;
+  the load-bearing check is *every requirement MUST have ≥1 scenario*.
+- `list_spec_changes(status?)` / `get_spec_change(name)` — inspect change
+  proposals (proposal/design/tasks prose + ADD/MODIFY/REMOVE/RENAME deltas).
+
 #### Spec Explorer (1, always visible)
 - `export_explorer(base?, head?, generated_at?)` — writes
   `.mcp-docs/explorer/` (`data.json` + `index.html`). Swagger-style view by
@@ -392,7 +412,7 @@ Always registered (including markdown Spec import + Explorer export).
   autowire on export/index. Preview: `livespec-mcp explorer serve` →
   `http://127.0.0.1:8765/explorer/`.
 
-### `livespec-spec` plugin — Spec mutation (9)
+### `livespec-spec` plugin — Spec mutation (12)
 
 Visible in `tools/list` when the workspace DB has `spec` rows, or when
 `LIVESPEC_PLUGINS` includes `spec`. Tools an *operator* runs to mutate Spec state.
@@ -405,6 +425,10 @@ setting `LIVESPEC_PLUGINS`.
   `delete_spec(spec_id)` — cascade-removes spec_symbol links.
 - `link_spec_symbol(spec_id, symbol_qname, relation, confidence, source, unlink)` —
   link / unlink a single Spec↔symbol pair.
+- `link_scenario_symbol(spec_id, scenario_name, symbol_qname, ...)` —
+  scenario-level traceability: link code/tests to an individual OpenSpec
+  `#### Scenario:` (finer than the whole requirement). Surfaced per-scenario in
+  `get_spec_implementation` (`verified` + linked `symbols`).
 - `link_spec_dependency(parent_spec_id, child_spec_id, kind='requires')` /
   `unlink_spec_dependency` / `get_spec_dependency_graph` — Spec→Spec graph.
   `kind` ∈ {requires, extends, conflicts}; cycles rejected at insert time.
@@ -413,6 +437,9 @@ setting `LIVESPEC_PLUGINS`.
 - `scan_docstrings_for_spec_hints()` — surfaces Spec candidates from existing
   docstrings (first sentence, leading verb). Returns
   `verb_histogram_top` for noticing dominant action verbs.
+- `apply_spec_change(name)` / `archive_spec_change(name)` — OpenSpec change
+  lifecycle: fold a change's deltas into the canonical Spec set (ADDED/MODIFIED/
+  RENAMED upsert+activate, REMOVED deprecate), then mark it archived.
 
 ### Brownfield bootstrap (no Python one-liner)
 

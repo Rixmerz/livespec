@@ -39,11 +39,14 @@ SPEC_MUTATION_TOOL_NAMES = frozenset(
         "update_spec",
         "delete_spec",
         "link_spec_symbol",
+        "link_scenario_symbol",
         "link_spec_dependency",
         "unlink_spec_dependency",
         "get_spec_dependency_graph",
         "scan_spec_annotations",
         "scan_docstrings_for_spec_hints",
+        "apply_spec_change",
+        "archive_spec_change",
     }
 )
 
@@ -60,6 +63,7 @@ CORE_PLUGIN_TOOL_NAMES = frozenset(
     {
         "export_explorer",
         "import_specs_from_markdown",
+        "sync_openspec",
     }
 )
 

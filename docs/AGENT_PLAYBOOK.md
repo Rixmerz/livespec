@@ -65,10 +65,18 @@ client cached the short tool list.
 | Dead code candidates | `find_dead_code()` | Respects entry points / `pub` / frameworks |
 | HTTP/CLI entry points | `find_endpoints(framework?)` | Prefer `summary_only=True` if full JSON breaks |
 | Batch link (escape hatch) | `bulk_link_spec_symbols(mappings)` | Configs, SQL, langs without `@spec:` extractor |
+| Import a whole OpenSpec repo | `sync_openspec(openspec_dir?)` | Specs **+** changes from `openspec/`; reads `openspec.json` |
+| Write Specs back to OpenSpec | `export_openspec(out_dir?)` | `specs/<capability>/spec.md` + `changes/` — closes the round-trip |
+| OpenSpec structural check | `validate_openspec(strict?)` | Mirror of `openspec validate --strict` (every requirement needs ≥1 scenario) |
+| Inspect change proposals | `list_spec_changes()` / `get_spec_change(name)` | proposal/design/tasks + ADD/MODIFY/REMOVE deltas |
+
+> **livespec speaks OpenSpec (Fission-AI).** If the repo has an `openspec/`
+> directory, livespec is the code-graph/traceability layer *beneath* it — it
+> does not compete with OpenSpec authoring. See §5.8 for the loop.
 
 ### `livespec-spec` plugin — *mutate Spec state* (operator)
 
-`create_spec`, `update_spec`, `delete_spec`, `link_spec_symbol`, `link_spec_dependency`, `scan_spec_annotations`, `scan_docstrings_for_spec_hints`, … (`import_specs_from_markdown` is always-visible core, not gated).
+`create_spec`, `update_spec`, `delete_spec`, `link_spec_symbol`, `link_scenario_symbol`, `link_spec_dependency`, `scan_spec_annotations`, `scan_docstrings_for_spec_hints`, `apply_spec_change`, `archive_spec_change`, … (`import_specs_from_markdown` and `sync_openspec` are always-visible core, not gated).
 
 > The spec-mutation tools above are **plugin-gated**: they appear only once
 > the workspace has spec rows or `LIVESPEC_PLUGINS=spec` (or `=all`) is set.
@@ -202,6 +210,39 @@ link_spec_dependency(parent_spec_id="SPEC-004", child_spec_id="SPEC-003", kind="
 
 Kinds: `requires` | `extends` | `conflicts`. Cycles are rejected.
 
+### 5.8 OpenSpec (Fission-AI) interop — you are the layer *beneath* it
+
+If a repo has an `openspec/` directory (`specs/`, `changes/`, optional
+`openspec.json`), livespec ingests it and keeps code↔spec traceability on top.
+livespec **reads and writes** the OpenSpec format — it is not a competitor to
+OpenSpec authoring. The full loop:
+
+1. **Ingest.** `sync_openspec()` imports the whole tree in one call — canonical
+   requirements from `specs/` **and** every change under `changes/`
+   (proposed) / `archive/` (archived). (Single file? `import_specs_from_markdown(path=...)`.)
+2. **Understand.** `list_specs()` (each row has `scenario_count`),
+   `get_spec_implementation(spec_id)` returns the requirement, its
+   `#### Scenario:` blocks with per-scenario linked `symbols` + a `verified`
+   flag, and `coverage.scenarios_verified`.
+3. **Trace at scenario granularity.** OpenSpec reasons per scenario, so link
+   code/tests to a *single* scenario, not just the requirement:
+   `link_scenario_symbol(spec_id, scenario_name, symbol_qname, relation="tests")`.
+4. **Change lifecycle.** `list_spec_changes()` / `get_spec_change(name)` inspect
+   a proposal; `apply_spec_change(name)` folds its deltas into the canonical
+   spec set (ADDED/MODIFIED/RENAMED activate, REMOVED deprecate);
+   `archive_spec_change(name)` closes it.
+5. **Validate.** `validate_openspec(strict=True)` mirrors
+   `openspec validate --strict` — the load-bearing rule is *every requirement
+   MUST have ≥1 scenario*.
+6. **Write back.** `export_openspec(out_dir="openspec")` re-emits the canonical
+   tree (`specs/<capability>/spec.md` with `## Purpose` / `### Requirement:` /
+   `#### Scenario:`) + `changes/` + `archive/` — closing the round-trip.
+
+Mapping: an OpenSpec **capability** == a livespec **module** (pass either as
+`capability=` or `module=`); a requirement name slugs to the spec_id
+(`auth` + "User Login" → `auth-user-login`). Everything is idempotent — re-sync
+freely. Invoke the `openspec_workflow` MCP prompt for this as a slash command.
+
 ---
 
 ## 6. Brownfield workflow (no Specs yet)
@@ -250,6 +291,7 @@ When explaining code to the user, cite **Spec ids** from `list_specs` / annotati
 | `analyze_change_impact` | Planned change |
 | `audit_spec_coverage` | Traceability audit |
 | `extract_specs_from_module` | Module-scoped Spec draft |
+| `openspec_workflow` | Repo has an `openspec/` dir — sync/trace/validate/export loop |
 
 ---
 

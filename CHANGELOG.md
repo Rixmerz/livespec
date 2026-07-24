@@ -7,6 +7,12 @@ follows [SemVer](https://semver.org/).
 ## [Unreleased]
 
 ### Fixed
+- **`audit_coverage` now records coverage-trend snapshots on Python 3.10.**
+  `from datetime import UTC` (used to timestamp the snapshot) is 3.11+, so on
+  3.10 it raised `ImportError` inside a best-effort `try/except` and the
+  snapshot was silently never written — the explorer coverage trend stayed
+  empty on 3.10 (the project supports `>=3.10`). Switched to
+  `datetime.now(timezone.utc)`, which works on every supported version.
 - **Python callback arguments now create real caller edges — kills a
   false-positive dead-code class.** Found by dogfooding livespec on itself: a
   function passed as an argument (`Watcher(on_reindex=cb)`,
@@ -20,6 +26,53 @@ follows [SemVer](https://semver.org/).
   tool, not just dead-code.
 
 ### Added
+- **OpenSpec (Fission-AI) full compatibility — round-trip + change lifecycle
+  (v0.22).** livespec could *read* OpenSpec markdown since v0.21; it is now a
+  first-class citizen of an `openspec/` repo. Three layers landed:
+  - **Scenarios are first-class** (schema migration v15, `spec_scenario`).
+    OpenSpec's atomic testable unit — the `#### Scenario:` WHEN/THEN block —
+    was previously flattened into `spec.description`; it is now modelled as
+    rows, surfaced by `get_spec_implementation` (`scenarios[]`,
+    `coverage.scenario_count`) and counted in `list_specs` (`scenario_count`).
+  - **Export closes the round-trip.** New `export_openspec(out_dir="openspec",
+    include_changes=True)` writes the canonical OpenSpec tree
+    (`specs/<capability>/spec.md` with `## Purpose` / `### Requirement:` /
+    `#### Scenario:`) plus `changes/` + `archive/`. Capability == the spec's
+    `module`; only non-deprecated specs are emitted as canonical requirements.
+  - **Structural validation.** New `validate_openspec(strict=False)` mirrors
+    `openspec validate [--strict]` — the load-bearing check is OpenSpec's
+    invariant (every requirement MUST have ≥1 scenario), plus missing
+    titles/bodies and (strict) missing RFC-2119 normative keywords.
+  - **Change lifecycle** (schema migration v16, `spec_change` +
+    `spec_change_delta`). The `openspec/changes/<name>/` package (proposal/
+    design/tasks + ADD/MODIFY/REMOVE/RENAME delta requirements) is modelled and
+    driven by new tools: `sync_openspec(openspec_dir=None)` imports an entire
+    tree (specs + changes) in one call and reads `openspec.json`;
+    `list_spec_changes` / `get_spec_change` inspect proposals;
+    `apply_spec_change` folds deltas into the canonical spec set (ADDED/
+    MODIFIED/RENAMED upsert+activate, REMOVED deprecate); `archive_spec_change`
+    marks a change done.
+  - **Scenario-level traceability** (schema migration v17, `scenario_symbol`).
+    New `link_scenario_symbol(spec_id, scenario_name, symbol_qname, ...)` links
+    code/tests to an individual `#### Scenario:` (not just the whole
+    requirement) — OpenSpec reasons per scenario. `get_spec_implementation` now
+    returns each scenario's linked `symbols` + a `verified` flag, and
+    `coverage.scenarios_verified`. Scenario reconciliation on re-import is an
+    upsert (matched by `(spec, name)`) so these links survive a re-sync.
+  - **Config:** new `[specs].openspec_dir` re-syncs an OpenSpec tree after every
+    `index_project`. **Ergonomics:** `capability` accepted as an alias for
+    `module` in `list_specs` and returned by `get_spec_implementation`.
+  - **Agent discoverability.** The compatibility is now advertised where an
+    agent will find it: a new `openspec_workflow` MCP prompt (sync → trace →
+    validate → export loop), an OpenSpec section (§5.8) + tool-tier rows in the
+    `agent_playbook`, and a line in the MCP server `instructions`. So a
+    consuming agent learns livespec speaks OpenSpec without reading every tool
+    docstring.
+  - Tool count 36 → 44 (29 core + 12 Spec plugin + 3 docs). New agentic core
+    tools: `export_openspec`, `validate_openspec`, `list_spec_changes`,
+    `get_spec_change`; new always-visible bootstrap tool `sync_openspec`; new
+    Spec-plugin tools `apply_spec_change`, `archive_spec_change`,
+    `link_scenario_symbol`. New MCP prompt: `openspec_workflow`.
 - **Cross-repo route edges (P2) — the call graph crosses the front↔back
   boundary.** The extractor now records HTTP route "sites" into a new
   `route_ref` table (schema migration v14): `role='server'` for backend

@@ -163,6 +163,42 @@ CREATE TABLE IF NOT EXISTS spec_symbol (
 CREATE INDEX IF NOT EXISTS idx_specsym_spec ON spec_symbol(spec_id);
 CREATE INDEX IF NOT EXISTS idx_specsym_sym ON spec_symbol(symbol_id);
 
+-- v0.22 P1 (OpenSpec interop): scenarios are OpenSpec's atomic, testable unit.
+-- Every OpenSpec requirement MUST carry >=1 `#### Scenario:` (WHEN/THEN) block;
+-- `validate_openspec` enforces that invariant. We model them as first-class
+-- rows (they were previously flattened into spec.description) so the round-trip
+-- export re-emits them structurally and coverage can reason per scenario.
+-- `body` is the raw markdown under the heading (the WHEN/THEN bullet list).
+CREATE TABLE IF NOT EXISTS spec_scenario (
+    id INTEGER PRIMARY KEY,
+    spec_id INTEGER NOT NULL REFERENCES spec(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    body TEXT NOT NULL DEFAULT '',
+    ordinal INTEGER NOT NULL DEFAULT 0,   -- source order within the requirement
+    UNIQUE(spec_id, name)
+);
+
+CREATE INDEX IF NOT EXISTS idx_spec_scenario_spec ON spec_scenario(spec_id);
+
+-- v0.22 P3 (OpenSpec interop): scenario-level traceability. OpenSpec reasons
+-- about behaviour per scenario, so this links code symbols to an individual
+-- `#### Scenario:` (not just the whole requirement) — enabling per-scenario
+-- "which code/test verifies this WHEN/THEN?" queries. Same shape/relations as
+-- spec_symbol; cascades on scenario or symbol delete.
+CREATE TABLE IF NOT EXISTS scenario_symbol (
+    id INTEGER PRIMARY KEY,
+    scenario_id INTEGER NOT NULL REFERENCES spec_scenario(id) ON DELETE CASCADE,
+    symbol_id INTEGER NOT NULL REFERENCES symbol(id) ON DELETE CASCADE,
+    relation TEXT NOT NULL DEFAULT 'implements',  -- implements | tests | references
+    confidence REAL NOT NULL DEFAULT 1.0,
+    source TEXT NOT NULL DEFAULT 'manual',        -- manual | annotation | embedding | llm
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(scenario_id, symbol_id, relation)
+);
+
+CREATE INDEX IF NOT EXISTS idx_scenario_symbol_scenario ON scenario_symbol(scenario_id);
+CREATE INDEX IF NOT EXISTS idx_scenario_symbol_symbol ON scenario_symbol(symbol_id);
+
 -- v0.5 P2: Spec dependency graph. parent depends on child.
 --   requires:  parent needs child to be implemented first
 --   extends:   parent specializes / refines child
@@ -181,6 +217,42 @@ CREATE TABLE IF NOT EXISTS spec_dependency (
 
 CREATE INDEX IF NOT EXISTS idx_specdep_parent ON spec_dependency(parent_spec_id);
 CREATE INDEX IF NOT EXISTS idx_specdep_child ON spec_dependency(child_spec_id);
+
+-- v0.22 P2 (OpenSpec interop): change proposals. OpenSpec's `openspec/changes/
+-- <name>/` package is a self-contained change request: proposal.md (why),
+-- design.md (how), tasks.md (checklist) plus delta spec files under specs/ that
+-- ADD/MODIFY/REMOVE/RENAME requirements. We model the package as one
+-- `spec_change` row (the three prose docs inline) plus N `spec_change_delta`
+-- rows (one per requirement touched). `apply_spec_change` folds the deltas into
+-- the canonical `spec` set; `archive_spec_change` marks it done.
+CREATE TABLE IF NOT EXISTS spec_change (
+    id INTEGER PRIMARY KEY,
+    project_id INTEGER NOT NULL REFERENCES project(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,                       -- change folder name, e.g. add-dark-mode
+    status TEXT NOT NULL DEFAULT 'proposed',  -- proposed | applied | archived
+    proposal TEXT,                            -- proposal.md content
+    design TEXT,                              -- design.md content
+    tasks TEXT,                               -- tasks.md content
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(project_id, name)
+);
+
+CREATE INDEX IF NOT EXISTS idx_spec_change_project ON spec_change(project_id, status);
+
+CREATE TABLE IF NOT EXISTS spec_change_delta (
+    id INTEGER PRIMARY KEY,
+    change_id INTEGER NOT NULL REFERENCES spec_change(id) ON DELETE CASCADE,
+    operation TEXT NOT NULL,        -- added | modified | removed | renamed
+    capability TEXT,                -- capability (== spec module) the requirement lives in
+    spec_id TEXT NOT NULL,          -- derived slug id of the target requirement
+    title TEXT NOT NULL,
+    description TEXT,
+    ordinal INTEGER NOT NULL DEFAULT 0,
+    UNIQUE(change_id, spec_id, operation)
+);
+
+CREATE INDEX IF NOT EXISTS idx_change_delta_change ON spec_change_delta(change_id);
 
 -- v0.16: Spec test-coverage trend. One row per spec per audit_coverage run
 -- plus a '__rollup__' row. Created here so a fresh DB matches a migrated one
