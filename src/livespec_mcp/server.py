@@ -21,7 +21,10 @@ mcp = FastMCP(
         "No LIVESPEC_WORKSPACE env. Switch repos by changing `workspace` only. "
         "Fetch prompt `agent_playbook` for @spec: commenting. "
         "Cold-open per repo: index_project(workspace=<repo>) then "
-        "get_project_overview(workspace=<same repo>)."
+        "get_project_overview(workspace=<same repo>). "
+        "Speaks OpenSpec (Fission-AI): if the repo has an `openspec/` dir, call "
+        "sync_openspec to ingest specs+changes, export_openspec to write them "
+        "back, validate_openspec to check; fetch prompt `openspec_workflow`."
     ),
 )
 

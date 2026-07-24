@@ -52,6 +52,43 @@ def register(mcp: FastMCP) -> None:
         )
 
     @mcp.prompt
+    def openspec_workflow() -> str:
+        """OpenSpec (Fission-AI) interop loop: sync -> trace -> validate -> export.
+
+        Invoke when the repo has an `openspec/` directory. livespec is the
+        code-graph/traceability layer BENEATH OpenSpec — it reads and writes the
+        OpenSpec format and does not compete with OpenSpec authoring.
+        """
+        return (
+            "This repo uses OpenSpec (Fission-AI). livespec is the code-graph +\n"
+            "traceability layer beneath it — it reads AND writes the OpenSpec\n"
+            "format. Run the loop:\n\n"
+            "1) Ingest the whole tree in one call:\n"
+            "   `sync_openspec()` — canonical requirements from openspec/specs/ PLUS\n"
+            "   every change under openspec/changes/ (proposed) and openspec/archive/\n"
+            "   (archived). Reads openspec.json. (Single file: import_specs_from_markdown.)\n"
+            "2) Understand: `list_specs()` (rows carry scenario_count) and\n"
+            "   `get_spec_implementation(spec_id)` — returns the requirement, its\n"
+            "   #### Scenario: blocks with per-scenario linked symbols + a `verified`\n"
+            "   flag, and coverage.scenarios_verified.\n"
+            "3) Trace at scenario granularity (OpenSpec's atomic unit):\n"
+            "   `link_scenario_symbol(spec_id, scenario_name, symbol_qname,\n"
+            "   relation='tests')` — link a test/impl to a single WHEN/THEN scenario.\n"
+            "4) Change lifecycle: `list_spec_changes()` / `get_spec_change(name)` to\n"
+            "   inspect; `apply_spec_change(name)` folds deltas into the canonical spec\n"
+            "   set (ADDED/MODIFIED/RENAMED activate, REMOVED deprecate);\n"
+            "   `archive_spec_change(name)` closes it.\n"
+            "5) Validate: `validate_openspec(strict=True)` — mirrors\n"
+            "   `openspec validate --strict`; every requirement MUST have >=1 scenario.\n"
+            "6) Write back: `export_openspec(out_dir='openspec')` re-emits the canonical\n"
+            "   tree + changes/ + archive/ — closing the round-trip.\n\n"
+            "Mapping: OpenSpec capability == livespec module (pass `capability=` or\n"
+            "`module=`); requirement name slugs to spec_id (auth + 'User Login' ->\n"
+            "auth-user-login). All idempotent — re-sync freely. Pass workspace= on\n"
+            "every call."
+        )
+
+    @mcp.prompt
     def analyze_change_impact(target: str) -> str:
         """Run impact analysis for a symbol/file/Spec and explain blast radius."""
         return (

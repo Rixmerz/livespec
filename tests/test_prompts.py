@@ -4,7 +4,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+from fastmcp import Client
+
 from livespec_mcp.prompts import _AGENT_PLAYBOOK, _load_agent_playbook
+from livespec_mcp.server import mcp
 
 
 def test_agent_playbook_file_exists():
@@ -22,3 +26,28 @@ def test_agent_playbook_loads_key_sections():
 
 def test_agent_playbook_under_docs():
     assert _AGENT_PLAYBOOK == Path(__file__).resolve().parents[1] / "docs" / "AGENT_PLAYBOOK.md"
+
+
+def test_agent_playbook_advertises_openspec_interop():
+    """Agents must be able to DISCOVER the OpenSpec compatibility from the guide."""
+    text = _load_agent_playbook()
+    assert "OpenSpec" in text
+    assert "sync_openspec" in text
+    assert "link_scenario_symbol" in text
+
+
+@pytest.mark.asyncio
+async def test_openspec_workflow_prompt_registered():
+    async with Client(mcp) as c:
+        names = {p.name for p in await c.list_prompts()}
+        assert "openspec_workflow" in names
+        result = await c.get_prompt("openspec_workflow")
+        text = result.messages[0].content.text
+        for tool in (
+            "sync_openspec",
+            "export_openspec",
+            "validate_openspec",
+            "link_scenario_symbol",
+            "apply_spec_change",
+        ):
+            assert tool in text, f"{tool} missing from openspec_workflow prompt"

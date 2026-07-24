@@ -62,11 +62,17 @@ follows [SemVer](https://semver.org/).
   - **Config:** new `[specs].openspec_dir` re-syncs an OpenSpec tree after every
     `index_project`. **Ergonomics:** `capability` accepted as an alias for
     `module` in `list_specs` and returned by `get_spec_implementation`.
+  - **Agent discoverability.** The compatibility is now advertised where an
+    agent will find it: a new `openspec_workflow` MCP prompt (sync → trace →
+    validate → export loop), an OpenSpec section (§5.8) + tool-tier rows in the
+    `agent_playbook`, and a line in the MCP server `instructions`. So a
+    consuming agent learns livespec speaks OpenSpec without reading every tool
+    docstring.
   - Tool count 36 → 44 (29 core + 12 Spec plugin + 3 docs). New agentic core
     tools: `export_openspec`, `validate_openspec`, `list_spec_changes`,
     `get_spec_change`; new always-visible bootstrap tool `sync_openspec`; new
     Spec-plugin tools `apply_spec_change`, `archive_spec_change`,
-    `link_scenario_symbol`.
+    `link_scenario_symbol`. New MCP prompt: `openspec_workflow`.
 - **Cross-repo route edges (P2) — the call graph crosses the front↔back
   boundary.** The extractor now records HTTP route "sites" into a new
   `route_ref` table (schema migration v14): `role='server'` for backend
