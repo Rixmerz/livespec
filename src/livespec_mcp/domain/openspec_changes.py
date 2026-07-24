@@ -21,7 +21,11 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from livespec_mcp.domain.md_specs import ParsedSpec, parse_openspec_markdown
+from livespec_mcp.domain.md_specs import (
+    ParsedSpec,
+    _ospec_spec_id,
+    parse_openspec_markdown,
+)
 from livespec_mcp.domain.specs_sync import _sync_spec_scenarios
 
 _PROSE_FILES = {"proposal": "proposal.md", "design": "design.md", "tasks": "tasks.md"}
@@ -87,11 +91,20 @@ def ingest_change(
     # Replace deltas wholesale so a re-ingest mirrors the folder exactly.
     st.conn.execute("DELETE FROM spec_change_delta WHERE change_id=?", (change_id,))
     for ordinal, d in enumerate(parsed.deltas):
+        # For a RENAMED delta, resolve the old requirement name to its slug id so
+        # apply can find and migrate the old spec.
+        rename_from_id = (
+            _ospec_spec_id(d.rename_from, d.module) if d.rename_from else None
+        )
         st.conn.execute(
             """INSERT OR IGNORE INTO spec_change_delta
-               (change_id, operation, capability, spec_id, title, description, ordinal)
-               VALUES(?,?,?,?,?,?,?)""",
-            (change_id, d.operation, d.module, d.spec_id, d.title, d.description, ordinal),
+               (change_id, operation, capability, spec_id, title, description,
+                rename_from, ordinal)
+               VALUES(?,?,?,?,?,?,?,?)""",
+            (
+                change_id, d.operation, d.module, d.spec_id, d.title, d.description,
+                rename_from_id, ordinal,
+            ),
         )
     st.conn.commit()
     return {
@@ -142,8 +155,45 @@ def _upsert_spec(st: Any, spec_id: str, title: str, description: str | None,
     _sync_spec_scenarios(st.conn, spec_pk, scenarios)
 
 
-def apply_change(st: Any, name: str) -> dict[str, Any]:
-    """Fold a change's deltas into the canonical spec set."""
+def _spec_pk(st: Any, spec_id: str) -> int | None:
+    row = st.conn.execute(
+        "SELECT id FROM spec WHERE project_id=? AND spec_id=?", (st.project_id, spec_id)
+    ).fetchone()
+    return int(row["id"]) if row else None
+
+
+def _validate_deltas(st: Any, deltas: list[Any]) -> list[dict[str, Any]]:
+    """Pre-apply applicability check: flag deltas whose target state is off."""
+    warnings: list[dict[str, Any]] = []
+    for d in deltas:
+        op, sid = d["operation"], d["spec_id"]
+        exists = _spec_pk(st, sid) is not None
+        if op == "added" and exists:
+            warnings.append({"operation": "added", "spec_id": sid,
+                             "issue": "ADDED target already exists — apply will overwrite it"})
+        elif op == "modified" and not exists:
+            warnings.append({"operation": "modified", "spec_id": sid,
+                             "issue": "MODIFIED target does not exist — apply will create it"})
+        elif op == "removed" and not exists:
+            warnings.append({"operation": "removed", "spec_id": sid,
+                             "issue": "REMOVED target does not exist — no-op"})
+        elif op == "renamed":
+            old = d["rename_from"]
+            if not old:
+                warnings.append({"operation": "renamed", "spec_id": sid,
+                                 "issue": "RENAMED delta has no source (FROM) — treated as add"})
+            elif _spec_pk(st, old) is None:
+                warnings.append({"operation": "renamed", "spec_id": sid,
+                                 "issue": f"RENAMED source {old!r} does not exist"})
+    return warnings
+
+
+def apply_change(st: Any, name: str, *, dry_run: bool = False) -> dict[str, Any]:
+    """Fold a change's deltas into the canonical spec set.
+
+    ``dry_run=True`` validates and returns the plan + applicability warnings
+    WITHOUT mutating anything. Otherwise applies and returns the same warnings
+    alongside the counts."""
     pid = st.project_id
     change = st.conn.execute(
         "SELECT id, status FROM spec_change WHERE project_id=? AND name=?", (pid, name)
@@ -152,22 +202,33 @@ def apply_change(st: Any, name: str) -> dict[str, Any]:
         return {"error": f"change {name!r} not found", "isError": True}
     change_id = int(change["id"])
     deltas = st.conn.execute(
-        """SELECT operation, capability, spec_id, title, description
+        """SELECT operation, capability, spec_id, title, description, rename_from
            FROM spec_change_delta WHERE change_id=? ORDER BY ordinal, id""",
         (change_id,),
     ).fetchall()
+
+    warnings = _validate_deltas(st, deltas)
+    plan: dict[str, int] = {"added": 0, "modified": 0, "removed": 0, "renamed": 0}
+    for d in deltas:
+        plan[d["operation"]] = plan.get(d["operation"], 0) + 1
+
+    if dry_run:
+        return {"change": name, "dry_run": True, "plan": plan, "warnings": warnings}
 
     from livespec_mcp.domain.md_specs import extract_scenarios
 
     counts = {"added": 0, "modified": 0, "removed": 0, "renamed": 0}
     for d in deltas:
         op = d["operation"]
-        if op in ("added", "modified", "renamed"):
+        if op in ("added", "modified"):
             _upsert_spec(
                 st, d["spec_id"], d["title"], d["description"], d["capability"],
                 extract_scenarios(d["description"] or ""),
             )
-            counts[op] = counts.get(op, 0) + 1
+            counts[op] += 1
+        elif op == "renamed":
+            _apply_rename(st, d, extract_scenarios(d["description"] or ""))
+            counts["renamed"] += 1
         elif op == "removed":
             st.conn.execute(
                 "UPDATE spec SET status='deprecated', updated_at=datetime('now') "
@@ -180,7 +241,30 @@ def apply_change(st: Any, name: str) -> dict[str, Any]:
         (change_id,),
     )
     st.conn.commit()
-    return {"change": name, "status": "applied", "applied": counts}
+    return {"change": name, "status": "applied", "applied": counts, "warnings": warnings}
+
+
+def _apply_rename(st: Any, d: Any, scenarios: list[tuple[str, str]]) -> None:
+    """Apply a RENAMED delta: upsert the new spec and migrate the old one's
+    traceability links (spec_symbol + spec_scenario) onto it, then drop the old
+    spec so the rename is a real move, not a duplicate."""
+    _upsert_spec(st, d["spec_id"], d["title"], d["description"], d["capability"], scenarios)
+    old_id = d["rename_from"]
+    if not old_id or old_id == d["spec_id"]:
+        return
+    new_pk = _spec_pk(st, d["spec_id"])
+    old_pk = _spec_pk(st, old_id)
+    if not old_pk or not new_pk or old_pk == new_pk:
+        return
+    # OR IGNORE: a link/scenario the new spec already has wins; the rest move.
+    st.conn.execute(
+        "UPDATE OR IGNORE spec_symbol SET spec_id=? WHERE spec_id=?", (new_pk, old_pk)
+    )
+    st.conn.execute(
+        "UPDATE OR IGNORE spec_scenario SET spec_id=? WHERE spec_id=?", (new_pk, old_pk)
+    )
+    # Dropping the old spec cascades away any links that couldn't move (dups).
+    st.conn.execute("DELETE FROM spec WHERE id=?", (old_pk,))
 
 
 def archive_change(st: Any, name: str) -> dict[str, Any]:

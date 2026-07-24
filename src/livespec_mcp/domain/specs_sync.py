@@ -182,6 +182,13 @@ def import_specs_from_markdown_file(
                     "INSERT INTO module(project_id, name) VALUES(?,?)", (pid, pspec.module)
                 )
                 module_id = int(cur.lastrowid)
+            # Preserve the capability's ## Purpose on the module so export can
+            # re-emit it verbatim (round-trip fidelity) instead of synthesizing.
+            if pspec.capability_purpose:
+                st.conn.execute(
+                    "UPDATE module SET description=? WHERE id=?",
+                    (pspec.capability_purpose, module_id),
+                )
         existing = st.conn.execute(
             "SELECT id FROM spec WHERE project_id=? AND spec_id=?", (pid, pspec.spec_id)
         ).fetchone()

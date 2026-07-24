@@ -1231,17 +1231,25 @@ def register(
     @mutation_tool(annotations={"readOnlyHint": False, "idempotentHint": True})
     def apply_spec_change(
         name: str,
+        dry_run: bool = False,
         workspace: Workspace | None = None,
     ) -> dict[str, Any]:
         """Apply an OpenSpec change: fold its deltas into the canonical Spec set.
 
-        ADDED/MODIFIED/RENAMED requirements are upserted and activated; REMOVED
-        requirements are deprecated. Marks the change `applied`. Idempotent.
+        ADDED/MODIFIED requirements are upserted and activated; REMOVED
+        requirements are deprecated; RENAMED moves the old requirement's
+        traceability links onto the new name and drops the old spec. Marks the
+        change `applied`. Idempotent.
+
+        `dry_run=True` returns the `plan` (counts per operation) + applicability
+        `warnings` (e.g. MODIFIED/REMOVED targeting a spec that doesn't exist, or
+        ADDED that would overwrite an existing one) WITHOUT mutating — preview
+        before committing. A normal apply returns the same `warnings`.
         """ + WORKSPACE_DOCSTRING_NOTE
         st = get_state(workspace)
         from livespec_mcp.domain.openspec_changes import apply_change
 
-        result = apply_change(st, name)
+        result = apply_change(st, name, dry_run=dry_run)
         if result.get("isError"):
             return mcp_error(
                 result["error"],

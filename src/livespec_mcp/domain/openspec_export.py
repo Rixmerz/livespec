@@ -114,7 +114,8 @@ def export_openspec(
 
     # --- canonical specs, grouped by capability (module) ---
     rows = conn.execute(
-        """SELECT sp.id, sp.spec_id, sp.title, sp.description, m.name AS module
+        """SELECT sp.id, sp.spec_id, sp.title, sp.description,
+                  m.name AS module, m.description AS module_purpose
            FROM spec sp LEFT JOIN module m ON m.id=sp.module_id
            WHERE sp.project_id=? AND sp.status != 'deprecated'
            ORDER BY m.name, sp.spec_id""",
@@ -122,17 +123,25 @@ def export_openspec(
     ).fetchall()
 
     by_cap: dict[str, list[Any]] = {}
+    cap_purpose: dict[str, str] = {}
     for r in rows:
         cap = r["module"] or _DEFAULT_CAPABILITY
         by_cap.setdefault(cap, []).append(r)
+        if r["module_purpose"] and cap not in cap_purpose:
+            cap_purpose[cap] = r["module_purpose"]
 
     spec_count = 0
     scenario_count = 0
     for cap, specs in sorted(by_cap.items()):
         lines: list[str] = [f"# {_capability_title(cap)} Specification", ""]
+        # Re-emit the stored ## Purpose verbatim when we captured one on import;
+        # otherwise synthesize a minimal placeholder so the file stays valid.
+        purpose_body = cap_purpose.get(cap) or (
+            f"The `{cap}` capability. Exported by livespec."
+        )
         lines += [
             "## Purpose",
-            f"The `{cap}` capability. Exported by livespec-mcp.",
+            purpose_body,
             "",
             "## Requirements",
             "",
