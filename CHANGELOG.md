@@ -6,6 +6,8 @@ follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.22.0] - 2026-07-24
+
 ### Fixed
 - **`audit_coverage` now records coverage-trend snapshots on Python 3.10.**
   `from datetime import UTC` (used to timestamp the snapshot) is 3.11+, so on
@@ -1734,6 +1736,7 @@ Bootstrap. Phases 0–6 of the original design.
   `doc://symbol/{qname*}`, `doc://requirement/{rf_id}`.
 
 [0.12.0]: https://github.com/Rixmerz/livespec/compare/v0.11.0...v0.12.0
+[0.22.0]: https://github.com/Rixmerz/livespec/releases/tag/v0.22.0
 [0.11.0]: https://github.com/Rixmerz/livespec/releases/tag/v0.11.0
 [0.7.0]: https://github.com/Rixmerz/livespec/releases/tag/v0.7.0
 [0.6.0]: https://github.com/Rixmerz/livespec/releases/tag/v0.6.0
