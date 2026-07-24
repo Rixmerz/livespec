@@ -33,5 +33,5 @@ The `.mcp.json` runs `uvx livespec-mcp` (the server is on PyPI). Ensure `uv` is
 installed. Then add this plugin to a marketplace and install it, or point Claude
 Code at this directory as a local plugin.
 
-The MCP server exposes 36 tools (24 core + 9 Spec + 3 docs). See the repo
+The MCP server exposes 43 tools (29 core + 11 Spec + 3 docs). See the repo
 `README.md`, `docs/AGENT_PLAYBOOK.md`, and `CHANGELOG.md` for the full surface.

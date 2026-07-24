@@ -49,6 +49,29 @@ cedido a Grep nativo) ni LSP (cedido a vise). Batches:
   `#### Scenario:`), con param `fmt` y soporte de árbol `openspec/`. Wedge: ser
   la capa de trazabilidad/grafo debajo de los tools SDD (OpenSpec/spec-kit/
   Kiro), en vez de competirles la autoría.
+- **OpenSpec compat FULL — round-trip + change lifecycle (v0.22)** (branch
+  `claude/openspec-compatibility-mf1igv`): de "leer OpenSpec" a "ser ciudadano
+  de primera clase de un repo `openspec/`". 3 capas:
+  1. **Scenarios first-class** (mig v15 `spec_scenario`): el `#### Scenario:`
+     (WHEN/THEN) deja de aplastarse en `description`; `get_spec_implementation`
+     devuelve `scenarios[]` + `coverage.scenario_count`, `list_specs` cuenta
+     `scenario_count`.
+  2. **Export** (`export_openspec`) escribe el árbol canónico
+     `specs/<capability>/spec.md` (+ `changes/`, `archive/`) — cierra el
+     round-trip. **Validate** (`validate_openspec`, mirror de
+     `openspec validate --strict`): invariante "todo requirement ≥1 scenario".
+  3. **Change lifecycle** (mig v16 `spec_change` + `spec_change_delta`):
+     `sync_openspec` importa specs+changes en una llamada (lee `openspec.json`);
+     `list_spec_changes`/`get_spec_change` inspeccionan; `apply_spec_change`
+     funde deltas en las specs canónicas (ADDED/MODIFIED/RENAMED upsert+activa,
+     REMOVED deprecia); `archive_spec_change` cierra. Config
+     `[specs].openspec_dir` re-sincroniza tras cada `index_project`. Tools
+     36→43 (29 core + 11 spec + 3 docs). Módulos nuevos:
+     `domain/openspec_{export,validate,changes,discover}.py`;
+     `test_openspec_interop.py` (10 tests). **Gate del área:** 88 passed (10
+     nuevos + 78 del área spec/config/tool). NOTA: en este entorno hay 62 fallos
+     preexistentes por versión de `tree-sitter-language-pack` (extractores JSX/
+     Rust), ajenos a este cambio (confirmado con `git stash` sobre HEAD base).
 - **P1 grouped DB** (LANDED): `.livespec.toml [workspace] group_db` rutea varios
   roots a una DB compartida (cada uno su `project_id`); un Spec de un repo
   linkea/surface símbolos de otro repo del grupo. `st.resolve_symbol` es

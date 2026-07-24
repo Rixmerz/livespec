@@ -21,15 +21,17 @@ Recognised kind synonyms (Spanish / English), default = functional_requirement:
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 _HEADER_RE = re.compile(r"^##+\s+(?P<spec>SPEC[-_]?\d+)\s*[:\-]\s*(?P<title>.+?)\s*$")
 # OpenSpec (Fission-AI) interop: `### Requirement: <name>` anchors one spec;
-# `## ADDED|MODIFIED|REMOVED Requirements` are the change-delta section headers.
+# `## ADDED|MODIFIED|REMOVED Requirements` are the change-delta section headers;
+# `#### Scenario: <name>` is a requirement's atomic WHEN/THEN behaviour block.
 _OSPEC_REQ_RE = re.compile(r"^###\s+Requirement:\s*(?P<name>.+?)\s*$")
 _OSPEC_DELTA_RE = re.compile(
     r"^##\s+(?P<verb>ADDED|MODIFIED|REMOVED|RENAMED)\s+Requirements\b", re.IGNORECASE
 )
+_OSPEC_SCENARIO_RE = re.compile(r"^####\s+Scenario:\s*(?P<name>.+?)\s*$")
 # Match `Prioridad: value` after stripping markdown bold markers.
 _META_RE = re.compile(
     r"\b(prioridad|priority|módulo|modulo|module|status|estado|kind|tipo)\s*[:=]\s*"
@@ -71,6 +73,12 @@ class ParsedSpec:
     status: str = "active"
     module: str | None = None
     kind: str = "functional_requirement"
+    # OpenSpec interop: `#### Scenario:` blocks under the requirement, as
+    # (name, body) pairs in source order. Empty for native livespec specs.
+    scenarios: list[tuple[str, str]] = field(default_factory=list)
+    # OpenSpec change-delta operation for this requirement: added | modified |
+    # removed | renamed. ``None`` for a canonical (non-delta) spec.
+    operation: str | None = None
 
 
 def _normalize_spec(raw: str) -> str:
@@ -187,6 +195,63 @@ def _ospec_spec_id(name: str, capability: str | None) -> str:
     return name_slug
 
 
+def extract_scenarios(description: str) -> list[tuple[str, str]]:
+    """Pull ``#### Scenario: <name>`` blocks out of a requirement's body.
+
+    Returns ``(name, body)`` pairs in source order; ``body`` is the raw
+    markdown under the heading (typically the ``- **WHEN** … / - **THEN** …``
+    bullet list), trimmed. A subsequent ``##``/``###``/``####`` heading closes
+    the current scenario. Fenced code blocks are skipped so an example
+    ``#### Scenario:`` inside ``` never spawns a phantom scenario. Duplicate
+    names keep the first occurrence (mirrors the UNIQUE(spec_id, name) row
+    constraint). Idempotent and side-effect free — reused by both import and
+    export."""
+    scenarios: list[tuple[str, str]] = []
+    seen: set[str] = set()
+    name: str | None = None
+    body: list[str] = []
+    in_fence = False
+    fence_marker = ""
+
+    def _flush() -> None:
+        nonlocal name
+        if name is not None and name not in seen:
+            seen.add(name)
+            scenarios.append((name, "\n".join(body).strip()))
+
+    for raw in description.splitlines():
+        stripped = raw.lstrip()
+        if stripped.startswith("```") or stripped.startswith("~~~"):
+            marker = stripped[:3]
+            if not in_fence:
+                in_fence, fence_marker = True, marker
+            elif stripped.startswith(fence_marker):
+                in_fence, fence_marker = False, ""
+            if name is not None:
+                body.append(raw)
+            continue
+        if in_fence:
+            if name is not None:
+                body.append(raw)
+            continue
+        m = _OSPEC_SCENARIO_RE.match(raw.rstrip())
+        if m:
+            _flush()
+            name = m.group("name").strip()
+            body = []
+            continue
+        # Any other markdown heading closes the current scenario body.
+        if name is not None and re.match(r"^#{2,4}(?!#)\s", stripped):
+            _flush()
+            name = None
+            body = []
+            continue
+        if name is not None:
+            body.append(raw)
+    _flush()
+    return scenarios
+
+
 def parse_openspec_markdown(
     text: str, *, capability: str | None = None
 ) -> list[ParsedSpec]:
@@ -207,6 +272,7 @@ def parse_openspec_markdown(
     current: dict | None = None
     description_lines: list[str] = []
     delta_status = "active"  # canonical specs (no delta header) are active
+    delta_op: str | None = None  # ADDED/MODIFIED/REMOVED/RENAMED; None = canonical
 
     def _flush() -> None:
         if current is None:
@@ -221,6 +287,10 @@ def parse_openspec_markdown(
                 status=current["status"],
                 module=capability,
                 kind="functional_requirement",
+                # Scenarios live verbatim inside the description too (kept for
+                # display / search); here we also surface them structurally.
+                scenarios=extract_scenarios(desc),
+                operation=current["operation"],
             )
         )
 
@@ -252,9 +322,9 @@ def parse_openspec_markdown(
             _flush()
             current = None
             description_lines = []
-            delta_status = (
-                "deprecated" if delta.group("verb").upper() == "REMOVED" else "active"
-            )
+            verb = delta.group("verb").upper()
+            delta_status = "deprecated" if verb == "REMOVED" else "active"
+            delta_op = verb.lower()
             continue
 
         req = _OSPEC_REQ_RE.match(line)
@@ -265,6 +335,7 @@ def parse_openspec_markdown(
                 "spec_id": _ospec_spec_id(name, capability),
                 "title": name,
                 "status": delta_status,
+                "operation": delta_op,
             }
             description_lines = []
             continue

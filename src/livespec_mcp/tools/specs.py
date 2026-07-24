@@ -217,16 +217,25 @@ def register(
         priority: str | None = None,
         kind: str | None = None,
         has_implementation: bool | None = None,
+        capability: str | None = None,
         limit: int = 100,
         workspace: Workspace | None = None,
     ) -> dict[str, Any]:
-        """List Specs with filters. Returns spec_id, kind, title, status, priority, module, link_count.""" + WORKSPACE_DOCSTRING_NOTE
+        """List Specs with filters. Returns spec_id, kind, title, status, priority,
+        module, link_count, scenario_count.
+
+        ``capability`` is an OpenSpec-interop alias for ``module`` (an OpenSpec
+        capability maps to a livespec module); pass either.""" + WORKSPACE_DOCSTRING_NOTE
         st = get_state(workspace)
         pid = st.project_id
+        # OpenSpec capability == livespec module. Accept either arg name.
+        if capability and not module:
+            module = capability
         sql = [
             """SELECT sp.id, sp.spec_id, sp.kind, sp.title, sp.description, sp.status, sp.priority,
                       m.name AS module,
-                      (SELECT COUNT(*) FROM spec_symbol ss WHERE ss.spec_id=sp.id) AS link_count
+                      (SELECT COUNT(*) FROM spec_symbol ss WHERE ss.spec_id=sp.id) AS link_count,
+                      (SELECT COUNT(*) FROM spec_scenario sc WHERE sc.spec_id=sp.id) AS scenario_count
                FROM spec sp LEFT JOIN module m ON m.id=sp.module_id
                WHERE sp.project_id=?"""
         ]
@@ -378,6 +387,13 @@ def register(
             (spec["id"],),
         ).fetchall()
         files = sorted({r["path"] for r in rows})
+        scenarios = [
+            {"name": s["name"], "body": s["body"]}
+            for s in st.conn.execute(
+                "SELECT name, body FROM spec_scenario WHERE spec_id=? ORDER BY ordinal, id",
+                (spec["id"],),
+            )
+        ]
         return {
             "spec": {
                 "spec_id": spec["spec_id"],
@@ -387,10 +403,18 @@ def register(
                 "status": spec["status"],
                 "priority": spec["priority"],
                 "module": spec["module"],
+                # OpenSpec interop: capability is the OpenSpec name for module.
+                "capability": spec["module"],
             },
             "symbols": [dict(r) for r in rows],
             "files": files,
-            "coverage": {"symbol_count": len(rows), "file_count": len(files)},
+            # OpenSpec scenarios (WHEN/THEN) attached to this requirement.
+            "scenarios": scenarios,
+            "coverage": {
+                "symbol_count": len(rows),
+                "file_count": len(files),
+                "scenario_count": len(scenarios),
+            },
         }
 
     @mutation_tool(annotations={"readOnlyHint": False, "idempotentHint": True})
@@ -995,3 +1019,173 @@ def register(
         Returns the visited Spec metadata + the edges traversed.
         """
         return _do_get_spec_dependency_graph(spec_id, direction, max_depth, workspace)
+
+    # ---------- v0.22: OpenSpec (Fission-AI) round-trip + change lifecycle ----------
+
+    @agentic_tool(annotations={"readOnlyHint": True, "idempotentHint": True})
+    def export_openspec(
+        out_dir: str = "openspec",
+        include_changes: bool = True,
+        workspace: Workspace | None = None,
+    ) -> dict[str, Any]:
+        """Write the project's Specs to an on-disk OpenSpec (Fission-AI) tree.
+
+        Closes the round-trip with `import_specs_from_markdown` / `sync_openspec`:
+        emits `<out_dir>/specs/<capability>/spec.md` (canonical requirements +
+        `#### Scenario:` WHEN/THEN blocks) and, when `include_changes`, the
+        `changes/` and `archive/` change packages. Capability == the spec's
+        `module`; module-less specs land under a `general` capability. Only
+        non-deprecated specs are emitted as canonical requirements. `out_dir` is
+        resolved inside the workspace root.
+        """ + WORKSPACE_DOCSTRING_NOTE
+        st = get_state(workspace)
+        from livespec_mcp.domain.openspec_export import export_openspec as _export
+
+        try:
+            root = st.settings.safe_path(out_dir)
+        except ValueError as e:
+            return mcp_error(str(e), hint="out_dir must stay inside the workspace root")
+        return _export(st.conn, st.project_id, root, include_changes=include_changes)
+
+    @agentic_tool(annotations={"readOnlyHint": True, "idempotentHint": True})
+    def validate_openspec(
+        strict: bool = False,
+        workspace: Workspace | None = None,
+    ) -> dict[str, Any]:
+        """Validate the Spec set against OpenSpec structural rules.
+
+        Mirrors `openspec validate [--strict]`. The load-bearing check is
+        OpenSpec's own invariant — every requirement MUST have >=1 scenario;
+        also flags missing titles, empty bodies, and (strict) missing RFC-2119
+        normative keywords (SHALL/MUST/...). Returns
+        `{valid, errors, warnings, specs_without_scenarios, ...}`. In `strict`
+        mode the scenario/normative findings are errors.
+        """ + WORKSPACE_DOCSTRING_NOTE
+        st = get_state(workspace)
+        from livespec_mcp.domain.openspec_validate import validate_openspec as _validate
+
+        return _validate(st.conn, st.project_id, strict=strict)
+
+    @mutation_tool(annotations={"readOnlyHint": False, "idempotentHint": True})
+    def sync_openspec(
+        openspec_dir: str | None = None,
+        workspace: Workspace | None = None,
+    ) -> dict[str, Any]:
+        """Import an entire OpenSpec tree — specs AND change proposals — in one call.
+
+        Discovers the OpenSpec root (`openspec_dir` if given, else `<workspace>/
+        openspec`), reads `openspec.json` if present, imports canonical
+        requirements from `specs/` and ingests every change under `changes/`
+        (proposed) and `archive/` (archived). Idempotent: re-run to re-sync.
+        For a single spec file use `import_specs_from_markdown` instead.
+        """ + WORKSPACE_DOCSTRING_NOTE
+        st = get_state(workspace)
+        from livespec_mcp.domain.openspec_discover import (
+            discover_openspec_root,
+            sync_openspec_tree,
+        )
+
+        root = discover_openspec_root(st.settings.workspace, openspec_dir)
+        if root is None:
+            return mcp_error(
+                "no OpenSpec directory found",
+                hint=(
+                    "pass openspec_dir=<path>, or create <workspace>/openspec/ "
+                    "(with specs/ and optional changes/)"
+                ),
+            )
+        return sync_openspec_tree(st, root)
+
+    @agentic_tool(annotations={"readOnlyHint": True, "idempotentHint": True})
+    def list_spec_changes(
+        status: str | None = None,
+        workspace: Workspace | None = None,
+    ) -> dict[str, Any]:
+        """List OpenSpec change proposals. Filter by status (proposed|applied|archived).
+
+        Returns each change's name, status, delta count, and timestamps.
+        """ + WORKSPACE_DOCSTRING_NOTE
+        st = get_state(workspace)
+        pid = st.project_id
+        sql = [
+            """SELECT c.id, c.name, c.status, c.created_at, c.updated_at,
+                      (SELECT COUNT(*) FROM spec_change_delta d WHERE d.change_id=c.id)
+                          AS delta_count
+               FROM spec_change c WHERE c.project_id=?"""
+        ]
+        args: list[Any] = [pid]
+        if status:
+            sql.append("AND c.status=?")
+            args.append(status)
+        sql.append("ORDER BY c.name")
+        rows = [dict(r) for r in st.conn.execute(" ".join(sql), args)]
+        return {"changes": rows}
+
+    @agentic_tool(annotations={"readOnlyHint": True, "idempotentHint": True})
+    def get_spec_change(
+        name: str,
+        workspace: Workspace | None = None,
+    ) -> dict[str, Any]:
+        """Get one OpenSpec change: proposal/design/tasks prose + its delta requirements."""
+        st = get_state(workspace)
+        pid = st.project_id
+        ch = st.conn.execute(
+            """SELECT id, name, status, proposal, design, tasks, created_at, updated_at
+               FROM spec_change WHERE project_id=? AND name=?""",
+            (pid, name),
+        ).fetchone()
+        if ch is None:
+            return mcp_error(
+                f"change {name!r} not found",
+                hint="check `list_spec_changes()` for known change names",
+            )
+        deltas = [
+            dict(d)
+            for d in st.conn.execute(
+                """SELECT operation, capability, spec_id, title, description
+                   FROM spec_change_delta WHERE change_id=? ORDER BY ordinal, id""",
+                (int(ch["id"]),),
+            )
+        ]
+        out = dict(ch)
+        out.pop("id", None)
+        out["deltas"] = deltas
+        return out
+
+    @mutation_tool(annotations={"readOnlyHint": False, "idempotentHint": True})
+    def apply_spec_change(
+        name: str,
+        workspace: Workspace | None = None,
+    ) -> dict[str, Any]:
+        """Apply an OpenSpec change: fold its deltas into the canonical Spec set.
+
+        ADDED/MODIFIED/RENAMED requirements are upserted and activated; REMOVED
+        requirements are deprecated. Marks the change `applied`. Idempotent.
+        """ + WORKSPACE_DOCSTRING_NOTE
+        st = get_state(workspace)
+        from livespec_mcp.domain.openspec_changes import apply_change
+
+        result = apply_change(st, name)
+        if result.get("isError"):
+            return mcp_error(
+                result["error"],
+                hint="check `list_spec_changes()` for known change names",
+            )
+        return result
+
+    @mutation_tool(annotations={"readOnlyHint": False, "idempotentHint": True})
+    def archive_spec_change(
+        name: str,
+        workspace: Workspace | None = None,
+    ) -> dict[str, Any]:
+        """Mark an OpenSpec change archived (completed). Idempotent."""
+        st = get_state(workspace)
+        from livespec_mcp.domain.openspec_changes import archive_change
+
+        result = archive_change(st, name)
+        if result.get("isError"):
+            return mcp_error(
+                result["error"],
+                hint="check `list_spec_changes()` for known change names",
+            )
+        return result

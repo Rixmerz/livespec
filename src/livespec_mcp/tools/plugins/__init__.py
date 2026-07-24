@@ -44,6 +44,8 @@ SPEC_MUTATION_TOOL_NAMES = frozenset(
         "get_spec_dependency_graph",
         "scan_spec_annotations",
         "scan_docstrings_for_spec_hints",
+        "apply_spec_change",
+        "archive_spec_change",
     }
 )
 
@@ -60,6 +62,7 @@ CORE_PLUGIN_TOOL_NAMES = frozenset(
     {
         "export_explorer",
         "import_specs_from_markdown",
+        "sync_openspec",
     }
 )
 
