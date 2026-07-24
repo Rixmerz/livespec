@@ -457,6 +457,15 @@ def _m017_scenario_symbol(conn: sqlite3.Connection) -> None:
     )
 
 
+def _m018_change_delta_rename_from(conn: sqlite3.Connection) -> None:
+    """v0.22 P (Tier 2): spec_change_delta.rename_from for OpenSpec RENAMED deltas.
+
+    A ``## RENAMED Requirements`` delta carries FROM/TO names; this column stores
+    the old requirement's slug id so ``apply_spec_change`` can migrate its
+    traceability links to the renamed spec and drop the old one. Additive."""
+    _try_add_column(conn, "spec_change_delta", "rename_from", "TEXT")
+
+
 # Ordered registry. Append-only — never reuse a version number.
 MIGRATIONS: list[Migration] = [
     (1, "drop_dead_tables", _m001_drop_dead_tables),
@@ -476,6 +485,7 @@ MIGRATIONS: list[Migration] = [
     (15, "spec_scenario", _m015_spec_scenario),
     (16, "spec_change", _m016_spec_change),
     (17, "scenario_symbol", _m017_scenario_symbol),
+    (18, "change_delta_rename_from", _m018_change_delta_rename_from),
 ]
 
 

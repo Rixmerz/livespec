@@ -331,3 +331,116 @@ async def test_apply_unknown_change_errors(sample_repo):
     async with Client(mcp) as c:
         result = (await c.call_tool("apply_spec_change", {"name": "nope"})).data
         assert result.get("isError") is True
+
+
+# ---------- Tier 2: RENAMED, Purpose round-trip, apply validation ----------
+
+RENAME_DELTA = """\
+## RENAMED Requirements
+
+- FROM: `### Requirement: Theme selection`
+- TO: `### Requirement: Theme picker`
+"""
+
+MODIFY_MISSING_DELTA = """\
+## MODIFIED Requirements
+
+### Requirement: Nonexistent thing
+The app SHALL do something that was never specified.
+
+#### Scenario: S
+- **WHEN** x
+- **THEN** y
+"""
+
+
+def test_parse_renamed_delta():
+    specs = parse_openspec_markdown(RENAME_DELTA, capability="theming")
+    assert len(specs) == 1
+    r = specs[0]
+    assert r.operation == "renamed"
+    assert r.title == "Theme picker"
+    assert r.spec_id == "theming-theme-picker"
+    assert r.rename_from == "Theme selection"
+
+
+@pytest.mark.asyncio
+async def test_rename_migrates_links(sample_repo):
+    root = sample_repo / "openspec"
+    (root / "specs" / "theming").mkdir(parents=True)
+    (root / "specs" / "theming" / "spec.md").write_text(CANONICAL)
+    change = root / "changes" / "rename-theme"
+    (change / "specs" / "theming").mkdir(parents=True)
+    (change / "proposal.md").write_text("# Rename theme selection\n")
+    (change / "specs" / "theming" / "spec.md").write_text(RENAME_DELTA)
+    async with Client(mcp) as c:
+        await c.call_tool("index_project", {})
+        await c.call_tool("sync_openspec", {})
+        await c.call_tool(
+            "link_spec_symbol",
+            {"spec_id": "theming-theme-selection", "symbol_qname": "pkg.auth.login"},
+        )
+        res = (await c.call_tool("apply_spec_change", {"name": "rename-theme"})).data
+        assert res["applied"]["renamed"] == 1
+
+        ids = {s["spec_id"] for s in (await c.call_tool("list_specs", {})).data["specs"]}
+        assert "theming-theme-picker" in ids
+        assert "theming-theme-selection" not in ids  # old spec is gone
+
+        impl = (
+            await c.call_tool(
+                "get_spec_implementation", {"spec_id": "theming-theme-picker"}
+            )
+        ).data
+        # The code link AND the scenario migrated from the old spec.
+        assert any(s["qualified_name"] == "pkg.auth.login" for s in impl["symbols"])
+        assert any(s["name"] == "User toggles dark mode" for s in impl["scenarios"])
+
+
+@pytest.mark.asyncio
+async def test_purpose_roundtrip(sample_repo):
+    tree = sample_repo / "openspec" / "specs" / "theming"
+    tree.mkdir(parents=True)
+    (tree / "spec.md").write_text(CANONICAL)  # has a `## Purpose` section
+    async with Client(mcp) as c:
+        await c.call_tool("sync_openspec", {})
+        await c.call_tool("export_openspec", {"out_dir": "out"})
+    exported = (sample_repo / "out" / "specs" / "theming" / "spec.md").read_text()
+    # The stored Purpose is re-emitted verbatim, not the synthesized placeholder.
+    assert "Let users control the app's appearance." in exported
+    assert "Exported by livespec." not in exported
+
+
+@pytest.mark.asyncio
+async def test_apply_dry_run_and_warnings(sample_repo):
+    root = sample_repo / "openspec"
+    (root / "specs" / "theming").mkdir(parents=True)
+    (root / "specs" / "theming" / "spec.md").write_text(CANONICAL)
+    change = root / "changes" / "mod-missing"
+    (change / "specs" / "theming").mkdir(parents=True)
+    (change / "proposal.md").write_text("# Modify a spec that doesn't exist\n")
+    (change / "specs" / "theming" / "spec.md").write_text(MODIFY_MISSING_DELTA)
+    async with Client(mcp) as c:
+        await c.call_tool("sync_openspec", {})
+
+        dry = (
+            await c.call_tool(
+                "apply_spec_change", {"name": "mod-missing", "dry_run": True}
+            )
+        ).data
+        assert dry["dry_run"] is True
+        assert dry["plan"]["modified"] == 1
+        assert any("does not exist" in w["issue"] for w in dry["warnings"])
+
+        # Dry run mutated nothing: spec absent, change still proposed.
+        ids = {s["spec_id"] for s in (await c.call_tool("list_specs", {})).data["specs"]}
+        assert "theming-nonexistent-thing" not in ids
+        changes = (await c.call_tool("list_spec_changes", {})).data["changes"]
+        assert changes[0]["status"] == "proposed"
+
+        # Real apply creates it and still surfaces the warning.
+        applied = (
+            await c.call_tool("apply_spec_change", {"name": "mod-missing"})
+        ).data
+        assert applied["applied"]["modified"] == 1
+        assert applied["warnings"]

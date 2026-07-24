@@ -248,6 +248,7 @@ CREATE TABLE IF NOT EXISTS spec_change_delta (
     spec_id TEXT NOT NULL,          -- derived slug id of the target requirement
     title TEXT NOT NULL,
     description TEXT,
+    rename_from TEXT,               -- for operation='renamed': old requirement's slug id
     ordinal INTEGER NOT NULL DEFAULT 0,
     UNIQUE(change_id, spec_id, operation)
 );

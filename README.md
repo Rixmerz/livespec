@@ -443,9 +443,12 @@ setting `LIVESPEC_PLUGINS`.
 - `scan_docstrings_for_spec_hints()` — surfaces Spec candidates from existing
   docstrings (first sentence, leading verb). Returns
   `verb_histogram_top` for noticing dominant action verbs.
-- `apply_spec_change(name)` / `archive_spec_change(name)` — OpenSpec change
-  lifecycle: fold a change's deltas into the canonical Spec set (ADDED/MODIFIED/
-  RENAMED upsert+activate, REMOVED deprecate), then mark it archived.
+- `apply_spec_change(name, dry_run=False)` / `archive_spec_change(name)` —
+  OpenSpec change lifecycle: fold a change's deltas into the canonical Spec set
+  (ADDED/MODIFIED upsert+activate, REMOVED deprecate, **RENAMED** moves the old
+  requirement's traceability links onto the new name and drops the old spec),
+  then mark it archived. `dry_run=True` returns the plan + applicability
+  `warnings` (missing target, would-overwrite) without mutating.
 
 ### Brownfield bootstrap (no Python one-liner)
 
