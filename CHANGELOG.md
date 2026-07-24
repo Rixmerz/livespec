@@ -7,6 +7,12 @@ follows [SemVer](https://semver.org/).
 ## [Unreleased]
 
 ### Fixed
+- **`audit_coverage` now records coverage-trend snapshots on Python 3.10.**
+  `from datetime import UTC` (used to timestamp the snapshot) is 3.11+, so on
+  3.10 it raised `ImportError` inside a best-effort `try/except` and the
+  snapshot was silently never written — the explorer coverage trend stayed
+  empty on 3.10 (the project supports `>=3.10`). Switched to
+  `datetime.now(timezone.utc)`, which works on every supported version.
 - **Python callback arguments now create real caller edges — kills a
   false-positive dead-code class.** Found by dogfooding livespec on itself: a
   function passed as an argument (`Watcher(on_reindex=cb)`,
