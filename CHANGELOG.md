@@ -6,6 +6,20 @@ follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+- **OpenSpec sync now matches real repo layout (battle-tested against
+  Fission-AI/OpenSpec).** Two ingestion bugs surfaced by running `sync_openspec`
+  against the real OpenSpec dogfood tree:
+  - Archives are read from `openspec/changes/archive/` (the layout the current
+    OpenSpec CLI writes) as well as `openspec/archive/`. Previously the
+    `archive/` subdir under `changes/` was mistaken for a change named
+    "archive" and the real archived changes were skipped.
+  - A change-only tree (no `openspec/specs/`) no longer imports in-flight change
+    *deltas* as canonical source-of-truth specs — canonical specs come only from
+    `specs/` (or from applying changes). The real OpenSpec content parsed and
+    `validate --strict`-passed cleanly; a legacy pre-structured archived spec
+    (no `### Requirement:` anchors) degrades to zero requirements without error.
+
 ### Added
 - **`livespec` console command** — an additive alias of `livespec-mcp` so the
   command matches the product name. After a local install both invoke the same
