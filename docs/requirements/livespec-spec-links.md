@@ -1,4 +1,4 @@
-# livespec-mcp — Spec↔symbol link seed
+# livespec — Spec↔symbol link seed
 
 The `implements` / `tests` links between each self-Spec and the symbols
 that satisfy it are committed as a deterministic data seed:

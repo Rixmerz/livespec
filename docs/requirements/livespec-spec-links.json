@@ -543,5 +543,195 @@
     "spec_id": "SPEC-012",
     "qname": "tests.test_cli.test_missing_workspace_is_clean_error",
     "relation": "tests"
+  },
+  {
+    "spec_id": "SPEC-013",
+    "qname": "src.livespec_mcp.domain.md_specs.extract_purpose",
+    "relation": "implements"
+  },
+  {
+    "spec_id": "SPEC-013",
+    "qname": "src.livespec_mcp.domain.md_specs.extract_scenarios",
+    "relation": "implements"
+  },
+  {
+    "spec_id": "SPEC-013",
+    "qname": "src.livespec_mcp.domain.md_specs.parse_openspec_markdown",
+    "relation": "implements"
+  },
+  {
+    "spec_id": "SPEC-013",
+    "qname": "src.livespec_mcp.domain.openspec_changes.apply_change",
+    "relation": "implements"
+  },
+  {
+    "spec_id": "SPEC-013",
+    "qname": "src.livespec_mcp.domain.openspec_changes.archive_change",
+    "relation": "implements"
+  },
+  {
+    "spec_id": "SPEC-013",
+    "qname": "src.livespec_mcp.domain.openspec_changes.import_changes_tree",
+    "relation": "implements"
+  },
+  {
+    "spec_id": "SPEC-013",
+    "qname": "src.livespec_mcp.domain.openspec_changes.ingest_change",
+    "relation": "implements"
+  },
+  {
+    "spec_id": "SPEC-013",
+    "qname": "src.livespec_mcp.domain.openspec_changes.parse_change_dir",
+    "relation": "implements"
+  },
+  {
+    "spec_id": "SPEC-013",
+    "qname": "src.livespec_mcp.domain.openspec_discover.discover_openspec_root",
+    "relation": "implements"
+  },
+  {
+    "spec_id": "SPEC-013",
+    "qname": "src.livespec_mcp.domain.openspec_discover.read_openspec_config",
+    "relation": "implements"
+  },
+  {
+    "spec_id": "SPEC-013",
+    "qname": "src.livespec_mcp.domain.openspec_discover.sync_openspec_tree",
+    "relation": "implements"
+  },
+  {
+    "spec_id": "SPEC-013",
+    "qname": "src.livespec_mcp.domain.openspec_export.export_openspec",
+    "relation": "implements"
+  },
+  {
+    "spec_id": "SPEC-013",
+    "qname": "src.livespec_mcp.domain.openspec_validate.validate_openspec",
+    "relation": "implements"
+  },
+  {
+    "spec_id": "SPEC-013",
+    "qname": "src.livespec_mcp.tools.specs.register.apply_spec_change",
+    "relation": "implements"
+  },
+  {
+    "spec_id": "SPEC-013",
+    "qname": "src.livespec_mcp.tools.specs.register.archive_spec_change",
+    "relation": "implements"
+  },
+  {
+    "spec_id": "SPEC-013",
+    "qname": "src.livespec_mcp.tools.specs.register.export_openspec",
+    "relation": "implements"
+  },
+  {
+    "spec_id": "SPEC-013",
+    "qname": "src.livespec_mcp.tools.specs.register.get_spec_change",
+    "relation": "implements"
+  },
+  {
+    "spec_id": "SPEC-013",
+    "qname": "src.livespec_mcp.tools.specs.register.link_scenario_symbol",
+    "relation": "implements"
+  },
+  {
+    "spec_id": "SPEC-013",
+    "qname": "src.livespec_mcp.tools.specs.register.list_spec_changes",
+    "relation": "implements"
+  },
+  {
+    "spec_id": "SPEC-013",
+    "qname": "src.livespec_mcp.tools.specs.register.sync_openspec",
+    "relation": "implements"
+  },
+  {
+    "spec_id": "SPEC-013",
+    "qname": "src.livespec_mcp.tools.specs.register.validate_openspec",
+    "relation": "implements"
+  },
+  {
+    "spec_id": "SPEC-013",
+    "qname": "tests.test_openspec_interop.test_apply_dry_run_and_warnings",
+    "relation": "tests"
+  },
+  {
+    "spec_id": "SPEC-013",
+    "qname": "tests.test_openspec_interop.test_apply_unknown_change_errors",
+    "relation": "tests"
+  },
+  {
+    "spec_id": "SPEC-013",
+    "qname": "tests.test_openspec_interop.test_change_lifecycle",
+    "relation": "tests"
+  },
+  {
+    "spec_id": "SPEC-013",
+    "qname": "tests.test_openspec_interop.test_export_includes_archived_change",
+    "relation": "tests"
+  },
+  {
+    "spec_id": "SPEC-013",
+    "qname": "tests.test_openspec_interop.test_export_roundtrip",
+    "relation": "tests"
+  },
+  {
+    "spec_id": "SPEC-013",
+    "qname": "tests.test_openspec_interop.test_extract_scenarios",
+    "relation": "tests"
+  },
+  {
+    "spec_id": "SPEC-013",
+    "qname": "tests.test_openspec_interop.test_fresh_db_has_openspec_tables",
+    "relation": "tests"
+  },
+  {
+    "spec_id": "SPEC-013",
+    "qname": "tests.test_openspec_interop.test_import_persists_scenarios",
+    "relation": "tests"
+  },
+  {
+    "spec_id": "SPEC-013",
+    "qname": "tests.test_openspec_interop.test_link_scenario_bad_name_errors",
+    "relation": "tests"
+  },
+  {
+    "spec_id": "SPEC-013",
+    "qname": "tests.test_openspec_interop.test_native_reimport_keeps_scenarios",
+    "relation": "tests"
+  },
+  {
+    "spec_id": "SPEC-013",
+    "qname": "tests.test_openspec_interop.test_parse_openspec_populates_scenarios_and_operation",
+    "relation": "tests"
+  },
+  {
+    "spec_id": "SPEC-013",
+    "qname": "tests.test_openspec_interop.test_parse_renamed_delta",
+    "relation": "tests"
+  },
+  {
+    "spec_id": "SPEC-013",
+    "qname": "tests.test_openspec_interop.test_purpose_roundtrip",
+    "relation": "tests"
+  },
+  {
+    "spec_id": "SPEC-013",
+    "qname": "tests.test_openspec_interop.test_rename_migrates_links",
+    "relation": "tests"
+  },
+  {
+    "spec_id": "SPEC-013",
+    "qname": "tests.test_openspec_interop.test_scenario_level_traceability",
+    "relation": "tests"
+  },
+  {
+    "spec_id": "SPEC-013",
+    "qname": "tests.test_openspec_interop.test_sync_openspec_missing_dir_errors",
+    "relation": "tests"
+  },
+  {
+    "spec_id": "SPEC-013",
+    "qname": "tests.test_openspec_interop.test_validate_openspec_flags_missing_scenario",
+    "relation": "tests"
   }
 ]

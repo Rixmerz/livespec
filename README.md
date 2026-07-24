@@ -139,7 +139,12 @@ uv pip install -e ".[dev]"
 
 ```bash
 livespec-mcp          # stdio MCP server (same as `livespec-mcp serve`)
+livespec              # same command — `livespec` is an alias of `livespec-mcp`
 ```
+
+> The **product** is `livespec`; the **package/command** stays `livespec-mcp`
+> (`pip install livespec-mcp`, `uvx livespec-mcp`) for back-compat. After a
+> local install both `livespec` and `livespec-mcp` invoke the same entry point.
 
 Every tool call requires `workspace="/abs/path"` (no cwd or env fallback
 since v0.12). Persistent state lives in `<workspace>/.mcp-docs/docs.db`.

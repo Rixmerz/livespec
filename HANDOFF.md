@@ -55,6 +55,15 @@ re-emite), y validación de `apply_spec_change` (`warnings` de aplicabilidad +
 `dry_run`). Descartado: generar `openspec/config.yaml` (config tool-managed, no
 derivable de specs). `test_openspec_interop.py` = 20 tests. Migraciones a v18.
 
+**Tier 3/4 (en `[Unreleased]`).** Tier 3 coherencia de nombre: agregado el
+comando **`livespec`** como alias aditivo de `livespec-mcp` (mismo entry point;
+dist/paquete siguen `livespec-mcp` — el rename total destructivo del módulo se
+descartó, rompería instalaciones/PyPI post-0.22). Tier 4 higiene: **SPEC-013
+(OpenSpec interoperability)** dogfoodeada sobre livespec mismo (agregada a
+`livespec-specs.md` + seed `livespec-spec-links.json`, 38 links, `apply_spec_links`
+→ linked=147 failed=0); nota de pin de versión en `plugin/.mcp.json` (pinear tras
+publicar a PyPI). Self-spec files rebrandeados a `livespec`.
+
 ### 3.0 En curso (post-0.20): cross-project + SDD interop
 
 Stream de trabajo abierto tras un análisis estratégico (competencia con

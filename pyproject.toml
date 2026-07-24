@@ -32,7 +32,12 @@ dev = [
 ]
 
 [project.scripts]
+# `livespec-mcp` is the historical console name (kept for back-compat: existing
+# installs, `uvx livespec-mcp`, and MCP configs keep working). `livespec` is an
+# additive alias so the command matches the product name. Both run the same
+# entry point; the distribution name stays `livespec-mcp`.
 livespec-mcp = "livespec_mcp.server:main"
+livespec = "livespec_mcp.server:main"
 
 [build-system]
 requires = ["hatchling"]

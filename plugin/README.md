@@ -35,5 +35,11 @@ The `.mcp.json` runs `uvx livespec-mcp` (the server is on PyPI). Ensure `uv` is
 installed. Then add this plugin to a marketplace and install it, or point Claude
 Code at this directory as a local plugin.
 
+> **Version pin:** `.mcp.json` runs `uvx livespec-mcp` unpinned, so it always
+> pulls the latest published release. Once a release is on PyPI you can pin for
+> reproducibility — `"args": ["livespec-mcp==<version>"]` — so the plugin's MCP
+> component tracks a known version. (Left unpinned here until the current
+> release is published.)
+
 The MCP server exposes 44 tools (29 core + 12 Spec + 3 docs). See the repo
 `README.md`, `docs/AGENT_PLAYBOOK.md`, and `CHANGELOG.md` for the full surface.
