@@ -6,6 +6,25 @@ follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- **OpenSpec interop — Tier 2 depth.** Three functional gaps from the v0.22
+  compatibility pass are now closed:
+  - **`RENAMED` deltas** (`## RENAMED Requirements` FROM/TO). The parser reads
+    the `- FROM:`/`- TO:` pairs; `apply_spec_change` performs a real *move* —
+    it upserts the new requirement and migrates the old spec's traceability
+    (`spec_symbol` + `spec_scenario` links) onto it, then drops the old spec
+    (schema migration v18 adds `spec_change_delta.rename_from`).
+  - **`## Purpose` round-trip.** A capability's Purpose prose is now stored on
+    the module (`module.description`) at import and re-emitted verbatim by
+    `export_openspec`, instead of being synthesized.
+  - **`apply_spec_change` applicability validation + `dry_run`.** Apply now
+    returns `warnings` (MODIFIED/REMOVED/RENAMED targeting a spec that doesn't
+    exist, ADDED that would overwrite an existing one); `dry_run=True` returns
+    the `plan` + `warnings` without mutating.
+  - Note: OpenSpec's `openspec/config.yaml` (schema/context/rules) is
+    deliberately not generated on export — it is tool-managed config, not
+    derivable from the spec set.
+
 ## [0.22.0] - 2026-07-24
 
 ### Fixed

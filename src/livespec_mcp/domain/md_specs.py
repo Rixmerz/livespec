@@ -32,6 +32,56 @@ _OSPEC_DELTA_RE = re.compile(
     r"^##\s+(?P<verb>ADDED|MODIFIED|REMOVED|RENAMED)\s+Requirements\b", re.IGNORECASE
 )
 _OSPEC_SCENARIO_RE = re.compile(r"^####\s+Scenario:\s*(?P<name>.+?)\s*$")
+_OSPEC_PURPOSE_RE = re.compile(r"^##\s+Purpose\s*$", re.IGNORECASE)
+# `## RENAMED Requirements` uses FROM/TO bullets. The name may be bare or wrapped
+# as `### Requirement: <name>` (optionally backticked).
+_OSPEC_RENAME_RE = re.compile(
+    r"^\s*[-*]\s*(?P<dir>FROM|TO)\s*:\s*(?P<val>.+?)\s*$", re.IGNORECASE
+)
+
+
+def _clean_rename_value(raw: str) -> str:
+    """Strip backticks and a leading ``### Requirement:`` from a FROM/TO value."""
+    v = raw.strip().strip("`").strip()
+    m = re.match(r"^#*\s*Requirement:\s*(?P<name>.+?)\s*$", v, re.IGNORECASE)
+    return (m.group("name") if m else v).strip()
+
+
+def extract_purpose(text: str) -> str | None:
+    """Return the body of the ``## Purpose`` section of an OpenSpec spec file.
+
+    Everything between ``## Purpose`` and the next ``##`` heading (or EOF),
+    trimmed. ``None`` when there is no Purpose section. Fenced code is passed
+    through untouched (a ``## Purpose`` inside a fence is ignored)."""
+    lines = text.splitlines()
+    out: list[str] = []
+    capturing = False
+    in_fence = False
+    fence_marker = ""
+    for raw in lines:
+        stripped = raw.lstrip()
+        if stripped.startswith("```") or stripped.startswith("~~~"):
+            marker = stripped[:3]
+            if not in_fence:
+                in_fence, fence_marker = True, marker
+            elif stripped.startswith(fence_marker):
+                in_fence, fence_marker = False, ""
+            if capturing:
+                out.append(raw)
+            continue
+        if in_fence:
+            if capturing:
+                out.append(raw)
+            continue
+        if _OSPEC_PURPOSE_RE.match(raw.rstrip()):
+            capturing = True
+            continue
+        if capturing and re.match(r"^##(?!#)", stripped):
+            break
+        if capturing:
+            out.append(raw)
+    body = "\n".join(out).strip()
+    return body or None
 # Match `Prioridad: value` after stripping markdown bold markers.
 _META_RE = re.compile(
     r"\b(prioridad|priority|módulo|modulo|module|status|estado|kind|tipo)\s*[:=]\s*"
@@ -79,6 +129,12 @@ class ParsedSpec:
     # OpenSpec change-delta operation for this requirement: added | modified |
     # removed | renamed. ``None`` for a canonical (non-delta) spec.
     operation: str | None = None
+    # For operation == "renamed": the OLD requirement name (the FROM side of a
+    # ``## RENAMED Requirements`` FROM/TO pair). ``title`` holds the new name.
+    rename_from: str | None = None
+    # The capability's ``## Purpose`` prose (same for every spec parsed from one
+    # OpenSpec file); persisted onto the module so export can re-emit it.
+    capability_purpose: str | None = None
 
 
 def _normalize_spec(raw: str) -> str:
@@ -273,6 +329,8 @@ def parse_openspec_markdown(
     description_lines: list[str] = []
     delta_status = "active"  # canonical specs (no delta header) are active
     delta_op: str | None = None  # ADDED/MODIFIED/REMOVED/RENAMED; None = canonical
+    pending_from: str | None = None  # FROM side of a RENAMED FROM/TO pair
+    purpose = extract_purpose(text)  # capability-level ## Purpose, same for all
 
     def _flush() -> None:
         if current is None:
@@ -291,6 +349,7 @@ def parse_openspec_markdown(
                 # display / search); here we also surface them structurally.
                 scenarios=extract_scenarios(desc),
                 operation=current["operation"],
+                capability_purpose=purpose,
             )
         )
 
@@ -325,7 +384,33 @@ def parse_openspec_markdown(
             verb = delta.group("verb").upper()
             delta_status = "deprecated" if verb == "REMOVED" else "active"
             delta_op = verb.lower()
+            pending_from = None
             continue
+
+        # RENAMED section: FROM/TO bullet pairs (name change only, no body).
+        if delta_op == "renamed":
+            rn = _OSPEC_RENAME_RE.match(line)
+            if rn:
+                val = _clean_rename_value(rn.group("val"))
+                if rn.group("dir").upper() == "FROM":
+                    pending_from = val
+                elif pending_from is not None:  # TO — emit the rename
+                    specs.append(
+                        ParsedSpec(
+                            spec_id=_ospec_spec_id(val, capability),
+                            title=val,
+                            description="",
+                            priority="medium",
+                            status="active",
+                            module=capability,
+                            kind="functional_requirement",
+                            operation="renamed",
+                            rename_from=pending_from,
+                            capability_purpose=purpose,
+                        )
+                    )
+                    pending_from = None
+                continue
 
         req = _OSPEC_REQ_RE.match(line)
         if req:

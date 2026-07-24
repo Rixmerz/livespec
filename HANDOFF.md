@@ -47,6 +47,14 @@ siguen siendo `livespec-mcp`). Tools 36 → 44. Migraciones append-only hasta
 `uvx livespec-mcp` sirva 0.22 (hasta entonces el plugin corre 0.20). Detalle del
 batch OpenSpec abajo.
 
+**Post-0.22.0 (en `[Unreleased]`): OpenSpec Tier 2.** Cerrados 3 gaps
+funcionales — `RENAMED` FROM/TO (parser + `apply_spec_change` migra links del
+spec viejo al nuevo y lo borra; mig **v18** `spec_change_delta.rename_from`),
+`## Purpose` round-trip (se guarda en `module.description` y `export_openspec` lo
+re-emite), y validación de `apply_spec_change` (`warnings` de aplicabilidad +
+`dry_run`). Descartado: generar `openspec/config.yaml` (config tool-managed, no
+derivable de specs). `test_openspec_interop.py` = 20 tests. Migraciones a v18.
+
 ### 3.0 En curso (post-0.20): cross-project + SDD interop
 
 Stream de trabajo abierto tras un análisis estratégico (competencia con
