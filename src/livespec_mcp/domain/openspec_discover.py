@@ -56,10 +56,21 @@ def sync_openspec_tree(st: Any, root: Path) -> dict[str, Any]:
 
     root = Path(root)
     specs_dir = root / "specs"
-    spec_src = specs_dir if specs_dir.is_dir() else root
-    specs_result = import_specs_from_markdown_file(
-        st, spec_src, fmt="openspec", check_duplicates=False
-    )
+    # Canonical requirements come ONLY from <root>/specs. If that dir is absent
+    # (a change-only repo), do NOT fall back to walking the whole root — that
+    # would slurp in-flight change *deltas* as source-of-truth specs. The
+    # canonical set then comes from applying changes.
+    if specs_dir.is_dir():
+        specs_result = import_specs_from_markdown_file(
+            st, specs_dir, fmt="openspec", check_duplicates=False
+        )
+    else:
+        specs_result = {
+            "created": 0,
+            "updated": 0,
+            "parsed": 0,
+            "note": "no specs/ directory — canonical specs come from applied changes",
+        }
     changes_result = import_changes_tree(st, root)
     return {
         "root": str(root),

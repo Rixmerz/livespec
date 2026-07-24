@@ -411,6 +411,58 @@ async def test_purpose_roundtrip(sample_repo):
     assert "Exported by livespec." not in exported
 
 
+ADDED_ONLY_DELTA = """\
+## ADDED Requirements
+
+### Requirement: Brand new thing
+The app SHALL do a brand new thing.
+
+#### Scenario: S
+- **WHEN** x
+- **THEN** y
+"""
+
+
+@pytest.mark.asyncio
+async def test_sync_nested_changes_archive_layout(sample_repo):
+    """Real OpenSpec repos nest archives at openspec/changes/archive/ — the
+    `archive` subdir must not become a phantom change, and its contents must be
+    ingested as archived. (Battle-test finding vs Fission-AI/OpenSpec.)"""
+    root = sample_repo / "openspec"
+    act = root / "changes" / "add-thing"
+    (act / "specs" / "cap").mkdir(parents=True)
+    (act / "proposal.md").write_text("# add a thing\n")
+    (act / "specs" / "cap" / "spec.md").write_text(ADDED_ONLY_DELTA)
+    arch = root / "changes" / "archive" / "2025-01-01-old-thing"
+    (arch / "specs" / "cap").mkdir(parents=True)
+    (arch / "proposal.md").write_text("# old thing\n")
+    (arch / "specs" / "cap" / "spec.md").write_text(ADDED_ONLY_DELTA)
+    async with Client(mcp) as c:
+        await c.call_tool("sync_openspec", {})
+        changes = (await c.call_tool("list_spec_changes", {})).data["changes"]
+        by_name = {ch["name"]: ch["status"] for ch in changes}
+        assert "archive" not in by_name  # no phantom change
+        assert by_name.get("add-thing") == "proposed"
+        assert by_name.get("2025-01-01-old-thing") == "archived"
+
+
+@pytest.mark.asyncio
+async def test_sync_no_specs_dir_does_not_slurp_deltas(sample_repo):
+    """A change-only tree (no openspec/specs/) must NOT import in-flight change
+    deltas as canonical source-of-truth specs. (Battle-test finding.)"""
+    root = sample_repo / "openspec"
+    ch = root / "changes" / "add-thing"
+    (ch / "specs" / "cap").mkdir(parents=True)
+    (ch / "specs" / "cap" / "spec.md").write_text(ADDED_ONLY_DELTA)
+    async with Client(mcp) as c:
+        result = (await c.call_tool("sync_openspec", {})).data
+        assert result["specs"].get("created", 0) == 0
+        assert result["specs"].get("note")  # explains why canonical is empty
+        assert (await c.call_tool("list_specs", {})).data["specs"] == []
+        # But the change WAS ingested.
+        assert (await c.call_tool("list_spec_changes", {})).data["changes"]
+
+
 @pytest.mark.asyncio
 async def test_apply_dry_run_and_warnings(sample_repo):
     root = sample_repo / "openspec"
