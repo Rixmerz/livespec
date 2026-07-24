@@ -6,6 +6,8 @@ follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.22.0] - 2026-07-24
+
 ### Fixed
 - **OpenSpec sync now matches real repo layout (battle-tested against
   Fission-AI/OpenSpec).** Two ingestion bugs surfaced by running `sync_openspec`
@@ -51,9 +53,7 @@ follows [SemVer](https://semver.org/).
 ### Changed
 - Self-spec dogfood files rebranded to `livespec` (headers, SPEC-013 count).
 
-## [0.22.0] - 2026-07-24
-
-### Fixed
+### Fixed (v0.22 compatibility pass)
 - **`audit_coverage` now records coverage-trend snapshots on Python 3.10.**
   `from datetime import UTC` (used to timestamp the snapshot) is 3.11+, so on
   3.10 it raised `ImportError` inside a best-effort `try/except` and the
