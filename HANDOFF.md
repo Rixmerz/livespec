@@ -1,4 +1,4 @@
-# livespec-mcp — Session Handoff
+# livespec — Session Handoff
 
 > **Para reanudar el trabajo después de `/clear`:** abrí este archivo y pedile al agente "leé HANDOFF.md y continuá". Contiene todo el contexto necesario para seguir sin re-explicar.
 
@@ -36,6 +36,16 @@ Todo el stack es local-first: 0 servicios externos, 0 API keys obligatorias, 0 D
 ---
 
 ## 3. Estado actual
+
+**Release actual: `v0.22.0` (2026-07-24).** Cortada sobre `main`: incluye el
+trabajo post-0.20 (cross-repo routes P2, grouped DB P1, callback edges),
+**compatibilidad OpenSpec completa** (round-trip + change lifecycle +
+scenario-level traceability + discoverability para agentes), el fix py3.10
+(`datetime.UTC`), y el **rebrand de producto a `livespec`** (el paquete/comando
+siguen siendo `livespec-mcp`). Tools 36 → 44. Migraciones append-only hasta
+**v17**. CI verde py3.10/3.11/3.12. Pendiente: publicar a PyPI para que
+`uvx livespec-mcp` sirva 0.22 (hasta entonces el plugin corre 0.20). Detalle del
+batch OpenSpec abajo.
 
 ### 3.0 En curso (post-0.20): cross-project + SDD interop
 
