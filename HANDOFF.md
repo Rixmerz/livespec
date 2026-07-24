@@ -6,7 +6,7 @@
 
 ## 1. Identidad del proyecto
 
-- **Repo remoto:** https://github.com/Rixmerz/livespec-mcp (branch `main`)
+- **Repo remoto:** https://github.com/Rixmerz/livespec (branch `main`)
 - **Repo local:** `<repo>` (Arch box,
   desde 2026-06; el path histórico `<repo>`
   era la máquina macOS anterior — referencias viejas en este doc pueden
@@ -1002,7 +1002,7 @@ significativas; foco en sanear lo que se acumuló.
 ## 3a. Estado previo: v0.4 mergeado, v0.3 taggeado
 
 **Tag + Release v0.3.0** — pushed, GitHub Release publicado en
-https://github.com/Rixmerz/livespec-mcp/releases/tag/v0.3.0 (apunta al
+https://github.com/Rixmerz/livespec/releases/tag/v0.3.0 (apunta al
 commit `40a2cfc`).
 
 **Branch v0.4-p0-release-hygiene** (PR #1) tiene P0 + P1 + P2 + P3 cocinados:

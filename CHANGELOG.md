@@ -1733,10 +1733,10 @@ Bootstrap. Phases 0–6 of the original design.
   `project://files/{path*}`, `project://symbols/{qname*}`,
   `doc://symbol/{qname*}`, `doc://requirement/{rf_id}`.
 
-[0.12.0]: https://github.com/Rixmerz/livespec-mcp/compare/v0.11.0...v0.12.0
-[0.11.0]: https://github.com/Rixmerz/livespec-mcp/releases/tag/v0.11.0
-[0.7.0]: https://github.com/Rixmerz/livespec-mcp/releases/tag/v0.7.0
-[0.6.0]: https://github.com/Rixmerz/livespec-mcp/releases/tag/v0.6.0
-[0.5.0]: https://github.com/Rixmerz/livespec-mcp/releases/tag/v0.5.0
-[0.4.0]: https://github.com/Rixmerz/livespec-mcp/releases/tag/v0.4.0
-[0.3.0]: https://github.com/Rixmerz/livespec-mcp/releases/tag/v0.3.0
+[0.12.0]: https://github.com/Rixmerz/livespec/compare/v0.11.0...v0.12.0
+[0.11.0]: https://github.com/Rixmerz/livespec/releases/tag/v0.11.0
+[0.7.0]: https://github.com/Rixmerz/livespec/releases/tag/v0.7.0
+[0.6.0]: https://github.com/Rixmerz/livespec/releases/tag/v0.6.0
+[0.5.0]: https://github.com/Rixmerz/livespec/releases/tag/v0.5.0
+[0.4.0]: https://github.com/Rixmerz/livespec/releases/tag/v0.4.0
+[0.3.0]: https://github.com/Rixmerz/livespec/releases/tag/v0.3.0

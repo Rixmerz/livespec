@@ -6,8 +6,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this project is
 
-**livespec-mcp** is a local-first MCP server that maintains a live call graph,
-Spec↔code traceability, and on-demand documentation for any codebase. It speaks
+**livespec** is a local-first Claude Code plugin — it bundles an MCP server, a
+specialized subagent, and a Skill — that maintains a live call graph,
+Spec↔code traceability, and on-demand documentation for any codebase. (The MCP
+server component is still distributed as the `livespec-mcp` package / console
+command; the product, plugin, subagent, Skill and MCP tool namespace are all
+`livespec`.) It speaks
 9 languages with passing extractor tests (Python, Go, Java, JS, TS, Rust,
 Ruby, PHP) plus scoped resolution in 8 of them, and is framework-aware for
 Flask, FastAPI, Click, pytest, FastMCP, Celery, Django, Next.js, Deno Fresh,
@@ -15,7 +19,7 @@ SvelteKit, Remix, Spring Boot, Angular and Hono (v0.13).
 
 ## Stakeholder posture (not co-architect — owner-with-skin)
 
-Future instances of Claude Code reading this should treat livespec-mcp as
+Future instances of Claude Code reading this should treat livespec as
 a **first-class deliverable for the AI-agent ecosystem**, not as one of many
 side projects. The project is intentionally agent-shaped: it produces signal
 that other agents (including future-you) consume to understand unfamiliar

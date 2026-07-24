@@ -9,7 +9,7 @@
     {
       "name": "livespec",
       "source": "./plugin",
-      "description": "Code intelligence + Spec traceability: livespec-mcp server, specialized subagent, and preloaded Skill."
+      "description": "Code intelligence + Spec traceability: livespec MCP server, specialized subagent, and preloaded Skill."
     }
   ]
 }

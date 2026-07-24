@@ -1,4 +1,9 @@
-"""livespec-mcp: living documentation MCP server."""
+"""livespec: code intelligence + Spec traceability, shipped as an MCP server.
+
+The distribution/console name stays ``livespec-mcp`` (see pyproject); the
+product is ``livespec`` — a Claude Code plugin bundling this MCP server, a
+subagent, and a Skill.
+"""
 
 from importlib.metadata import PackageNotFoundError, version
 
