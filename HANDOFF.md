@@ -37,7 +37,9 @@ Todo el stack es local-first: 0 servicios externos, 0 API keys obligatorias, 0 D
 
 ## 3. Estado actual
 
-**Release actual: `v0.22.0` (2026-07-24).** Cortada sobre `main`: incluye el
+**Release actual: `v0.23.0` (2026-07-24)** — supersede del tag-only `v0.22.0`
+(nunca publicado a PyPI; PyPI va 0.20.0 → 0.23.0). Incluye además Tier 2/3/4 +
+battle-test + workflow de Trusted Publishing (`.github/workflows/publish.yml`). Cortada sobre `main`: incluye el
 trabajo post-0.20 (cross-repo routes P2, grouped DB P1, callback edges),
 **compatibilidad OpenSpec completa** (round-trip + change lifecycle +
 scenario-level traceability + discoverability para agentes), el fix py3.10

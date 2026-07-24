@@ -6,7 +6,10 @@ follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
-## [0.22.0] - 2026-07-24
+## [0.23.0] - 2026-07-24
+
+> Supersedes the `v0.22.0` git tag, which was tagged but never published to
+> PyPI (PyPI went 0.20.0 → 0.23.0). This section covers everything since 0.20.0.
 
 ### Fixed
 - **OpenSpec sync now matches real repo layout (battle-tested against
@@ -23,6 +26,10 @@ follows [SemVer](https://semver.org/).
     (no `### Requirement:` anchors) degrades to zero requirements without error.
 
 ### Added
+- **PyPI publish via Trusted Publishing** — new `.github/workflows/publish.yml`
+  builds + publishes on every `v*` tag using OIDC (no token/secret in the repo);
+  guards that the tag matches the package version. One-time trusted-publisher
+  config on pypi.org required.
 - **`livespec` console command** — an additive alias of `livespec-mcp` so the
   command matches the product name. After a local install both invoke the same
   entry point. The distribution name and `uvx livespec-mcp` are unchanged (no
@@ -1781,7 +1788,7 @@ Bootstrap. Phases 0–6 of the original design.
   `doc://symbol/{qname*}`, `doc://requirement/{rf_id}`.
 
 [0.12.0]: https://github.com/Rixmerz/livespec/compare/v0.11.0...v0.12.0
-[0.22.0]: https://github.com/Rixmerz/livespec/releases/tag/v0.22.0
+[0.23.0]: https://github.com/Rixmerz/livespec/releases/tag/v0.23.0
 [0.11.0]: https://github.com/Rixmerz/livespec/releases/tag/v0.11.0
 [0.7.0]: https://github.com/Rixmerz/livespec/releases/tag/v0.7.0
 [0.6.0]: https://github.com/Rixmerz/livespec/releases/tag/v0.6.0

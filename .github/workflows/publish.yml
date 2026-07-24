@@ -1,0 +1,44 @@
+name: Publish to PyPI
+
+# Publishes the `livespec-mcp` distribution to PyPI on every version tag push.
+# Uses PyPI Trusted Publishing (OIDC) — no API token or secret is stored in the
+# repo. One-time setup on pypi.org (project `livespec-mcp` → Settings →
+# Publishing → add a GitHub trusted publisher):
+#   Owner: Rixmerz   Repository: livespec   Workflow: publish.yml   Environment: (leave blank)
+# Then `git push origin v0.23.0` builds and publishes automatically.
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    name: Build and publish
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write  # required for Trusted Publishing (OIDC)
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+
+      - name: Build sdist + wheel
+        run: uv build
+
+      - name: Verify version tag matches package version
+        run: |
+          PKG_VERSION="$(uv run python -c 'import tomllib; print(tomllib.load(open("pyproject.toml","rb"))["project"]["version"])')"
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          echo "package=$PKG_VERSION tag=$TAG_VERSION"
+          if [ "$PKG_VERSION" != "$TAG_VERSION" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME does not match pyproject version $PKG_VERSION"
+            exit 1
+          fi
+
+      - name: Publish to PyPI (Trusted Publishing)
+        uses: pypa/gh-action-pypi-publish@release/v1
