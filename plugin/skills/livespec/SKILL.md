@@ -1,7 +1,7 @@
 ---
 name: livespec
 description: >-
-  Operate the livespec-mcp server on any codebase: index, orient, trace the call
+  Operate the livespec MCP server on any codebase: index, orient, trace the call
   graph, run impact/blast-radius analysis, and maintain bidirectional Spec<->code
   traceability (FRs, ADRs, NFRs). Use whenever the user asks "what calls this?",
   "what breaks if I change X?", "what code implements SPEC-NNN?", "what Specs touch

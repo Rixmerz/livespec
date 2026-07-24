@@ -25,7 +25,7 @@ def _load_agent_playbook() -> str:
         return _AGENT_PLAYBOOK.read_text(encoding="utf-8")
     return (
         "Agent playbook file missing. See docs/AGENT_QUICKSTART.md and README.md "
-        "in the livespec-mcp repository."
+        "in the livespec repository."
     )
 
 
@@ -44,7 +44,7 @@ def register(mcp: FastMCP) -> None:
     def onboard_project() -> str:
         """Walk a new project: index, list languages, surface top symbols, draft Specs."""
         return (
-            "You're onboarding to a new repo through livespec-mcp. Steps:\n"
+            "You're onboarding to a new repo through livespec. Steps:\n"
             "1) Call `index_project()` and report counts.\n"
             "2) Call `get_project_overview()` and summarize languages and top symbols.\n"
             "3) Call `list_specs()` — if empty, suggest 3-5 candidate Specs based on top symbols.\n"

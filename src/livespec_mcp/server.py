@@ -1,4 +1,4 @@
-"""livespec-mcp FastMCP server entry point."""
+"""livespec FastMCP server entry point (the MCP component of the livespec plugin)."""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ from livespec_mcp.tools import analysis, indexing, search, specs
 from livespec_mcp.tools.plugins import register_all_plugins
 
 mcp = FastMCP(
-    name="livespec-mcp",
+    name="livespec",
     instructions=(
         "Local-first MCP: call graph, impact analysis, Spec<->code traceability. "
         "Every tool has a required parameter `workspace` (see its per-parameter "

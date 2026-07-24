@@ -1,4 +1,4 @@
-# Agent Playbook — livespec-mcp
+# Agent Playbook — livespec
 
 **Audience:** AI agents (Cursor, Claude Code, etc.) with the livespec MCP server configured.
 
@@ -318,4 +318,4 @@ Tour codes are out of scope for matcher (SPEC-7).
 
 ---
 
-*Version: livespec-mcp 0.20+. Source: `docs/AGENT_PLAYBOOK.md`. Battle-test notes: `docs/AGENT_USAGE_DATA.md`, flow: `docs/AGENT_QUICKSTART.md`.*
+*Version: livespec 0.22+. Source: `docs/AGENT_PLAYBOOK.md`. Battle-test notes: `docs/AGENT_USAGE_DATA.md`, flow: `docs/AGENT_QUICKSTART.md`.*

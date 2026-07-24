@@ -1,8 +1,8 @@
-# Agent Quickstart — livespec-mcp
+# Agent Quickstart — livespec
 
 The brownfield-onboarding flow that 3 sessions of real agent battle-testing
 converged on. If you are an AI agent dropped into an unfamiliar repo with
-livespec-mcp configured, run this sequence top-down.
+livespec configured, run this sequence top-down.
 
 > **Full guide (tools + how to comment/link code):** invoke the MCP prompt
 > **`agent_playbook`** or read [`AGENT_PLAYBOOK.md`](AGENT_PLAYBOOK.md).
