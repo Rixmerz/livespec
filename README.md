@@ -255,6 +255,74 @@ Writes:
 Appends `mount_explorer(app, prefix="/explorer")` to `main.py`/`app.py` when found.
 Flags: `--no-index`, `--no-wire`, `--no-cursor`.
 
+## Workflows — livespec + OpenSpec
+
+[OpenSpec](https://github.com/Fission-AI/OpenSpec) is a spec-driven-development
+**framework**: you author the intent (requirements + scenarios) in an
+`openspec/` tree before writing code. **livespec is the code-graph and
+traceability layer beneath it** — it does not replace OpenSpec authoring; it
+links those specs to the code that implements them and keeps the link live.
+Since v0.22 livespec reads *and* writes the OpenSpec format (round-trip).
+
+**The pieces you invoke** (Claude Code plugin):
+
+| Invocation | What it is | When |
+|---|---|---|
+| `/livespec-onboard <path>` | slash command → delegates to the subagent (cold open) | start on any repo |
+| **`livespec`** subagent | specialized agent, preloads the Skill | heavy exploration / spec work |
+| `/openspec_workflow` | MCP prompt: the sync → trace → validate → export loop | a repo with `openspec/` |
+| `/onboard_project`, `/extract_specs_from_module`, `/audit_spec_coverage` | MCP prompts | brownfield |
+
+> **The one rule:** every tool takes `workspace="/abs/repo/root"` (no cwd/env fallback).
+
+### Case 1 — New project from scratch (spec-first)
+
+Intent leads (OpenSpec); livespec ties code↔spec as you build.
+
+1. **Author capabilities as specs** — `openspec/specs/<capability>/spec.md` with
+   `## Purpose` / `### Requirement:` / `#### Scenario:` (WHEN/THEN). Ask the
+   `livespec` subagent to draft them.
+2. **Ingest + gate the design before coding** —
+   `sync_openspec()` → `validate_openspec(strict=True)` (mirrors
+   `openspec validate --strict`: every requirement needs ≥1 scenario).
+3. **Implement feature by feature**, annotating docstrings with `@spec:SPEC-NNN`;
+   run `index_project()` after each batch (auto-scans annotations).
+4. **Trace tests to individual scenarios** —
+   `link_scenario_symbol(spec_id, scenario_name, symbol_qname, relation="tests")`.
+5. **Track coverage live** — `audit_coverage()` and `get_spec_implementation(spec_id)`
+   (per-scenario `verified` flag).
+6. **Behaviour changes = an OpenSpec change** — author `openspec/changes/<name>/`,
+   then `sync_openspec()` → `apply_spec_change(name, dry_run=True)` → `apply_spec_change(name)`
+   → `archive_spec_change(name)`.
+7. **Before a PR** — `git_diff_impact(base, head)`; cite spec ids.
+
+*Shortcut:* `/openspec_workflow` loads this whole loop.
+
+### Case 2 — Undocumented project (brownfield)
+
+livespec reverse-engineers the structure and proposes specs; you curate and link.
+
+1. **Onboard** — `/livespec-onboard /abs/path` (subagent runs `index_project`
+   → `get_project_overview` → `list_specs`).
+2. **Understand the shape** — `quick_orient`, `who_calls`, `find_endpoints`,
+   `find_dead_code`.
+3. **Propose specs from the code** (the brownfield killer feature) —
+   `propose_specs_from_codebase()` + `scan_docstrings_for_spec_hints`; per-module
+   `/extract_specs_from_module <module>`.
+4. **Curate + persist** (human in the loop) — `create_spec(...)`, or write
+   `docs/specs.md` and `import_specs_from_markdown`.
+5. **Link code↔spec** — `bulk_link_spec_symbols(mappings=[...])`, or add
+   `@spec:SPEC-NNN` annotations and re-`index_project`. Tests via `relation="tests"`.
+6. **Audit + iterate** — `/audit_spec_coverage` (orphan specs, uncovered modules).
+7. **Graduate to OpenSpec (optional)** — `export_openspec()` writes a real
+   `openspec/` tree, then `validate_openspec(strict=True)`. A repo that had zero
+   docs now has a maintainable spec-driven structure.
+
+**In one line each:** *new* → OpenSpec defines the contract, `validate_openspec`
+gates it, you build with live links; *brownfield* → `/livespec-onboard` orients,
+`propose_specs_from_codebase` reconstructs the intent, `export_openspec` graduates
+it to spec-driven.
+
 ## Tools (44 total: 29 core + 12 Spec plugin + 3 docs plugin)
 
 Every tool requires `workspace` (absolute project root). Pass it on each call;
