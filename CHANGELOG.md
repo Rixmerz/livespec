@@ -8,8 +8,8 @@ follows [SemVer](https://semver.org/).
 
 ## [0.23.0] - 2026-07-24
 
-> Supersedes the `v0.22.0` git tag, which was tagged but never published to
-> PyPI (PyPI went 0.20.0 → 0.23.0). This section covers everything since 0.20.0.
+> Follows `0.22.0` (published to PyPI from the `v0.22.0` tag). This section
+> covers everything since 0.20.0; 0.21.0 was skipped.
 
 ### Fixed
 - **OpenSpec sync now matches real repo layout (battle-tested against
