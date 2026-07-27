@@ -1,5 +1,5 @@
 {
-  "name": "livespec-local",
+  "name": "livespec",
   "description": "Local marketplace for the livespec Claude Code plugin (code intelligence + Spec traceability).",
   "owner": {
     "name": "Juan Pablo Diaz",
