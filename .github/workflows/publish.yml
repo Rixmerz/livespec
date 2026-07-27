@@ -2,10 +2,20 @@ name: Publish to PyPI
 
 # Publishes the `livespec-mcp` distribution to PyPI on every version tag push.
 # Uses PyPI Trusted Publishing (OIDC) — no API token or secret is stored in the
-# repo. One-time setup on pypi.org (project `livespec-mcp` → Settings →
+# repo. One-time setup on pypi.org (project `livespec-mcp` → Manage →
 # Publishing → add a GitHub trusted publisher):
 #   Owner: Rixmerz   Repository: livespec   Workflow: publish.yml   Environment: (leave blank)
-# Then `git push origin v0.23.0` builds and publishes automatically.
+# Then `git push origin vX.Y.Z` builds and publishes automatically.
+#
+# The PACKAGE is `livespec-mcp`; the GITHUB REPO is `livespec`. They differ, and
+# PyPI matches on the repo. A publisher registered against the old repo name
+# fails every release with:
+#   invalid-publisher: valid token, but no corresponding publisher
+#   `repository`: `Rixmerz/livespec`
+# which reads like a permissions problem and is really a name mismatch. It
+# silently broke v0.23.0 and v0.24.0. PyPI cannot rename a publisher — delete
+# it and add a new one. If this ever returns, compare the `repository` claim
+# printed in the failure log against what is registered: the claim is the truth.
 
 on:
   push:
