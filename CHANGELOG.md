@@ -6,6 +6,56 @@ follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.24.0] - 2026-07-26
+
+Audit pass against a production Hono/Deno TypeScript backend. The theme: the
+tools returned a plausible result instead of admitting they had not looked.
+
+### Fixed
+
+- **Call edges were discarded when the call site sat inside an anonymous scope.**
+  `app.post("/", async (c) => { await svc(...) })` — the dominant shape in any
+  Hono/Express/Fastify app — produced no symbol for the arrow, so the edge was
+  thrown away rather than attributed. `who_calls` returned
+  `{"callers": [], "count": 0}` for a function a plain grep finds instantly.
+  Edges are now attributed to the nearest named enclosing symbol, falling back
+  to a per-file module symbol, so an edge is never dropped for want of a name.
+- **`find_dead_code` inherited it**: 807 "dead" symbols, of which 5 of 5 sampled
+  were verified alive by grep. An agent trusting that list deletes the service
+  layer.
+- Pre-existing double count: a nested `const inner = () => {}` had its calls
+  attributed to both itself and its enclosing function.
+- **`find_dead_code` returned 0 on a TypeScript repo** and `find_endpoints`
+  returned 0 on one with 777 routes — a default filter excluded the entire
+  corpus and neither said so. Both now report `not_swept` plus a hint grounded
+  in real index counts.
+- **Read-only tools created a SQLite DB in whatever directory they were pointed
+  at.** A typo in `workspace` left an orphan `.mcp-docs/` anywhere, and
+  `{"specs":[]}` was indistinguishable from "indexed but empty". Creation is now
+  exclusive to `index_project`; reads fail with a structured hint instead.
+- **Build output was indexed**: 250 of 466 files were `_fresh/` bundles, and
+  `find_symbol("ErrorBanner")` resolved to minified code instead of the
+  component. `deno.json` already declared the exclusion; only `.gitignore` was
+  being read. `deno.json`/`deno.jsonc`/`tsconfig.json` `exclude` are now honored.
+- `list_specs` and `validate_openspec` could exceed the token limit with no
+  argument combination that returned. Both are bounded now; `validate_openspec`
+  went 56,238 → 2,531 chars and reports a check firing on 185/185 specs once as
+  a project-level gap instead of 185 times. `git_diff_impact` honors
+  `summary_only`.
+- `export_explorer` had no `framework` parameter, so no correct Explorer could
+  be generated for a Hono repo. `agent_scratch` validated nothing and had no
+  read counterpart.
+
+### Added
+
+- `scan_annotation_verbs` — 763 `@rf:` annotations linked nothing and no tool
+  said so. The matcher accepts only `@spec`/`@implements`/`@tests`/`@see`/
+  `@references` with a `SPEC-NNN` token, so every one of them was decoration.
+  Reports them with `file:line` and `did_you_mean`, suggesting `@spec` when the
+  payload looks like a spec id rather than trusting edit distance (which ranks
+  `rf`→`see` above `rf`→`spec`).
+- `agent_scratch_get`, plus `cursor`/`summary_only` pagination on `list_specs`.
+
 ## [0.23.0] - 2026-07-24
 
 > Follows `0.22.0` (published to PyPI from the `v0.22.0` tag). This section
