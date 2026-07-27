@@ -16,14 +16,17 @@ import json
 import re
 from pathlib import Path
 
-import tomllib
-
 REPO = Path(__file__).resolve().parents[1]
 
 
 def _package_version() -> str:
-    with (REPO / "pyproject.toml").open("rb") as fh:
-        return tomllib.load(fh)["project"]["version"]
+    # Read the line rather than parse the TOML: `tomllib` is stdlib only from
+    # 3.11, and this package supports 3.10 (CI runs the matrix). Adding `tomli`
+    # as a test dependency to read one string would be the heavier fix.
+    text = (REPO / "pyproject.toml").read_text(encoding="utf-8")
+    m = re.search(r'(?m)^version\s*=\s*"([^"]+)"', text)
+    assert m, "no `version = \"...\"` line found in pyproject.toml"
+    return m.group(1)
 
 
 def _pinned_version() -> str:
