@@ -1,15 +1,15 @@
 """CLI entry point: MCP server by default, plus headless subcommands.
 
-`livespec-mcp` with no arguments runs the stdio MCP server — the form every
+`livespec` with no arguments runs the stdio MCP server — the form every
 mcp.json out there already uses, so it must never change. Subcommands give
 the same indexing pipeline a scriptable surface (cron, systemd timers,
 pre-commit hooks, CI) without an MCP host in the middle:
 
-    livespec-mcp index <path> [--force] [--embed]   # index + chunks, JSON out
-    livespec-mcp status <path>                      # index status, JSON out
-    livespec-mcp explorer serve [path] [--port 8765]  # Spec Explorer at /explorer/
-    livespec-mcp fastapi init [path]                  # index + Explorer + Cursor assets
-    livespec-mcp serve                              # explicit server form
+    livespec index <path> [--force] [--embed]   # index + chunks, JSON out
+    livespec status <path>                      # index status, JSON out
+    livespec explorer serve [path] [--port 8765]  # Spec Explorer at /explorer/
+    livespec fastapi init [path]                  # index + Explorer + Cursor assets
+    livespec serve                              # explicit server form
 
 JSON goes to stdout, errors to stderr with exit code 1.
 """
@@ -50,13 +50,13 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     parser = argparse.ArgumentParser(
-        prog="livespec-mcp",
+        prog="livespec",
         description="Code intelligence MCP server + headless indexing CLI.",
     )
     from livespec_mcp import __version__
 
     parser.add_argument(
-        "--version", action="version", version=f"livespec-mcp {__version__}"
+        "--version", action="version", version=f"livespec {__version__}"
     )
     sub = parser.add_subparsers(dest="cmd", required=True)
 
