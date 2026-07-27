@@ -18,7 +18,6 @@ from fastmcp import Client
 from livespec_mcp.domain.extractors import _ts_extract
 from livespec_mcp.server import mcp
 
-
 # ---------- unit tests: extractor-level, one fixture per anonymous shape ----------
 
 

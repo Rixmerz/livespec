@@ -10,6 +10,7 @@ quietly leaving an orphan ``.mcp-docs/`` behind.
 
 from __future__ import annotations
 
+import sqlite3
 from pathlib import Path
 
 import pytest
@@ -93,6 +94,9 @@ def test_db_connect_create_false_opens_existing_readonly(tmp_path: Path):
     ro = connect(db_path, create=False)
     row = ro.execute("SELECT name FROM project WHERE root=?", (str(tmp_path),)).fetchone()
     assert row["name"] == "x"
-    with pytest.raises(Exception):
+    # Specifically OperationalError ("attempt to write a readonly database").
+    # A blind `Exception` here would pass on a typo in the SQL too, so it would
+    # not actually prove the connection is read-only.
+    with pytest.raises(sqlite3.OperationalError, match="readonly"):
         ro.execute("INSERT INTO project(name, root) VALUES (?, ?)", ("y", "other"))
     ro.close()
