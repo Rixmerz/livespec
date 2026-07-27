@@ -986,6 +986,16 @@ def register(
         recognized = matcher.RECOGNIZED_PREFIX_VERBS_DISPLAY
         recognized_sorted = sorted(recognized)
 
+        # Judge token shape against the SAME prefix set the real linker
+        # derives from the store (`scan_annotations` / `derive_spec_prefixes`)
+        # — otherwise this diagnostic and the linker disagree about what
+        # counts as "linkable".
+        spec_ids = (
+            r["spec_id"]
+            for r in st.conn.execute("SELECT spec_id FROM spec WHERE project_id=?", (pid,))
+        )
+        token_re = matcher.make_spec_token_re(matcher.derive_spec_prefixes(spec_ids))
+
         groups: dict[str, dict[str, Any]] = {}
         total_findings = 0
         for fr in file_rows:
@@ -999,7 +1009,7 @@ def register(
                 verb = m.group("verb")
                 verb_lower = verb.lower()
                 rest = m.group("rest")
-                token_ok = bool(matcher.SPEC_TOKEN_RE.search(rest))
+                token_ok = bool(token_re.search(rest))
                 verb_ok = verb_lower in recognized
                 if verb_ok and token_ok:
                     continue  # the real matcher DOES consume this one
