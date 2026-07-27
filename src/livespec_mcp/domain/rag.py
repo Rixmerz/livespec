@@ -248,12 +248,29 @@ def embed_texts(texts: list[str], kind: str) -> list[list[float]]:
 # re-loading it on every search (vec_search + the lanes payload) was pure
 # overhead. A closed connection's id may be reused, but re-loading an
 # already-loaded extension is harmless — this is a fast-path cache, not a lock.
-_VEC_LOADED: set[int] = set()
+# No id()-keyed cache here: CPython reuses object ids after collection, and a
+# sqlite3.Connection cannot be weak-referenced, so a set of id(conn) says
+# "already loaded" about a brand-new connection that merely landed on a freed
+# address. Measured: 399 of 400 sequentially opened-and-closed connections
+# reused an id. Ask the connection instead of remembering — see below.
 
 
 def have_sqlite_vec(conn: sqlite3.Connection) -> bool:
-    if id(conn) in _VEC_LOADED:
+    """True if sqlite-vec is usable on *this* connection, loading it if needed.
+
+    Asks the connection whether the extension is live rather than consulting a
+    memo. The previous memo was keyed by id(conn) and reported "loaded" for
+    connections that had never loaded anything, which surfaced downstream as
+    `OperationalError: no such module: vec0` from ensure_vec_tables — a failure
+    that looks like a missing dependency and is really a stale cache. The probe
+    is one trivial scalar call.
+    """
+    try:
+        conn.execute("SELECT vec_version()").fetchone()
         return True
+    except sqlite3.Error:
+        pass  # not loaded on this connection yet — fall through and load it
+
     try:
         import sqlite_vec
     except ImportError:
@@ -262,7 +279,6 @@ def have_sqlite_vec(conn: sqlite3.Connection) -> bool:
         conn.enable_load_extension(True)
         sqlite_vec.load(conn)
         conn.enable_load_extension(False)
-        _VEC_LOADED.add(id(conn))
         return True
     except Exception:
         return False
