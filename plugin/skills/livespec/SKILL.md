@@ -54,7 +54,7 @@ it is not a background watcher you should lean on while editing.
 | Blast radius + Spec rollup | `analyze_impact(target_type, target, max_depth)` — `symbol`\|`file`\|`spec` |
 | PR / diff scope | `git_diff_impact(base_ref, head_ref)` — git repos only |
 | Semantic + lexical grep | `search(query, scope)` — FTS5 + optional vectors |
-| Literal string search over indexed files | `grep_in_indexed_files(pattern)` |
+| Literal string search over indexed files | `grep_in_indexed_files(pattern)` — check `scope_fresh`, see the staleness trap below |
 | Dead-code candidates | `find_dead_code()` — respects entry points / `pub` / frameworks |
 | Orphan tests | `find_orphan_tests()` |
 | HTTP/CLI entry points | `find_endpoints(framework=None)` — see the Hono trap below; prefer `summary_only=True` if JSON is huge |
@@ -71,6 +71,28 @@ the sweep returns 0 and Hono files are present, the payload carries
 `not_swept: ["hono"]` plus a `hint` — read it before concluding a repo has no
 routes. All other frameworks (flask, fastapi, click, pytest, fastmcp, celery,
 django, nextjs, fresh, sveltekit, remix, spring, angular) *are* in the default sweep.
+
+**`grep_in_indexed_files` — the stale-index trap.** It only reads files the
+index knows about, so an edit or a brand-new file since the last
+`index_project` can hide a real match behind a clean `count: 0`. Every response
+now carries **`scope_fresh`**:
+
+- `scope_fresh: true` → the covered files are byte-identical to what was
+  indexed and no unindexed file falls in scope. An empty `matches` genuinely
+  means "no matches".
+- `scope_fresh: false` → the payload adds `stale_files` / `stale_files_count`
+  (indexed files whose bytes changed — still searched, but the index no longer
+  describes them) and/or `unindexed_files` / `unindexed_files_count` (files
+  present on disk that were **never searched at all**), plus a `hint`. Path
+  lists are capped at 20; the `_count` fields carry the true magnitude.
+
+Do **not** conclude "the pattern does not occur" from a `scope_fresh: false`
+result — run `index_project(workspace=..., force=false)` and re-grep. The
+verdict is bounded by `path_glob`/`kind`: it describes the searched scope, not
+the whole index (files outside the scope can't affect the result). The
+changed-file half is free (it re-hashes bytes already read); the never-indexed
+half costs one workspace walk per call, so a narrow `path_glob` grep pays a
+fixed cost it doesn't otherwise need.
 
 ### Spec traceability (agentic, always available)
 

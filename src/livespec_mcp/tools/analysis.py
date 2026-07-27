@@ -21,6 +21,7 @@ from typing import Any, Literal
 
 from fastmcp import FastMCP
 
+from livespec_mcp.config import load_repo_config
 from livespec_mcp.domain.extractors import (
     HTTP_ROUTE_DECORATOR_LASTSEGS,
     infer_python_http_framework,
@@ -35,6 +36,8 @@ from livespec_mcp.domain.graph import (
     graph_pagerank,
     load_graph,
 )
+from livespec_mcp.domain.indexer import DEFAULT_IGNORES, _hash_bytes, _iter_files
+from livespec_mcp.domain.languages import detect_language
 from livespec_mcp.state import AppState, get_state
 from livespec_mcp.tools._errors import mcp_error
 from livespec_mcp.workspace_param import WORKSPACE_DOCSTRING_NOTE, Workspace
@@ -116,6 +119,72 @@ def _attach_payload_warning(
     return payload
 
 
+_STALE_SAMPLE = 20  # cap on the path lists attached to a grep result
+
+
+def _grep_scope_staleness(
+    st: AppState,
+    indexed_paths: set[str],
+    changed: list[str],
+    path_glob: str | None,
+    kind: str | None,
+) -> dict[str, Any]:
+    """Freshness verdict for the slice of the repo a grep actually covered.
+
+    `changed` is filled by the caller for free: it already read every in-scope
+    file, so re-hashing those bytes costs no extra I/O. The unindexed half is
+    NOT free — it walks the workspace exactly the way `index_project` would
+    (`_iter_files`: os.walk + a .gitignore read per dir + a stat per candidate),
+    because a file that was never indexed cannot be seen by a hash check and is
+    the case most likely to hide a match.
+
+    Scope-bound on purpose: it says nothing about files outside `path_glob`/
+    `kind`, and it doesn't need to — those can't affect this result.
+    """
+    ws = st.settings.workspace
+    unindexed: list[str] = []
+    try:
+        on_disk = _iter_files(ws, DEFAULT_IGNORES, load_repo_config(ws))
+    except OSError:
+        on_disk = []
+    for p in on_disk:
+        try:
+            rel = str(p.relative_to(ws))
+        except ValueError:
+            continue
+        if rel in indexed_paths:
+            continue
+        if path_glob and not fnmatch.fnmatch(rel, path_glob):
+            continue
+        if kind and detect_language(p) != kind:
+            continue
+        unindexed.append(rel)
+
+    out: dict[str, Any] = {"scope_fresh": not changed and not unindexed}
+    hints: list[str] = []
+    if changed:
+        out["stale_files_count"] = len(changed)
+        out["stale_files"] = sorted(changed)[:_STALE_SAMPLE]
+        hints.append(
+            f"{len(changed)} searched file(s) changed on disk since they were "
+            "indexed — matches shown come from the current file contents, but "
+            "the index no longer describes them"
+        )
+    if unindexed:
+        out["unindexed_files_count"] = len(unindexed)
+        out["unindexed_files"] = sorted(unindexed)[:_STALE_SAMPLE]
+        hints.append(
+            f"{len(unindexed)} file(s) in scope were NEVER indexed and were "
+            "therefore NOT searched — matches in them are missing from this result"
+        )
+    if hints:
+        out["hint"] = (
+            " | ".join(hints)
+            + " | run index_project(workspace=..., force=false) and re-grep"
+        )
+    return out
+
+
 def _grep_indexed_files_core(
     st: AppState,
     pattern: str,
@@ -126,7 +195,7 @@ def _grep_indexed_files_core(
 ) -> dict[str, Any]:
     """Search indexed file contents on disk (substring or regex)."""
     pid = st.project_id
-    sql = "SELECT path, language FROM file WHERE project_id=?"
+    sql = "SELECT path, language, content_hash FROM file WHERE project_id=?"
     params: list[Any] = [pid]
     if kind:
         sql += " AND language=?"
@@ -146,18 +215,28 @@ def _grep_indexed_files_core(
         needle = pattern
 
     matches: list[dict[str, Any]] = []
+    indexed_paths: set[str] = set()
+    changed_on_disk: list[str] = []
     ws = st.settings.workspace
     for row in file_rows:
         path = row["path"]
+        indexed_paths.add(path)
         if path_glob and not fnmatch.fnmatch(path, path_glob):
             continue
         fp = ws / path
         if not fp.is_file():
             continue
         try:
-            lines = fp.read_text(encoding="utf-8", errors="replace").splitlines()
+            raw = fp.read_bytes()
         except OSError:
             continue
+        # Free staleness check: the bytes are already in hand, and the indexer
+        # hashes the same raw bytes (indexer._hash_bytes on p.read_bytes()).
+        # Hashing the decoded text instead would mismatch forever on any file
+        # with invalid UTF-8.
+        if row["content_hash"] and _hash_bytes(raw) != row["content_hash"]:
+            changed_on_disk.append(path)
+        lines = raw.decode("utf-8", errors="replace").splitlines()
         for line_no, line in enumerate(lines, start=1):
             if use_regex:
                 if regex is None or not regex.search(line):
@@ -179,6 +258,7 @@ def _grep_indexed_files_core(
         "matches": page,
         "count": total,
         "next_cursor": next_cursor,
+        **_grep_scope_staleness(st, indexed_paths, changed_on_disk, path_glob, kind),
     }
 
 # v0.5 P1: framework decorator names that imply hidden callers (HTTP routers,
@@ -3632,6 +3712,16 @@ def register(mcp: FastMCP) -> None:
         indexed relative path (e.g. ``src/**/*.py``). ``kind`` filters the
         indexed ``language`` column (e.g. ``python``). Results are paginated
         with ``limit`` (default 50) and ``cursor``.
+
+        Only files in the index are searched, so a stale index can make a real
+        match invisible. Every response therefore carries ``scope_fresh``:
+        ``True`` means the files this call covered are byte-identical to what
+        was indexed AND no unindexed file falls in scope — an empty ``matches``
+        really means "no matches". ``False`` adds ``stale_files`` /
+        ``unindexed_files`` (+ ``_count``) and a ``hint``; ``unindexed_files``
+        in particular were **not searched at all**. The verdict is bounded by
+        ``path_glob``/``kind`` — it describes the searched scope, not the whole
+        index. Fix with ``index_project(workspace=..., force=false)``.
         """
         st = get_state(workspace)
         return _grep_indexed_files_core(

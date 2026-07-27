@@ -6,6 +6,31 @@ follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.25.0] - 2026-07-27
+
+### Fixed — `grep_in_indexed_files` no longer hides an incomplete answer
+
+The tool greps the bodies of files **in the index**. A file present on disk but
+never indexed contributes no matches, so the caller saw a clean empty result and
+concluded the pattern does not occur. Same failure shape as `find_endpoints`
+returning `count: 0` without saying it never swept Hono.
+
+Every response now carries **`scope_fresh`**. When false it is accompanied by
+`unindexed_files` / `unindexed_files_count` (files on disk the index has never
+seen — these genuinely hide matches) and `stale_files` / `stale_files_count`
+(indexed files whose content changed — their *matches are still returned*, since
+grep reads current bytes off disk, but their symbols and edges are outdated), plus
+a `hint` naming `index_project(workspace=..., force=false)`. The two are reported
+separately so `stale_files` is never misread as "matches were hidden".
+
+The verdict is bound to the `path_glob`/`kind` scope actually searched — hence
+`scope_fresh`, not `index_fresh`. Claiming more would repeat the overclaim being
+fixed. Existing response fields and all parameters are unchanged.
+
+Cost: the change-detection half is free (re-hashes bytes the grep loop already
+read). Detecting never-indexed files needs one workspace walk — measured at 18 ms
+on this repo's 155 files, no file reads and no parsing.
+
 ## [0.24.0] - 2026-07-26
 
 ### Changed — the distribution is now `livespec`

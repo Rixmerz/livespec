@@ -80,6 +80,103 @@ async def test_grep_in_indexed_files_path_glob(sample_repo):
 
 
 @pytest.mark.asyncio
+async def test_grep_fresh_index_reports_scope_fresh(sample_repo):
+    ws = str(sample_repo)
+    async with Client(mcp) as c:
+        await c.call_tool("index_project", {"workspace": ws})
+        data = (
+            await c.call_tool(
+                "grep_in_indexed_files",
+                {"pattern": "login", "workspace": ws},
+            )
+        ).data
+    assert data["scope_fresh"] is True
+    assert data["count"] >= 1
+    assert "hint" not in data
+    assert "stale_files" not in data
+    assert "unindexed_files" not in data
+
+
+@pytest.mark.asyncio
+async def test_grep_signals_stale_when_indexed_file_edited(sample_repo):
+    ws = str(sample_repo)
+    async with Client(mcp) as c:
+        await c.call_tool("index_project", {"workspace": ws})
+        (sample_repo / "pkg" / "auth.py").write_text(
+            "def login(user, password):\n    return NEEDLE_XYZ\n"
+        )
+        data = (
+            await c.call_tool(
+                "grep_in_indexed_files",
+                {"pattern": "NEEDLE_XYZ", "workspace": ws},
+            )
+        ).data
+    assert data["scope_fresh"] is False
+    assert data["stale_files"] == ["pkg/auth.py"]
+    assert data["stale_files_count"] == 1
+    assert "index_project" in data["hint"]
+    # The match itself still comes back — grep reads current bytes.
+    assert data["count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_grep_signals_never_indexed_file_on_disk(sample_repo):
+    ws = str(sample_repo)
+    async with Client(mcp) as c:
+        await c.call_tool("index_project", {"workspace": ws})
+        (sample_repo / "pkg" / "brand_new.py").write_text("NEEDLE_XYZ = 1\n")
+        data = (
+            await c.call_tool(
+                "grep_in_indexed_files",
+                {"pattern": "NEEDLE_XYZ", "workspace": ws},
+            )
+        ).data
+    # The whole point: the match is invisible to grep...
+    assert data["count"] == 0
+    # ...but the payload says why, instead of reading as "no matches exist".
+    assert data["scope_fresh"] is False
+    assert data["unindexed_files"] == ["pkg/brand_new.py"]
+    assert data["unindexed_files_count"] == 1
+    assert "NOT searched" in data["hint"]
+
+
+@pytest.mark.asyncio
+async def test_grep_staleness_respects_path_glob_scope(sample_repo):
+    """The verdict is scope-bound: an unindexed file outside the glob is not
+    reported, because it cannot affect this result."""
+    ws = str(sample_repo)
+    async with Client(mcp) as c:
+        await c.call_tool("index_project", {"workspace": ws})
+        (sample_repo / "pkg" / "elsewhere.py").write_text("x = 1\n")
+        data = (
+            await c.call_tool(
+                "grep_in_indexed_files",
+                {"pattern": "def ", "path_glob": "pkg/auth.py", "workspace": ws},
+            )
+        ).data
+    assert data["scope_fresh"] is True
+    assert data["count"] >= 1
+
+
+@pytest.mark.asyncio
+async def test_grep_response_contract_unchanged(sample_repo):
+    ws = str(sample_repo)
+    async with Client(mcp) as c:
+        await c.call_tool("index_project", {"workspace": ws})
+        data = (
+            await c.call_tool(
+                "grep_in_indexed_files",
+                {"pattern": "def ", "limit": 1, "workspace": ws},
+            )
+        ).data
+    assert data["pattern"] == "def "
+    assert isinstance(data["count"], int) and data["count"] > 1
+    assert len(data["matches"]) == 1
+    assert set(data["matches"][0]) == {"file_path", "language", "line", "text"}
+    assert data["next_cursor"] == 1
+
+
+@pytest.mark.asyncio
 async def test_agent_scratch_roundtrip(sample_repo):
     ws = str(sample_repo)
     async with Client(mcp) as c:
