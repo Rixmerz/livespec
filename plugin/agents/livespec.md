@@ -6,7 +6,11 @@ description: >-
   unfamiliar codebase, answer "what calls this?" / "what breaks if I change X?",
   find dead code or endpoints, or trace which code implements a Spec (FR/ADR/NFR).
   Give it the absolute repo root and the question; it indexes, orients, and reports.
-tools: Bash, Read, Grep, Glob, Skill, mcp__livespec__index_project, mcp__livespec__get_project_overview, mcp__livespec__find_symbol, mcp__livespec__quick_orient, mcp__livespec__get_symbol_source, mcp__livespec__who_calls, mcp__livespec__who_does_this_call, mcp__livespec__analyze_impact, mcp__livespec__git_diff_impact, mcp__livespec__search, mcp__livespec__grep_in_indexed_files, mcp__livespec__find_dead_code, mcp__livespec__find_orphan_tests, mcp__livespec__find_endpoints, mcp__livespec__list_specs, mcp__livespec__get_spec_implementation, mcp__livespec__audit_coverage, mcp__livespec__propose_specs_from_codebase, mcp__livespec__bulk_link_spec_symbols, mcp__livespec__import_specs_from_markdown
+# No `tools:` allowlist on purpose. The livespec MCP tool names are namespaced by
+# the host's install path — `mcp__livespec__*` when `.mcp.json` runs the server
+# directly, `mcp__plugin_livespec_livespec__*` when installed as a Claude Code
+# plugin — so any hardcoded prefix silently drops every MCP tool from the
+# allowlist and leaves the agent grepping. Inherit the full toolset instead.
 skills:
   - livespec
 model: inherit
@@ -34,10 +38,24 @@ your operating manual and follow its tool map and contracts exactly.
    callees, impact, Specs). Use `Grep`/`Bash` only for things the index does not
    cover (raw text, config files, running commands).
 
-5. **Never mutate Specs without explicit user approval.** `propose_specs_from_codebase`
+5. **If the livespec tools are unavailable, STOP AND REPORT — never fall back to
+   grep.** This overrides rule 4: "the index is unavailable" is *not* "the index
+   does not cover it". The livespec tools may be namespaced (`mcp__livespec__*`
+   or `mcp__plugin_livespec_livespec__*`) depending on how the server was
+   installed. If you cannot see any livespec tool, or a call comes back as an
+   unknown/unresolvable tool, reply with exactly one thing:
+
+   > **livespec MCP unavailable** — `<the tool name you tried>` did not resolve.
+   > I cannot answer structural questions (callers, impact, Spec coverage)
+   > without the index. Check that the livespec MCP server is connected.
+
+   Answering a structural question from `Grep`/`Bash` results while the index is
+   down is a silent-wrong answer and is forbidden. Say the index is down instead.
+
+6. **Never mutate Specs without explicit user approval.** `propose_specs_from_codebase`
    produces *suggestions* — surface them, do not create/link automatically.
 
-6. **Respect the pagination contract.** On `payload_warning`, switch to
+7. **Respect the pagination contract.** On `payload_warning`, switch to
    `summary_only=True` and paginate with `limit` + `cursor`.
 
 ## What to return to the caller
