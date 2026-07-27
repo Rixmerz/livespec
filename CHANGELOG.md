@@ -8,6 +8,25 @@ follows [SemVer](https://semver.org/).
 
 ## [0.24.0] - 2026-07-26
 
+### Changed — the distribution is now `livespec`
+
+**`pip install livespec-mcp` / `uvx livespec-mcp` no longer resolve.** Use
+`livespec`. The `livespec-mcp` console command still exists as an alias inside
+the package, so a local checkout or an MCP config that invokes it keeps
+working; only the *distribution* name changed.
+
+The package, the console command and the GitHub repo now agree — they had
+drifted (`livespec-mcp` on PyPI, `livespec` on GitHub), and since PyPI Trusted
+Publishing matches on the repository name, every release silently failed with
+`invalid-publisher`. That is why 0.23.0's publish workflow failed and why
+0.24.0 could not ship until this landed. `livespec-mcp` cannot be reclaimed —
+PyPI permanently blocks a deleted project name.
+
+The import package stays `livespec_mcp`; renaming it would churn every module
+path and `@spec` link for no user-visible gain.
+
+### The audit
+
 Audit pass against a production Hono/Deno TypeScript backend. The theme: the
 tools returned a plausible result instead of admitting they had not looked.
 

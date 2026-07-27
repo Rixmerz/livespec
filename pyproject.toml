@@ -1,5 +1,5 @@
 [project]
-name = "livespec-mcp"
+name = "livespec"
 version = "0.24.0"
 description = "Code intelligence for AI agents: call graph, impact analysis, and bidirectional Spec <-> code traceability"
 readme = "README.md"
@@ -32,12 +32,14 @@ dev = [
 ]
 
 [project.scripts]
-# `livespec-mcp` is the historical console name (kept for back-compat: existing
-# installs, `uvx livespec-mcp`, and MCP configs keep working). `livespec` is an
-# additive alias so the command matches the product name. Both run the same
-# entry point; the distribution name stays `livespec-mcp`.
-livespec-mcp = "livespec_mcp.server:main"
+# `livespec` is now the name everywhere: distribution, command, GitHub repo.
+# `livespec-mcp` stays as a console alias only so an existing local checkout or
+# MCP config keeps working — it can never be reinstalled from PyPI under that
+# name, since PyPI permanently blocks a deleted project name.
+# The IMPORT package stays `livespec_mcp`: renaming it would churn every module
+# path and every @spec link for no user-visible gain.
 livespec = "livespec_mcp.server:main"
+livespec-mcp = "livespec_mcp.server:main"
 
 [build-system]
 requires = ["hatchling"]

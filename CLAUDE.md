@@ -9,7 +9,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 **livespec** is a local-first Claude Code plugin — it bundles an MCP server, a
 specialized subagent, and a Skill — that maintains a live call graph,
 Spec↔code traceability, and on-demand documentation for any codebase. (The MCP
-server component is still distributed as the `livespec-mcp` package / console
+server component is distributed as the `livespec` package / console
 command; the product, plugin, subagent, Skill and MCP tool namespace are all
 `livespec`.) It speaks
 9 languages with passing extractor tests (Python, Go, Java, JS, TS, Rust,

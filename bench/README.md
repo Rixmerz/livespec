@@ -1,6 +1,6 @@
 # bench/
 
-Performance baseline for livespec-mcp.
+Performance baseline for livespec.
 
 ## Run
 
