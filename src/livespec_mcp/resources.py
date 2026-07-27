@@ -68,6 +68,11 @@ def register(mcp: FastMCP) -> None:
             return _no_workspace_json()
         return json.dumps(compute_project_overview(st))
 
+    # Resource, not a tool: no query args available, so the ceiling is a flat
+    # cap + truncated flag rather than cursor pagination — see the
+    # `list_specs(limit=..., cursor=...)` tool for pageable access to the rest.
+    _LIST_SPECS_RESOURCE_CAP = 1000
+
     @mcp.resource("project://specs", mime_type="application/json")
     def list_specs() -> str:
         st = _resolve_state()
@@ -83,7 +88,13 @@ def register(mcp: FastMCP) -> None:
                 (pid,),
             )
         ]
-        return json.dumps({"specs": rows})
+        total = len(rows)
+        page = rows[:_LIST_SPECS_RESOURCE_CAP]
+        return json.dumps({
+            "specs": page,
+            "total": total,
+            "truncated": total > len(page),
+        })
 
     @mcp.resource("project://specs/{spec_id}", mime_type="application/json")
     def spec(spec_id: str) -> str:

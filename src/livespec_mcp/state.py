@@ -27,7 +27,7 @@ from pathlib import Path
 
 from livespec_mcp.config import REPO_CONFIG_FILENAME, Settings
 from livespec_mcp.storage.db import connect, get_or_create_project
-from livespec_mcp.workspace_param import WorkspaceRequiredError
+from livespec_mcp.workspace_param import WorkspaceNotIndexedError, WorkspaceRequiredError
 
 if sys.version_info >= (3, 11):
     import tomllib
@@ -136,10 +136,36 @@ def _resolve_workspace(path: str | Path | None) -> Path:
     return Path(str(path)).expanduser().resolve()
 
 
-def get_state(workspace: str | Path | None = None) -> AppState:
+def workspace_db_path(workspace: Path) -> Path:
+    """Resolve the ``docs.db`` path a workspace would use (honors group_db).
+
+    Pure filesystem lookup — never creates anything. Shared by ``get_state``
+    and ``WorkspaceErrorMiddleware`` so both agree on "is this indexed?".
+    """
+    group_db = _read_group_db(workspace)
+    return group_db if group_db is not None else workspace / ".mcp-docs" / "docs.db"
+
+
+def get_state(workspace: str | Path | None = None, *, create: bool = False) -> AppState:
     """Return the AppState for the given workspace, opening it if needed.
 
     Requires ``workspace`` on every call (absolute project root).
+
+    ``create`` (default ``False``): when the workspace has never been
+    indexed (no ``.mcp-docs/docs.db``), the default is to raise
+    ``WorkspaceNotIndexedError`` rather than silently materializing an empty
+    database in an arbitrary directory (a typo'd ``workspace`` used to leave
+    an orphan ``.mcp-docs/`` behind). Pass ``create=True`` only from
+    ``index_project`` / the ``index`` CLI command / other explicit
+    bootstrap paths that are SUPPOSED to build a fresh index.
+
+    Once the DB file exists (created earlier via ``create=True``), every
+    call — including this function's own default — opens it normally
+    (read-write): mutation tools (``create_spec``, ``bulk_link_spec_symbols``,
+    ...) share this same default path and need write access to data that
+    already exists. ``create`` only gates *first creation*, not connection
+    mode — see ``storage.db.connect(..., create=False)`` for the stricter
+    read-only primitive this deliberately does not use here.
     """
     ws = _resolve_workspace(workspace)
     if not ws.is_dir():
@@ -156,10 +182,16 @@ def get_state(workspace: str | Path | None = None) -> AppState:
         # A `[workspace] group_db` reroutes only the DB to a shared file (each
         # repo keeps its own project_id inside it); docs/explorer stay per-repo.
         group_db = _read_group_db(ws)
+        db_path = group_db if group_db is not None else workspace_db_path(ws)
+        if not create and not db_path.is_file():
+            raise WorkspaceNotIndexedError(
+                f"workspace not indexed: {ws}. "
+                f"run index_project(workspace='{ws}') first."
+            )
         settings = Settings(
             workspace=ws,
             state_dir=ws / ".mcp-docs",
-            db_path=group_db if group_db is not None else ws / ".mcp-docs" / "docs.db",
+            db_path=db_path,
             docs_dir=ws / ".mcp-docs" / "docs",
             grouped=group_db is not None,
         )

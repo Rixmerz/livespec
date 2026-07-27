@@ -9,6 +9,8 @@ fresh on every ``index_project`` call so edits apply without restarts.
 
 from __future__ import annotations
 
+import json
+import re
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -98,6 +100,136 @@ def _config_error(msg: str) -> ValueError:
     return ValueError(f"Invalid {REPO_CONFIG_FILENAME}: {msg}")
 
 
+# ---------- Ecosystem build-output exclusions (deno.json / tsconfig.json) ----------
+#
+# Bug #12: the indexer only honored .gitignore + .livespec.toml, so a project
+# that declares its build output via `deno.json`'s `exclude` (Fresh's
+# `_fresh/`) or `tsconfig.json`'s `exclude` (`dist/`, etc.) — rather than
+# .gitignore — got its minified bundles indexed as if they were source. This
+# folds those declarations into `RepoConfig.ignore` so `indexer.py` needs no
+# changes at all: it already routes `cfg.ignore` through a GitIgnoreSpec that
+# outranks .gitignore.
+
+
+def _strip_jsonc_comments(text: str) -> str:
+    """Best-effort strip of ``//`` and ``/* */`` comments outside string
+    literals, so ``json.loads`` can parse a ``.jsonc``-flavored file
+    (deno.json/tsconfig.json both allow comments + trailing commas).
+
+    Dependency-free by design (ponytail: stdlib only). Not a full JSONC
+    parser — good enough for the config shapes these tools actually emit.
+    """
+    out: list[str] = []
+    in_string = False
+    escape = False
+    i = 0
+    n = len(text)
+    while i < n:
+        ch = text[i]
+        if in_string:
+            out.append(ch)
+            if escape:
+                escape = False
+            elif ch == "\\":
+                escape = True
+            elif ch == '"':
+                in_string = False
+            i += 1
+            continue
+        if ch == '"':
+            in_string = True
+            out.append(ch)
+            i += 1
+            continue
+        if ch == "/" and i + 1 < n and text[i + 1] == "/":
+            while i < n and text[i] not in "\r\n":
+                i += 1
+            continue
+        if ch == "/" and i + 1 < n and text[i + 1] == "*":
+            i += 2
+            while i + 1 < n and not (text[i] == "*" and text[i + 1] == "/"):
+                i += 1
+            i += 2
+            continue
+        out.append(ch)
+        i += 1
+    return "".join(out)
+
+
+def _strip_trailing_commas(text: str) -> str:
+    """``,}``/``,]`` (with optional whitespace between) -> ``}``/``]``."""
+    return re.sub(r",(\s*[}\]])", r"\1", text)
+
+
+def _load_jsonc(path: Path) -> dict | None:
+    """Parse a JSON/JSONC file; ``None`` on any error (missing, malformed,
+    not an object) — a malformed config file must never break indexing."""
+    try:
+        raw = path.read_text(encoding="utf-8")
+    except OSError:
+        return None
+    try:
+        data = json.loads(_strip_trailing_commas(_strip_jsonc_comments(raw)))
+    except Exception:
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def _normalize_exclude_pattern(pattern: str) -> str | None:
+    """Translate one deno.json/tsconfig.json ``exclude`` entry to gitignore
+    syntax. Both tools already use gitignore-compatible globs for the common
+    cases (bare name, ``**/x/*``, trailing ``/``); the one real gap is a
+    leading ``./`` that gitignore patterns don't use."""
+    if not isinstance(pattern, str):
+        return None
+    p = pattern.strip()
+    if not p:
+        return None
+    if p.startswith("./"):
+        p = p[2:]
+    return p or None
+
+
+def _ecosystem_ignore_patterns(workspace: Path) -> tuple[str, ...]:
+    """``exclude`` arrays from ``deno.json``/``deno.jsonc`` and
+    ``tsconfig.json`` at the workspace root, translated to gitignore syntax.
+
+    ``include`` allowlists (tsconfig's "only these paths" mode) are NOT
+    honored — that inverts the walk from denylist to allowlist, a materially
+    different code path this fix doesn't need: every project this bug was
+    found against declares its build output via `exclude`.
+    ponytail: revisit only if a real project needs include-only semantics.
+    """
+    patterns: list[str] = []
+    for name in ("deno.json", "deno.jsonc"):
+        data = _load_jsonc(workspace / name)
+        if data is None:
+            continue
+        exclude = data.get("exclude")
+        if isinstance(exclude, list):
+            patterns.extend(
+                p for p in (_normalize_exclude_pattern(x) for x in exclude) if p
+            )
+        break  # deno.json wins over deno.jsonc if both exist (Deno's own rule)
+
+    ts_data = _load_jsonc(workspace / "tsconfig.json")
+    if ts_data is not None:
+        exclude = ts_data.get("exclude")
+        if isinstance(exclude, list):
+            patterns.extend(
+                p for p in (_normalize_exclude_pattern(x) for x in exclude) if p
+            )
+
+    # Dedup, preserve order.
+    seen: set[str] = set()
+    out: list[str] = []
+    for p in patterns:
+        if p not in seen:
+            seen.add(p)
+            out.append(p)
+    return tuple(out)
+
+
 def load_repo_config(workspace: Path) -> RepoConfig:
     """Read ``<workspace>/.livespec.toml``; missing file → defaults.
 
@@ -121,10 +253,19 @@ def load_repo_config(workspace: Path) -> RepoConfig:
 
     Malformed content raises ``ValueError`` with an actionable message —
     silently ignoring a typoed config would be worse than failing the call.
+
+    v0.24: ``deno.json``/``deno.jsonc``/``tsconfig.json`` ``exclude`` arrays
+    at the workspace root are folded into ``.ignore`` too (see
+    ``_ecosystem_ignore_patterns``) — a build-output declaration shouldn't
+    need to be repeated in ``.livespec.toml`` to keep bundles out of the
+    index. They're applied FIRST so an explicit ``[index].ignore`` entry in
+    ``.livespec.toml`` (including a ``!re-include``) still wins, matching
+    that file's documented precedence over every other ignore source.
     """
+    eco_ignore = _ecosystem_ignore_patterns(workspace)
     path = workspace / REPO_CONFIG_FILENAME
     if not path.is_file():
-        return RepoConfig()
+        return RepoConfig(ignore=eco_ignore) if eco_ignore else RepoConfig()
     try:
         data = tomllib.loads(path.read_text(encoding="utf-8"))
     except (OSError, tomllib.TOMLDecodeError) as e:
@@ -223,7 +364,7 @@ def load_repo_config(workspace: Path) -> RepoConfig:
         raise _config_error("[workspace].group_db must be a non-empty string path")
 
     return RepoConfig(
-        ignore=tuple(ignore),
+        ignore=eco_ignore + tuple(ignore),
         languages=frozenset(languages) if languages else None,
         max_file_bytes=max_file_bytes,
         explorer_auto_mount=explorer_auto_mount,

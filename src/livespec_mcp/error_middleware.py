@@ -27,9 +27,16 @@ from livespec_mcp.workspace_param import WorkspaceRequiredError
 
 _WORKSPACE_HINT = "pass workspace='/absolute/path/to/repo' (the repository root)"
 
+# Tools allowed to run against a workspace that has no index yet — they are
+# the ones that BUILD the index. Every other tool must fail clean rather than
+# let a downstream get_state() call materialize an empty .mcp-docs/docs.db in
+# whatever directory a typo'd `workspace` happened to point at.
+_INDEX_BOOTSTRAP_TOOLS = frozenset({"index_project"})
+
 
 class WorkspaceErrorMiddleware(Middleware):
-    """Return a shaped mcp_error when the workspace is missing / not a dir."""
+    """Return a shaped mcp_error when the workspace is missing / not a dir /
+    not indexed yet (for tools other than the ones that build the index)."""
 
     async def on_call_tool(self, context, call_next):  # type: ignore[override]
         args: dict[str, Any] = dict(getattr(context.message, "arguments", None) or {})
@@ -46,6 +53,14 @@ class WorkspaceErrorMiddleware(Middleware):
                 mcp_error(
                     f"Workspace directory not found: {ws}.",
                     hint=_WORKSPACE_HINT,
+                )
+            )
+        tool_name = getattr(context.message, "name", "")
+        if tool_name not in _INDEX_BOOTSTRAP_TOOLS and not _state.workspace_db_path(ws).is_file():
+            return _as_tool_result(
+                mcp_error(
+                    "workspace not indexed",
+                    hint=f"run index_project(workspace='{ws}') first",
                 )
             )
         return await call_next(context)

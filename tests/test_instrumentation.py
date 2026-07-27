@@ -63,6 +63,8 @@ async def test_args_redacted_strips_workspace_path(sample_repo):
     """Absolute paths under the workspace get rewritten to <workspace>/..."""
     abs_path = str(sample_repo / "pkg" / "auth.py")
     async with Client(mcp) as c:
+        # v0.24: find_symbol needs an indexed workspace now.
+        await c.call_tool("index_project", {"workspace": str(sample_repo)})
         # workspace= explicitly passed; would normally land verbatim in args
         await c.call_tool(
             "find_symbol",
@@ -109,6 +111,8 @@ async def test_log_respects_repo_config_log_calls(sample_repo, monkeypatch):
     (sample_repo / ".livespec.toml").write_text("[agent]\nlog_calls = true\n")
     ws = str(sample_repo)
     async with Client(mcp) as c:
+        # v0.24: list_specs needs an indexed workspace now.
+        await c.call_tool("index_project", {"workspace": ws})
         await c.call_tool("list_specs", {"workspace": ws})
     assert _read_log(sample_repo)
 
@@ -128,10 +132,12 @@ async def test_log_file_lives_under_resolved_workspace(sample_repo):
     """Log lands under the workspace path passed on the tool call."""
     ws = str(sample_repo)
     async with Client(mcp) as c:
+        # v0.24: list_specs needs an indexed workspace now.
+        await c.call_tool("index_project", {"workspace": ws})
         await c.call_tool("list_specs", {"workspace": ws})
 
     log = sample_repo / ".mcp-docs" / "agent_log.jsonl"
     assert log.exists()
     entries = _read_log(sample_repo)
-    assert len(entries) == 1
-    assert entries[0]["workspace"] == str(sample_repo)
+    assert entries[-1]["tool_name"] == "list_specs"
+    assert entries[-1]["workspace"] == str(sample_repo)

@@ -32,6 +32,16 @@ class WorkspaceRequiredError(ValueError):
     """Raised when a tool is invoked without ``workspace``."""
 
 
+class WorkspaceNotIndexedError(ValueError):
+    """Raised when a tool needs an existing index but the workspace has none.
+
+    ``workspace`` resolves to a real directory (otherwise ``WorkspaceRequiredError``
+    / ``FileNotFoundError`` would fire first) but no ``.mcp-docs/docs.db`` exists
+    yet. Only ``index_project`` (and the ``livespec-mcp index`` CLI command) may
+    create that file — every other entry point must raise this instead.
+    """
+
+
 # Annotated alias: MCP clients expose Field.description + examples on the parameter.
 Workspace = Annotated[
     str | None,

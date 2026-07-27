@@ -85,6 +85,10 @@ async def test_import_creates_rfs(sample_repo, tmp_path):
     md = sample_repo / "specs.md"
     md.write_text(SAMPLE)
     async with Client(mcp) as c:
+        # v0.24: mutation tools (including the markdown-import bootstrap
+        # helper) require an indexed workspace — WorkspaceErrorMiddleware
+        # rejects them clean rather than let get_state() silently create a DB.
+        await c.call_tool("index_project", {})
         result = (
             await c.call_tool(
                 "import_specs_from_markdown",
@@ -106,6 +110,7 @@ async def test_import_is_idempotent(sample_repo):
     md = sample_repo / "specs.md"
     md.write_text(SAMPLE)
     async with Client(mcp) as c:
+        await c.call_tool("index_project", {})
         first = (
             await c.call_tool(
                 "import_specs_from_markdown",
@@ -183,6 +188,7 @@ async def test_import_openspec_file(sample_repo):
     md = sample_repo / "spec.md"
     md.write_text(OPENSPEC_SAMPLE)
     async with Client(mcp) as c:
+        await c.call_tool("index_project", {})
         result = (
             await c.call_tool("import_specs_from_markdown", {"path": "spec.md"})
         ).data
@@ -201,6 +207,7 @@ async def test_import_openspec_tree(sample_repo):
     tree.mkdir(parents=True)
     (tree / "spec.md").write_text(OPENSPEC_SAMPLE)
     async with Client(mcp) as c:
+        await c.call_tool("index_project", {})
         result = (
             await c.call_tool(
                 "import_specs_from_markdown", {"path": "openspec"}

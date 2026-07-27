@@ -39,7 +39,7 @@ def test_filter_endpoints_excludes_pytest_fixtures(workspace: Path):
         "@app.get('/ok')\ndef ok():\n    return 1\n",
         encoding="utf-8",
     )
-    st = get_state(str(workspace))
+    st = get_state(str(workspace), create=True)
     from livespec_mcp.tools.indexing import run_index_pipeline
 
     run_index_pipeline(st, force=True, embed=False)
@@ -60,7 +60,7 @@ def test_specs_sync_from_config(tmp_path: Path):
     )
     cfg = load_repo_config(tmp_path)
     assert cfg.specs_sync_from == ("docs/spec.md",)
-    st = get_state(str(tmp_path))
+    st = get_state(str(tmp_path), create=True)
     from livespec_mcp.tools.indexing import run_index_pipeline
 
     run_index_pipeline(st, force=True, embed=False)
@@ -72,7 +72,7 @@ def test_specs_sync_from_config(tmp_path: Path):
 def test_bulk_link_test_module_hint(workspace: Path):
     from livespec_mcp.domain.specs_sync import bulk_link_spec_symbols_impl
 
-    st = get_state(str(workspace))
+    st = get_state(str(workspace), create=True)
     st.conn.execute(
         "INSERT INTO spec(project_id, spec_id, title) VALUES(?, ?, ?)",
         (st.project_id, "SPEC-099", "t"),

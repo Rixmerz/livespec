@@ -218,6 +218,7 @@ def compute_explorer_data(
     generated_at: str | None = None,
     base: str | None = None,
     head: str | None = None,
+    framework: str | None = None,
 ) -> dict[str, Any]:
     """Build the full Spec Explorer data bundle for ``st``'s workspace.
 
@@ -232,6 +233,13 @@ def compute_explorer_data(
     entirely when the workspace is not a git repo). Defaulting keeps the
     no-arg ``compute_explorer_data(st)`` call (used by indexing.py's freshness
     hook via ``write_explorer_bundle(st)``) working unchanged.
+
+    ``framework`` narrows the endpoint surface the same way ``find_endpoints``'s
+    ``framework`` argument does (passed straight through to
+    ``compute_endpoints``). Default None auto-detects across every recognized
+    decorator/framework — the same default as before this parameter existed.
+    Explicit-opt-in frameworks (e.g. Hono) are NOT swept by the default; pass
+    ``framework="hono"`` on a Hono repo or the endpoints tab renders empty.
     """
     conn = st.conn
     pid = st.project_id
@@ -299,7 +307,7 @@ def compute_explorer_data(
     # `dashboard.with_endpoints` was inflated.
     # Computed once and reused by the full endpoints section below (was
     # computed twice — a real cost on a large repo where it ast-parses files).
-    raw_endpoints = compute_endpoints(st, framework=None)
+    raw_endpoints = compute_endpoints(st, framework=framework)
     _endpoint_handler_qnames = {
         ep.get("qualified_name")
         for ep in raw_endpoints
@@ -584,6 +592,7 @@ def write_explorer_bundle(
     generated_at: str | None = None,
     base: str | None = None,
     head: str | None = None,
+    framework: str | None = None,
 ) -> dict[str, Any]:
     """Compute + write data.json and index.html under .mcp-docs/explorer/.
 
@@ -594,8 +603,14 @@ def write_explorer_bundle(
     ``write_explorer_bundle(st)`` (indexing.py's freshness hook) therefore
     keeps working unchanged — the range defaults to ``main``..``HEAD`` (or is
     omitted off-git).
+
+    ``framework`` is threaded straight into ``compute_explorer_data`` /
+    ``compute_endpoints`` — required on explicit-opt-in frameworks (e.g.
+    ``"hono"``) that the default sweep does not cover.
     """
-    data = compute_explorer_data(st, generated_at=generated_at, base=base, head=head)
+    data = compute_explorer_data(
+        st, generated_at=generated_at, base=base, head=head, framework=framework
+    )
     repo_cfg = load_repo_config(st.settings.workspace)
     data["meta"]["base_path"] = repo_cfg.explorer_mount_path
     out_dir: Path = st.settings.state_dir / "explorer"

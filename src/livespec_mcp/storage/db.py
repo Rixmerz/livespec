@@ -25,7 +25,36 @@ def _schema_sql() -> str:
     return _SCHEMA_CACHE
 
 
-def connect(db_path: Path) -> sqlite3.Connection:
+def connect(db_path: Path, *, create: bool = True) -> sqlite3.Connection:
+    """Open ``db_path``.
+
+    ``create=True`` (default): today's behaviour — makes the parent dir,
+    opens read-write, bootstraps schema + migrations. Used only where a
+    missing DB should be materialized (``index_project``, the ``index`` CLI
+    command, and any caller that already confirmed the file exists — schema
+    bootstrap/migrations are idempotent no-ops on an up-to-date DB).
+
+    ``create=False``: strict read-only primitive for callers that must NEVER
+    create a file. Raises ``FileNotFoundError`` if ``db_path`` doesn't exist;
+    otherwise opens via SQLite's ``mode=ro`` URI (no schema/migration writes
+    attempted). Not currently wired into ``get_state`` — see ``state.py``'s
+    ``get_state(..., create=...)`` for why (existing mutation tools share the
+    same default connection path and need read-write access to a DB that
+    already exists).
+    """
+    if not create:
+        if not db_path.is_file():
+            raise FileNotFoundError(f"No index database at {db_path}")
+        conn = sqlite3.connect(
+            f"file:{db_path}?mode=ro",
+            uri=True,
+            isolation_level=None,
+            check_same_thread=False,
+        )
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA busy_timeout = 30000")
+        return conn
+
     db_path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(str(db_path), isolation_level=None, check_same_thread=False)
     conn.row_factory = sqlite3.Row

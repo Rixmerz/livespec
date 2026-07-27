@@ -25,9 +25,24 @@ from dataclasses import dataclass
 # Captures the rest of the line so we can parse:
 #   - multiple comma-separated specs:  @spec:SPEC-001, SPEC-002
 #   - confidence override at the end:  @spec:SPEC-001:0.85   (or  @spec:SPEC-001,SPEC-002:0.85)
+#
+# `_PREFIX_HEAD_RE`'s verb alternation is BUILT from this tuple (not
+# duplicated) so the regex and the "recognized verb" vocabulary can never
+# drift apart. Import `RECOGNIZED_PREFIX_VERBS` / `RECOGNIZED_PREFIX_VERBS_DISPLAY`
+# wherever that vocabulary is needed elsewhere (e.g. specs.scan_annotation_verbs) —
+# never re-declare the verb list.
+RECOGNIZED_PREFIX_VERBS: tuple[str, ...] = (
+    "not_spec", "!spec", "spec", "implements?", "tests?", "see", "references?",
+)
+# Human-readable expansion of the pattern forms above, for did-you-mean
+# suggestions. Cosmetic only — it does not affect what the regex matches.
+RECOGNIZED_PREFIX_VERBS_DISPLAY: frozenset[str] = frozenset({
+    "spec", "implement", "implements", "test", "tests", "see",
+    "reference", "references", "not_spec",
+})
 _PREFIX_HEAD_RE = re.compile(
     r"""^\s*[#*]?\s*                       # optional comment leader
-        @(?P<verb>not_spec|!spec|spec|implements?|tests?|see|references?)
+        @(?P<verb>""" + "|".join(RECOGNIZED_PREFIX_VERBS) + r""")
         (?=[:=\s]|$)                       # verb boundary: reject @specifically,
                                            # @testsuite, @seed (prefix-of-a-word)
         \s*[:=]?\s*
@@ -37,6 +52,9 @@ _PREFIX_HEAD_RE = re.compile(
 
 # Each SPEC-NNN inside the `rest` payload of a prefix annotation.
 _SPEC_TOKEN_RE = re.compile(r"SPEC[-_]?\d{1,6}", re.IGNORECASE)
+# Public alias — cross-module callers (specs.scan_annotation_verbs) import
+# this instead of the "private" name so the token shape can never drift.
+SPEC_TOKEN_RE = _SPEC_TOKEN_RE
 
 # Optional `:confidence` suffix at the end of a prefix payload. Accepts
 # `:0.85`, `:.85`, `:1.0`, `:1`. Anchored to end so it doesn't eat digits

@@ -177,7 +177,7 @@ def register(mcp: FastMCP) -> None:
         and skipped. The payload reports `explorer_regenerated`.
         Use after pulling new commits or when documentation feels stale.
         """
-        st = get_state(workspace)
+        st = get_state(workspace, create=True)
         result = run_index_pipeline(st, force=force, embed=embed)
         result["explorer_regenerated"] = _maybe_regenerate_explorer(st, explorer)
         try:

@@ -94,7 +94,7 @@ def init_fastapi_project(
             from livespec_mcp.state import get_state
             from livespec_mcp.tools.indexing import _maybe_regenerate_explorer, run_index_pipeline
 
-            st = get_state(str(root))
+            st = get_state(str(root), create=True)
             run_index_pipeline(st, force=False, embed=False)
             indexed = True
             explorer_bundle = _maybe_regenerate_explorer(st, explorer=True)

@@ -19,6 +19,7 @@ from typing import Any, Literal
 
 from fastmcp import FastMCP
 
+from livespec_mcp.domain import matcher
 from livespec_mcp.domain.graph import graph_pagerank, load_graph
 from livespec_mcp.domain.matcher import scan_annotations
 from livespec_mcp.state import get_state
@@ -52,6 +53,50 @@ def _humanize_module_segment(seg: str) -> str:
     if title.islower():
         title = title.title()
     return title
+
+
+# `@word:` / `@word=` annotation-shaped comment, ANY verb (unlike
+# `matcher._PREFIX_HEAD_RE`, which only matches the recognized vocabulary).
+# Used by `scan_annotation_verbs` to find annotations the real matcher
+# silently drops. Colon/equals required — matches the shape described in
+# the bug report (`@rf:BE-RF-080`), not bare `@decorator` syntax.
+#
+# Deliberately NOT anchored to line-start (unlike `_PREFIX_HEAD_RE`): real
+# annotations show up as `/** @rf:X */` (opener + annotation on one line)
+# and `* @rf:X / @rf:Y` (two mentions on one line) — both would be missed,
+# or under-counted, by a `^`-anchored single-leader regex. This tool is a
+# diagnostic sweep, not a linker, so the wider match (any `@word:` anywhere)
+# trades a little false-positive risk for not silently under-counting the
+# exact class of bug it exists to catch.
+_ANY_ANNOTATION_RE = re.compile(r"@(?P<verb>\w+)\s*[:=]\s*(?P<rest>[^\n\r@]*)")
+
+# Payload "looks like a spec identifier" even when it isn't SPEC-NNN shaped
+# (`matcher.SPEC_TOKEN_RE`) — e.g. `BE-RF-080`, `FE-RF-119`, `DEVMCP-RF-021`.
+# When this matches, `@spec` is the domain-correct suggestion regardless of
+# edit distance from the bare verb: pure Levenshtein on `"rf"` picks `"see"`
+# (distance 3) over `"spec"` (distance 4), which is technically the nearest
+# recognized verb but the wrong answer for every one of these — they're all
+# spec references, not "see also" pointers.
+_LIKELY_SPEC_ID_RE = re.compile(r"\b[A-Za-z]{2,}(?:-[A-Za-z]{2,})*-\d+\b")
+
+
+def _levenshtein(a: str, b: str) -> int:
+    """True edit distance (stdlib-only DP). `difflib.SequenceMatcher.ratio()`
+    over-weights a shared PREFIX (e.g. would rank 'reference' above 'spec'
+    for input 'rf' purely because both start with 'r') — not what
+    `scan_annotation_verbs`'s docstring promises ("nearest recognized verb
+    by edit distance")."""
+    if a == b:
+        return 0
+    la, lb = len(a), len(b)
+    prev = list(range(lb + 1))
+    for i in range(1, la + 1):
+        cur = [i] + [0] * lb
+        for j in range(1, lb + 1):
+            cost = 0 if a[i - 1] == b[j - 1] else 1
+            cur[j] = min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + cost)
+        prev = cur
+    return prev[lb]
 
 
 _DOC_FIRST_SENT_RE = re.compile(r"(?<=[.!?])\s+")
@@ -219,51 +264,92 @@ def register(
         has_implementation: bool | None = None,
         capability: str | None = None,
         limit: int = 100,
+        cursor: int = 0,
+        summary_only: bool = False,
         workspace: Workspace | None = None,
     ) -> dict[str, Any]:
         """List Specs with filters. Returns spec_id, kind, title, status, priority,
         module, link_count, scenario_count.
 
         ``capability`` is an OpenSpec-interop alias for ``module`` (an OpenSpec
-        capability maps to a livespec module); pass either.""" + WORKSPACE_DOCSTRING_NOTE
+        capability maps to a livespec module); pass either.
+
+        Paginated (mirrors ``audit_coverage`` / ``scan_docstrings_for_spec_hints``):
+        ``limit`` (default 100, hard-capped at 200 to bound response size on
+        large spec sets — a flat un-paginated dump exceeded MCP's token limit
+        on a 185-spec repo) caps the page; ``cursor`` resumes; ``next_cursor``
+        is null when exhausted. ``summary_only=True`` returns just ``total``
+        and the list of ``spec_id``s (no title/description bodies) — use this
+        first to size a project before paging bodies.""" + WORKSPACE_DOCSTRING_NOTE
         st = get_state(workspace)
         pid = st.project_id
         # OpenSpec capability == livespec module. Accept either arg name.
         if capability and not module:
             module = capability
-        sql = [
-            """SELECT sp.id, sp.spec_id, sp.kind, sp.title, sp.description, sp.status, sp.priority,
-                      m.name AS module,
-                      (SELECT COUNT(*) FROM spec_symbol ss WHERE ss.spec_id=sp.id) AS link_count,
-                      (SELECT COUNT(*) FROM spec_scenario sc WHERE sc.spec_id=sp.id) AS scenario_count
-               FROM spec sp LEFT JOIN module m ON m.id=sp.module_id
-               WHERE sp.project_id=?"""
-        ]
+        where = ["sp.project_id=?"]
         args: list[Any] = [pid]
         if status:
-            sql.append("AND sp.status=?")
+            where.append("sp.status=?")
             args.append(status)
         if priority:
-            sql.append("AND sp.priority=?")
+            where.append("sp.priority=?")
             args.append(priority)
         if kind:
-            sql.append("AND sp.kind=?")
+            where.append("sp.kind=?")
             args.append(kind)
         if module:
-            sql.append("AND m.name=?")
+            where.append("m.name=?")
             args.append(module)
         # Apply has_implementation in SQL BEFORE the LIMIT — filtering in Python
         # after the slice let a page silently shrink to 0 while matching specs
         # existed beyond the limit.
         if has_implementation is not None:
             op = ">" if has_implementation else "="
-            sql.append(
-                f"AND (SELECT COUNT(*) FROM spec_symbol ss WHERE ss.spec_id=sp.id) {op} 0"
+            where.append(
+                f"(SELECT COUNT(*) FROM spec_symbol ss WHERE ss.spec_id=sp.id) {op} 0"
             )
-        sql.append("ORDER BY sp.spec_id LIMIT ?")
-        args.append(max(1, min(int(limit), 1000)))
-        rows = [dict(r) for r in st.conn.execute(" ".join(sql), args).fetchall()]
-        return {"specs": rows}
+        where_sql = " AND ".join(where)
+
+        if summary_only:
+            ids = [
+                r["spec_id"]
+                for r in st.conn.execute(
+                    f"""SELECT sp.spec_id FROM spec sp LEFT JOIN module m ON m.id=sp.module_id
+                        WHERE {where_sql} ORDER BY sp.spec_id""",
+                    args,
+                ).fetchall()
+            ]
+            return {"total": len(ids), "spec_ids": ids}
+
+        total = int(
+            st.conn.execute(
+                f"""SELECT COUNT(*) AS n FROM spec sp LEFT JOIN module m ON m.id=sp.module_id
+                    WHERE {where_sql}""",
+                args,
+            ).fetchone()["n"]
+        )
+        page_limit = max(1, min(int(limit), 200))
+        cursor = max(0, int(cursor))
+        rows = [
+            dict(r)
+            for r in st.conn.execute(
+                f"""SELECT sp.id, sp.spec_id, sp.kind, sp.title, sp.description, sp.status, sp.priority,
+                           m.name AS module,
+                           (SELECT COUNT(*) FROM spec_symbol ss WHERE ss.spec_id=sp.id) AS link_count,
+                           (SELECT COUNT(*) FROM spec_scenario sc WHERE sc.spec_id=sp.id) AS scenario_count
+                    FROM spec sp LEFT JOIN module m ON m.id=sp.module_id
+                    WHERE {where_sql}
+                    ORDER BY sp.spec_id LIMIT ? OFFSET ?""",
+                [*args, page_limit, cursor],
+            ).fetchall()
+        ]
+        next_cursor = cursor + page_limit if cursor + page_limit < total else None
+        return {
+            "specs": rows,
+            "total": total,
+            "next_cursor": next_cursor,
+            "truncated": next_cursor is not None,
+        }
 
     def _do_link_spec_symbol(
         spec_id: str,
@@ -851,6 +937,128 @@ def register(
         n = scan_annotations(st.conn, pid)
         return {"links_created": n}
 
+    @agentic_tool(annotations={"readOnlyHint": True, "idempotentHint": True})
+    def scan_annotation_verbs(
+        sample_per_group: int = 10,
+        workspace: Workspace | None = None,
+    ) -> dict[str, Any]:
+        """Find `@word:` annotation-shaped comments the matcher will NOT link.
+
+        `scan_spec_annotations` / `parse_annotations` only consume a fixed
+        verb vocabulary (`@spec`, `@implements`, `@tests`, `@see`,
+        `@references`, plus the `@not_spec` negation) AND require the payload
+        to contain a `SPEC-NNN`-shaped token. A comment like `@rf:BE-RF-080`
+        satisfies neither: the verb `rf` is unrecognized, so it is silently
+        invisible to every other Spec tool — no error, no count, nothing.
+        This tool is the check that surfaces that gap.
+
+        Two independent failure modes are reported, since either one alone
+        is enough to make an annotation dead weight:
+        - `unrecognized_verb`: the `@word` isn't in the recognized set.
+          `did_you_mean` suggests the nearest recognized verb by edit
+          distance.
+        - `token_shape`: the verb IS recognized but the payload after it
+          doesn't contain a `SPEC-NNN` token (e.g. `@spec:BE-RF-080` — the
+          verb is fine, `BE-RF-080` just isn't shaped like `SPEC-080`).
+
+        Findings are grouped by the literal `@word` used, each with a count
+        and a bounded sample of `file:line` sites (`sample_per_group`,
+        default 10) — with potentially hundreds of raw hits, the caller
+        needs the shape of the problem, not every occurrence.
+
+        Scans indexed source FILES directly, not just extracted docstrings:
+        an annotation sitting above a symbol tree-sitter doesn't extract as
+        a linkable node (a bare `new Hono()` export, a Zod schema `const`)
+        is invisible to `symbol.docstring` entirely, which would silently
+        under-count this exact class of bug. Reading the file guarantees
+        every occurrence is seen regardless of extractor coverage.
+        """
+        st = get_state(workspace)
+        pid = st.project_id
+        ws = st.settings.workspace
+        file_rows = st.conn.execute(
+            "SELECT path FROM file WHERE project_id=?", (pid,)
+        ).fetchall()
+
+        recognized = matcher.RECOGNIZED_PREFIX_VERBS_DISPLAY
+        recognized_sorted = sorted(recognized)
+
+        groups: dict[str, dict[str, Any]] = {}
+        total_findings = 0
+        for fr in file_rows:
+            path = fr["path"]
+            try:
+                src = (ws / path).read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                continue
+            symbols: list[dict[str, Any]] | None = None
+            for m in _ANY_ANNOTATION_RE.finditer(src):
+                verb = m.group("verb")
+                verb_lower = verb.lower()
+                rest = m.group("rest")
+                token_ok = bool(matcher.SPEC_TOKEN_RE.search(rest))
+                verb_ok = verb_lower in recognized
+                if verb_ok and token_ok:
+                    continue  # the real matcher DOES consume this one
+                total_findings += 1
+                key = f"@{verb}"
+                g = groups.setdefault(key, {
+                    "verb": key,
+                    "count": 0,
+                    "reason": "unrecognized_verb" if not verb_ok else "token_shape",
+                    "did_you_mean": None,
+                    "did_you_mean_reason": None,
+                    "sample": [],
+                })
+                g["count"] += 1
+                if not verb_ok and g["did_you_mean"] is None:
+                    if _LIKELY_SPEC_ID_RE.search(rest):
+                        # Payload signal beats edit distance: this is a spec
+                        # reference (BE-RF-080-shaped), not a typo of @see.
+                        g["did_you_mean"] = "@spec"
+                        g["did_you_mean_reason"] = (
+                            "payload looks like a spec identifier "
+                            f"({_LIKELY_SPEC_ID_RE.search(rest).group(0)!r})"
+                        )
+                    else:
+                        nearest = min(
+                            recognized_sorted,
+                            key=lambda v: (_levenshtein(verb_lower, v), v),
+                        )
+                        g["did_you_mean"] = f"@{nearest}"
+                        g["did_you_mean_reason"] = "nearest recognized verb by edit distance"
+                if len(g["sample"]) < sample_per_group:
+                    line = src[: m.start()].count("\n") + 1
+                    if symbols is None:
+                        symbols = [
+                            dict(sr) for sr in st.conn.execute(
+                                """SELECT qualified_name, start_line, end_line FROM symbol s
+                                   JOIN file f ON f.id=s.file_id
+                                   WHERE f.project_id=? AND f.path=?""",
+                                (pid, path),
+                            ).fetchall()
+                        ]
+                    qname = next(
+                        (
+                            s["qualified_name"] for s in symbols
+                            if s["start_line"] <= line <= s["end_line"]
+                        ),
+                        None,
+                    )
+                    g["sample"].append({
+                        "qualified_name": qname,
+                        "file_path": path,
+                        "line": line,
+                        "token_candidate": rest.strip()[:40],
+                    })
+
+        groups_out = sorted(groups.values(), key=lambda g: g["count"], reverse=True)
+        return {
+            "total_findings": total_findings,
+            "verb_groups": groups_out,
+            "recognized_verbs": recognized_sorted,
+        }
+
     # ---------- v0.5 P2 / v0.6 P1 / v0.20: Spec dependency graph ----------
 
     def _do_link_spec_dependency(
@@ -1132,10 +1340,15 @@ def register(
 
         Mirrors `openspec validate [--strict]`. The load-bearing check is
         OpenSpec's own invariant — every requirement MUST have >=1 scenario;
-        also flags missing titles, empty bodies, and (strict) missing RFC-2119
-        normative keywords (SHALL/MUST/...). Returns
-        `{valid, errors, warnings, specs_without_scenarios, ...}`. In `strict`
-        mode the scenario/normative findings are errors.
+        also flags missing titles, empty bodies, and missing RFC-2119
+        normative keywords (SHALL/MUST/SHOULD/MAY). Returns `{valid,
+        error_count, warning_count, findings, specs_without_scenarios,
+        hygiene, ...}` — `findings` groups issues by `(issue, severity)`
+        with a count, `project_level` flag, and a bounded sample of
+        `{spec_id, title}`; `hygiene` reports aggregate stats (e.g. average
+        description length). Missing-scenario and missing-normative-keyword
+        findings are `warning` severity normally, `error` under `strict`
+        (which is what gates `valid`); missing-title is always an error.
         """ + WORKSPACE_DOCSTRING_NOTE
         st = get_state(workspace)
         from livespec_mcp.domain.openspec_validate import validate_openspec as _validate

@@ -34,6 +34,7 @@ from livespec_mcp.tools.plugins import (
     detect_active_plugins,
     plugin_name_for_tool,
 )
+from livespec_mcp.workspace_param import WorkspaceNotIndexedError, WorkspaceRequiredError
 
 _SESSION_WORKSPACES: OrderedDict[str, str] = OrderedDict()
 _MAX_SESSION_WORKSPACES = 64
@@ -57,7 +58,16 @@ def _session_id(context) -> str | None:
 def _active_plugins(workspace: str | None) -> set[str]:
     """Plugins visible for list/call gating."""
     if workspace:
-        return detect_active_plugins(get_state(workspace))
+        try:
+            return detect_active_plugins(get_state(workspace))
+        except (WorkspaceNotIndexedError, WorkspaceRequiredError, FileNotFoundError):
+            # Never indexed (or workspace vanished) — no plugin tables exist,
+            # so no plugin can be active. Must not raise: this runs on every
+            # tools/list and would otherwise brick the session before the
+            # user ever gets to call index_project. get_state(create=False)
+            # deliberately does not create a DB here (that would be the very
+            # bug this guards against).
+            return set()
     # Global env override without a workspace (all/none/spec/docs). Parse the
     # env var directly — building state here would raise WorkspaceRequiredError
     # on tools/list before any workspace is cached, bricking the session.

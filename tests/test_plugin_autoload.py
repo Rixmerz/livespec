@@ -37,27 +37,27 @@ def _seed_doc(state) -> None:
 
 def test_detect_empty_workspace_returns_empty(workspace, monkeypatch):
     monkeypatch.delenv("LIVESPEC_PLUGINS", raising=False)
-    state = get_state()
+    state = get_state(create=True)
     assert detect_active_plugins(state) == set()
 
 
 def test_detect_rf_rows_activate_rf_plugin(workspace, monkeypatch):
     monkeypatch.delenv("LIVESPEC_PLUGINS", raising=False)
-    state = get_state()
+    state = get_state(create=True)
     _seed_rf(state)
     assert detect_active_plugins(state) == {"spec"}
 
 
 def test_detect_doc_rows_activate_docs_plugin(workspace, monkeypatch):
     monkeypatch.delenv("LIVESPEC_PLUGINS", raising=False)
-    state = get_state()
+    state = get_state(create=True)
     _seed_doc(state)
     assert detect_active_plugins(state) == {"docs"}
 
 
 def test_explorer_bundle_on_disk_activates_docs_plugin(workspace, monkeypatch):
     monkeypatch.delenv("LIVESPEC_PLUGINS", raising=False)
-    state = get_state()
+    state = get_state(create=True)
     out = workspace / ".mcp-docs" / "explorer"
     out.mkdir(parents=True)
     (out / "index.html").write_text("<html></html>", encoding="utf-8")
@@ -66,14 +66,14 @@ def test_explorer_bundle_on_disk_activates_docs_plugin(workspace, monkeypatch):
 
 def test_detect_both_rows_activate_both_plugins(workspace, monkeypatch):
     monkeypatch.delenv("LIVESPEC_PLUGINS", raising=False)
-    state = get_state()
+    state = get_state(create=True)
     _seed_rf(state)
     _seed_doc(state)
     assert detect_active_plugins(state) == {"spec", "docs"}
 
 
 def test_env_none_overrides_db_signal(workspace, monkeypatch):
-    state = get_state()
+    state = get_state(create=True)
     _seed_rf(state)
     monkeypatch.setenv("LIVESPEC_PLUGINS", "none")
     assert detect_active_plugins(state) == set()
@@ -82,13 +82,13 @@ def test_env_none_overrides_db_signal(workspace, monkeypatch):
 def test_env_all_loads_every_known_plugin_even_on_empty_db(
     workspace, monkeypatch
 ):
-    state = get_state()
+    state = get_state(create=True)
     monkeypatch.setenv("LIVESPEC_PLUGINS", "all")
     assert detect_active_plugins(state) == set(KNOWN_PLUGINS)
 
 
 def test_env_subset_filters_to_named_plugins(workspace, monkeypatch):
-    state = get_state()
+    state = get_state(create=True)
     _seed_rf(state)
     _seed_doc(state)
     monkeypatch.setenv("LIVESPEC_PLUGINS", "spec")
@@ -96,7 +96,7 @@ def test_env_subset_filters_to_named_plugins(workspace, monkeypatch):
 
 
 def test_env_unknown_plugin_name_is_ignored(workspace, monkeypatch):
-    state = get_state()
+    state = get_state(create=True)
     monkeypatch.setenv("LIVESPEC_PLUGINS", "spec,bogus,docs")
     assert detect_active_plugins(state) == {"spec", "docs"}
 
@@ -104,7 +104,7 @@ def test_env_unknown_plugin_name_is_ignored(workspace, monkeypatch):
 def test_register_active_returns_active_set_and_is_idempotent(
     workspace, monkeypatch
 ):
-    state = get_state()
+    state = get_state(create=True)
     _seed_rf(state)
     monkeypatch.delenv("LIVESPEC_PLUGINS", raising=False)
     mcp = FastMCP(name="test")
@@ -120,7 +120,7 @@ async def test_docs_plugin_registers_doc_tools(workspace, monkeypatch):
     """v0.8 P3.5: docs plugin owns generate_docs, list_docs, export_documentation."""
     from fastmcp import Client
 
-    state = get_state()
+    state = get_state(create=True)
     monkeypatch.setenv("LIVESPEC_PLUGINS", "docs")
     test_mcp = FastMCP(name="docs-plugin-test")
     register_active(test_mcp, state)
@@ -141,7 +141,7 @@ async def test_rf_plugin_registers_mutation_tools(workspace, monkeypatch):
     """
     from fastmcp import Client
 
-    state = get_state()
+    state = get_state(create=True)
     monkeypatch.setenv("LIVESPEC_PLUGINS", "spec")
     test_mcp = FastMCP(name="spec-plugin-test")
     register_active(test_mcp, state)
@@ -172,7 +172,7 @@ async def test_rf_plugin_registers_mutation_tools(workspace, monkeypatch):
 
 def test_detect_survives_missing_table(workspace, monkeypatch):
     """If a plugin's table doesn't exist (older schema), probe returns False."""
-    state = get_state()
+    state = get_state(create=True)
     monkeypatch.delenv("LIVESPEC_PLUGINS", raising=False)
     state.conn.execute("DROP TABLE spec_symbol")
     state.conn.execute("DROP TABLE spec_dependency")
@@ -184,7 +184,7 @@ def test_detect_survives_missing_table(workspace, monkeypatch):
 def test_env_unknown_only_value_falls_back_to_detection(workspace, monkeypatch):
     """A typo like LIVESPEC_PLUGINS=specs must not silently hide every plugin:
     with no valid names in the override, DB detection wins (v0.20)."""
-    state = get_state()
+    state = get_state(create=True)
     monkeypatch.setenv("LIVESPEC_PLUGINS", "specs")
     assert detect_active_plugins(state) == set()  # no rows yet
     _seed_rf(state)

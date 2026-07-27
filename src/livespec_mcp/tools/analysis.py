@@ -41,6 +41,12 @@ from livespec_mcp.workspace_param import WORKSPACE_DOCSTRING_NOTE, Workspace
 
 _INFRA_NAME_SUFFIXES = ("_state", "_settings", "_config", "_session")
 
+# v0.7 B4: visibility values that imply external callers. `pub(crate)` /
+# `pub(super)` are NOT in this set — those symbols are only callable within
+# this indexed scope, so absence of in-project callers IS a real dead-code
+# signal.
+_PUBLIC_VIS = frozenset({"pub", "exported", "public"})
+
 _PAYLOAD_WARN_BYTES = 500 * 1024
 _DEFAULT_META_BYTES = 400
 
@@ -2133,6 +2139,88 @@ def _route_edge_peers(conn, symbol_id: int, *, incoming: bool) -> list[dict]:
     ]
 
 
+def _attach_dead_code_not_swept(
+    payload: dict[str, Any],
+    *,
+    st: AppState,
+    rows: list,
+    total: int,
+    include_non_python: bool,
+    include_public: bool,
+) -> None:
+    """When `find_dead_code` returns a zero count because a default filter
+    excluded the whole corpus (not because the corpus is clean), say so.
+
+    A plain ``count: 0`` is indistinguishable from "nothing found" and
+    "nothing swept" — the caller can't tell whether to trust the zero.
+    Grounds the hint in the actual indexed-file language mix and the raw
+    zero-caller/zero-spec-link candidate rows, not a static string.
+    """
+    if total != 0:
+        return
+    not_swept: list[str] = []
+    hints: list[str] = []
+
+    if not include_non_python:
+        lang_rows = st.conn.execute(
+            "SELECT language, COUNT(*) AS c FROM file WHERE project_id=? GROUP BY language",
+            (st.project_id,),
+        ).fetchall()
+        lang_counts = {r["language"]: r["c"] for r in lang_rows}
+        py_files = lang_counts.pop("python", 0)
+        non_py_total = sum(lang_counts.values())
+        if non_py_total > 0:
+            top_lang, top_count = max(lang_counts.items(), key=lambda kv: kv[1])
+            not_swept.append("non-python")
+            hints.append(
+                f"pass include_non_python=True — {non_py_total} of "
+                f"{non_py_total + py_files} indexed files are non-Python "
+                f"(mostly {top_lang}, {top_count}); the dead-code scan is "
+                "Python-only by default"
+            )
+
+    if not include_public:
+        public_candidates = sum(1 for r in rows if r["visibility"] in _PUBLIC_VIS)
+        if public_candidates:
+            not_swept.append("public")
+            hints.append(
+                f"pass include_public=True — {public_candidates} zero-caller "
+                "candidate(s) are public/exported symbols excluded by default"
+            )
+
+    if not_swept:
+        payload["not_swept"] = not_swept
+        payload["hint"] = " | ".join(hints)
+
+
+def _attach_endpoints_not_swept(payload: dict[str, Any], *, st: AppState, framework: str | None, total: int) -> None:
+    """When `find_endpoints(framework=None)` returns zero, say whether an
+    explicit-opt-in framework (currently only Hono — see `compute_endpoints`)
+    was excluded from the default sweep rather than genuinely absent.
+    """
+    if total != 0 or framework is not None:
+        return
+    hono_files = 0
+    ws = st.settings.workspace
+    for fr in st.conn.execute(
+        """SELECT path FROM file
+           WHERE project_id=? AND language IN ('typescript', 'javascript', 'tsx')""",
+        (st.project_id,),
+    ).fetchall():
+        try:
+            src = (ws / fr["path"]).read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        if "hono" in src.lower():
+            hono_files += 1
+    if hono_files:
+        payload["not_swept"] = ["hono"]
+        payload["hint"] = (
+            f"pass framework='hono' — {hono_files} indexed file(s) reference "
+            "Hono; it is explicit opt-in and is not part of the default sweep"
+        )
+
+
 def register(mcp: FastMCP) -> None:
     @mcp.tool(annotations={"readOnlyHint": True, "idempotentHint": True})
     def find_symbol(
@@ -2842,8 +2930,6 @@ def register(mcp: FastMCP) -> None:
                 or p == "manage.py"
             )
 
-        # v0.7 B4: visibility values that imply external callers
-        _PUBLIC_VIS = {"pub", "exported", "public"}
         # `pub(crate)` / `pub(super)` are NOT skipped — those symbols are
         # only callable within this indexed scope, so absence of in-project
         # callers IS a real dead-code signal.
@@ -3040,31 +3126,37 @@ def register(mcp: FastMCP) -> None:
             top_dir = m["file_path"].split("/", 1)[0]
             by_dir[top_dir] = by_dir.get(top_dir, 0) + 1
 
-        if summary_only:
-            return {
-                "count": total,
-                "by_kind": by_kind,
-                "by_top_dir": by_dir,
-            }
-
-        page = filtered[cursor : cursor + limit]
-        next_cursor = cursor + limit if cursor + limit < total else None
-        return {
+        payload: dict[str, Any] = {
             "count": total,
             "by_kind": by_kind,
             "by_top_dir": by_dir,
-            "dead_symbols": [
-                {
-                    "qualified_name": m["qualified_name"],
-                    "kind": m["kind"],
-                    "file_path": m["file_path"],
-                    "start_line": m["start_line"],
-                    "end_line": m["end_line"],
-                }
-                for m in page
-            ],
-            "next_cursor": next_cursor,
         }
+        _attach_dead_code_not_swept(
+            payload,
+            st=st,
+            rows=rows,
+            total=total,
+            include_non_python=include_non_python,
+            include_public=include_public,
+        )
+
+        if summary_only:
+            return payload
+
+        page = filtered[cursor : cursor + limit]
+        next_cursor = cursor + limit if cursor + limit < total else None
+        payload["dead_symbols"] = [
+            {
+                "qualified_name": m["qualified_name"],
+                "kind": m["kind"],
+                "file_path": m["file_path"],
+                "start_line": m["start_line"],
+                "end_line": m["end_line"],
+            }
+            for m in page
+        ]
+        payload["next_cursor"] = next_cursor
+        return payload
 
     @mcp.tool(annotations={"readOnlyHint": True, "idempotentHint": True})
     def find_endpoints(
@@ -3125,16 +3217,15 @@ def register(mcp: FastMCP) -> None:
             exclude_tests=True,
         )
         total = len(endpoints)
+        payload: dict[str, Any] = {"framework": framework, "count": total}
+        _attach_endpoints_not_swept(payload, st=st, framework=framework, total=total)
         if summary_only:
-            return {"framework": framework, "count": total}
+            return payload
         page = endpoints[cursor : cursor + limit]
         next_cursor = cursor + limit if cursor + limit < total else None
-        return {
-            "framework": framework,
-            "endpoints": page,
-            "count": total,
-            "next_cursor": next_cursor,
-        }
+        payload["endpoints"] = page
+        payload["next_cursor"] = next_cursor
+        return payload
 
     @mcp.tool(annotations={"readOnlyHint": True, "idempotentHint": True})
     def audit_coverage(
@@ -3371,17 +3462,21 @@ def register(mcp: FastMCP) -> None:
             empty: dict[str, Any] = {
                 "base_ref": base_ref,
                 "head_ref": head_ref,
-                "changed_files": [],
-                "changed_files_indexed": [],
-                "changed_files_unindexed": [],
                 "affected_specs": [],
                 "suggested_tests": [],
                 "counts": {"impacted_callers": 0, "changed_symbols": 0},
             }
-            if not summary_only:
-                empty["changed_symbols"] = []
-                empty["impacted_callers"] = []
-                empty["next_cursor"] = None
+            if summary_only:
+                empty["changed_files_sample"] = []
+                empty["changed_files_indexed_sample"] = []
+                empty["changed_files_unindexed_sample"] = []
+                return empty
+            empty["changed_files"] = []
+            empty["changed_files_indexed"] = []
+            empty["changed_files_unindexed"] = []
+            empty["changed_symbols"] = []
+            empty["impacted_callers"] = []
+            empty["next_cursor"] = None
             return empty
 
         view = load_graph(st.conn, pid)
@@ -3480,18 +3575,29 @@ def register(mcp: FastMCP) -> None:
             "affected_specs": len(affected_specs),
             "suggested_tests": len(suggested_tests),
         }
-        base = {
+        base: dict[str, Any] = {
             "base_ref": base_ref,
             "head_ref": head_ref,
-            "changed_files": changed_paths,
-            "changed_files_indexed": sorted(indexed_paths),
-            "changed_files_unindexed": sorted(set(changed_paths) - indexed_paths),
             "affected_specs": affected_specs,
             "suggested_tests": suggested_tests,
             "counts": counts,
         }
         if summary_only:
+            # v0.16 fix: honor summary_only for real — the full path lists
+            # (changed_files / _indexed / _unindexed) were previously
+            # returned in full here regardless of the flag, defeating its
+            # purpose (a 133-file diff repeated the same list 3x). A small
+            # bounded sample is enough to sanity-check which files matched.
+            _SAMPLE = 20
+            base["changed_files_sample"] = changed_paths[:_SAMPLE]
+            base["changed_files_indexed_sample"] = sorted(indexed_paths)[:_SAMPLE]
+            base["changed_files_unindexed_sample"] = sorted(
+                set(changed_paths) - indexed_paths
+            )[:_SAMPLE]
             return base
+        base["changed_files"] = changed_paths
+        base["changed_files_indexed"] = sorted(indexed_paths)
+        base["changed_files_unindexed"] = sorted(set(changed_paths) - indexed_paths)
         page = impacted_meta[impacted_cursor : impacted_cursor + impacted_limit]
         next_cursor = (
             impacted_cursor + impacted_limit
@@ -3538,7 +3644,14 @@ def register(mcp: FastMCP) -> None:
         note: str,
         workspace: Workspace | None = None,
     ) -> dict[str, Any]:
-        """Store or update a short agent note keyed by symbol qualified name."""
+        """Store or update a short agent note keyed by symbol qualified name.
+
+        ``qname`` is not required to match an indexed symbol — the note is
+        still saved (a symbol renamed out from under a note shouldn't lose
+        it) — but when it doesn't, the response carries a ``warning`` naming
+        the unknown qname and suggesting ``find_symbol`` to check for a typo
+        or a rename.
+        """
         st = get_state(workspace)
         st.conn.execute(
             """INSERT INTO agent_scratch (project_id, qname, note, updated_at)
@@ -3549,7 +3662,36 @@ def register(mcp: FastMCP) -> None:
             (st.project_id, qname, note),
         )
         st.conn.commit()
-        return {"qname": qname, "note": note, "saved": True}
+        result: dict[str, Any] = {"qname": qname, "note": note, "saved": True}
+        known = st.conn.execute(
+            """SELECT 1 FROM symbol s JOIN file f ON f.id=s.file_id
+               WHERE f.project_id=? AND s.qualified_name=? LIMIT 1""",
+            (st.project_id, qname),
+        ).fetchone()
+        if not known:
+            result["warning"] = (
+                f"qname {qname!r} is not an indexed symbol — the note was still "
+                "saved. Run find_symbol to confirm the intended qname."
+            )
+        return result
+
+    @mcp.tool(annotations={"readOnlyHint": True, "idempotentHint": True})
+    def agent_scratch_get(
+        qname: str,
+        workspace: Workspace | None = None,
+    ) -> dict[str, Any]:
+        """Read back the agent scratch note (if any) for a symbol qualified name."""
+        st = get_state(workspace)
+        row = st.conn.execute(
+            "SELECT note, updated_at FROM agent_scratch WHERE project_id=? AND qname=?",
+            (st.project_id, qname),
+        ).fetchone()
+        return {
+            "qname": qname,
+            "note": row["note"] if row else None,
+            "updated_at": row["updated_at"] if row else None,
+            "found": row is not None,
+        }
 
     @mcp.tool(annotations={"readOnlyHint": False, "idempotentHint": True})
     def agent_scratch_clear(

@@ -15,6 +15,8 @@ from livespec_mcp.server import mcp
 @pytest.mark.asyncio
 async def test_update_spec_round_trip(workspace):
     async with Client(mcp) as c:
+        # v0.24: mutation tools require an indexed workspace.
+        await c.call_tool("index_project", {})
         await c.call_tool(
             "create_spec", {"title": "Orig", "spec_id": "SPEC-500", "priority": "low"}
         )

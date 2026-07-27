@@ -89,6 +89,7 @@ def test_parse_openspec_populates_scenarios_and_operation():
 async def test_import_persists_scenarios(sample_repo):
     (sample_repo / "spec.md").write_text(CANONICAL)
     async with Client(mcp) as c:
+        await c.call_tool("index_project", {})
         await c.call_tool("import_specs_from_markdown", {"path": "spec.md"})
         listed = (await c.call_tool("list_specs", {})).data
         by_id = {r["spec_id"]: r for r in listed["specs"]}
@@ -110,6 +111,7 @@ async def test_native_reimport_keeps_scenarios(sample_repo):
     (sample_repo / "os.md").write_text(CANONICAL)
     (sample_repo / "native.md").write_text("## SPEC-010: Something\ndesc\n")
     async with Client(mcp) as c:
+        await c.call_tool("index_project", {})
         await c.call_tool("import_specs_from_markdown", {"path": "os.md"})
         await c.call_tool("import_specs_from_markdown", {"path": "native.md"})
         impl = (
@@ -127,6 +129,7 @@ async def test_native_reimport_keeps_scenarios(sample_repo):
 async def test_validate_openspec_flags_missing_scenario(sample_repo):
     (sample_repo / "spec.md").write_text(CANONICAL)
     async with Client(mcp) as c:
+        await c.call_tool("index_project", {})
         await c.call_tool("import_specs_from_markdown", {"path": "spec.md"})
         # Add a spec with no scenario via create_spec.
         await c.call_tool(
@@ -151,6 +154,7 @@ async def test_export_roundtrip(sample_repo):
     tree.mkdir(parents=True)
     (tree / "spec.md").write_text(CANONICAL)
     async with Client(mcp) as c:
+        await c.call_tool("index_project", {})
         await c.call_tool("sync_openspec", {})
         result = (await c.call_tool("export_openspec", {"out_dir": "out"})).data
         assert result["specs_written"] == 1
@@ -179,6 +183,7 @@ async def test_change_lifecycle(sample_repo):
     (change / "specs" / "theming" / "spec.md").write_text(CHANGE_DELTA)
 
     async with Client(mcp) as c:
+        await c.call_tool("index_project", {})
         synced = (await c.call_tool("sync_openspec", {})).data
         assert synced["changes"]["count"] == 1
 
@@ -307,6 +312,7 @@ async def test_export_includes_archived_change(sample_repo):
     (change / "proposal.md").write_text(CHANGE_PROPOSAL)
     (change / "specs" / "theming" / "spec.md").write_text(CHANGE_DELTA)
     async with Client(mcp) as c:
+        await c.call_tool("index_project", {})
         await c.call_tool("sync_openspec", {})
         await c.call_tool("archive_spec_change", {"name": "add-high-contrast"})
         result = (await c.call_tool("export_openspec", {"out_dir": "out"})).data
@@ -403,6 +409,7 @@ async def test_purpose_roundtrip(sample_repo):
     tree.mkdir(parents=True)
     (tree / "spec.md").write_text(CANONICAL)  # has a `## Purpose` section
     async with Client(mcp) as c:
+        await c.call_tool("index_project", {})
         await c.call_tool("sync_openspec", {})
         await c.call_tool("export_openspec", {"out_dir": "out"})
     exported = (sample_repo / "out" / "specs" / "theming" / "spec.md").read_text()
@@ -438,6 +445,7 @@ async def test_sync_nested_changes_archive_layout(sample_repo):
     (arch / "proposal.md").write_text("# old thing\n")
     (arch / "specs" / "cap" / "spec.md").write_text(ADDED_ONLY_DELTA)
     async with Client(mcp) as c:
+        await c.call_tool("index_project", {})
         await c.call_tool("sync_openspec", {})
         changes = (await c.call_tool("list_spec_changes", {})).data["changes"]
         by_name = {ch["name"]: ch["status"] for ch in changes}
@@ -455,6 +463,7 @@ async def test_sync_no_specs_dir_does_not_slurp_deltas(sample_repo):
     (ch / "specs" / "cap").mkdir(parents=True)
     (ch / "specs" / "cap" / "spec.md").write_text(ADDED_ONLY_DELTA)
     async with Client(mcp) as c:
+        await c.call_tool("index_project", {})
         result = (await c.call_tool("sync_openspec", {})).data
         assert result["specs"].get("created", 0) == 0
         assert result["specs"].get("note")  # explains why canonical is empty
@@ -473,6 +482,7 @@ async def test_apply_dry_run_and_warnings(sample_repo):
     (change / "proposal.md").write_text("# Modify a spec that doesn't exist\n")
     (change / "specs" / "theming" / "spec.md").write_text(MODIFY_MISSING_DELTA)
     async with Client(mcp) as c:
+        await c.call_tool("index_project", {})
         await c.call_tool("sync_openspec", {})
 
         dry = (

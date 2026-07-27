@@ -47,7 +47,7 @@ async def test_list_tools_hides_plugins_on_fresh_workspace(workspace, monkeypatc
 @pytest.mark.asyncio
 async def test_list_tools_shows_rf_after_workspace_touch(workspace, monkeypatch):
     monkeypatch.delenv("LIVESPEC_PLUGINS", raising=False)
-    state = get_state()
+    state = get_state(create=True)
     _seed_rf(state)
     mcp = _minimal_mcp()
     async with Client(mcp) as c:
@@ -78,7 +78,7 @@ async def test_call_plugin_tool_blocked_without_rf_rows(workspace, monkeypatch):
 @pytest.mark.asyncio
 async def test_call_plugin_tool_allowed_when_rf_rows_exist(workspace, monkeypatch):
     monkeypatch.delenv("LIVESPEC_PLUGINS", raising=False)
-    state = get_state()
+    state = get_state(create=True)
     _seed_rf(state)
     mcp = _minimal_mcp()
     async with Client(mcp) as c:

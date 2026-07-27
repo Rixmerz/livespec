@@ -70,7 +70,7 @@ def test_autowire_uses_mount_path_from_config(workspace: Path):
 
 def test_write_explorer_bundle_autowires_fastapi(workspace: Path):
     (workspace / "main.py").write_text("from fastapi import FastAPI\n\napp = FastAPI()\n")
-    st = get_state(str(workspace))
+    st = get_state(str(workspace), create=True)
     result = write_explorer_bundle(st)
     assert result["autowire"]["wired"] is True
     assert 'mount_explorer(app, prefix="/explorer")' in (workspace / "main.py").read_text(encoding="utf-8")

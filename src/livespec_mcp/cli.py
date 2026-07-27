@@ -33,7 +33,7 @@ def _cmd_index(path: str, *, force: bool, embed: bool) -> dict[str, Any]:
     from livespec_mcp.state import get_state
     from livespec_mcp.tools.indexing import run_index_pipeline
 
-    return run_index_pipeline(get_state(path), force=force, embed=embed)
+    return run_index_pipeline(get_state(path, create=True), force=force, embed=embed)
 
 
 def _cmd_status(path: str) -> dict[str, Any]:

@@ -100,7 +100,7 @@ async def test_ungrouped_repo_cannot_link_foreign_symbol(tmp_path):
 def test_group_project_ids_ungrouped_is_home_only(tmp_path):
     """Unit guard: an ungrouped AppState resolves to exactly [home]."""
     repo = _make_repo(tmp_path / "solo", "m", "f", group_db=None)
-    st = state_module.get_state(str(repo))
+    st = state_module.get_state(str(repo), create=True)
     assert st.group_project_ids() == [st.project_id]
     assert st.settings.grouped is False
 

@@ -964,6 +964,20 @@ def _ts_extract(
                     return  # do not double-walk
             # otherwise let normal recursion continue
 
+        # Object-literal arrow properties (`{ handler: async (c) => {...} }`)
+        # deliberately do NOT get their own symbol. Minting one per property
+        # key is catastrophic on real code: test mock DBs are object literals
+        # of Prisma-verb properties, so it minted 543 symbols named `create` /
+        # `findFirst` / `findUnique`, and _resolve_refs then fanned every
+        # unqualified `db.x.findFirst()` out to all of them at weight 0.5 —
+        # 39,752 junk edges on a 321-file repo, 1.1% precision on the sampled
+        # symbol, 114 colliding qnames, and `get_project_overview`'s top hub
+        # inverted from getDb to a mock property. Their calls are still
+        # collected: the enclosing named symbol owns them, or the module pass
+        # below does. `{ async handler(c) {...} }` is a `method_definition`
+        # and is caught by the standard def-node branch, which is correct —
+        # that one is a real named method, not an anonymous literal.
+
         # ----- Standard def nodes -----
         if node.type in _DEF_NODE_TYPES:
             name = find_name(node)
@@ -999,6 +1013,35 @@ def _ts_extract(
             walk_rust_method(c, parent_qname)
 
     walk(tree.root_node, None)
+
+    # Bug #7/#8 fix: calls issued directly at module top level — never inside
+    # any named function/class — have no enclosing symbol to attribute to.
+    # The canonical case is a Hono/Express/Fastify route registered with an
+    # inline anonymous handler: `app.post("/", async (c) => { await svc(...) })`.
+    # `walk()` above only calls `_ts_collect_calls` when it finds a NAMED def
+    # (or a name-bound anonymous function/property); nothing ever walked the
+    # module-level statement list itself, so those call sites were silently
+    # dropped rather than attributed anywhere. Emit a per-file pseudo-symbol
+    # and run one more collection pass over the whole tree, reusing the same
+    # "stop at a named scope boundary" logic so calls already attributed to a
+    # real named symbol are never double-counted.
+    if language in ("javascript", "typescript", "tsx"):
+        module_qname = module_name
+        out.symbols.append(
+            ExtractedSymbol(
+                name="__module__",
+                qualified_name=module_qname,
+                kind="module",
+                signature=None,
+                docstring=None,
+                body_hash_seed="module",
+                start_line=1,
+                end_line=(source.count("\n") + 1),
+                parent_qname=None,
+            )
+        )
+        _ts_collect_calls(tree.root_node, module_qname, src_bytes, out)
+
     return out
 
 
@@ -1163,6 +1206,32 @@ def _ts_leftmost_ident(node, text) -> str | None:
             nxt = cur.children[0] if getattr(cur, "children", None) else None
         cur = nxt
     return None
+
+
+def _is_named_scope_boundary(node) -> bool:
+    """True if `node` already has (or will get) its own collected symbol, so a
+    surrounding `_ts_collect_calls` walk must not descend into it — that would
+    attribute its call sites to the enclosing/module scope too (double count).
+
+    Covers named def nodes (function/class/method/...) AND anonymous function
+    literals bound to a name via `const foo = () => {}` (variable_declarator),
+    which gets its own symbol + dedicated `_ts_collect_calls` call elsewhere
+    in `_ts_extract.walk()`. A TRULY anonymous function (bare callback arg,
+    IIFE, object-literal property value) is NOT a boundary — nothing else
+    collects its calls, so they must be picked up here.
+
+    `pair` is deliberately absent: object-literal properties get no symbol
+    (see the comment in `_ts_extract.walk`), so treating them as a boundary
+    would silently drop every call inside them — the exact bug the module
+    pass exists to fix.
+    """
+    if node.type in _DEF_NODE_TYPES:
+        return True
+    if node.type in _ANONYMOUS_FN_TYPES:
+        parent = getattr(node, "parent", None)
+        if parent is not None and parent.type == "variable_declarator":
+            return True
+    return False
 
 
 def _ts_collect_calls(def_node, src_qname: str, src_bytes: bytes, out: ExtractResult) -> None:
@@ -1404,7 +1473,7 @@ def _ts_collect_calls(def_node, src_qname: str, src_bytes: bytes, out: ExtractRe
             # method-body call, a function absorbing a nested function). Inline
             # anonymous arrows/callbacks (not def-typed) are still walked, so
             # their calls correctly belong to the enclosing symbol.
-            if c is not def_node and c.type in _DEF_NODE_TYPES:
+            if c is not def_node and _is_named_scope_boundary(c):
                 continue
             walk(c)
 

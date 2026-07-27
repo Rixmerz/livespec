@@ -319,6 +319,7 @@ def register(mcp: FastMCP) -> None:
         generated_at: str | None = None,
         base: str | None = None,
         head: str | None = None,
+        framework: str | None = None,
         workspace: Workspace | None = None,
     ) -> dict[str, Any]:
         """Emit a static, self-contained "Spec Explorer" bundle.
@@ -358,11 +359,17 @@ def register(mcp: FastMCP) -> None:
         ``mount_explorer(app)`` so the running API serves the bundle at
         ``/explorer`` (disable via ``.livespec.toml`` →
         ``[explorer] auto_mount = false``).
+
+        **``framework``**: narrows the endpoints tab the same way
+        ``find_endpoints(framework=...)`` does. Default None sweeps every
+        recognized decorator/framework EXCEPT explicit-opt-in frameworks
+        (e.g. Hono) — pass ``framework="hono"`` on a Hono repo, or the
+        endpoints tab renders empty even though the routes exist.
         """
         try:
             st = get_state(workspace)
             result = _explorer.write_explorer_bundle(
-                st, generated_at=generated_at, base=base, head=head
+                st, generated_at=generated_at, base=base, head=head, framework=framework
             )
         except Exception as e:  # surface as the standard error shape
             return mcp_error(

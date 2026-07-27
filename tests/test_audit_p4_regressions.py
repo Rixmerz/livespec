@@ -41,7 +41,7 @@ async def test_git_diff_impact_detects_rename(sample_repo: Path):
 
 def test_next_spec_id_uses_max_not_last_inserted(workspace):
     """M9: next id is MAX+1, robust to out-of-order inserts."""
-    st = get_state()
+    st = get_state(create=True)
     pid = st.project_id
     st.conn.execute(
         "INSERT INTO spec(project_id, spec_id, title) VALUES (?, 'SPEC-005', 't')", (pid,)
@@ -56,6 +56,9 @@ def test_next_spec_id_uses_max_not_last_inserted(workspace):
 @pytest.mark.asyncio
 async def test_create_spec_duplicate_returns_mcp_error(workspace):
     async with Client(mcp) as c:
+        # v0.24: mutation tools require an indexed workspace (WorkspaceErrorMiddleware
+        # rejects them clean rather than let get_state() silently create a DB).
+        await c.call_tool("index_project", {})
         await c.call_tool("create_spec", {"title": "A", "spec_id": "SPEC-100"})
         res = (
             await c.call_tool("create_spec", {"title": "B", "spec_id": "SPEC-100"})
