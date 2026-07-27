@@ -6,7 +6,8 @@ they remain callable when a workspace needs them. This middleware trims
 opted into the plugin:
 
 - No ``LIVESPEC_PLUGINS`` override and no session workspace hint → core
-  surface only (24 tools).
+  surface only (everything except ``SPEC_MUTATION_TOOL_NAMES`` and
+  ``DOCS_PLUGIN_TOOL_NAMES``, both imported below).
 - After any tool call with ``workspace=``, the session caches that path
   and subsequent ``tools/list`` reflects ``detect_active_plugins`` for it.
 - ``LIVESPEC_PLUGINS`` env overrides apply globally (all/none/spec/docs).

@@ -41,5 +41,5 @@ Code at this directory as a local plugin.
 > component tracks a known version. (Left unpinned here until the current
 > release is published.)
 
-The MCP server exposes 44 tools (29 core + 12 Spec + 3 docs). See the repo
+The MCP server exposes 46 tools (31 core + 12 Spec + 3 docs). See the repo
 `README.md`, `docs/AGENT_PLAYBOOK.md`, and `CHANGELOG.md` for the full surface.
