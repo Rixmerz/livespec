@@ -2457,7 +2457,9 @@ const TOTAL_LABELS = {
   modules_unsupported_language: 'Unsupported language',
   specs_without_implementation: 'Specs w/o impl',
   specs_low_confidence: 'Specs low confidence',
-  specs_with_test_coverage: 'Specs w/ tests',
+  specs_with_linked_tests: 'Specs w/ linked tests',
+  specs_with_derived_test_coverage: 'Specs w/ derived coverage',
+  avg_test_coverage: 'Avg test coverage',
 };
 function buildGaps() {
   const g = DATA.coverage;
@@ -2471,7 +2473,7 @@ function buildGaps() {
     const label = TOTAL_LABELS[k] || k.replace(/_/g, ' ');
     let cls = '';
     if (k === 'modules_truly_orphan' || k === 'modules_without_spec') cls = ' flag';
-    if (k === 'specs_with_test_coverage' && v > 0) cls = ' good';
+    if (k === 'specs_with_linked_tests' && v > 0) cls = ' good';
     if (k === 'specs_without_implementation' && v > 0) cls = ' flag';
     h += `<div class="kpi${cls}"><div class="n">${esc(v)}</div><div class="k">${esc(label)}</div></div>`;
   });

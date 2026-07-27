@@ -1357,9 +1357,20 @@ def compute_endpoints(
 
 
 def _is_test_scaffold_path(file_path: str) -> bool:
-    """True for tests/, conftest.py, and pytest fixture helper dirs."""
+    """True for any test file, plus conftest.py and fixture helper dirs.
+
+    Delegates the "is this a test file" half to ``_is_test_file_path`` instead
+    of keeping a second, narrower copy. The copy only knew Python conventions,
+    so ``filter_api_endpoints`` let routes declared inside ``*.test.ts`` through
+    and ``find_endpoints`` listed them as real endpoints — on a Hono backend
+    that surfaced `POST /login` from `auth.test.ts` next to the genuine one in
+    `auth.ts`, with nothing to tell them apart.
+
+    The pytest-specific extras below are NOT part of the general heuristic
+    (a ``fixtures/`` dir is scaffolding but not a test file), so they stay here.
+    """
     fp = file_path.replace("\\", "/").lstrip("/")
-    if fp.startswith("tests/") or "/tests/" in f"/{fp}":
+    if _is_test_file_path(fp):
         return True
     base = fp.rsplit("/", 1)[-1]
     if base == "conftest.py" or base.startswith("conftest_"):
@@ -1404,20 +1415,47 @@ def filter_api_endpoints(
 _TEST_REACH_DEPTH = 3
 
 
+# Directory segments that mark a test tree. Matched as EXACT path segments,
+# never as substrings — `contest/`, `latest/`, `protest/` must not match.
+# `spec` (RSpec) is in; `specs` (plural) is NOT — that's the OpenSpec/docs
+# convention, not a test one.
+_TEST_DIR_SEGMENTS = frozenset({"tests", "test", "__tests__", "spec"})
+
+_TEST_CODE_EXTS = ("ts", "tsx", "js", "jsx", "mjs", "cjs")
+
+# Basename suffixes, each ANCHORED on its separator so a near-miss can't
+# match: `latest.ts` ends with `test.ts` but not `.test.ts`; likewise
+# `protest.ts`. `_spec.` is anchored to known extensions rather than left as
+# a bare substring — in a spec-tracking tool, `import_spec.py` is a plausible
+# real source file.
+_TEST_BASENAME_SUFFIXES = (
+    tuple(f".{w}.{e}" for w in ("test", "spec") for e in _TEST_CODE_EXTS)
+    + tuple(f"_spec.{e}" for e in _TEST_CODE_EXTS)
+    + ("_spec.rb",)
+)
+
+
 def _is_test_file_path(path: str) -> bool:
-    """True if `path` is a test file. Same heuristic as the nested
-    ``is_test_path`` in ``find_orphan_tests`` (lifted to module scope so the
-    Spec-test-coverage derivation reuses it instead of reinventing detection):
-    anything under a ``tests/`` tree or matching ``test_*`` / ``*_test.*``
-    naming. Path is project-relative (no leading slash)."""
-    base = path.rsplit("/", 1)[-1]
+    """True if `path` is a test file. Shared by ``find_orphan_tests``, the
+    Spec-test-coverage derivation and the project-overview ranking, so all
+    three agree on what counts as a test. Path is project-relative.
+
+    Matches, by language convention:
+    - a ``tests`` / ``test`` / ``__tests__`` / ``spec`` **path segment**
+      (Python, Go, Java ``src/test/``, Jest ``__tests__/``, RSpec ``spec/``)
+    - basename prefix ``test_`` (Python)
+    - basename infix ``_test.`` (Python ``_test.py``, Go ``_test.go``, …)
+    - basename suffix ``.test.<jsext>`` / ``.spec.<jsext>`` /
+      ``_spec.<jsext>`` / ``_spec.rb`` (JS/TS, Ruby)
+    """
+    fp = path.replace("\\", "/").lstrip("/")
+    segments = fp.split("/")
+    base = segments[-1]
     return (
-        path.startswith("tests/")
-        or "/tests/" in path
+        not _TEST_DIR_SEGMENTS.isdisjoint(segments[:-1])
         or base.startswith("test_")
-        or base.endswith("_test.py")
-        or base.endswith("_test.go")
         or "_test." in base
+        or base.endswith(_TEST_BASENAME_SUFFIXES)
     )
 
 
@@ -1720,13 +1758,13 @@ def compute_coverage(st: AppState, *, record: bool = True) -> dict[str, Any]:
 
     # v0.15: auto-derived per-Spec test coverage from the call graph. Reuses
     # the cached `view` (no reload). Additive — leaves the explicit-link
-    # `spec_test_coverage` / `specs_with_test_coverage` above untouched.
+    # `spec_test_coverage` / `specs_with_linked_tests` above untouched.
     spec_coverage_map = compute_spec_test_coverage(st, view)
     spec_coverage = sorted(
         spec_coverage_map.values(),
         key=lambda d: (-d["test_coverage_ratio"], d["spec_id"]),
     )
-    specs_with_any_test_coverage = sum(
+    specs_with_derived_test_coverage = sum(
         1 for d in spec_coverage if d["test_coverage_ratio"] > 0
     )
     avg_test_coverage = (
@@ -1759,7 +1797,7 @@ def compute_coverage(st: AppState, *, record: bool = True) -> dict[str, Any]:
                 pid,
                 per_spec={d["spec_id"]: d["test_coverage_ratio"] for d in spec_coverage},
                 avg=avg_test_coverage if spec_coverage else None,
-                verified_count=specs_with_any_test_coverage,
+                verified_count=specs_with_derived_test_coverage,
                 ts=datetime.now(timezone.utc).isoformat(),
             )
         except Exception:
@@ -1772,8 +1810,17 @@ def compute_coverage(st: AppState, *, record: bool = True) -> dict[str, Any]:
         "modules_unsupported_language": len(modules_unsupported_language),
         "specs_without_implementation": len(specs_no_impl),
         "specs_low_confidence": len(specs_low_conf),
-        "specs_with_test_coverage": len(spec_test_coverage),
-        "specs_with_any_test_coverage": specs_with_any_test_coverage,
+        # Two DIFFERENT mechanisms, not two views of one number. They used to
+        # be `specs_with_test_coverage` / `specs_with_any_test_coverage`, whose
+        # names read as contradictory once they diverged (17 vs 0).
+        #   linked  = Specs with ≥1 EXPLICIT `relation='tests'` spec_symbol row.
+        #   derived = Specs whose per-symbol coverage ratio is > 0 — see
+        #             compute_spec_test_coverage: a symbol counts when a test
+        #             reaches it in the call graph OR carries its own explicit
+        #             'tests' link, so "derived" names the mechanism (the
+        #             ratio), not an explicit-free source.
+        "specs_with_linked_tests": len(spec_test_coverage),
+        "specs_with_derived_test_coverage": specs_with_derived_test_coverage,
         "avg_test_coverage": avg_test_coverage,
     }
     return {
@@ -1786,7 +1833,7 @@ def compute_coverage(st: AppState, *, record: bool = True) -> dict[str, Any]:
         "specs_low_confidence": specs_low_conf,
         "spec_coverage": spec_coverage,
         "avg_test_coverage": avg_test_coverage,
-        "specs_with_any_test_coverage": specs_with_any_test_coverage,
+        "specs_with_derived_test_coverage": specs_with_derived_test_coverage,
         "spec_test_coverage": spec_test_coverage,
     }
 
@@ -2023,6 +2070,18 @@ def compute_project_overview(
     PageRank correctly ranks them as high-centrality but they're structural
     patterns, not semantically distinctive symbols. Set True to see the
     raw PageRank top.
+
+    Symbols living in test files are always dropped from `top_symbols` —
+    the tool answers "what is this repo's core", and test helpers are not
+    it. Their qualified names come back in `test_symbols_filtered`, so
+    nothing is silently discarded.
+
+    Caveat on that field, unlike `structural_patterns_filtered` (a full DB
+    query, therefore exhaustive): it is collected inside the ranking loop,
+    which stops at 20 kept symbols, and is itself capped at 20. So it lists
+    the top test symbols that OUTRANKED the last entry of `top_symbols` —
+    not every test symbol in the project. That is the actionable set (the
+    ones that would have polluted the answer), not a census.
     """
     pid = st.project_id
     langs = [
@@ -2041,6 +2100,7 @@ def compute_project_overview(
     ranks = graph_pagerank(view)
     ordered = sorted(ranks.items(), key=lambda x: x[1], reverse=True)
     top_syms: list[dict[str, Any]] = []
+    test_outranked: list[str] = []
     for sid, score in ordered:
         meta = view.sym_meta.get(sid)
         if meta is None:
@@ -2050,6 +2110,12 @@ def compute_project_overview(
         if structural_names and meta.get("name") in structural_names:
             continue
         if _is_bundler_output_path(meta.get("file_path") or ""):
+            continue
+        # Test scaffolding (createMockDb, signTestToken, fakeAuthMiddleware…)
+        # ranks high by PageRank but is the opposite of "what is this repo's
+        # core". Filtered, and surfaced by name so the caller can still see it.
+        if _is_test_file_path(meta.get("file_path") or ""):
+            test_outranked.append(meta.get("qualified_name") or meta.get("name") or "")
             continue
         top_syms.append({**meta, "pagerank": round(score, 6)})
         if len(top_syms) >= 20:
@@ -2067,6 +2133,11 @@ def compute_project_overview(
         "languages": langs,
         "top_symbols": top_syms,
         "structural_patterns_filtered": sorted(structural_names),
+        # Capped: when fewer than 20 symbols survive the filters the loop
+        # never breaks and scans the whole PageRank ordering, so this would
+        # otherwise carry EVERY test symbol in the project into a response
+        # that has no pagination and was fixed-size by design.
+        "test_symbols_filtered": test_outranked[:20],
         "specs_total": int(spec_total),
         "specs_linked": int(spec_linked),
     }
@@ -2925,7 +2996,12 @@ def register(mcp: FastMCP) -> None:
           etc.). PageRank correctly identifies them as central but they
           carry near-zero "what is this codebase about" signal. Pass
           `include_structural_patterns=True` to keep them. The names
-          actually filtered come back in `structural_patterns_filtered`.""" + WORKSPACE_DOCSTRING_NOTE
+          actually filtered come back in `structural_patterns_filtered`.
+        - test-file symbols (`createMockDb`, `signTestToken`,
+          `fakeAuthMiddleware`, …). Test scaffolding ranks high by PageRank
+          but is the opposite of "what is this repo's core". No opt-out;
+          the ones that outranked the returned top-N are listed by
+          qualified name in `test_symbols_filtered`.""" + WORKSPACE_DOCSTRING_NOTE
         return compute_project_overview(
             get_state(workspace),
             include_infrastructure,
@@ -3334,6 +3410,7 @@ def register(mcp: FastMCP) -> None:
         - `spec_test_coverage` (v0.8 P2 fix #9): Specs that have ≥1 `relation='tests'`
           link, with the count. Use this to spot Specs implemented but not
           tested (Spec in this list with low test_count → coverage gap).
+          Counted as `counts.specs_with_linked_tests`.
         - `spec_coverage` (v0.15): per-Spec AUTO-DERIVED test coverage from the
           call graph. Each entry is `{spec_id, title, test_coverage_ratio,
           tested_symbols, total_symbols, coverage_source}`. A Spec's
@@ -3342,8 +3419,16 @@ def register(mcp: FastMCP) -> None:
           `relation='tests'` link (explicit); `coverage_source`
           ∈ {derived, explicit, both, none}. No hand-linking required —
           this is the differentiator over the explicit-only `spec_test_coverage`
-          above. Rollups `avg_test_coverage` and `specs_with_any_test_coverage`
-          (Specs with ratio>0) are also in `counts`.
+          above. Rollups `avg_test_coverage` and
+          `specs_with_derived_test_coverage` (Specs with ratio>0) are also
+          in `counts`.
+
+        The two test-coverage counts measure DIFFERENT mechanisms and can
+        legitimately disagree — they are not two views of one number:
+        `specs_with_linked_tests` counts EXPLICIT `relation='tests'` links;
+        `specs_with_derived_test_coverage` counts Specs whose derived ratio
+        is > 0. (These were previously named `specs_with_test_coverage` /
+        `specs_with_any_test_coverage`, which read as contradictory.)
 
         v0.7 (B3): paginated. `limit` (default 200) caps each list per
         call; `cursor` resumes; `summary_only=True` returns only the
@@ -3396,7 +3481,7 @@ def register(mcp: FastMCP) -> None:
             "spec_test_coverage": spectc_p,
             "spec_coverage": speccov_p,
             "avg_test_coverage": cov["avg_test_coverage"],
-            "specs_with_any_test_coverage": cov["specs_with_any_test_coverage"],
+            "specs_with_derived_test_coverage": cov["specs_with_derived_test_coverage"],
             "next_cursor": {
                 "modules_without_spec": mw_next,
                 "modules_implicitly_covered": mi_next,
@@ -3447,16 +3532,7 @@ def register(mcp: FastMCP) -> None:
             "Treat this as an upper bound."
         )
 
-        def is_test_path(p: str) -> bool:
-            base = p.rsplit("/", 1)[-1]
-            return (
-                p.startswith("tests/")
-                or "/tests/" in p
-                or base.startswith("test_")
-                or base.endswith("_test.py")
-                or base.endswith("_test.go")
-                or "_test." in base
-            )
+        is_test_path = _is_test_file_path
 
         test_rows = st.conn.execute(
             """SELECT s.id, s.qualified_name, s.kind, f.path AS file_path

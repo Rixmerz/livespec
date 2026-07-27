@@ -59,9 +59,9 @@ async def test_spec_coverage_derived_from_call_graph(workspace):
         f"coverage_source should include derived: {entry}"
     )
     # Rollups present and reflect the credited Spec.
-    assert out["specs_with_any_test_coverage"] >= 1
+    assert out["specs_with_derived_test_coverage"] >= 1
     assert out["avg_test_coverage"] > 0
-    assert out["counts"]["specs_with_any_test_coverage"] >= 1
+    assert out["counts"]["specs_with_derived_test_coverage"] >= 1
     assert out["counts"]["avg_test_coverage"] > 0
 
 
@@ -163,7 +163,7 @@ async def test_spec_coverage_zero_when_nothing_reaches_impl(workspace):
 @pytest.mark.asyncio
 async def test_spec_coverage_backward_compat_explicit_fields_intact(workspace):
     """The v0.8 explicit-link fields (`spec_test_coverage` /
-    `counts.specs_with_test_coverage`) must remain exactly as before alongside
+    `counts.specs_with_linked_tests`) must remain exactly as before alongside
     the new auto-derived `spec_coverage` block."""
     pkg = workspace / "pkg"
     pkg.mkdir()
@@ -196,8 +196,8 @@ async def test_spec_coverage_backward_compat_explicit_fields_intact(workspace):
         out = (await c.call_tool("audit_coverage", {})).data
 
     # Backward-compat: explicit-link signal still present and correct.
-    assert out["counts"]["specs_with_test_coverage"] == 1, (
-        f"explicit specs_with_test_coverage must be intact: {out['counts']}"
+    assert out["counts"]["specs_with_linked_tests"] == 1, (
+        f"explicit specs_with_linked_tests must be intact: {out['counts']}"
     )
     assert any(
         r["spec_id"] == "SPEC-200" and r["test_count"] == 1

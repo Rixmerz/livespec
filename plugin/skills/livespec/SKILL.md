@@ -58,7 +58,7 @@ it is not a background watcher you should lean on while editing.
 | Dead-code candidates | `find_dead_code()` — respects entry points / `pub` / frameworks |
 | Orphan tests | `find_orphan_tests()` |
 | HTTP/CLI entry points | `find_endpoints(framework=None)` — see the Hono trap below; prefer `summary_only=True` if JSON is huge |
-| Project snapshot | `get_project_overview()` |
+| Project snapshot | `get_project_overview()` — test-file symbols are excluded from `top_symbols` |
 | Vector embeddings for `search` | `embed_chunks()` — backfills any unembedded chunks |
 | Static Spec Explorer bundle | `export_explorer(base?, head?, framework?)` |
 | Scratch note on a symbol | `agent_scratch(qname, note)` / `agent_scratch_get(qname)` / `agent_scratch_clear(qname?)` |
@@ -71,6 +71,29 @@ the sweep returns 0 and Hono files are present, the payload carries
 `not_swept: ["hono"]` plus a `hint` — read it before concluding a repo has no
 routes. All other frameworks (flask, fastapi, click, pytest, fastmcp, celery,
 django, nextjs, fresh, sveltekit, remix, spring, angular) *are* in the default sweep.
+
+**What counts as a test file.** `find_orphan_tests`, the auto-derived Spec test
+coverage in `audit_coverage`, and the `top_symbols` filter in
+`get_project_overview` all share one detector. It matches a `tests` / `test` /
+`__tests__` / `spec` **path segment**, a `test_` basename prefix, a `_test.`
+basename infix, and the `.test.` / `.spec.` / `_spec.` basename suffixes for
+`.ts .tsx .js .jsx .mjs .cjs` plus `_spec.rb`. Matching is segment- and
+suffix-anchored, so `src/contest/`, `src/latest.ts`, `src/protest.ts` are not
+tests. `specs/` (plural — the OpenSpec/docs convention) is deliberately NOT a
+test segment.
+
+**`audit_coverage` — two test counts, two mechanisms.** `counts` carries
+`specs_with_linked_tests` (Specs with ≥1 explicit `relation='tests'` link) and
+`specs_with_derived_test_coverage` (Specs whose auto-derived call-graph ratio is
+> 0). They measure different things and can legitimately disagree — that is not
+corrupt data. They were formerly `specs_with_test_coverage` /
+`specs_with_any_test_coverage`, whose names read as contradictory.
+
+**`get_project_overview` — test scaffolding is filtered.** Symbols in test files
+(`createMockDb`, `signTestToken`, `fakeAuthMiddleware`) rank high by PageRank but
+answer the wrong question. They are dropped from `top_symbols` and reported by
+qualified name in `test_symbols_filtered` (those that outranked the last returned
+entry — not an exhaustive census of test symbols).
 
 **`grep_in_indexed_files` — the stale-index trap.** It only reads files the
 index knows about, so an edit or a brand-new file since the last

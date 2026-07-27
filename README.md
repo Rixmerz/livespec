@@ -435,7 +435,7 @@ Always registered (including markdown Spec import + Explorer export).
   modules in languages whose annotation extractor isn't wired yet
   (`modules_unsupported_language`), Specs without implementation, Specs with
   low avg confidence. **(v0.16)** Also reports auto-derived per-Spec **test
-  coverage** (`spec_coverage`, `avg_test_coverage`, `specs_with_any_test_coverage`):
+  coverage** (`spec_coverage`, `avg_test_coverage`, `specs_with_derived_test_coverage`):
   an implementing symbol counts as tested when a test's forward call-cone
   reaches it (depth 3) or an explicit `relation='tests'` link exists — so
   Spec test-coverage works with no hand-linking for projects whose tests

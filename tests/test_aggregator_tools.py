@@ -208,7 +208,7 @@ async def test_audit_coverage_excludes_package_markers(workspace):
 async def test_audit_coverage_credits_test_coverage(workspace):
     """v0.8 P2 fix #9: Specs with spec_symbol rows whose relation='tests'
     show up in `spec_test_coverage` and are counted in
-    `counts.specs_with_test_coverage`."""
+    `counts.specs_with_linked_tests`."""
     pkg = workspace / "pkg"
     pkg.mkdir()
     (pkg / "__init__.py").write_text("")
@@ -241,7 +241,7 @@ async def test_audit_coverage_credits_test_coverage(workspace):
         )
         out = (await c.call_tool("audit_coverage", {})).data
 
-    assert out["counts"]["specs_with_test_coverage"] == 1, (
+    assert out["counts"]["specs_with_linked_tests"] == 1, (
         f"expected SPEC-200 with 1 test, got counts: {out['counts']}"
     )
     assert any(

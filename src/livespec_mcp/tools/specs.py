@@ -24,7 +24,7 @@ from livespec_mcp.domain.graph import graph_pagerank, load_graph
 from livespec_mcp.domain.matcher import scan_annotations
 from livespec_mcp.state import get_state
 from livespec_mcp.tools._errors import mcp_error
-from livespec_mcp.tools.analysis import symbol_not_found_error
+from livespec_mcp.tools.analysis import _is_test_file_path, symbol_not_found_error
 from livespec_mcp.workspace_param import WORKSPACE_DOCSTRING_NOTE, Workspace
 
 SpecKind = Literal[
@@ -700,12 +700,15 @@ def register(
         # v0.8 P2 fix #10: skip test modules — they exercise features but
         # aren't features themselves. Mirrors find_dead_code's entry-point
         # path filter.
+        # Delegates test detection rather than keeping a third copy of the
+        # heuristic: this one only knew directory conventions, so a
+        # `*.test.ts` / `*.spec.ts` file sitting beside its source was
+        # proposed as a feature. `bin/` and `scripts/` are not tests — they
+        # are excluded for the same "not a feature" reason, so they stay.
         def _is_test_path(p: str) -> bool:
             return (
-                p.startswith(("tests/", "test/", "bin/", "scripts/"))
-                or "/tests/" in p
-                or "/test/" in p
-                or "/__tests__/" in p
+                _is_test_file_path(p)
+                or p.startswith(("bin/", "scripts/"))
                 or "/__fixtures__/" in p
                 or "/fixtures/" in p
             )

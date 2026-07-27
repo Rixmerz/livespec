@@ -6,6 +6,65 @@ follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.26.0] - 2026-07-27
+
+### Fixed — the test-file detector was blind to JavaScript/TypeScript
+
+`_is_test_file_path` matched only Python/Go/Rust conventions (`tests/` segment,
+`test_` prefix, `*_test.py`, `*_test.go`). Measured on a real TS backend +
+frontend: **93 test files, 0 detected.** Two tools were silently wrong as a
+result — `find_orphan_tests` returned `count: 0`, which reads as "no orphan
+tests" but actually meant "no tests found at all", and `compute_spec_test_coverage`
+BFSes forward from the test-symbol set, so an empty seed gave every Spec a 0.0
+ratio on a repo with a real suite.
+
+The detector now also matches `__tests__/` and `test` / `spec` path segments,
+the `.test.` / `.spec.` / `_spec.` basename suffixes for `.ts .tsx .js .jsx
+.mjs .cjs`, and Ruby's `_spec.rb`. Matching is segment- and suffix-anchored, so
+`src/contest/index.ts`, `src/latest.ts`, `src/protest.ts` and
+`src/attestation.ts` do not match. The duplicate copy of the heuristic nested
+inside `find_orphan_tests` was deleted in favour of the shared helper.
+
+Note for trend history: `spec_coverage_snapshot` rows keep the same shape, but
+`avg` / `verified_count` will now be non-zero on JS/TS repos where they were 0.0,
+so pre-fix snapshots are not comparable with post-fix ones.
+
+### Changed — `audit_coverage` test-coverage counts renamed (response shape)
+
+`specs_with_test_coverage: 17` next to `specs_with_any_test_coverage: 0` read as
+corrupt data. They are not contradictory — they measure different mechanisms.
+Renamed so the distinction is legible:
+
+| old | new | measures |
+|---|---|---|
+| `specs_with_test_coverage` | `specs_with_linked_tests` | Specs with ≥1 explicit `relation='tests'` link |
+| `specs_with_any_test_coverage` | `specs_with_derived_test_coverage` | Specs whose auto-derived call-graph ratio is > 0 |
+
+No back-compat aliases. The Spec Explorer bundle and README were updated to match.
+
+### Changed — `get_project_overview` no longer ranks test scaffolding as the core
+
+On a real TS backend, 5 of the top 10 PageRank symbols were test infrastructure
+(`createMockDb`, `makeModel`, `signTestToken`, `bearerToken`,
+`fakeAuthMiddleware`), which defeats the tool's purpose. Symbols in test files
+are now excluded from `top_symbols`, in the same spirit as the existing
+bundler-output and structural-pattern filters. Nothing is silently dropped: the
+new `test_symbols_filtered` field lists them by qualified name. Unlike
+`structural_patterns_filtered` (a full DB query) it is collected inside the
+ranking loop, so it holds the test symbols that outranked the last returned
+entry — the actionable set, not a census.
+
+### Fixed — the same blindness in two sibling detectors
+
+`_is_test_scaffold_path` (endpoint filtering) and the nested `_is_test_path` in
+`specs.py` each kept their own narrower copy of the heuristic, so widening the
+main one left them Python-only. Verified live on a Hono backend before fixing:
+`find_endpoints` listed `POST /register`, `/login`, `/refresh` and `/logout`
+from `src/routes/v1/auth.test.ts` **beside the genuine routes of the same name**
+in `auth.ts`, with nothing to distinguish them. Both now delegate; the extras
+that are scaffolding-but-not-a-test-file (`conftest.py`, `fixtures/`,
+`bin/`, `scripts/`) stay where they were.
+
 ## [0.25.0] - 2026-07-27
 
 ### Fixed — `grep_in_indexed_files` no longer hides an incomplete answer
