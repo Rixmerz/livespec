@@ -42,8 +42,27 @@ def _pinned_version() -> str:
     return m.group(1)
 
 
+def _manifest_version() -> str:
+    path = REPO / "plugin" / ".claude-plugin" / "plugin.json"
+    return json.loads(path.read_text(encoding="utf-8"))["version"]
+
+
 def test_mcp_json_pin_matches_package_version():
     assert _pinned_version() == _package_version(), (
         f"plugin/.mcp.json pins livespec@{_pinned_version()} but pyproject.toml "
         f"declares {_package_version()} — bump the pin with the release"
+    )
+
+
+def test_plugin_manifest_version_matches_package_version():
+    # The Claude Code plugin updater compares the DECLARED manifest version,
+    # not the commit. Ship a new server pin while leaving this string behind
+    # and `claude plugin update` reports "already up to date" — the fix reaches
+    # no install, and nothing anywhere errors. This gap was live during the
+    # 0.27.0 release: .mcp.json and pyproject were bumped, the manifest was not,
+    # and the existing pin test could not see it.
+    assert _manifest_version() == _package_version(), (
+        f"plugin/.claude-plugin/plugin.json declares {_manifest_version()} but "
+        f"pyproject.toml declares {_package_version()} — the updater keys off "
+        f"the manifest, so every install would silently stay on the old version"
     )
