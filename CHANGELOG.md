@@ -6,6 +6,36 @@ follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.27.0] - 2026-07-27
+
+### Fixed — `SPEC` was hardcoded as the only valid spec-ID prefix
+
+Any project using its own ID scheme (`BE-RF-102`, `FE-RF-119`, `ADR-007`) could
+never use `@spec:` annotations. Two regexes and the normalizer all assumed
+`SPEC-NNN`:
+
+- `_SPEC_TOKEN_RE` and `_VERB_RE` (level-2, verb-anchored) each hardcoded
+  `SPEC[-_]?\d{1,6}`, so `@spec:BE-RF-102` parsed the verb and then dropped the
+  token — the annotation linked to nothing, silently.
+- `_normalize_spec` extracted digits from the *whole* string and re-emitted
+  `SPEC-NNN`, so even a matching token collapsed namespaces: `BE-RF-56` and
+  `FE-RF-56` both became `SPEC-056`.
+
+Measured on a real TS backend + frontend: **1022 annotations, 0 linkable.**
+
+The accepted prefix set is now **derived from the spec IDs already in the
+store** (`derive_spec_prefixes`, always unioning `SPEC`) rather than configured.
+Deriving it means zero config surface, no drift from reality, and no false
+positives — a generic `[A-Z]+-[A-Z]+-\d+` shape was rejected precisely because
+it would eat `RFC-2119` and `ISO-8601` out of prose. `scan_annotation_verbs`
+builds its token shape from the same derived set, so the diagnostic and the
+linker can no longer disagree about what counts as a valid token.
+
+Prefix-preserving normalization keeps the store's existing padding:
+`BE-RF-56` → `BE-RF-056`, `SPEC-1` → `SPEC-001`, `SPEC-901` unchanged.
+`parse_annotations` defaults to `prefixes=("SPEC",)`, so every existing caller
+is byte-identical.
+
 ## [0.26.0] - 2026-07-27
 
 ### Fixed — the test-file detector was blind to JavaScript/TypeScript

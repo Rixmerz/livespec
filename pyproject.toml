@@ -1,6 +1,6 @@
 [project]
 name = "livespec"
-version = "0.26.0"
+version = "0.27.0"
 description = "Code intelligence for AI agents: call graph, impact analysis, and bidirectional Spec <-> code traceability"
 readme = "README.md"
 requires-python = ">=3.10"
