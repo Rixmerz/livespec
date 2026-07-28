@@ -6,6 +6,22 @@ follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.28.1] - 2026-07-28
+
+### Fixed — Express/Hono handlers resolve via import bindings
+
+`wrap(details)` no longer links to a colliding `services.suppliers.details`.
+Route files' import map prefers the imported module; anonymous
+`export default async () => {}` mints a basename symbol (`liveness`) so
+default-export controllers link. Member handlers keep
+`handler_import=healthController` for the same scoping.
+
+### Docs — reload MCP after local checkout edits
+
+`mcp_auth` alone may not restart a long-lived `uv run livespec-mcp` process.
+Kill the local process (or toggle the server off/on) so the host respawns
+from the checkout.
+
 ## [0.28.0] - 2026-07-28
 
 ### Added — stable `spec_id` round-trip for OpenSpec export/sync

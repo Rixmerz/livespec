@@ -54,8 +54,9 @@ code even when the marketplace plugin still pins PyPI:
 }
 ```
 
-After edits, restart the MCP server (toggle in Cursor Settings → MCP) so the
-stdio process reloads the working tree.
+After edits, restart the MCP server (toggle in Cursor Settings → MCP, or kill
+the `uv … run livespec-mcp` process so the host respawns it). `mcp_auth` alone
+may leave a long-lived stdio process on the old code.
 
 ### Marketplace / PyPI
 

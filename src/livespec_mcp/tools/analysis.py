@@ -24,6 +24,8 @@ from fastmcp import FastMCP
 from livespec_mcp.config import load_repo_config
 from livespec_mcp.domain.extractors import (
     HTTP_ROUTE_DECORATOR_LASTSEGS,
+    _ts_collect_imports,
+    get_parser,
     infer_python_http_framework,
     parse_python_http_route,
     scan_hono_routes,
@@ -1120,6 +1122,90 @@ def _structural_pattern_names(conn, project_id: int, threshold: int) -> set[str]
     return {r["name"] for r in rows if r["name"]}
 
 
+def _module_path_candidates(module: str) -> list[str]:
+    """Dotted in-project module → candidate relative file paths."""
+    base = module.replace(".", "/")
+    out: list[str] = []
+    for ext in (".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"):
+        out.append(base + ext)
+    for ext in (".ts", ".tsx", ".js", ".jsx"):
+        out.append(f"{base}/index{ext}")
+    return out
+
+
+def _resolve_call_style_handler(
+    conn,
+    project_id: int,
+    route_file_id: int,
+    route_rel_path: str,
+    source: str,
+    language: str,
+    handler_name: str | None,
+    handler_import: str | None,
+) -> Any | None:
+    """Resolve a Hono/Express handler to a symbol row.
+
+    Prefers the file's import map so ``wrap(details)`` links to
+    ``src.controllers.details`` (default export) instead of a colliding
+    ``src.services.suppliers.details`` elsewhere in the project.
+    """
+    if not handler_name:
+        return None
+
+    import_mod: str | None = None
+    if language in ("typescript", "javascript", "tsx") and handler_import:
+        try:
+            parent = Path(route_rel_path).parent
+            current_dir = () if str(parent) in (".", "") else tuple(parent.parts)
+            src_bytes = source.encode("utf-8", errors="replace")
+            tree = get_parser(language).parse(src_bytes)
+            imports = _ts_collect_imports(tree.root_node, src_bytes, current_dir)
+            import_mod = imports.get(handler_import)
+        except Exception:
+            import_mod = None
+
+    basename = (import_mod or "").rsplit(".", 1)[-1] if import_mod else ""
+
+    # 1) Import-scoped: restrict candidates to the imported module's file.
+    if import_mod and ("." in import_mod or "/" in import_mod or import_mod.startswith("src")):
+        candidates = _module_path_candidates(import_mod)
+        placeholders = ",".join("?" * len(candidates))
+        rows = conn.execute(
+            f"""SELECT s.qualified_name, s.kind, s.start_line, s.end_line, s.name,
+                       f.path AS file_path
+                FROM symbol s JOIN file f ON f.id=s.file_id
+                WHERE f.project_id=? AND f.path IN ({placeholders})""",
+            (project_id, *candidates),
+        ).fetchall()
+        if rows:
+            def rank(r) -> tuple[int, int]:
+                # Prefer exact handler name, then module basename (default export),
+                # then any real function, then __module__ fallback.
+                if r["name"] == handler_name:
+                    return (0, r["start_line"] or 0)
+                if basename and r["name"] == basename:
+                    return (1, r["start_line"] or 0)
+                if r["kind"] == "function" and r["name"] != "__module__":
+                    return (2, r["start_line"] or 0)
+                if r["name"] == "__module__":
+                    return (3, r["start_line"] or 0)
+                return (4, r["start_line"] or 0)
+
+            rows = sorted(rows, key=rank)
+            best = rows[0]
+            if rank(best)[0] <= 3:
+                return best
+
+    # 2) Same-file then any-name fallback (previous behaviour).
+    return conn.execute(
+        """SELECT s.qualified_name, s.kind, s.start_line, s.end_line
+           FROM symbol s JOIN file f ON f.id=s.file_id
+           WHERE f.project_id=? AND s.name=?
+           ORDER BY (s.file_id=?) DESC LIMIT 1""",
+        (project_id, handler_name, route_file_id),
+    ).fetchone()
+
+
 def compute_endpoints(
     st: AppState,
     framework: str | None = None,
@@ -1329,14 +1415,16 @@ def compute_endpoints(
                 kind = "route"
                 start_line = end_line = rt["line"]
                 if rt["handler_name"]:
-                    sym = st.conn.execute(
-                        """SELECT s.qualified_name, s.kind, s.start_line,
-                                  s.end_line
-                           FROM symbol s JOIN file f ON f.id=s.file_id
-                           WHERE f.project_id=? AND s.name=?
-                           ORDER BY (s.file_id=?) DESC LIMIT 1""",
-                        (pid, rt["handler_name"], fr["id"]),
-                    ).fetchone()
+                    sym = _resolve_call_style_handler(
+                        st.conn,
+                        pid,
+                        int(fr["id"]),
+                        fr["path"],
+                        src,
+                        fr["language"],
+                        rt.get("handler_name"),
+                        rt.get("handler_import") or rt.get("handler_name"),
+                    )
                     if sym is not None:
                         qname = sym["qualified_name"]
                         kind = sym["kind"]
@@ -3391,6 +3479,9 @@ def register(mcp: FastMCP) -> None:
         Unreleased: ``framework='express'`` uses the same call-style scanner
         for Express ``router.get/post/...`` (files that mention ``express``).
         Reports ``express_method`` / ``express_path`` plus ``http_*``.
+        Handlers resolve via the route file's import map (``wrap(details)`` →
+        imported controller, not a same-named symbol elsewhere) and anonymous
+        ``export default`` controllers mint a basename symbol.
         """
         st = get_state(workspace)
 

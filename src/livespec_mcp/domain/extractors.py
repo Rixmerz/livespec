@@ -978,6 +978,36 @@ def _ts_extract(
         # and is caught by the standard def-node branch, which is correct —
         # that one is a real named method, not an anonymous literal.
 
+        # ----- export default <fn> -----
+        # `export default async (ctx) => {}` / `export default function() {}`
+        # have no binding name. Mint one from the module basename so
+        # `import liveness from './controllers/liveness'` can resolve.
+        # Named `export default function foo()` keeps `foo`.
+        if (
+            language in ("javascript", "typescript", "tsx")
+            and node.type == "export_statement"
+            and any(c.type == "default" for c in node.children)
+        ):
+            value = next(
+                (
+                    c
+                    for c in node.children
+                    if c.type in _ANONYMOUS_FN_TYPES
+                    or c.type in ("function_declaration", "function_expression", "class_declaration")
+                ),
+                None,
+            )
+            if value is not None:
+                name = find_name(value)
+                if not name:
+                    name = module_name.rsplit(".", 1)[-1] or "default"
+                kind = "class" if "class" in value.type else "function"
+                qname = emit_symbol(value, name, parent_qname, kind)
+                _ts_collect_calls(value, qname, src_bytes, out)
+                for c in value.children:
+                    walk(c, qname)
+                return
+
         # ----- Standard def nodes -----
         if node.type in _DEF_NODE_TYPES:
             name = find_name(node)
@@ -1137,13 +1167,36 @@ def _route_handler_name(node, text) -> str | None:
     - ``wrap(ctrl.check)`` → ``check``
     Anonymous arrows / bare objects → ``None``.
     """
+    binding, _ = _route_handler_binding(node, text)
+    return binding
+
+
+def _route_handler_binding(node, text) -> tuple[str | None, str | None]:
+    """Return ``(symbol_name, import_local)`` for a route-handler AST node.
+
+    ``import_local`` is the binding to look up in the file's import map
+    (``healthController`` for ``healthController.check``, ``liveness`` for
+    ``wrap(liveness)``). ``symbol_name`` is what to find inside that module
+    (``check`` / ``liveness``).
+    """
     if node is None:
-        return None
+        return None, None
     if node.type == "identifier":
-        return text(node).strip() or None
+        name = text(node).strip() or None
+        return name, name
     if node.type == "member_expression":
         prop = node.child_by_field_name("property")
-        return text(prop).strip() if prop is not None else None
+        obj = node.child_by_field_name("object")
+        sym = text(prop).strip() if prop is not None else None
+        # Prefer the leftmost identifier as the import binding
+        # (``healthController.check`` → healthController).
+        binding = None
+        if obj is not None:
+            if obj.type == "identifier":
+                binding = text(obj).strip() or None
+            else:
+                binding = _ts_leftmost_ident(obj, text)
+        return sym, binding or sym
     if node.type == "call_expression":
         args_node = node.child_by_field_name("arguments")
         args = [
@@ -1152,23 +1205,23 @@ def _route_handler_name(node, text) -> str | None:
             if a.type not in ("(", ")", ",", "comment")
         ]
         for a in args:
-            name = _route_handler_name(a, text)
-            if name:
-                return name
+            sym, binding = _route_handler_binding(a, text)
+            if sym:
+                return sym, binding
         fn = node.child_by_field_name("function")
         if fn is not None and fn.type == "identifier":
-            return text(fn).strip() or None
+            name = text(fn).strip() or None
+            return name, name
         if fn is not None and fn.type == "member_expression":
-            prop = fn.child_by_field_name("property")
-            return text(prop).strip() if prop is not None else None
-    return None
+            return _route_handler_binding(fn, text)
+    return None, None
 
 
 def scan_hono_routes(source: str, language: str) -> list[dict]:
     """Route registrations in a Hono/Express-style app file.
 
-    v0.13 P3: returns ``[{method, path, handler_name, line}]`` for
-    ``app.get('/users', handler)`` / ``app.on('PURGE', '/cache', h)`` /
+    v0.13 P3: returns ``[{method, path, handler_name, handler_import, line}]``
+    for ``app.get('/users', handler)`` / ``app.on('PURGE', '/cache', h)`` /
     ``app.route('/api', subApp)`` call patterns. ``use`` is middleware, not
     a route — skipped. The caller pre-filters files (source must mention
     'hono' or 'express') and resolves handler names to symbols.
@@ -1177,6 +1230,8 @@ def scan_hono_routes(source: str, language: str) -> list[dict]:
     (``app`` / ``router`` / ``*Router`` / …). Drops ``axios.get`` /
     ``cache.get`` / ``headers.get`` false positives. Handler names also
     resolve ``obj.method`` and ``wrap(fn)`` (not only bare identifiers).
+    ``handler_import`` is the local binding used to consult the file's
+    import map (``healthController`` for ``healthController.check``).
     """
     try:
         parser = get_parser(language)
@@ -1221,10 +1276,12 @@ def scan_hono_routes(source: str, language: str) -> list[dict]:
                     if a.type not in ("(", ")", ",", "comment")
                 ]
                 handler = None
+                handler_import = None
                 for a in reversed(args):
-                    name = _route_handler_name(a, text)
-                    if name:
-                        handler = name
+                    sym, binding = _route_handler_binding(a, text)
+                    if sym:
+                        handler = sym
+                        handler_import = binding
                         break
                 line = node.start_point[0] + 1
                 if pname in _HONO_ROUTE_VERBS and args and str_arg(args[0]) is not None:
@@ -1232,6 +1289,7 @@ def scan_hono_routes(source: str, language: str) -> list[dict]:
                         "method": pname.upper(),
                         "path": str_arg(args[0]),
                         "handler_name": handler,
+                        "handler_import": handler_import,
                         "line": line,
                     })
                 elif pname == "on" and len(args) >= 2 and str_arg(args[1]) is not None:
@@ -1239,6 +1297,7 @@ def scan_hono_routes(source: str, language: str) -> list[dict]:
                         "method": (str_arg(args[0]) or "ON").upper(),
                         "path": str_arg(args[1]),
                         "handler_name": handler,
+                        "handler_import": handler_import,
                         "line": line,
                     })
                 elif pname == "route" and args and str_arg(args[0]) is not None:
@@ -1246,6 +1305,7 @@ def scan_hono_routes(source: str, language: str) -> list[dict]:
                         "method": "ROUTE",
                         "path": str_arg(args[0]),
                         "handler_name": handler,
+                        "handler_import": handler_import,
                         "line": line,
                     })
         for c in node.children:
@@ -1299,6 +1359,10 @@ def _is_named_scope_boundary(node) -> bool:
         parent = getattr(node, "parent", None)
         if parent is not None and parent.type == "variable_declarator":
             return True
+        # `export default async () => {}` — we mint a basename symbol for these
+        if parent is not None and parent.type == "export_statement":
+            if any(c.type == "default" for c in parent.children):
+                return True
     return False
 
 
