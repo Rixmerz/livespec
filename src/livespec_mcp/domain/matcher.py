@@ -161,13 +161,20 @@ def _relation_for(verb: str) -> str:
 
 
 def _parse_prefix_payload(
-    rest: str, token_re: re.Pattern[str] = _SPEC_TOKEN_RE
+    rest: str,
+    token_re: re.Pattern[str] = _SPEC_TOKEN_RE,
+    *,
+    known_ids: frozenset[str] | None = None,
 ) -> tuple[list[str], float | None]:
     """Parse the payload after `@verb:`.
 
     Returns (spec_ids, confidence_override). Confidence override is `None`
     when no `:N.NN` suffix is present, in which case the caller should use
     the default for the verb's level.
+
+    When ``known_ids`` is provided (typically slug OpenSpec ids from the store),
+    also match exact case-insensitive tokens that appear in that set — so
+    ``@spec:auth-user-login`` works without inventing an open kebab regex.
     """
     payload = rest
     conf: float | None = None
@@ -182,11 +189,25 @@ def _parse_prefix_payload(
         except ValueError:
             conf = None
     spec_ids = [_normalize_match(tm) for tm in token_re.finditer(payload)]
+    if known_ids:
+        # Map casefold → canonical store id
+        by_fold = {k.casefold(): k for k in known_ids if len(k) <= 80}
+        # Tokens: comma/whitespace separated fragments after stripping prefixes
+        for raw in re.split(r"[,;\s]+", payload):
+            tok = raw.strip().strip("`")
+            if not tok or len(tok) > 80:
+                continue
+            canon = by_fold.get(tok.casefold())
+            if canon and canon not in spec_ids:
+                spec_ids.append(canon)
     return spec_ids, conf
 
 
 def parse_annotations(
-    text: str, prefixes: Iterable[str] = ("SPEC",)
+    text: str,
+    prefixes: Iterable[str] = ("SPEC",),
+    *,
+    known_ids: Iterable[str] | None = None,
 ) -> list[AnnotationHit]:
     """Extract all Spec annotations from a docstring/comment block.
 
@@ -194,10 +215,12 @@ def parse_annotations(
     - L1 prefix `@spec:SPEC-001` / `@implements:SPEC-001` / `@tests:SPEC-001` -> 1.0
       Multi-spec: `@spec:SPEC-001, SPEC-002` (each gets its own hit)
       Confidence override: `@spec:SPEC-001:0.85` (applies to all specs in the line)
+      OpenSpec slugs: `@spec:auth-user-login` when ``known_ids`` includes that id
     - L1 negation `@not_spec:SPEC-001` (or `@!spec:SPEC-001`) cancels every
       hit (L1 OR L2) for the listed specs in this docstring.
     - L2 verb-anchored `... implements SPEC-001` -> 0.7, with negation-window
       guard ("not", "no", "never", "doesn't", "without", "skip", "TODO").
+      Also matches ``implements auth-user-login`` when that id is in known_ids.
 
     `prefixes`: accepted spec-ID prefixes beyond `SPEC` (e.g. `("SPEC", "BE-RF")`).
     Defaults to `("SPEC",)`, byte-identical to the old hardcoded behavior —
@@ -208,6 +231,8 @@ def parse_annotations(
     prefixes_key = tuple(sorted({p.upper() for p in prefixes})) or ("SPEC",)
     token_re = make_spec_token_re(prefixes_key)
     verb_re = _make_verb_re(prefixes_key)
+    known = frozenset(known_ids) if known_ids is not None else frozenset()
+    known_fold = {k.casefold(): k for k in known if len(k) <= 80}
     hits: list[AnnotationHit] = []
     seen: set[tuple[str, str]] = set()
     negated_specs: set[str] = set()
@@ -216,7 +241,9 @@ def parse_annotations(
     for m in _PREFIX_HEAD_RE.finditer(text):
         verb = m.group("verb").lower()
         rest = m.group("rest")
-        spec_ids, conf_override = _parse_prefix_payload(rest, token_re)
+        spec_ids, conf_override = _parse_prefix_payload(
+            rest, token_re, known_ids=known or None
+        )
         if not spec_ids:
             continue
         if verb in ("not_spec", "!spec"):
@@ -231,7 +258,7 @@ def parse_annotations(
             confidence = conf_override if conf_override is not None else 1.0
             hits.append(AnnotationHit(spec_id=spec_id, relation=relation, confidence=confidence))
 
-    # Second pass: L2 verb-anchored
+    # Second pass: L2 verb-anchored (digit-prefix schemes)
     for m in verb_re.finditer(text):
         spec_id = _normalize_spec(m.group("spec"), token_re)
         relation = _relation_for(m.group("verb"))
@@ -244,6 +271,32 @@ def parse_annotations(
             continue
         seen.add(key)
         hits.append(AnnotationHit(spec_id=spec_id, relation=relation, confidence=0.7))
+
+    # Second pass (b): L2 for known OpenSpec slug ids
+    if known_fold:
+        slug_verb_re = re.compile(
+            r"""(?P<verb>implements?|tests?|references?|covers?)
+                \s+(?P<spec>[A-Za-z0-9][A-Za-z0-9._-]{0,79})\b""",
+            re.IGNORECASE | re.VERBOSE,
+        )
+        for m in slug_verb_re.finditer(text):
+            raw = m.group("spec")
+            canon = known_fold.get(raw.casefold())
+            if canon is None:
+                continue
+            # Skip if already captured as a digit-prefix token
+            if token_re.fullmatch(raw.strip()):
+                continue
+            relation = _relation_for(m.group("verb"))
+            key = (canon, relation)
+            if key in seen:
+                continue
+            window_start = max(0, m.start() - 12)
+            window = text[window_start : m.start()]
+            if _NEGATION_RE.search(window):
+                continue
+            seen.add(key)
+            hits.append(AnnotationHit(spec_id=canon, relation=relation, confidence=0.7))
 
     if negated_specs:
         hits = [h for h in hits if h.spec_id not in negated_specs]
@@ -269,10 +322,13 @@ def scan_annotations(conn: sqlite3.Connection, project_id: int) -> int:
         )
     }
     prefixes = derive_spec_prefixes(spec_map.keys())
+    known_ids = tuple(spec_map.keys())
 
     created = 0
     for r in rows:
-        for hit in parse_annotations(r["docstring"] or "", prefixes):
+        for hit in parse_annotations(
+            r["docstring"] or "", prefixes, known_ids=known_ids
+        ):
             spec_pk = spec_map.get(hit.spec_id)
             if spec_pk is None:
                 continue

@@ -113,14 +113,32 @@ def _next_spec_id(conn, project_id: int) -> str:
     # numeric order (markdown import, or legacy RF-042 ids preserved by
     # migration v11) — e.g. last-inserted SPEC-001b next to an existing
     # SPEC-002 produced a duplicate SPEC-002.
+    # Only considers SPEC-NNN shaped ids (digit suffix after SPEC).
     best = 0
     for r in conn.execute(
         "SELECT spec_id FROM spec WHERE project_id=?", (project_id,)
     ):
-        digits = "".join(c for c in r["spec_id"] if c.isdigit())
+        sid = r["spec_id"] or ""
+        if not sid.upper().startswith("SPEC"):
+            continue
+        digits = "".join(c for c in sid if c.isdigit())
         if digits:
             best = max(best, int(digits))
     return f"SPEC-{best + 1:03d}"
+
+
+def _default_spec_id(conn, project_id: int, title: str, module: str | None) -> str:
+    """Prefer an OpenSpec-shaped slug; fall back to SPEC-NNN on collision."""
+    from livespec_mcp.domain.md_specs import _ospec_spec_id
+
+    candidate = _ospec_spec_id(title, module)
+    exists = conn.execute(
+        "SELECT 1 FROM spec WHERE project_id=? AND spec_id=?",
+        (project_id, candidate),
+    ).fetchone()
+    if exists is None:
+        return candidate
+    return _next_spec_id(conn, project_id)
 
 
 def _noop_decorator(**_kwargs: Any):
@@ -173,13 +191,15 @@ def register(
     ) -> dict[str, Any]:
         """Create a Spec (functional requirement, NFR, ADR, design note, ...).
 
-        Auto-assigns spec_id (SPEC-NNN) if not provided. `kind` classifies
-        the spec — see SpecKind for the documented values (free-text column,
-        not DB-enforced, so custom kinds also work). Not idempotent — use
-        `update_spec` for changes.""" + WORKSPACE_DOCSTRING_NOTE
+        Auto-assigns ``spec_id`` from the title (+ module) as an OpenSpec-shaped
+        slug (e.g. ``auth-user-login``). Falls back to ``SPEC-NNN`` if that slug
+        already exists. Pass ``spec_id`` explicitly to force either scheme.
+        `kind` classifies the spec — see SpecKind for the documented values
+        (free-text column, not DB-enforced, so custom kinds also work). Not
+        idempotent — use `update_spec` for changes.""" + WORKSPACE_DOCSTRING_NOTE
         st = get_state(workspace)
         pid = st.project_id
-        sid = spec_id or _next_spec_id(st.conn, pid)
+        sid = spec_id or _default_spec_id(st.conn, pid, title, module)
         module_id = None
         if module:
             r = st.conn.execute(
@@ -658,7 +678,7 @@ def register(
         (kind defaults to "functional_requirement"):
 
           {
-            "proposed_spec_id": "SPEC-007",
+            "proposed_spec_id": "auth-auth",       # OpenSpec slug; SPEC-NNN on collision
             "title": "Auth",                       # humanized module name
             "description": "...",                  # first sentence of top symbol's docstring
             "module_key": "pkg.auth",
@@ -736,15 +756,15 @@ def register(
 
         # Build proposals
         proposals: list[dict[str, Any]] = []
-        next_spec_n = 0
-        # Compute starting spec id offset based on existing specs
-        last_spec = st.conn.execute(
-            "SELECT spec_id FROM spec WHERE project_id=? ORDER BY id DESC LIMIT 1",
-            (pid,),
-        ).fetchone()
-        if last_spec:
-            digits = "".join(c for c in last_spec["spec_id"] if c.isdigit())
-            next_spec_n = int(digits) if digits else 0
+        from livespec_mcp.domain.md_specs import _ospec_spec_id
+
+        existing_ids = {
+            r["spec_id"]
+            for r in st.conn.execute(
+                "SELECT spec_id FROM spec WHERE project_id=?", (pid,)
+            )
+        }
+        used_ids: set[str] = set()
 
         for group_key, syms in groups.items():
             if len(syms) < min_symbols_per_group:
@@ -784,11 +804,8 @@ def register(
 
             score = sum(s for _, s, _ in top)
 
-            next_spec_n += 1
-            proposed_spec_id = f"SPEC-{next_spec_n:03d}"
-
             proposals.append({
-                "proposed_spec_id": proposed_spec_id,
+                "proposed_spec_id": "",  # assigned after sort by score
                 "title": title,
                 "description": description,
                 "module_key": group_key,
@@ -808,16 +825,32 @@ def register(
         proposals.sort(key=lambda p: p["score"], reverse=True)
         proposals = proposals[:max_proposals]
 
-        # Re-number spec ids in score order so the highest-value group gets
-        # SPEC-{next}, second gets SPEC-{next+1}, etc. — keeps the
-        # suggestion naturally ordered.
-        if last_spec:
-            digits = "".join(c for c in last_spec["spec_id"] if c.isdigit())
-            base = int(digits) if digits else 0
-        else:
-            base = 0
-        for i, p in enumerate(proposals, start=1):
-            p["proposed_spec_id"] = f"SPEC-{base + i:03d}"
+        # Assign OpenSpec-shaped ids in score order; SPEC-NNN (MAX+1) on collision.
+        for p in proposals:
+            module_hint = (p["module_key"] or "").split(".")[-1] or None
+            candidate = _ospec_spec_id(p["title"], module_hint)
+            if candidate in existing_ids or candidate in used_ids:
+                # Temporary placeholder; resolve numeric after collecting collisions
+                p["proposed_spec_id"] = ""
+                p["_needs_numeric"] = True
+            else:
+                p["proposed_spec_id"] = candidate
+                p["_needs_numeric"] = False
+                used_ids.add(candidate)
+
+        for p in proposals:
+            if p.pop("_needs_numeric", False):
+                # Simulate MAX over existing + already-assigned SPEC-* proposals
+                best = 0
+                for sid in existing_ids | used_ids:
+                    if not (sid or "").upper().startswith("SPEC"):
+                        continue
+                    digits = "".join(c for c in sid if c.isdigit())
+                    if digits:
+                        best = max(best, int(digits))
+                sid = f"SPEC-{best + 1:03d}"
+                p["proposed_spec_id"] = sid
+                used_ids.add(sid)
 
         return {
             "proposals": proposals,

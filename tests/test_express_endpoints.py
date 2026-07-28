@@ -18,7 +18,11 @@ EXPRESS_ROUTES = (
     "  res.json([]);\n"
     "}\n"
     "\n"
+    "function liveness(req, res) { res.send('ok'); }\n"
+    "function wrap(fn) { return fn; }\n"
+    "\n"
     "router.get('/health', healthController.check);\n"
+    "router.get('/live', wrap(liveness));\n"
     "router.get('/list', listHotels);\n"
     "router.post('/search', listHotels);\n"
     "\n"
@@ -48,9 +52,24 @@ def test_scan_skips_non_router_receivers():
     assert "FlowId" not in paths
 
 
+def test_scan_resolves_member_and_wrap_handlers():
+    routes = {
+        r["path"]: r["handler_name"]
+        for r in scan_hono_routes(EXPRESS_ROUTES, "javascript")
+    }
+    assert routes["/health"] == "check"
+    assert routes["/live"] == "liveness"
+    assert routes["/list"] == "listHotels"
+
+
 @pytest.mark.asyncio
 async def test_find_endpoints_express(workspace):
     (workspace / "routes.js").write_text(EXPRESS_ROUTES)
+    (workspace / "controller").mkdir()
+    (workspace / "controller" / "healthController.js").write_text(
+        "function check(req, res) { res.send('ok'); }\n"
+        "module.exports = { check };\n"
+    )
     async with Client(mcp) as c:
         await c.call_tool("index_project", {})
         empty = (await c.call_tool("find_endpoints", {})).data
@@ -60,6 +79,7 @@ async def test_find_endpoints_express(workspace):
         out = (await c.call_tool("find_endpoints", {"framework": "express"})).data
         routes = {(e["express_method"], e["express_path"]) for e in out["endpoints"]}
         assert ("GET", "/health") in routes, routes
+        assert ("GET", "/live") in routes
         assert ("GET", "/list") in routes
         assert ("POST", "/search") in routes
         by_route = {
@@ -67,6 +87,9 @@ async def test_find_endpoints_express(workspace):
         }
         assert by_route[("GET", "/list")]["qualified_name"].endswith("listHotels")
         assert by_route[("GET", "/list")]["http_framework"] == "express"
+        # Member + wrap handlers resolve to real symbols when indexed
+        assert by_route[("GET", "/health")]["qualified_name"].endswith("check")
+        assert by_route[("GET", "/live")]["qualified_name"].endswith("liveness")
 
 
 @pytest.mark.asyncio

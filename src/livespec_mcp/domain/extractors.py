@@ -1127,6 +1127,43 @@ def _is_http_route_receiver(name: str | None) -> bool:
     return n.endswith(("router", "app", "server", "routes"))
 
 
+def _route_handler_name(node, text) -> str | None:
+    """Resolve a route-handler AST node to a linkable symbol name.
+
+    Patterns (a client Express / Hono):
+    - ``listHotels`` → ``listHotels``
+    - ``healthController.check`` → ``check`` (member property)
+    - ``wrap(liveness)`` / ``asyncHandler(fn)`` → first identifiable arg
+    - ``wrap(ctrl.check)`` → ``check``
+    Anonymous arrows / bare objects → ``None``.
+    """
+    if node is None:
+        return None
+    if node.type == "identifier":
+        return text(node).strip() or None
+    if node.type == "member_expression":
+        prop = node.child_by_field_name("property")
+        return text(prop).strip() if prop is not None else None
+    if node.type == "call_expression":
+        args_node = node.child_by_field_name("arguments")
+        args = [
+            a
+            for a in (args_node.children if args_node is not None else [])
+            if a.type not in ("(", ")", ",", "comment")
+        ]
+        for a in args:
+            name = _route_handler_name(a, text)
+            if name:
+                return name
+        fn = node.child_by_field_name("function")
+        if fn is not None and fn.type == "identifier":
+            return text(fn).strip() or None
+        if fn is not None and fn.type == "member_expression":
+            prop = fn.child_by_field_name("property")
+            return text(prop).strip() if prop is not None else None
+    return None
+
+
 def scan_hono_routes(source: str, language: str) -> list[dict]:
     """Route registrations in a Hono/Express-style app file.
 
@@ -1138,7 +1175,8 @@ def scan_hono_routes(source: str, language: str) -> list[dict]:
 
     Unreleased: only counts calls whose receiver looks like an HTTP app
     (``app`` / ``router`` / ``*Router`` / …). Drops ``axios.get`` /
-    ``cache.get`` / ``headers.get`` false positives.
+    ``cache.get`` / ``headers.get`` false positives. Handler names also
+    resolve ``obj.method`` and ``wrap(fn)`` (not only bare identifiers).
     """
     try:
         parser = get_parser(language)
@@ -1182,10 +1220,12 @@ def scan_hono_routes(source: str, language: str) -> list[dict]:
                     for a in (args_node.children if args_node is not None else [])
                     if a.type not in ("(", ")", ",", "comment")
                 ]
-                handler = next(
-                    (text(a) for a in reversed(args) if a.type == "identifier"),
-                    None,
-                )
+                handler = None
+                for a in reversed(args):
+                    name = _route_handler_name(a, text)
+                    if name:
+                        handler = name
+                        break
                 line = node.start_point[0] + 1
                 if pname in _HONO_ROUTE_VERBS and args and str_arg(args[0]) is not None:
                     routes.append({

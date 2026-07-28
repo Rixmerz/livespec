@@ -1,41 +1,44 @@
-# livespec — Self-Specs (SPEC-001 .. SPEC-013)
+# livespec — Self-Specs (dogfood)
 
-These are livespec's own specs (functional requirements), dogfooded by
-the project on itself. They live here (committed) so they are reproducible
-from a fresh clone — the live `.mcp-docs/docs.db` is gitignored and only
-exists locally.
+Canonical authoring is **OpenSpec** under [`openspec/specs/`](../../openspec/specs/).
+Each requirement keeps a stable id via `<!-- livespec:id=SPEC-NNN -->` so the
+committed link seed [`livespec-spec-links.json`](./livespec-spec-links.json)
+keeps working.
+
+This file is **legacy import-compat** only (the old `## SPEC-NNN:` catalog).
+Prefer `sync_openspec` / the OpenSpec tree for new work.
 
 ## Regeneration flow (for a cloner)
 
-1. **Index the project** — populate symbols, edges and the call graph:
+1. **Index the project**
 
    ```
    index_project(workspace="/abs/path/to/livespec-mcp")
    ```
 
-2. **Recreate the 13 Spec definitions** from this markdown file:
+2. **Import Spec definitions** from the OpenSpec tree:
 
    ```
-   import_specs_from_markdown(path="docs/requirements/livespec-specs.md")
+   sync_openspec(openspec_dir="openspec")
    ```
 
-   This re-parses SPEC-001..SPEC-013 (id, title, description) and upserts
-   them into the local `docs.db`. Idempotent — safe to re-run.
+   Equivalent one-shot import:
 
-3. **Recreate the implements/tests LINKS** from the committed seed
-   `docs/requirements/livespec-spec-links.json`:
+   ```
+   import_specs_from_markdown(path="openspec", fmt="openspec")
+   ```
+
+   Legacy fallback (same SPEC-001..SPEC-013 content):
+
+   ```
+   import_specs_from_markdown(path="docs/requirements/livespec-specs.md", fmt="livespec")
+   ```
+
+3. **Recreate Spec↔symbol links** from the seed:
 
    ```
    python scripts/apply_spec_links.py --workspace /abs/path/to/livespec-mcp
    ```
-
-   The Spec↔symbol links (which functions implement / test each Spec) are
-   NOT encoded in the Spec definitions above — they live in the JSON seed
-   as a sorted list of `{"spec_id", "qname", "relation"}` objects. The
-   script replays them through `bulk_link_spec_symbols` (one transaction,
-   `INSERT OR IGNORE` — idempotent, safe to re-run). After this step a
-   fresh clone reproduces both the Spec definitions AND their code links
-   exactly.
 
 ---
 

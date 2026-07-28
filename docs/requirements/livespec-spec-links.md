@@ -8,8 +8,9 @@ that satisfy it are committed as a deterministic data seed:
 
 ## Reproduce the links
 
-From a fresh clone, after `index_project` + `import_specs_from_markdown`
-(see the regeneration flow in [`livespec-specs.md`](./livespec-specs.md)):
+From a fresh clone, after `index_project` + `sync_openspec` (or
+`import_specs_from_markdown` on `openspec/` — see the regeneration flow in
+[`livespec-specs.md`](./livespec-specs.md)):
 
 ```
 python scripts/apply_spec_links.py --workspace /abs/path/to/livespec-mcp

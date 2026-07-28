@@ -73,11 +73,12 @@ async def test_propose_requirements_basic(workspace):
     titles = {p["title"].lower() for p in proposals}
     assert "auth" in titles or "payments" in titles, f"titles: {titles}"
 
-    # Each proposal has the expected shape
+    # Each proposal has the expected shape (OpenSpec slug or SPEC-NNN fallback)
     for p in proposals:
-        assert p["proposed_spec_id"].startswith("SPEC-")
+        assert p["proposed_spec_id"]
         assert p["module_key"]
         assert p["symbol_count"] > 0
+        assert "-" in p["proposed_spec_id"] or p["proposed_spec_id"].startswith("SPEC-")
         assert isinstance(p["suggested_symbols"], list)
         assert p["suggested_symbols"], "suggested_symbols must be non-empty"
         for s in p["suggested_symbols"]:
@@ -87,12 +88,17 @@ async def test_propose_requirements_basic(workspace):
 
 @pytest.mark.asyncio
 async def test_propose_requirements_spec_ids_unique_and_continuous(workspace):
-    """Proposed Spec ids continue from the highest existing Spec id."""
+    """Proposed Spec ids are unique; collide with existing → SPEC-NNN via MAX."""
     _make_layered_repo(workspace)
     async with Client(mcp) as c:
         await c.call_tool("index_project", {})
-        # Seed two existing Specs so proposals start at SPEC-003
-        await c.call_tool("create_spec", {"spec_id": "SPEC-001", "title": "x"})
+        # Seed OpenSpec-shaped ids that would collide with auth/payments slugs
+        await c.call_tool(
+            "create_spec", {"spec_id": "auth-auth", "title": "Auth"}
+        )
+        await c.call_tool(
+            "create_spec", {"spec_id": "payments-payments", "title": "Payments"}
+        )
         await c.call_tool("create_spec", {"spec_id": "SPEC-002", "title": "y"})
         out = (
             await c.call_tool(
@@ -102,9 +108,9 @@ async def test_propose_requirements_spec_ids_unique_and_continuous(workspace):
         ).data
     spec_ids = [p["proposed_spec_id"] for p in out["proposals"]]
     assert len(spec_ids) == len(set(spec_ids)), "proposed_spec_id must be unique"
-    # First proposal should be SPEC-003
-    if spec_ids:
-        assert spec_ids[0] == "SPEC-003"
+    # Colliding module titles fall back to SPEC-{MAX+1} (MAX of SPEC-* is 002)
+    numeric = [s for s in spec_ids if s.startswith("SPEC-")]
+    assert all(s >= "SPEC-003" for s in numeric), spec_ids
 
 
 @pytest.mark.asyncio

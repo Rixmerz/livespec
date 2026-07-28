@@ -94,3 +94,23 @@ def test_comment_leader_stripped():
     hits = parse_annotations(text)
     spec_ids = {h.spec_id for h in hits}
     assert spec_ids == {"SPEC-050", "SPEC-051"}
+
+
+def test_openspec_slug_via_known_ids():
+    """OpenSpec kebab ids link only when present in the store allowlist."""
+    known = ("auth-user-login", "payments-charge")
+    assert parse_annotations("@spec:auth-user-login") == []
+    hits = parse_annotations("@spec:auth-user-login", known_ids=known)
+    assert len(hits) == 1
+    assert hits[0].spec_id == "auth-user-login"
+    assert hits[0].confidence == 1.0
+
+    hits2 = parse_annotations(
+        "This function implements auth-user-login.", known_ids=known
+    )
+    assert len(hits2) == 1
+    assert hits2[0].spec_id == "auth-user-login"
+    assert hits2[0].confidence == 0.7
+
+    # Unknown slug stays invisible (no open kebab regex)
+    assert parse_annotations("@spec:not-in-store", known_ids=known) == []

@@ -6,6 +6,34 @@ follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.28.0] - 2026-07-28
+
+### Added — stable `spec_id` round-trip for OpenSpec export/sync
+
+`export_openspec` writes `<!-- livespec:id=SPEC-001 -->` under each
+`### Requirement:`. `parse_openspec_markdown` / `sync_openspec` prefer that
+marker over title-slug ids, so create → export → sync no longer duplicates
+`SPEC-001` as `indexing-indexing-workspace-walk`.
+
+### Added — `@spec:` OpenSpec slug allowlist
+
+`parse_annotations(..., known_ids=...)` / `scan_annotations` match kebab
+ids already in the store (`@spec:auth-user-login`, `implements auth-user-login`)
+without an open kebab regex over prose.
+
+### Added — Express member / wrap handler resolution
+
+`scan_hono_routes` resolves `healthController.check` → `check` and
+`wrap(liveness)` → `liveness`, so `find_endpoints(framework="express")`
+links those routes to symbols.
+
+### Changed — `create_spec` / `propose_specs_from_codebase` OpenSpec-first ids
+
+Default auto-ids are OpenSpec-shaped slugs (`auth-user-login`). `SPEC-NNN`
+remains the collision fallback (MAX numeric, not last-inserted). Dogfood
+specs live under `openspec/specs/` with stable `<!-- livespec:id=SPEC-NNN -->`
+markers; `docs/requirements/livespec-specs.md` is legacy import-compat.
+
 ### Added — `find_endpoints(framework="express")`
 
 Call-style Express routes (`router.get/post/...`) were invisible: the Hono

@@ -35,6 +35,9 @@ _OPERATION_HEADERS = {
     "renamed": "## RENAMED Requirements",
 }
 
+# Stable id marker — HTML comment is inert for OpenSpec validate / Fission tooling.
+_LIVESPEC_ID_COMMENT = "<!-- livespec:id={sid} -->"
+
 
 def _capability_title(cap: str) -> str:
     words = cap.replace("_", " ").replace("-", " ").split()
@@ -46,22 +49,36 @@ def _requirement_prose(description: str | None) -> str:
 
     Scenarios that were flattened into the description at import time are cut so
     the exporter can re-emit them structurally from ``spec_scenario`` without
-    duplicating them."""
+    duplicating them. Also strips ``<!-- livespec:id=... -->`` (re-emitted
+    via ``spec_id=``)."""
     if not description:
         return ""
     out: list[str] = []
     for ln in description.splitlines():
         if _OSPEC_SCENARIO_RE.match(ln.rstrip()):
             break
+        if "livespec:id=" in ln and ln.strip().startswith("<!--"):
+            continue
         out.append(ln)
     return "\n".join(out).strip()
 
 
 def _emit_requirement(
-    title: str, description: str | None, scenarios: list[tuple[str, str]]
+    title: str,
+    description: str | None,
+    scenarios: list[tuple[str, str]],
+    *,
+    spec_id: str | None = None,
 ) -> list[str]:
-    """Render one ``### Requirement:`` block (+ its scenarios) as md lines."""
+    """Render one ``### Requirement:`` block (+ its scenarios) as md lines.
+
+    When ``spec_id`` is set, emit ``<!-- livespec:id=... -->`` immediately under
+    the heading so ``sync_openspec`` / ``parse_openspec_markdown`` can round-trip
+    without slugifying a fresh id (avoids SPEC-001 → indexing-foo duplicates).
+    """
     block: list[str] = [f"### Requirement: {title}", ""]
+    if spec_id:
+        block += [_LIVESPEC_ID_COMMENT.format(sid=spec_id), ""]
     if scenarios:
         prose = _requirement_prose(description)
         if prose:
@@ -73,9 +90,17 @@ def _emit_requirement(
     else:
         # No structured scenarios: emit the description verbatim (it may already
         # contain embedded scenarios for legacy-imported specs, or be plain
-        # prose for a spec authored via create_spec).
+        # prose for a spec authored via create_spec). Strip re-import id markers.
         if description and description.strip():
-            block += [description.strip(), ""]
+            cleaned = "\n".join(
+                ln
+                for ln in description.splitlines()
+                if not (
+                    ln.strip().startswith("<!--") and "livespec:id=" in ln
+                )
+            ).strip()
+            if cleaned:
+                block += [cleaned, ""]
     return block
 
 
@@ -149,7 +174,9 @@ def export_openspec(
         for r in specs:
             scenarios = _scenarios_for(conn, int(r["id"]))
             scenario_count += len(scenarios)
-            lines += _emit_requirement(r["title"], r["description"], scenarios)
+            lines += _emit_requirement(
+                r["title"], r["description"], scenarios, spec_id=r["spec_id"]
+            )
             spec_count += 1
         text = "\n".join(lines).rstrip() + "\n"
         _write(root / "specs" / _slugify(cap) / "spec.md", text, written, root)
@@ -205,6 +232,7 @@ def _export_changes(
                     continue
                 lines += [_OPERATION_HEADERS[op], ""]
                 for d in ops[op]:
+                    # Deltas may not carry a livespec id yet; title-only is fine.
                     lines += _emit_requirement(d["title"], d["description"], [])
             text = "\n".join(lines).rstrip() + "\n"
             _write(change_root / "specs" / _slugify(cap) / "spec.md", text, written, root)

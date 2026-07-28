@@ -37,6 +37,10 @@ _HEADER_RE = re.compile(r"^##+\s+(?P<spec>SPEC[-_]?\d+)\s*[:\-]\s*(?P<title>.+?)
 # `## ADDED|MODIFIED|REMOVED Requirements` are the change-delta section headers;
 # `#### Scenario: <name>` is a requirement's atomic WHEN/THEN behaviour block.
 _OSPEC_REQ_RE = re.compile(r"^###\s+Requirement:\s*(?P<name>.+?)\s*$")
+# Stable id written by export_openspec — prefer over title slug on re-import.
+_LIVESPEC_ID_RE = re.compile(
+    r"^<!--\s*livespec:id=(?P<sid>[^\s>]+)\s*-->\s*$", re.IGNORECASE
+)
 _OSPEC_DELTA_RE = re.compile(
     r"^##\s+(?P<verb>ADDED|MODIFIED|REMOVED|RENAMED)\s+Requirements\b", re.IGNORECASE
 )
@@ -433,6 +437,19 @@ def parse_openspec_markdown(
             }
             description_lines = []
             continue
+
+        # Prefer stable id from export_openspec (<!-- livespec:id=SPEC-001 -->).
+        # Must appear before body prose (blank lines after the heading are OK);
+        # not kept in the description.
+        if current is not None and not any(ln.strip() for ln in description_lines):
+            id_m = _LIVESPEC_ID_RE.match(line)
+            if id_m:
+                current["spec_id"] = id_m.group("sid").strip()
+                description_lines = []  # drop leading blanks before the marker
+                continue
+            if not stripped:
+                # Leading blank after ### Requirement — wait for id or prose
+                continue
 
         # Any other level-2/3 heading closes the current requirement body so
         # unrelated sections (## Purpose, ## Why) don't leak into the spec.

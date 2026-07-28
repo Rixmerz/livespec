@@ -230,3 +230,22 @@ async def test_import_rejects_bad_fmt(sample_repo):
             )
         ).data
         assert result.get("isError") is True
+
+
+def test_openspec_livespec_id_comment_overrides_slug():
+    """export_openspec markers keep SPEC-NNN (or any) id on re-import."""
+    text = (
+        "### Requirement: Indexing & workspace walk\n"
+        "<!-- livespec:id=SPEC-001 -->\n"
+        "\n"
+        "Walk the workspace and persist symbols.\n"
+        "\n"
+        "#### Scenario: Fresh clone\n"
+        "- **WHEN** index_project runs\n"
+        "- **THEN** symbols are stored\n"
+    )
+    specs = parse_openspec_markdown(text, capability="indexing")
+    assert len(specs) == 1
+    assert specs[0].spec_id == "SPEC-001"
+    assert specs[0].title == "Indexing & workspace walk"
+    assert len(specs[0].scenarios) == 1

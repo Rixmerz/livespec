@@ -163,10 +163,51 @@ async def test_export_roundtrip(sample_repo):
     exported = (sample_repo / "out" / "specs" / "theming" / "spec.md").read_text()
     assert "### Requirement: Theme selection" in exported
     assert "#### Scenario: User toggles dark mode" in exported
+    assert "<!-- livespec:id=theming-theme-selection -->" in exported
     # Re-parse the exported file: id + scenario survive the round-trip.
     reparsed = parse_openspec_markdown(exported, capability="theming")
     assert reparsed[0].spec_id == "theming-theme-selection"
     assert len(reparsed[0].scenarios) == 1
+
+
+@pytest.mark.asyncio
+async def test_export_preserves_numeric_spec_id(sample_repo):
+    """create_spec(SPEC-001) → export → sync must not mint a duplicate slug id."""
+    async with Client(mcp) as c:
+        await c.call_tool("index_project", {})
+        await c.call_tool(
+            "create_spec",
+            {
+                "spec_id": "SPEC-001",
+                "title": "Indexing & workspace walk",
+                "module": "indexing",
+                "description": "Walk the workspace.",
+                "status": "active",
+            },
+        )
+        result = (await c.call_tool("export_openspec", {"out_dir": "out"})).data
+        assert result["specs_written"] == 1
+
+    exported = (sample_repo / "out" / "specs" / "indexing" / "spec.md").read_text()
+    assert "<!-- livespec:id=SPEC-001 -->" in exported
+    reparsed = parse_openspec_markdown(exported, capability="indexing")
+    assert reparsed[0].spec_id == "SPEC-001"
+
+    # Import into a second pass: still SPEC-001, not indexing-indexing-...
+    async with Client(mcp) as c:
+        synced = (
+            await c.call_tool(
+                "import_specs_from_markdown",
+                {"path": "out/specs/indexing/spec.md", "fmt": "openspec"},
+            )
+        ).data
+        assert synced.get("updated", 0) + synced.get("created", 0) >= 1
+        listed = (await c.call_tool("list_specs", {})).data
+        ids = {s["spec_id"] for s in listed["specs"]}
+        assert "SPEC-001" in ids
+        assert not any(
+            s.startswith("indexing-") and s != "SPEC-001" for s in ids
+        )
 
 
 # ---------- change lifecycle ----------
