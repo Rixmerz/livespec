@@ -32,11 +32,12 @@ def _load_agent_playbook() -> str:
 def register(mcp: FastMCP) -> None:
     @mcp.prompt
     def agent_playbook() -> str:
-        """How to use livespec tools and how to comment/link code (@spec: annotations).
+        """How to use livespec tools; OpenSpec authoring first; @spec: linking.
 
         Invoke at the start of a session on any livespec-indexed repo. Covers cold-open
-        tool patterns, Spec traceability in docstrings, Markdown Spec import, anti-patterns,
-        and brownfield onboarding — the operational guide agents should follow.
+        tool patterns, OpenSpec as preferred Spec authoring SSoT (livespec is the engine
+        beneath), legacy ## SPEC-NNN import-compat, Markdown import, anti-patterns, and
+        brownfield onboarding.
         """
         return _load_agent_playbook()
 
@@ -47,8 +48,11 @@ def register(mcp: FastMCP) -> None:
             "You're onboarding to a new repo through livespec. Steps:\n"
             "1) Call `index_project()` and report counts.\n"
             "2) Call `get_project_overview()` and summarize languages and top symbols.\n"
-            "3) Call `list_specs()` — if empty, suggest 3-5 candidate Specs based on top symbols.\n"
-            "4) Ask the user which module they want to focus on next."
+            "3) Call `list_specs()` — if empty, prefer drafting OpenSpec under\n"
+            "   `openspec/specs/<capability>/spec.md` then `sync_openspec()` (not\n"
+            "   create_spec-first). Legacy ## SPEC-NNN catalogs are import-compat only.\n"
+            "4) If `openspec/` already exists, run `sync_openspec()` + `validate_openspec`.\n"
+            "5) Report Spec totals and suggest `@spec:` / bulk links for top symbols."
         )
 
     @mcp.prompt
@@ -118,7 +122,11 @@ def register(mcp: FastMCP) -> None:
             f"   fall back to `find_symbol(query='*')` to enumerate by hand.\n"
             f"2) Group by behavioral intent (auth, billing, ingestion, ...).\n"
             f"3) Draft 3-7 Specs (id, title, 1-line description, suggested module).\n"
-            f"4) Ask the user which to persist via `create_spec`."
+            f"4) Ask the user which to persist as OpenSpec under\n"
+            f"   `openspec/specs/<capability>/spec.md`, then `sync_openspec()`\n"
+            f"   (or `import_specs_from_markdown(..., fmt='auto')`). Prefer that\n"
+            f"   over `create_spec` for new work — OpenSpec markdown is the\n"
+            f"   authoring SSoT; livespec is the engine beneath."
         )
 
     @mcp.prompt

@@ -585,22 +585,24 @@ def register(
         fmt: str = "auto",
         workspace: Workspace | None = None,
     ) -> dict[str, Any]:
-        """Bulk-create / update Specs from Markdown — native or OpenSpec format.
+        """Bulk-create / update Specs from Markdown — OpenSpec preferred, native legacy.
 
-        Two dialects, auto-detected per file:
-        - **livespec** (native): `## SPEC-NNN: Title` headers with
-          `**Prioridad:** alta` / `**Módulo:** auth` metadata (ES/EN variants).
-        - **openspec** (Fission-AI OpenSpec interop): `### Requirement: <name>`
+        Two dialects, auto-detected per file (`fmt="auto"`):
+        - **openspec** (preferred authoring SSoT / Fission-AI): `### Requirement: <name>`
           anchors with SHALL prose + `#### Scenario:` WHEN/THEN blocks. The
           requirement name becomes the title; a slug becomes the spec_id;
           `## REMOVED Requirements` → status `deprecated`, else `active`.
           Point `path` at a single file, or at an `openspec/` directory to
           walk its whole `specs/`/`changes/` tree (capability = folder name).
+        - **livespec** (legacy native catalog): `## SPEC-NNN: Title` headers with
+          `**Prioridad:** alta` / `**Módulo:** auth` metadata (ES/EN variants).
+          Prefer migrating these to OpenSpec for new work.
 
-        `fmt` forces a dialect (`"livespec"` | `"openspec"`); default `"auto"`
-        sniffs each file and treats a directory as an OpenSpec tree. Idempotent:
-        re-import updates in place. OpenSpec specs default to
-        `kind=functional_requirement` — reclassify with `update_spec`.
+        `fmt` forces a dialect (`"openspec"` | `"livespec"`); default `"auto"`
+        sniffs each file (OpenSpec wins if `### Requirement:` is present) and
+        treats a directory as an OpenSpec tree. Idempotent: re-import updates
+        in place. OpenSpec specs default to `kind=functional_requirement` —
+        reclassify with `update_spec`.
 
         Path is resolved relative to the workspace root if not absolute.
         """

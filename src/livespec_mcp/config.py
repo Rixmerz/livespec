@@ -245,7 +245,10 @@ def load_repo_config(workspace: Path) -> RepoConfig:
         mount_path = "/explorer"   # URL prefix served by mount_explorer()
 
         [specs]
-        sync_from = ["docs/REQUISITOS_FUNCIONALES.md"]  # re-import on each index_project
+        # Preferred: OpenSpec tree re-synced after every index_project
+        openspec_dir = "openspec"
+        # Legacy: native ## SPEC-NNN catalogs (import-compat only)
+        # sync_from = ["docs/REQUISITOS_FUNCIONALES.md"]
         links_seed = "docs/requirements/spec-links.json"  # optional bulk_link replay
 
         [agent]

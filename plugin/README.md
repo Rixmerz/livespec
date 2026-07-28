@@ -31,15 +31,41 @@ without rediscovering conventions each time.
 
 ## Install
 
-The `.mcp.json` runs `uvx livespec` (the server is on PyPI). Ensure `uv` is
-installed. Then add this plugin to a marketplace and install it, or point Claude
-Code at this directory as a local plugin.
+### Local checkout (dev / testing unreleased fixes)
 
-> **Version pin:** `.mcp.json` runs `uvx livespec` unpinned, so it always
-> pulls the latest published release. Once a release is on PyPI you can pin for
-> reproducibility — `"args": ["livespec==<version>"]` — so the plugin's MCP
-> component tracks a known version. (Left unpinned here until the current
-> release is published.)
+Keep the published `plugin/.mcp.json` on `uvx livespec@…`. For a local
+checkout, register the editable install in **`~/.cursor/mcp.json`** (server
+name `livespec` → shows as `user-livespec`) so the agent picks up Unreleased
+code even when the marketplace plugin still pins PyPI:
+
+```json
+{
+  "mcpServers": {
+    "livespec": {
+      "command": "uv",
+      "args": [
+        "--directory",
+        "/ABS/PATH/TO/livespec-mcp",
+        "run",
+        "livespec"
+      ]
+    }
+  }
+}
+```
+
+After edits, restart the MCP server (toggle in Cursor Settings → MCP) so the
+stdio process reloads the working tree.
+
+### Marketplace / PyPI
+
+The published plugin runs `uvx livespec` (or a pinned `livespec@x.y.z`). Ensure
+`uv` is installed. Then add this plugin to a marketplace and install it, or
+point Claude Code at this directory as a local plugin.
+
+> **Version pin (published):** once a release is on PyPI you can pin for
+> reproducibility — `"args": ["livespec@<version>"]`. Local checkout mode above
+> always runs the working tree (including Unreleased nomenclature changes).
 
 The MCP server exposes 46 tools (31 core + 12 Spec + 3 docs). See the repo
 `README.md`, `docs/AGENT_PLAYBOOK.md`, and `CHANGELOG.md` for the full surface.

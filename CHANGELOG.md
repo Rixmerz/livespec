@@ -6,6 +6,32 @@ follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Added — `find_endpoints(framework="express")`
+
+Call-style Express routes (`router.get/post/...`) were invisible: the Hono
+scanner required the string `hono` in source. Express a client APIs
+(`composer-flight-service`, `composer-service`) therefore reported
+`count: 0`. `framework="express"` reuses the same AST scanner for files that
+mention `express`, and the default-sweep zero-hint now suggests
+`framework='express'` when those files are indexed.
+
+Receiver allowlist (`app` / `router` / `*Router` / …) drops false positives
+from `axios.get` / `cache.get` / `headers.get`.
+
+### Changed — OpenSpec is the preferred authoring nomenclature
+
+Guidance and defaults now treat **OpenSpec markdown** (`### Requirement:` /
+`#### Scenario:` under `openspec/`) as the authoring source of truth. Livespec
+remains the code-graph / Spec↔code engine beneath it. The native
+`## SPEC-NNN:` catalog is documented as **legacy import-compat** only.
+
+- Skill + AGENT_PLAYBOOK + README: OpenSpec-first loops; stop forcing
+  `fmt="livespec"` on OpenSpec files (`fmt="auto"` / `openspec`).
+- `detect_spec_format`: if `### Requirement:` is present, prefer `"openspec"`
+  even when `## SPEC-NNN:` headers also appear.
+- Config example / tool docstring: `openspec_dir` first; `sync_from` native
+  catalogs demoted.
+
 ## [0.27.0] - 2026-07-27
 
 ### Fixed — `SPEC` was hardcoded as the only valid spec-ID prefix

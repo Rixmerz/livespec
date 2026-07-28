@@ -169,9 +169,30 @@ def match_overs_with_insights(...):
 
 Annotate **behavior-bearing** symbols (handlers, domain services, matchers). Skip `__init__.py` package markers unless they contain real logic.
 
-### 5.5 Markdown Spec catalog (bulk create)
+### 5.5 Authoring Specs — OpenSpec first (preferred)
 
-Create `docs/REQUISITOS_FUNCIONALES.md` (or project convention):
+**Preferred:** author under `openspec/specs/<capability>/spec.md` and ingest with
+`sync_openspec()` (or `import_specs_from_markdown(..., fmt="auto")` for one file).
+
+```markdown
+## Purpose
+Authentication for the booking API.
+
+### Requirement: User login
+The system SHALL authenticate users with email + password.
+
+#### Scenario: Valid credentials
+- **WHEN** credentials are valid
+- **THEN** a session token is returned
+```
+
+livespec is the code-graph / Spec↔code engine **beneath** that markdown — it does
+not compete on authoring. See §5.8 for the full OpenSpec loop.
+
+### 5.5b Legacy catalog (`## SPEC-NNN`) — import compat only
+
+Older a client / livespec-native catalogs still work. Prefer migrating them to
+OpenSpec rather than keeping both dialects in one repo.
 
 ```markdown
 ## SPEC-001: Detect OVER in XML
@@ -189,7 +210,9 @@ Expose OVER codes and presence flags from incoming XML.
 Market policies that are insight-only when plate filters exclude them.
 ```
 
-Then (plugin): `import_specs_from_markdown(path="docs/REQUISITOS_FUNCIONALES.md")` — idempotent.
+Then: `import_specs_from_markdown(path="docs/REQUISITOS_FUNCIONALES.md", fmt="livespec")`
+(or `fmt="auto"`). Idempotent. Do **not** mix these headers with `### Requirement:`
+files in the same tree.
 
 ### 5.6 Linking without editing source
 
@@ -248,11 +271,14 @@ freely. Invoke the `openspec_workflow` MCP prompt for this as a slash command.
 ## 6. Brownfield workflow (no Specs yet)
 
 1. `index_project()` + `get_project_overview()`
-2. `propose_specs_from_codebase(max_proposals=30)` — review with human
-3. `import_specs_from_markdown` *or* `create_spec` per approved Spec
-4. Add `@spec:SPEC-NNN` lines to implementing symbols (or `bulk_link_spec_symbols`)
-5. `index_project()` → `scan_spec_annotations()` → `audit_coverage()`
-6. Iterate: `get_spec_implementation`, `analyze_impact(target_type="spec", ...)`
+2. Prefer authoring OpenSpec under `openspec/specs/<capability>/spec.md`, then
+   `sync_openspec()` (or review `propose_specs_from_codebase` → write OpenSpec files)
+3. Link code: `@spec:` when ids are annotation-friendly, else
+   `bulk_link_spec_symbols` / `link_scenario_symbol` (OpenSpec slug ids often need bulk link)
+4. `index_project()` → `scan_spec_annotations()` → `audit_coverage()`
+5. Iterate: `get_spec_implementation`, `analyze_impact(target_type="spec", ...)`
+6. Legacy-only path: `import_specs_from_markdown` on a `## SPEC-NNN` catalog or
+   `create_spec` — treat as temporary until exported/migrated to OpenSpec
 
 ---
 

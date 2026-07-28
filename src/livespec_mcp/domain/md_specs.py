@@ -1,6 +1,15 @@
 """Parse a Markdown file containing Spec definitions.
 
-Expected format (loose; the parser tolerates whitespace and order):
+**Preferred authoring format (OpenSpec / Fission-AI)** — write under ``openspec/``:
+
+    ### Requirement: User login
+    The system SHALL authenticate users with email + password.
+    #### Scenario: Valid credentials
+    - **WHEN** credentials are valid
+    - **THEN** a session token is returned
+
+**Legacy / compat format** (livespec-native catalog — import only; prefer migrating
+to OpenSpec for new work):
 
     ## SPEC-001: Title
     **Prioridad:** alta · **Módulo:** auth · **Kind:** adr
@@ -443,13 +452,15 @@ def parse_openspec_markdown(
 def detect_spec_format(text: str) -> str:
     """Return ``"openspec"`` or ``"livespec"`` for a markdown spec file.
 
-    OpenSpec files use ``### Requirement:`` anchors and have no
-    ``## SPEC-NNN:`` headers; livespec's native format is the inverse. When a
-    file has both (unusual), the native ``## SPEC-NNN:`` format wins so
-    existing imports never change behaviour.
+    OpenSpec files use ``### Requirement:`` anchors; the legacy livespec-native
+    catalog uses ``## SPEC-NNN:`` headers. When a file has both (unusual),
+    **OpenSpec wins** — authoring SSoT is OpenSpec; native headers are treated as
+    leftover noise rather than forcing the legacy parser.
     """
     has_livespec = any(_HEADER_RE.match(ln) for ln in text.splitlines())
     has_openspec = bool(re.search(r"^###\s+Requirement:", text, re.MULTILINE))
-    if has_openspec and not has_livespec:
+    if has_openspec:
         return "openspec"
+    if has_livespec:
+        return "livespec"
     return "livespec"

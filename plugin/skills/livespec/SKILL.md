@@ -63,14 +63,11 @@ it is not a background watcher you should lean on while editing.
 | Static Spec Explorer bundle | `export_explorer(base?, head?, framework?)` |
 | Scratch note on a symbol | `agent_scratch(qname, note)` / `agent_scratch_get(qname)` / `agent_scratch_clear(qname?)` |
 
-**`find_endpoints` — the Hono trap.** `framework` *is* optional, but Hono is
-**explicit-opt-in** and is excluded from the `framework=None` sweep (it reads
-files on demand). On a Hono repo the default call returns **`count: 0`**, which
-reads as "no routes indexed" — pass `framework="hono"` to actually get them. When
-the sweep returns 0 and Hono files are present, the payload carries
-`not_swept: ["hono"]` plus a `hint` — read it before concluding a repo has no
-routes. All other frameworks (flask, fastapi, click, pytest, fastmcp, celery,
-django, nextjs, fresh, sveltekit, remix, spring, angular) *are* in the default sweep.
+**`find_endpoints` — Hono / Express traps.** Both are **explicit-opt-in** and
+excluded from `framework=None`. On Express a client APIs the default call returns
+**`count: 0`** with `not_swept: ["express"]` — pass `framework="express"`. On
+Hono pass `framework="hono"`. Only receivers like `app` / `router` / `*Router`
+count (axios/cache/headers `.get` are ignored).
 
 **What counts as a test file.** `find_orphan_tests`, the auto-derived Spec test
 coverage in `audit_coverage`, and the `top_symbols` filter in
@@ -136,26 +133,33 @@ fixed cost it doesn't otherwise need.
 (`implements`\|`tests`\|`references`), `confidence`, `source`. `symbol_qname` must
 name an indexed *function/method* — a test *module* is not a symbol and will fail lookup.
 
-### OpenSpec round-trip (Fission-AI interop, always available)
+### OpenSpec authoring (preferred SSoT) + engine round-trip
+
+**Author in OpenSpec** (`openspec/specs/<capability>/spec.md` with
+`### Requirement:` + `#### Scenario:` + SHALL/MUST). Livespec is the
+code-graph / Spec↔code engine **beneath** that markdown — it does not invent a
+competing authoring dialect for new work.
 
 | Intent | Tool |
 |--------|------|
-| Store → markdown | `export_openspec(out_dir="openspec", include_changes=True)` |
-| Markdown → store (whole tree) | `sync_openspec(openspec_dir?)` — **read the warning below** |
-| Markdown → store (one file) | `import_specs_from_markdown(path, fmt="livespec")` |
+| Ingest hand-authored `openspec/` tree | `sync_openspec(openspec_dir?)` — **read the warning below** |
+| Ingest one markdown file | `import_specs_from_markdown(path, fmt="auto")` — sniffs OpenSpec vs legacy |
 | Structural check (`openspec validate`) | `validate_openspec(strict=False)` — every requirement needs ≥1 scenario |
+| Store → markdown (engine dump) | `export_openspec(out_dir="openspec", include_changes=True)` |
 | List change proposals | `list_spec_changes(status?)` — `proposed`\|`applied`\|`archived` |
 | Read one change package | `get_spec_change(name)` — proposal/design/tasks + delta requirements |
 
+Legacy catalogs (`## SPEC-NNN:` headers) still import via
+`import_specs_from_markdown(..., fmt="livespec")` or `fmt="auto"`. Prefer migrating
+those files to OpenSpec rather than keeping two dialects in one repo.
+
 > **`sync_openspec` can duplicate your whole store — do not run it on a tree you
-> exported.** The openspec dialect derives `spec_id` by **slugifying the
-> requirement title**, so it never matches the ids `export_openspec` wrote; and
-> `export_openspec` dumps every module-less spec into a single `general`
-> capability file. Re-syncing an exported tree therefore re-ingests each spec
-> under a fresh slug id — one real run took a store from **176 → 358 specs**. To
-> ingest hand-written specs, point at **one file** with
-> `import_specs_from_markdown(path="openspec/specs/<cap>/spec.md", fmt="livespec")`
-> instead. `sync_openspec` is for a tree you authored by hand, never a round-tripped export.
+> just `export_openspec`'d.** Export rewrites titles into OpenSpec shape; re-sync
+> then slugifies those titles into **new** `spec_id`s (one real run: 176 → 358).
+> Use `sync_openspec` only on trees **authored** as OpenSpec. For a single
+> hand-written OpenSpec file use
+> `import_specs_from_markdown(path="openspec/specs/<cap>/spec.md", fmt="auto")`
+> (or `fmt="openspec"`). Never force `fmt="livespec"` on `### Requirement:` files.
 
 ### Spec mutation — `livespec-spec` plugin (operator; plugin-gated)
 
@@ -203,6 +207,11 @@ For the full annotation grammar and examples, fetch the MCP prompt `agent_playbo
 - Do not rely on the watcher while actively editing — re-index on demand.
 - Do not expect spec-mutation tools on a spec-less repo without `LIVESPEC_PLUGINS`.
 - Do not run `sync_openspec` on a tree produced by `export_openspec` — it duplicates
-  every spec. Use `import_specs_from_markdown(path=<one file>, fmt="livespec")`.
+  every spec. Ingest hand-authored OpenSpec with `sync_openspec` or
+  `import_specs_from_markdown(..., fmt="auto"|"openspec")`.
+- Do not author new Specs as `## SPEC-NNN:` when the repo can use OpenSpec —
+  OpenSpec markdown is the preferred authoring SSoT; native headers are legacy import.
+- Do not mix OpenSpec `### Requirement:` and native `## SPEC-NNN:` catalogs in the
+  same repo (duplicate ids / noisy validate).
 - Do not read `find_endpoints()` returning 0 as "no routes" on a Hono repo — pass
   `framework="hono"`.

@@ -37,6 +37,12 @@ Todo el stack es local-first: 0 servicios externos, 0 API keys obligatorias, 0 D
 
 ## 3. Estado actual
 
+**Nomenclatura (authoring):** OpenSpec markdown (`openspec/specs/...` con
+`### Requirement:` + `#### Scenario:`) es la **SSoT de autoría**. Livespec es el
+motor de grafo/trazabilidad debajo. El catálogo nativo `## SPEC-NNN:` queda como
+**import-compat / legacy** — no mezclar dialectos en el mismo repo. Ver
+`CHANGELOG` Unreleased + Skill `livespec` + `docs/AGENT_PLAYBOOK.md` §5.5.
+
 **Release actual: `v0.23.0` (2026-07-24)** — supersede del tag-only `v0.22.0`
 (nunca publicado a PyPI; PyPI va 0.20.0 → 0.23.0). Incluye además Tier 2/3/4 +
 battle-test + workflow de Trusted Publishing (`.github/workflows/publish.yml`). Cortada sobre `main`: incluye el

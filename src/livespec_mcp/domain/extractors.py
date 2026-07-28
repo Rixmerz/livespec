@@ -1110,14 +1110,35 @@ def ts_registered_callback_names(source: str, language: str) -> frozenset[str]:
     return frozenset(out)
 
 
+# Receivers that look like HTTP apps/routers — used to ignore axios/cache/headers
+# `.get("…")` false positives when scanning call-style routes (Hono + Express).
+_HTTP_ROUTE_RECEIVERS = frozenset({
+    "app", "router", "server", "api", "route", "routes", "web", "http",
+})
+
+
+def _is_http_route_receiver(name: str | None) -> bool:
+    """True for ``app`` / ``router`` / ``hotelRouter`` / ``apiApp``, not ``axios``."""
+    if not name:
+        return False
+    n = name.lower()
+    if n in _HTTP_ROUTE_RECEIVERS:
+        return True
+    return n.endswith(("router", "app", "server", "routes"))
+
+
 def scan_hono_routes(source: str, language: str) -> list[dict]:
-    """Route registrations in a Hono-style app file.
+    """Route registrations in a Hono/Express-style app file.
 
     v0.13 P3: returns ``[{method, path, handler_name, line}]`` for
     ``app.get('/users', handler)`` / ``app.on('PURGE', '/cache', h)`` /
     ``app.route('/api', subApp)`` call patterns. ``use`` is middleware, not
     a route — skipped. The caller pre-filters files (source must mention
-    'hono') and resolves handler names to symbols.
+    'hono' or 'express') and resolves handler names to symbols.
+
+    Unreleased: only counts calls whose receiver looks like an HTTP app
+    (``app`` / ``router`` / ``*Router`` / …). Drops ``axios.get`` /
+    ``cache.get`` / ``headers.get`` false positives.
     """
     try:
         parser = get_parser(language)
@@ -1144,10 +1165,17 @@ def scan_hono_routes(source: str, language: str) -> list[dict]:
         if node.type == "call_expression":
             fn = node.child_by_field_name("function")
             prop = None
+            obj = None
             if fn is not None and fn.type == "member_expression":
                 prop = fn.child_by_field_name("property")
+                obj = fn.child_by_field_name("object")
             if prop is not None:
                 pname = text(prop).lower()
+                receiver = _ts_leftmost_ident(obj, text) if obj is not None else None
+                if not _is_http_route_receiver(receiver):
+                    for c in node.children:
+                        walk(c)
+                    return
                 args_node = node.child_by_field_name("arguments")
                 args = [
                     a

@@ -285,8 +285,9 @@ Intent leads (OpenSpec); livespec ties code↔spec as you build.
 2. **Ingest + gate the design before coding** —
    `sync_openspec()` → `validate_openspec(strict=True)` (mirrors
    `openspec validate --strict`: every requirement needs ≥1 scenario).
-3. **Implement feature by feature**, annotating docstrings with `@spec:SPEC-NNN`;
-   run `index_project()` after each batch (auto-scans annotations).
+3. **Implement feature by feature**, linking code with
+   `link_scenario_symbol` / `bulk_link_spec_symbols` (and `@spec:` when the
+   store id is annotation-friendly); run `index_project()` after each batch.
 4. **Trace tests to individual scenarios** —
    `link_scenario_symbol(spec_id, scenario_name, symbol_qname, relation="tests")`.
 5. **Track coverage live** — `audit_coverage()` and `get_spec_implementation(spec_id)`
@@ -300,28 +301,31 @@ Intent leads (OpenSpec); livespec ties code↔spec as you build.
 
 ### Case 2 — Undocumented project (brownfield)
 
-livespec reverse-engineers the structure and proposes specs; you curate and link.
+livespec reverse-engineers the structure; you curate specs as **OpenSpec**
+(preferred authoring SSoT) and livespec keeps the links live.
 
 1. **Onboard** — `/livespec-onboard /abs/path` (subagent runs `index_project`
    → `get_project_overview` → `list_specs`).
 2. **Understand the shape** — `quick_orient`, `who_calls`, `find_endpoints`,
    `find_dead_code`.
-3. **Propose specs from the code** (the brownfield killer feature) —
+3. **Propose specs from the code** —
    `propose_specs_from_codebase()` + `scan_docstrings_for_spec_hints`; per-module
    `/extract_specs_from_module <module>`.
-4. **Curate + persist** (human in the loop) — `create_spec(...)`, or write
-   `docs/specs.md` and `import_specs_from_markdown`.
-5. **Link code↔spec** — `bulk_link_spec_symbols(mappings=[...])`, or add
-   `@spec:SPEC-NNN` annotations and re-`index_project`. Tests via `relation="tests"`.
+4. **Curate + persist as OpenSpec** (human in the loop) — write
+   `openspec/specs/<capability>/spec.md` (`### Requirement:` + `#### Scenario:`)
+   then `sync_openspec()` / `import_specs_from_markdown(..., fmt="auto")`.
+   Legacy path only: `create_spec(...)` or a `## SPEC-NNN` catalog import.
+5. **Link code↔spec** — `bulk_link_spec_symbols` / `link_scenario_symbol`, or
+   `@spec:` annotations when ids are annotation-friendly; re-`index_project`.
 6. **Audit + iterate** — `/audit_spec_coverage` (orphan specs, uncovered modules).
-7. **Graduate to OpenSpec (optional)** — `export_openspec()` writes a real
-   `openspec/` tree, then `validate_openspec(strict=True)`. A repo that had zero
-   docs now has a maintainable spec-driven structure.
+7. **Validate the OpenSpec tree** — `validate_openspec(strict=True)`. If you
+   started from DB-only rows, `export_openspec()` once then treat `openspec/` as
+   SSoT going forward (do not re-`sync_openspec` that export blindly — see Skill).
 
 **In one line each:** *new* → OpenSpec defines the contract, `validate_openspec`
 gates it, you build with live links; *brownfield* → `/livespec-onboard` orients,
-`propose_specs_from_codebase` reconstructs the intent, `export_openspec` graduates
-it to spec-driven.
+`propose_specs_from_codebase` reconstructs intent, **author OpenSpec first**
+(export only as a bootstrap dump).
 
 ## Tools (44 total: 29 core + 12 Spec plugin + 3 docs plugin)
 
@@ -364,7 +368,10 @@ Always registered (including markdown Spec import + Explorer export).
   max_file_bytes = 2000000              # skip files larger than this
 
   [specs]
-  sync_from = ["docs/REQUISITOS_FUNCIONALES.md"]  # re-import after every index_project
+  # Preferred: OpenSpec tree re-synced after every index_project
+  openspec_dir = "openspec"
+  # Legacy native ## SPEC-NNN catalogs (import-compat only):
+  # sync_from = ["docs/REQUISITOS_FUNCIONALES.md"]
   links_seed = "docs/requirements/livespec-spec-links.json"  # optional bulk_link seed
 
   [workspace]

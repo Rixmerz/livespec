@@ -159,8 +159,8 @@ The app used a legacy cookie that is no longer supported.
 def test_detect_format():
     assert detect_spec_format(OPENSPEC_SAMPLE) == "openspec"
     assert detect_spec_format(SAMPLE) == "livespec"
-    # Mixed → native SPEC-NNN wins so existing imports never change behaviour.
-    assert detect_spec_format(SAMPLE + "\n### Requirement: X\ndesc\n") == "livespec"
+    # Mixed → OpenSpec wins (authoring SSoT); native headers are leftover noise.
+    assert detect_spec_format(SAMPLE + "\n### Requirement: X\ndesc\n") == "openspec"
 
 
 def test_parse_openspec_basic():

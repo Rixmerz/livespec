@@ -1300,9 +1300,15 @@ def compute_endpoints(
             })
             seen_qnames.add(r["qualified_name"])
 
-    # v0.13 P3: Hono call-style routes. Opt-in (reads files on demand).
-    if framework == "hono":
+    # v0.13 P3 / Unreleased: call-style HTTP routes (Hono + Express).
+    # Opt-in (reads files on demand). Same AST scanner — both frameworks use
+    # `app|router.get('/path', handler)` shapes. Pre-filter by framework marker
+    # in source so we don't scan every TS/JS file.
+    if framework in ("hono", "express"):
         workspace_path = st.settings.workspace
+        marker = "hono" if framework == "hono" else "express"
+        method_key = "hono_method" if framework == "hono" else "express_method"
+        path_key = "hono_path" if framework == "hono" else "express_path"
         for fr in st.conn.execute(
             """SELECT id, path, language FROM file
                WHERE project_id=? AND language IN
@@ -1316,7 +1322,7 @@ def compute_endpoints(
                 )
             except OSError:
                 continue
-            if "hono" not in src.lower():
+            if marker not in src.lower():
                 continue
             for rt in scan_hono_routes(src, fr["language"]):
                 qname = None
@@ -1347,8 +1353,11 @@ def compute_endpoints(
                     "start_line": start_line,
                     "end_line": end_line,
                     "decorators": [],
-                    "hono_method": rt["method"],
-                    "hono_path": rt["path"],
+                    method_key: rt["method"],
+                    path_key: rt["path"],
+                    "http_method": rt["method"],
+                    "http_path": rt["path"],
+                    "http_framework": framework,
                 })
                 seen_qnames.add(route_key)
 
@@ -2346,12 +2355,13 @@ def _attach_dead_code_not_swept(
 
 def _attach_endpoints_not_swept(payload: dict[str, Any], *, st: AppState, framework: str | None, total: int) -> None:
     """When `find_endpoints(framework=None)` returns zero, say whether an
-    explicit-opt-in framework (currently only Hono — see `compute_endpoints`)
+    explicit-opt-in framework (Hono / Express — see `compute_endpoints`)
     was excluded from the default sweep rather than genuinely absent.
     """
     if total != 0 or framework is not None:
         return
     hono_files = 0
+    express_files = 0
     ws = st.settings.workspace
     for fr in st.conn.execute(
         """SELECT path FROM file
@@ -2359,17 +2369,30 @@ def _attach_endpoints_not_swept(payload: dict[str, Any], *, st: AppState, framew
         (st.project_id,),
     ).fetchall():
         try:
-            src = (ws / fr["path"]).read_text(encoding="utf-8", errors="replace")
+            src = (ws / fr["path"]).read_text(encoding="utf-8", errors="replace").lower()
         except OSError:
             continue
-        if "hono" in src.lower():
+        if "hono" in src:
             hono_files += 1
+        if "express" in src:
+            express_files += 1
+    not_swept: list[str] = []
+    hints: list[str] = []
     if hono_files:
-        payload["not_swept"] = ["hono"]
-        payload["hint"] = (
+        not_swept.append("hono")
+        hints.append(
             f"pass framework='hono' — {hono_files} indexed file(s) reference "
             "Hono; it is explicit opt-in and is not part of the default sweep"
         )
+    if express_files:
+        not_swept.append("express")
+        hints.append(
+            f"pass framework='express' — {express_files} indexed file(s) reference "
+            "Express; call-style router.get/post is explicit opt-in"
+        )
+    if not_swept:
+        payload["not_swept"] = not_swept
+        payload["hint"] = " | ".join(hints)
 
 
 def register(mcp: FastMCP) -> None:
@@ -3319,7 +3342,7 @@ def register(mcp: FastMCP) -> None:
         framework: Literal[
             "flask", "fastapi", "click", "pytest", "fastmcp", "celery", "django",
             "nextjs", "fresh", "sveltekit", "remix", "spring", "angular",
-            "hono",
+            "hono", "express",
         ] | None = None,
         limit: int = 200,
         cursor: int = 0,
@@ -3364,6 +3387,10 @@ def register(mcp: FastMCP) -> None:
         ``hono_path``; ``qualified_name`` resolves to the handler symbol
         when the handler is a named identifier. Explicit-opt-in only (not
         part of the ``framework=None`` sweep — it reads files on demand).
+
+        Unreleased: ``framework='express'`` uses the same call-style scanner
+        for Express ``router.get/post/...`` (files that mention ``express``).
+        Reports ``express_method`` / ``express_path`` plus ``http_*``.
         """
         st = get_state(workspace)
 
