@@ -208,7 +208,10 @@ async def test_export_explorer_data_schema(workspace: Path):
 
     # Every spec carries a derived dev_state in the valid vocabulary.
     valid_states = {"not_started", "in_progress", "implemented", "verified"}
-    valid_sources = {"derived", "explicit", "both", "none"}
+    valid_sources = {
+        "derived", "explicit", "report", "both", "none",
+        "derived+report", "explicit+report", "derived+explicit+report",
+    }
     for r in data["specs"]:
         assert r["dev_state"] in valid_states
         # v0.15: REAL test-coverage fields on every spec.

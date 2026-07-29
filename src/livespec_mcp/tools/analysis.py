@@ -40,6 +40,7 @@ from livespec_mcp.domain.graph import (
 )
 from livespec_mcp.domain.indexer import DEFAULT_IGNORES, _hash_bytes, _iter_files
 from livespec_mcp.domain.languages import detect_language
+from livespec_mcp.domain.test_coverage_reports import discover_report_coverage
 from livespec_mcp.state import AppState, get_state
 from livespec_mcp.tools._errors import mcp_error
 from livespec_mcp.workspace_param import WORKSPACE_DOCSTRING_NOTE, Workspace
@@ -1569,9 +1570,9 @@ def compute_spec_test_coverage(
     2. ``tested_symbols`` = multi-source forward BFS from ALL test symbols
        over the call graph, bounded ``_TEST_REACH_DEPTH``. Computed once.
     3. For each Spec: an ``implements`` symbol S counts as TESTED if it is in
-       ``tested_symbols`` (derived) OR carries an explicit ``relation='tests'``
-       link (explicit). ``coverage_source`` ∈ {derived, explicit, both, none}
-       records which kinds contributed.
+       ``tested_symbols`` (derived), carries an explicit ``relation='tests'``
+       link (explicit), or overlaps a Jest/Vitest report-covered line (report).
+       ``coverage_source`` records which kinds contributed.
 
     Returns a mapping ``spec_id -> {spec_id, title, test_coverage_ratio,
     tested_symbols, total_symbols, coverage_source}``. ``test_coverage_ratio``
@@ -1610,6 +1611,8 @@ def compute_spec_test_coverage(
             tested_symbols.add(succ)
             frontier.append((succ, depth + 1))
 
+    report_coverage = discover_report_coverage(st.settings.workspace)
+
     # Step 3: per-Spec rollup. One pass over the spec/spec_symbol join.
     rows = st.conn.execute(
         """SELECT r.spec_id, r.title, rs.symbol_id, rs.relation
@@ -1644,21 +1647,38 @@ def compute_spec_test_coverage(
         total = len(impl)
         derived_hit = False
         explicit_hit = False
+        report_hit = False
         tested_count = 0
         uncovered_sids: list[int] = []
         for sid in impl:
             in_derived = sid in tested_symbols
             in_explicit = sid in explicit
+            meta = view.sym_meta.get(sid, {})
+            report_lines = report_coverage.get(meta.get("file_path") or "", set())
+            in_report = any(
+                int(meta.get("start_line") or 0) <= line <= int(meta.get("end_line") or 0)
+                for line in report_lines
+            )
             if in_derived:
                 derived_hit = True
             if in_explicit:
                 explicit_hit = True
-            if in_derived or in_explicit:
+            if in_report:
+                report_hit = True
+            if in_derived or in_explicit or in_report:
                 tested_count += 1
             else:
                 uncovered_sids.append(sid)
         ratio = (tested_count / total) if total else 0.0
-        if derived_hit and explicit_hit:
+        if report_hit:
+            source_parts = []
+            if derived_hit:
+                source_parts.append("derived")
+            if explicit_hit:
+                source_parts.append("explicit")
+            source_parts.append("report")
+            source = "+".join(source_parts)
+        elif derived_hit and explicit_hit:
             source = "both"
         elif derived_hit:
             source = "derived"
@@ -3520,7 +3540,7 @@ def register(mcp: FastMCP) -> None:
           link AND no transitive coverage — the actually-actionable list
         - `modules_unsupported_language`: files in languages whose extractor
           does not yet read in-source `@spec:` annotations (everything outside
-          Python / JS / TS today). Listed separately so they aren't reported
+          Python / JS / TS / Java today). Listed separately so they aren't reported
           as orphans — the gap is in the extractor, not the project.
         - `specs_without_implementation`: Specs with no `spec_symbol` row at all
         - `specs_low_confidence`: Specs whose avg(spec_symbol.confidence) < 0.7
@@ -3533,9 +3553,10 @@ def register(mcp: FastMCP) -> None:
           call graph. Each entry is `{spec_id, title, test_coverage_ratio,
           tested_symbols, total_symbols, coverage_source}`. A Spec's
           `implements` symbol counts as tested when a test symbol reaches it
-          within 3 call-graph hops (derived) OR it carries an explicit
-          `relation='tests'` link (explicit); `coverage_source`
-          ∈ {derived, explicit, both, none}. No hand-linking required —
+          within 3 call-graph hops (derived), carries an explicit
+          `relation='tests'` link (explicit), or overlaps a Jest/Vitest
+          report-covered line (report); `coverage_source` records the
+          contributing signals. No hand-linking required —
           this is the differentiator over the explicit-only `spec_test_coverage`
           above. Rollups `avg_test_coverage` and
           `specs_with_derived_test_coverage` (Specs with ratio>0) are also

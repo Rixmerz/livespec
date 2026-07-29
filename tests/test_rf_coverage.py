@@ -161,6 +161,42 @@ async def test_spec_coverage_zero_when_nothing_reaches_impl(workspace):
 
 
 @pytest.mark.asyncio
+async def test_spec_coverage_from_lcov_report_without_static_call_edge(workspace):
+    """LCOV covers an implementation even when static test reachability cannot."""
+    src = workspace / "src"
+    src.mkdir()
+    source = (
+        "export function reportCovered(): number {\n"
+        "  return 42;\n"
+        "}\n"
+    )
+    (src / "feature.ts").write_text(source)
+    coverage = workspace / "coverage"
+    coverage.mkdir()
+    (coverage / "lcov.info").write_text(
+        "TN:\n"
+        f"SF:{src / 'feature.ts'}\n"
+        "DA:2,1\n"
+        "end_of_record\n"
+    )
+
+    async with Client(mcp) as c:
+        await c.call_tool("index_project", {})
+        await c.call_tool(
+            "create_spec", {"spec_id": "SPEC-004", "title": "Report-covered"}
+        )
+        await c.call_tool(
+            "link_spec_symbol",
+            {"spec_id": "SPEC-004", "symbol_qname": "src.feature.reportCovered"},
+        )
+        out = (await c.call_tool("audit_coverage", {})).data
+
+    entry = {r["spec_id"]: r for r in out["spec_coverage"]}["SPEC-004"]
+    assert entry["test_coverage_ratio"] == 1.0, entry
+    assert entry["coverage_source"] == "report", entry
+
+
+@pytest.mark.asyncio
 async def test_spec_coverage_backward_compat_explicit_fields_intact(workspace):
     """The v0.8 explicit-link fields (`spec_test_coverage` /
     `counts.specs_with_linked_tests`) must remain exactly as before alongside

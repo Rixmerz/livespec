@@ -189,6 +189,24 @@ async def test_axios_client_links_to_backend_handler(sample_repo):
 
 
 @pytest.mark.asyncio
+async def test_bare_got_client_links_to_backend_handler(sample_repo):
+    """got('/x') uses the same method-agnostic route matching as fetch."""
+    (sample_repo / "back.py").write_text(BACKEND)
+    (sample_repo / "front.ts").write_text(
+        "export async function loadUser() {\n"
+        "  return got('/api/users/7');\n"
+        "}\n"
+    )
+    async with Client(mcp) as c:
+        await c.call_tool("index_project", {"workspace": str(sample_repo)})
+        callers = (
+            await c.call_tool("who_calls", {"qname": "back.get_user"})
+        ).data
+        rc = callers.get("route_callers", [])
+        assert any("front" in x["file"] for x in rc)
+
+
+@pytest.mark.asyncio
 async def test_hono_server_registration_is_not_a_client(sample_repo):
     """A Hono/Express-style ``app.get('/x', handler)`` server registration
     (object `app`, not in the HTTP-client allowlist) must not create a

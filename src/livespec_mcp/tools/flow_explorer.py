@@ -3,19 +3,36 @@
 Writes ``flow-explorer/data.json`` + ``index.html`` next to the shared
 group database (or under ``.mcp-docs/flow-explorer/`` for a solo repo).
 
-v1 edges are Spec-centric (mirrored ``xrepo-*`` ids + ``spec_dependency``).
-HTTP ``route_ref`` bridging is not required; the UI states that clearly.
+Spec edges are driven by mirrored ``xrepo-*`` ids + ``spec_dependency``;
+resolved HTTP route hops come from ``invokes_route`` graph edges.
 """
 
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 from typing import Any
 
 from livespec_mcp.config import Settings
 from livespec_mcp.state import AppState
 from livespec_mcp.tools.analysis import compute_endpoints
+
+_HTTP_VERBS = frozenset({"GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"})
+
+# Spring @XxxMapping("…") — bound lengths (ReDoS-safe).
+_SPRING_MAPPING = re.compile(
+    r"@(Get|Post|Put|Patch|Delete)Mapping\s*\(\s*"
+    r"(?:value\s*=\s*|path\s*=\s*)?"
+    r"[\"'](/[^\"']{0,200})[\"']",
+)
+_SPRING_VERB = {
+    "Get": "GET",
+    "Post": "POST",
+    "Put": "PUT",
+    "Patch": "PATCH",
+    "Delete": "DELETE",
+}
 
 
 def _ephemeral_project_state(st: AppState, root: Path, project_id: int) -> AppState:
@@ -48,26 +65,159 @@ def _project_rows(st: AppState) -> list[dict[str, Any]]:
     ]
 
 
-def _endpoint_entry(ep: dict[str, Any], project: str) -> dict[str, Any]:
-    """Normalize compute_endpoints rows for the flow viewer."""
+def _spring_route_from_source(
+    root: Path, file_path: str | None, start_line: int | None
+) -> tuple[str | None, str | None]:
+    """Best-effort method/path from Java ``@GetMapping("/x")`` near ``start_line``."""
+    if not file_path or not start_line:
+        return None, None
+    abs_path = root / file_path
+    if abs_path.suffix != ".java" or not abs_path.is_file():
+        return None, None
+    try:
+        lines = abs_path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return None, None
+    # Scan a small window above the method (annotations live there).
+    lo = max(0, int(start_line) - 25)
+    hi = min(len(lines), int(start_line))
+    window = "\n".join(lines[lo:hi])[:4000]
+    m = _SPRING_MAPPING.search(window)
+    if not m:
+        return None, None
+    return _SPRING_VERB.get(m.group(1)), m.group(2)
+
+
+def _endpoint_http_fields(
+    ep: dict[str, Any], *, root: Path | None = None
+) -> tuple[str | None, str | None]:
     method = (
         ep.get("http_method")
         or ep.get("hono_method")
-        or (ep.get("decorators") or [None])[0]
+        or ep.get("express_method")
     )
-    path = ep.get("http_path") or ep.get("hono_path")
+    path = ep.get("http_path") or ep.get("hono_path") or ep.get("express_path")
+    if (not method or not path) and root is not None:
+        sm, sp = _spring_route_from_source(
+            root, ep.get("file_path"), ep.get("start_line")
+        )
+        method = method or sm
+        path = path or sp
+    if isinstance(method, str):
+        method = method.upper()
+    else:
+        method = None
+    if not isinstance(path, str):
+        path = None
+    return method, path
+
+
+def _endpoint_entry(
+    ep: dict[str, Any], project: str, *, root: Path | None = None
+) -> dict[str, Any]:
+    """Normalize compute_endpoints rows for the flow viewer."""
+    method, path = _endpoint_http_fields(ep, root=root)
     return {
         "project": project,
         "kind": ep.get("kind") or ep.get("ts_framework") or "other",
-        "framework": ep.get("ts_framework") or ep.get("django_cbv_base"),
+        "framework": (
+            ep.get("http_framework")
+            or ep.get("ts_framework")
+            or ep.get("django_cbv_base")
+        ),
         "handler": ep.get("qualified_name"),
         "file_path": ep.get("file_path"),
         "start_line": ep.get("start_line"),
-        "method": method if isinstance(method, str) else None,
+        "method": method,
         "path": path,
         "signature": ep.get("signature"),
         "decorators": ep.get("decorators") or [],
     }
+
+
+def _is_http_endpoint(ep: dict[str, Any], *, root: Path | None = None) -> bool:
+    """Keep only endpoint rows with a concrete HTTP route (not ``*`` catch-alls)."""
+    method, path = _endpoint_http_fields(ep, root=root)
+    if method and path and path.startswith("/") and path != "*":
+        return method in _HTTP_VERBS
+    # Normalized viewer shape (already through _endpoint_entry).
+    m2, p2 = ep.get("method"), ep.get("path")
+    return (
+        isinstance(m2, str)
+        and m2.upper() in _HTTP_VERBS
+        and isinstance(p2, str)
+        and p2.startswith("/")
+        and p2 != "*"
+    )
+
+
+def _iter_project_endpoints(pst: AppState, framework: str | None):
+    """Union decorator endpoints with Express/Hono call-style scanners.
+
+    ``compute_endpoints(framework=None)`` skips Express/Hono (opt-in scanners).
+    Flow Explorer always needs those for Node composers.
+    """
+    seen: set[tuple[Any, ...]] = set()
+    frameworks: list[str | None]
+    if framework is None:
+        frameworks = [None, "express", "hono", "spring"]
+    else:
+        frameworks = [framework]
+    for fw in frameworks:
+        for ep in compute_endpoints(pst, framework=fw):
+            key = (
+                ep.get("qualified_name"),
+                ep.get("http_method") or ep.get("express_method") or ep.get("hono_method"),
+                ep.get("http_path") or ep.get("express_path") or ep.get("hono_path"),
+                ep.get("file_path"),
+                ep.get("start_line"),
+            )
+            if key in seen:
+                continue
+            seen.add(key)
+            yield ep
+
+
+def _route_edges(
+    conn: Any, name_by_id: dict[int, str]
+) -> list[dict[str, str | None]]:
+    """Return resolved HTTP hops with endpoint metadata from route_ref."""
+    try:
+        rows = conn.execute(
+            """SELECT src_project.id AS from_pid,
+                      src.qualified_name AS from_symbol,
+                      client.method AS method, client.path AS path,
+                      dst_project.id AS to_pid,
+                      dst.qualified_name AS to_symbol
+               FROM symbol_edge edge
+               JOIN symbol src ON src.id=edge.src_symbol_id
+               JOIN file src_file ON src_file.id=src.file_id
+               JOIN project src_project ON src_project.id=src_file.project_id
+               JOIN symbol dst ON dst.id=edge.dst_symbol_id
+               JOIN file dst_file ON dst_file.id=dst.file_id
+               JOIN project dst_project ON dst_project.id=dst_file.project_id
+               JOIN route_ref client
+                 ON client.symbol_id=src.id AND client.role='client'
+               JOIN route_ref server
+                 ON server.symbol_id=dst.id AND server.role='server'
+                    AND server.norm_path=client.norm_path
+               WHERE edge.edge_type='invokes_route'
+               ORDER BY src_project.id, src.qualified_name, client.path,
+                        dst_project.id, dst.qualified_name"""
+        )
+    except Exception:  # noqa: BLE001 — route migration may be absent
+        return []
+    return [
+        {
+            "from_project": name_by_id.get(int(row["from_pid"])),
+            "from_symbol": row["from_symbol"],
+            "method": row["method"],
+            "path": row["path"],
+            "to_project": name_by_id.get(int(row["to_pid"])),
+            "to_symbol": row["to_symbol"],
+        }
+        for row in rows
+    ]
 
 
 def compute_flow_explorer_data(
@@ -114,8 +264,12 @@ def compute_flow_explorer_data(
         if root.is_dir():
             try:
                 pst = _ephemeral_project_state(st, root, pid)
-                for ep in compute_endpoints(pst, framework=framework):
-                    entry = _endpoint_entry(ep, pname)
+                for ep in _iter_project_endpoints(pst, framework):
+                    if not _is_http_endpoint(ep, root=root):
+                        continue
+                    entry = _endpoint_entry(ep, pname, root=root)
+                    if not _is_http_endpoint(entry):
+                        continue
                     eps.append(entry)
                     all_endpoints.append(entry)
             except Exception as e:  # noqa: BLE001 — keep bundle resilient
@@ -235,6 +389,8 @@ def compute_flow_explorer_data(
             }
         )
 
+    route_edges = _route_edges(conn, name_by_id)
+
     # --- topology for Mermaid ---
     nodes: list[dict[str, str]] = []
     edges: list[dict[str, str]] = []
@@ -259,6 +415,20 @@ def compute_flow_explorer_data(
                         "kind": "implements",
                     }
                 )
+
+    for route in route_edges:
+        source, target = route["from_project"], route["to_project"]
+        if source is None or target is None:
+            continue
+        method = f"{route['method']} " if route["method"] else ""
+        edges.append(
+            {
+                "from": f"proj:{source}",
+                "to": f"proj:{target}",
+                "kind": "route",
+                "label": f"{method}{route['path']}",
+            }
+        )
 
     # de-dupe edges
     seen: set[tuple[str, str, str]] = set()
@@ -290,15 +460,18 @@ def compute_flow_explorer_data(
                 "route_ref": route_ref_n,
             },
             "bridge_note": (
-                "Cross-repo links are Spec-based (mirrored xrepo-* ids). "
-                "HTTP call-graph bridging (route_ref) is not populated yet — "
-                "API tabs list endpoints discovered per repo, not live hops."
+                "Cross-repo links include resolved HTTP route hops from the "
+                "indexer."
+                if route_edges
+                else "No HTTP route hops resolved yet (need literal/env-resolvable "
+                "client URLs matching server routes)."
             ),
         },
         "projects": project_summaries,
         "xrepo_specs": xrepo_specs,
         "flow_topology": {"nodes": nodes, "edges": uniq_edges},
         "endpoints": all_endpoints,
+        "route_edges": route_edges,
     }
 
 
@@ -420,7 +593,7 @@ a { color:var(--accent); }
 </header>
 <main>
   <section class="panel active" data-panel="flow">
-    <div class="note">Project → Spec edges mean the repo has linked symbols for that xrepo id. Spec → Spec edges are <code>spec_dependency</code>.</div>
+    <div class="note">Project → Spec edges mean the repo has linked symbols for that xrepo id. Spec → Spec edges are <code>spec_dependency</code>. Solid route edges are resolved HTTP hops.</div>
     <div class="mermaid" id="flow-mermaid">Loading diagram…</div>
   </section>
   <section class="panel" data-panel="specs">
@@ -487,8 +660,8 @@ function renderMermaid() {
   edges.forEach((e) => {
     const a = safe(e.from);
     const b = safe(e.to);
-    const arrow = e.kind === "implements" ? "-->" : "-.->";
-    lines.push("  " + a + " " + arrow + "|" + (e.kind || "") + "| " + b);
+    const arrow = e.kind === "route" ? "==>" : (e.kind === "implements" ? "-->" : "-.->");
+    lines.push("  " + a + " " + arrow + "|" + (e.label || e.kind || "") + "| " + b);
   });
   const src = lines.join("\n");
   box.removeAttribute("data-processed");

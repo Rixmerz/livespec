@@ -56,10 +56,11 @@ The ``coverage`` float per Spec is the AVERAGE LINK CONFIDENCE of that Spec's
 test coverage and NOT call-graph reachability. The UI labels it as such.
 SEPARATE from it, ``test_coverage_ratio`` (0..1) is REAL test coverage
 (v0.15): the fraction of the Spec's implementing symbols reached by a test
-symbol's depth-3 call cone UNIONED with explicit ``relation='tests'``
-links — sourced from ``compute_spec_test_coverage`` / ``compute_coverage``'s
-``spec_coverage`` list. ``coverage_source`` ∈ {derived, explicit, both, none}
-records HOW that coverage is known. Both meters are shown, each labelled.
+symbol's depth-3 call cone, explicit ``relation='tests'`` links, or
+Jest/Vitest report-covered lines — sourced from ``compute_spec_test_coverage``
+/ ``compute_coverage``'s ``spec_coverage`` list. ``coverage_source`` records
+the contributing signals (including ``report``). Both meters are shown, each
+labelled.
 
 ``dev_state`` is DERIVED from evidence (symbol links + that confidence +
 real test coverage), independent of the manually-maintained ``status``:
@@ -346,10 +347,9 @@ def compute_explorer_data(
             )
         else:
             coverage = None
-        # REAL test coverage (v0.15): call-graph-derived + explicit test
-        # links, from compute_spec_test_coverage. This SUPERSEDES the old
-        # explicit-link-only verified rule. `coverage_source` ∈
-        # {derived, explicit, both, none}.
+        # REAL test coverage: call-graph-derived, explicit test links, or
+        # report-covered lines from compute_spec_test_coverage. This
+        # SUPERSEDES the old explicit-link-only verified rule.
         spec_id = spec["spec_id"]
         rc = spec_cov_by_id.get(spec_id)
         test_coverage_ratio = float(rc["test_coverage_ratio"]) if rc else 0.0

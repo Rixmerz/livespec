@@ -314,7 +314,7 @@ _HTTP_CLIENT_VERBS = frozenset({"get", "post", "put", "delete", "patch", "head",
 # discriminator is a trailing handler arg (see `_TS_HANDLER_ARG_TYPES`), since
 # router variables are commonly named `api`/`client`/`request` too.
 _TS_HTTP_CLIENT_OBJS = frozenset({
-    "axios", "api", "http", "https", "client", "request", "httpclient", "$http", "fetch",
+    "axios", "api", "http", "https", "client", "request", "httpclient", "$http", "fetch", "got",
 })
 # tree-sitter node types for a route-handler argument: a function/arrow, or a
 # bare identifier naming a handler. Their presence after the URL marks a SERVER
@@ -1513,7 +1513,7 @@ def _ts_collect_calls(def_node, src_qname: str, src_bytes: bytes, out: ExtractRe
     def _client_route(call_node):
         """v0.21 P2: (method, path) for a fetch/axios client call, else None.
 
-        Conservative: bare ``fetch(...)`` / ``axios(...)``, or ``<client>.verb(...)``
+        Conservative: bare ``fetch(...)`` / ``axios(...)`` / ``got(...)``, or ``<client>.verb(...)``
         where the object is a known HTTP-client identifier — so Hono's
         ``app.get('/x', handler)`` (server) never registers as a client call."""
         fn = call_node.child_by_field_name("function") if hasattr(call_node, "child_by_field_name") else None
@@ -1521,7 +1521,7 @@ def _ts_collect_calls(def_node, src_qname: str, src_bytes: bytes, out: ExtractRe
             return None
         method: str | None = None
         if fn.type == "identifier":
-            if text(fn) not in ("fetch", "axios"):
+            if text(fn) not in ("fetch", "axios", "got"):
                 return None
         elif fn.type == "member_expression":
             prop = fn.child_by_field_name("property")

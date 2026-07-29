@@ -12,6 +12,45 @@ from fastmcp import Client
 
 from livespec_mcp.server import mcp
 from livespec_mcp.state import reset_state
+from livespec_mcp.tools.flow_explorer import _endpoint_entry, _is_http_endpoint
+
+
+@pytest.mark.parametrize(
+    ("endpoint", "expected"),
+    [
+        ({"http_method": "GET", "http_path": "/health"}, True),
+        ({"hono_method": "POST", "hono_path": "/search"}, True),
+        ({"method": "PATCH", "path": "/users/1"}, True),
+        ({"decorators": ["Component"], "kind": "class"}, False),
+        ({"decorators": ["route"], "path": None}, False),
+        ({"method": "Component", "path": "/app"}, False),
+    ],
+)
+def test_flow_explorer_keeps_only_http_routes(endpoint, expected):
+    assert _is_http_endpoint(endpoint) is expected
+
+
+def test_flow_endpoint_entry_does_not_use_decorator_as_method():
+    entry = _endpoint_entry(
+        {"decorators": ["Component"], "qualified_name": "app.App"},
+        "frontend",
+    )
+    assert entry["method"] is None
+
+
+def test_flow_endpoint_entry_reads_express_fields():
+    entry = _endpoint_entry(
+        {
+            "express_method": "post",
+            "express_path": "/flights/v2",
+            "http_framework": "express",
+            "qualified_name": "ctrl.getFlights",
+        },
+        "composer-flight-service",
+    )
+    assert entry["method"] == "POST"
+    assert entry["path"] == "/flights/v2"
+    assert entry["framework"] == "express"
 
 
 @pytest.mark.asyncio
@@ -36,7 +75,10 @@ async def test_export_flow_explorer_group(tmp_path: Path):
             "@app.route('/search', methods=['POST'])\n"
             "def search():\n"
             "    '''@spec:xrepo-search-orchestrate'''\n"
-            "    return {}\n",
+            "    return {}\n\n"
+            "def call_hub():\n"
+            "    import requests\n"
+            "    return requests.post('/graphql')\n",
         ),
     ):
         root.mkdir()
@@ -69,6 +111,22 @@ async def test_export_flow_explorer_group(tmp_path: Path):
     # this fixture. The results polyrepo seeds Specs via OpenSpec/links_seed.
     assert "xrepo_specs" in bundle
     assert bundle["meta"]["counts"]["endpoints"] >= 1
+    assert bundle["meta"]["counts"]["route_ref"] == 3
+    assert bundle["route_edges"] == [
+        {
+            "from_project": "composer",
+            "from_symbol": "app.call_hub",
+            "method": "POST",
+            "path": "/graphql",
+            "to_project": "hub",
+            "to_symbol": "app.graphql",
+        }
+    ]
+    assert any(edge["kind"] == "route" for edge in bundle["flow_topology"]["edges"])
+    assert all(
+        endpoint["method"] and endpoint["path"].startswith("/")
+        for endpoint in bundle["endpoints"]
+    )
     if shutil.which("node"):
         text = html.read_text(encoding="utf-8")
         js = (

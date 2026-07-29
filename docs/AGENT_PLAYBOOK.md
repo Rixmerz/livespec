@@ -109,7 +109,7 @@ Avoid the v0.7 chain `find_symbol → get_symbol_info → who_calls → …`.
 
 ## 5. How to comment code for livespec (Spec traceability)
 
-The index **auto-links** symbols when their **docstring or leading comment block** contains recognized Spec annotations (Python, JavaScript, TypeScript today). After editing annotations, run `index_project()` (or rely on post-index scan).
+The index **auto-links** symbols when their **docstring or leading comment block** contains recognized Spec annotations (Python, JavaScript, TypeScript, Java today). After editing annotations, run `index_project()` (or rely on post-index scan).
 
 ### 5.1 Level 1 — explicit (confidence 1.0) — **preferred**
 
@@ -164,7 +164,8 @@ def match_overs_with_insights(...):
 |----------|-----------|
 | Function / method / class docstring (Python) | Yes |
 | JS/TS leading block comments on declarations | Yes |
-| Go, Rust, Java, Ruby, PHP | Graph yes; `@spec:` in-source not wired — use `bulk_link_spec_symbols` |
+| Java leading Javadoc on declarations | Yes |
+| Go, Rust, Ruby, PHP | Graph yes; `@spec:` in-source not wired — use `bulk_link_spec_symbols` |
 | YAML, SQL, Markdown specs | Use `import_specs_from_markdown` + bulk link |
 
 Annotate **behavior-bearing** symbols (handlers, domain services, matchers). Skip `__init__.py` package markers unless they contain real logic.

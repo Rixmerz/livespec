@@ -53,6 +53,7 @@ EXTRACTOR_SUPPORTED: frozenset[str] = frozenset({
 # "actually un-covered" from "extractor can't see annotations here yet".
 ANNOTATION_SUPPORTED_LANGUAGES: frozenset[str] = frozenset({
     "python", "javascript", "typescript", "tsx",
+    "java",
 })
 
 

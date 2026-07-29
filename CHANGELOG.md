@@ -6,14 +6,35 @@ follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Added — Flow Explorer HTTP filter + `route_edges`
+
+`export_flow_explorer` keeps only concrete HTTP routes (drops Angular
+`@Component` noise), exports resolved `route_ref` / `invokes_route` hops as
+`route_edges` + Mermaid edges, and reports an accurate `route_ref` count.
+
+### Added — `got` client routes
+
+TS/JS extractor treats `got("/path")` and `got.get/post/...` like axios/fetch
+for `route_ref` client rows.
+
+### Added — Java Javadoc `@spec:` linking
+
+`java` is in `ANNOTATION_SUPPORTED_LANGUAGES`. Leading `/** @spec:ID */` on
+methods links Specs on index (same pipeline as JSDoc).
+
+### Added — Jest/Vitest coverage report ingestion
+
+`coverage/coverage-final.json` and `coverage/lcov.info` feed Spec test-coverage
+as an OR with graph-derived / explicit `tests` links (`coverage_source` may
+include `report`).
+
 ### Added — `export_flow_explorer` (cross-repo Flow Explorer)
 
 New docs-plugin tool writes `.livespec-group/flow-explorer/{data.json,index.html}`
 (or `.mcp-docs/flow-explorer/` when ungrouped). Aggregates every project in the
 shared `group_db`: repo cards, mirrored `xrepo-*` specs with per-repo symbols,
-Mermaid flow (project→spec / spec→spec), and per-repo API endpoints. Cross-repo
-edges are Spec-based; HTTP `route_ref` bridging is documented as not required
-for v1.
+Mermaid flow (project→spec / spec→spec), and per-repo API endpoints. Spec edges
+plus resolved HTTP `route_edges` when the indexer matched client→server routes.
 
 ### Fixed — Spec Explorer blank Overview (broken template literals)
 

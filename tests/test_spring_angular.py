@@ -72,6 +72,26 @@ async def test_find_endpoints_spring(workspace):
 
 
 @pytest.mark.asyncio
+async def test_java_javadoc_spec_annotation_links_method(workspace):
+    """Leading Javadoc is persisted as a Java method docstring for @spec links."""
+    async with Client(mcp) as c:
+        await c.call_tool("index_project", {})
+        await c.call_tool("create_spec", {"spec_id": "SPEC-001", "title": "Lookup"})
+        (workspace / "UserService.java").write_text(
+            "public class UserService {\n"
+            "    /** @spec:SPEC-001 */\n"
+            "    public String lookup() {\n"
+            "        return \"user\";\n"
+            "    }\n"
+            "}\n"
+        )
+        await c.call_tool("index_project", {})
+        out = (await c.call_tool("get_spec_implementation", {"spec_id": "SPEC-001"})).data
+
+    assert any(symbol["qualified_name"].endswith("UserService.lookup") for symbol in out["symbols"])
+
+
+@pytest.mark.asyncio
 async def test_find_endpoints_angular(workspace):
     (workspace / "dash.component.ts").write_text(ANGULAR_SRC)
     async with Client(mcp) as c:
