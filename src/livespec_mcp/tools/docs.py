@@ -24,6 +24,7 @@ from fastmcp import Context, FastMCP
 
 from livespec_mcp.state import get_state
 from livespec_mcp.tools import explorer as _explorer
+from livespec_mcp.tools import flow_explorer as _flow_explorer
 from livespec_mcp.tools._errors import mcp_error
 from livespec_mcp.tools.analysis import symbol_not_found_error
 from livespec_mcp.workspace_param import Workspace
@@ -381,4 +382,53 @@ def register(mcp: FastMCP) -> None:
             "files_written": result["files_written"],
             "counts": result["data"]["meta"]["counts"],
             "autowire": result.get("autowire"),
+        }
+
+    @mcp.tool(annotations={"readOnlyHint": False, "idempotentHint": True})
+    def export_flow_explorer(
+        generated_at: str | None = None,
+        framework: str | None = None,
+        workspace: Workspace | None = None,
+    ) -> dict[str, Any]:
+        """Emit a cross-repo Flow Explorer over the workspace ``group_db``.
+
+        Writes ``flow-explorer/data.json`` + ``index.html`` next to the shared
+        group database (``[workspace] group_db``), or under
+        ``.mcp-docs/flow-explorer/`` when the workspace is not grouped.
+
+        The bundle aggregates every project in the DB:
+
+        - **Repos** — symbol/spec/link/endpoint counts + link to each local
+          Spec Explorer when present
+        - **Cross-repo specs** — ``xrepo-*`` ids with per-repo implementing
+          symbols, signatures, files, and Spec↔Spec dependencies
+        - **Flow diagram** — Mermaid graph (project → spec implements,
+          spec → spec requires)
+        - **API surface** — endpoints discovered per repo (method/path/handler)
+
+        Cross-repo edges are Spec-based. HTTP ``route_ref`` bridging is not
+        required for v1; the HTML states that explicitly.
+
+        ``framework`` is passed to ``compute_endpoints`` the same way as
+        ``export_explorer`` / ``find_endpoints``.
+        """
+        try:
+            st = get_state(workspace)
+            result = _flow_explorer.write_flow_explorer_bundle(
+                st, generated_at=generated_at, framework=framework
+            )
+        except Exception as e:  # surface as the standard error shape
+            return mcp_error(
+                f"export_flow_explorer failed: {e}",
+                hint=(
+                    "run index_project on each repo in the group first; "
+                    "set [workspace] group_db in .livespec.toml for cross-repo"
+                ),
+            )
+        return {
+            "ok": True,
+            "files_written": result["files_written"],
+            "out_dir": result["out_dir"],
+            "counts": result["data"]["meta"]["counts"],
+            "bridge_note": result["data"]["meta"]["bridge_note"],
         }

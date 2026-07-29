@@ -66,6 +66,25 @@ async def test_export_explorer_writes_both_files(workspace: Path):
     html = html_path.read_text(encoding="utf-8")
     assert 'id="explorer-data"' in html
     assert "mermaid" in html.lower()
+    # Catch broken template literals (`...';) that blank the whole viewer in
+    # the browser (SyntaxError before any panel paints).
+    import shutil
+    import subprocess
+
+    if shutil.which("node"):
+        js = (
+            html.split('<script id="explorer-data" type="application/json">', 1)[1]
+            .split("</script>", 1)[1]
+            .split("<script>", 1)[1]
+            .rsplit("</script>", 1)[0]
+        )
+        js_path = explorer_dir / "_viewer_check.js"
+        js_path.write_text(js, encoding="utf-8")
+        check = subprocess.run(
+            ["node", "--check", str(js_path)], capture_output=True, text=True
+        )
+        js_path.unlink(missing_ok=True)
+        assert check.returncode == 0, check.stderr
     # v0.15 viewer: a real test-coverage meter + coverage_source badge,
     # DISTINCT from the existing link-confidence meter.
     assert "TEST_COVERAGE_LABEL" in html

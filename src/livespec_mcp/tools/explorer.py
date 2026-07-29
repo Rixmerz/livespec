@@ -2332,7 +2332,7 @@ function buildEndpoints() {
         h += '<div class="op-section"><div class="op-section-h">Try it out (MCP)</div>' +
           '<div class="op-try">' +
           `<button type="button" class="copy-call" data-copy="${cid}">Copy call</button>` +
-          `<pre class="call-shape" id="${cid}">${esc(shape)}</pre></div></div>';
+          `<pre class="call-shape" id="${cid}">${esc(shape)}</pre></div></div>`;
       } else if (isHttpTryIt(ep)) {
         const eid = `http-${k}-${i}`;
         const method = String(ep.method).toUpperCase();
@@ -2543,7 +2543,7 @@ function buildTrendOverview() {
   h += '</tbody></table>';
   h += '<div class="trend-meta">' +
     `<span>Latest: <b>${lastPct}%</b> avg ${esc(TEST_COVERAGE_LABEL)}</span>` +
-    `<span>Verified Specs: <b>${last.verified_count}</b></span></div>';
+    `<span>Verified Specs: <b>${last.verified_count}</b></span></div>`;
   h += '</div>';
   return h;
 }

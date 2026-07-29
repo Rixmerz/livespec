@@ -6,6 +6,23 @@ follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Added — `export_flow_explorer` (cross-repo Flow Explorer)
+
+New docs-plugin tool writes `.livespec-group/flow-explorer/{data.json,index.html}`
+(or `.mcp-docs/flow-explorer/` when ungrouped). Aggregates every project in the
+shared `group_db`: repo cards, mirrored `xrepo-*` specs with per-repo symbols,
+Mermaid flow (project→spec / spec→spec), and per-repo API endpoints. Cross-repo
+edges are Spec-based; HTTP `route_ref` bridging is documented as not required
+for v1.
+
+### Fixed — Spec Explorer blank Overview (broken template literals)
+
+Two viewer template literals ended with `';` instead of `` `; `` (`call-shape`
+MCP try-it block and trend “Verified Specs” meta). The SyntaxError aborted the
+whole script so only the header painted. Regenerated explorers need a hard
+refresh. Regression: `node --check` on the inlined viewer JS in
+`test_export_explorer_writes_both_files`.
+
 ### Changed — plugin MCP ships `[embeddings]` by default
 
 `plugin/.mcp.json` now runs
