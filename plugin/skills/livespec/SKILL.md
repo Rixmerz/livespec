@@ -59,7 +59,7 @@ it is not a background watcher you should lean on while editing.
 | Orphan tests | `find_orphan_tests()` |
 | HTTP/CLI entry points | `find_endpoints(framework=None)` — see the Hono trap below; prefer `summary_only=True` if JSON is huge |
 | Project snapshot | `get_project_overview()` — test-file symbols are excluded from `top_symbols` |
-| Vector embeddings for `search` | `embed_chunks()` — backfills any unembedded chunks |
+| Vector embeddings for `search` | `embed_chunks()` — backfills any unembedded chunks. Needs MCP launched with `livespec[embeddings]` (plugin `.mcp.json` default). If the tool says fastembed is missing, the host is still on bare `uvx livespec` — fix the MCP command and restart. First run downloads ~1.6 GB of ONNX weights from HuggingFace. |
 | Static Spec Explorer bundle | `export_explorer(base?, head?, framework?)` |
 | Scratch note on a symbol | `agent_scratch(qname, note)` / `agent_scratch_get(qname)` / `agent_scratch_clear(qname?)` |
 

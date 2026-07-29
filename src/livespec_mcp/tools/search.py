@@ -63,7 +63,7 @@ def register(mcp: FastMCP) -> None:
         """Populate vector embeddings for any unembedded chunks.
 
         Requires the [embeddings] extra (fastembed + sqlite-vec). First
-        run downloads ~200MB of model weights. No-op if extras missing
+        run downloads ~1.6 GB of ONNX weights. No-op if extras missing
         or all chunks already embedded.
         """
         st = get_state(workspace)

@@ -182,7 +182,7 @@ def _embed_cache_dir() -> str:
     """Persistent, workspace-shared model cache.
 
     fastembed's default is ``$TMPDIR/fastembed_cache`` — on tmpfs systems
-    that's wiped every reboot, re-downloading ~200MB of weights. We pin
+    that's wiped every reboot, re-downloading ~1.6 GB of weights. We pin
     XDG cache instead (`~/.cache/livespec-mcp/fastembed`), shared across
     all workspaces (models are workspace-independent). An explicit
     ``FASTEMBED_CACHE_PATH`` env var still wins."""

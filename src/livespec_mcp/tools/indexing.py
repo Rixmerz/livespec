@@ -163,7 +163,7 @@ def register(mcp: FastMCP) -> None:
         automatic re-index (debounce 2s).
         Pass embed=True to populate vector embeddings after chunking
         (requires the [embeddings] extra: fastembed + sqlite-vec). First
-        run downloads ~200MB of model weights; FTS5 lane works without it.
+        run downloads ~1.6 GB of ONNX weights; FTS5 lane works without it.
         Pass explorer=True to (re)generate the static Spec Explorer bundle
         (.mcp-docs/explorer/) after indexing; it is also auto-refreshed
         whenever that bundle already exists, so the viewer never goes stale.

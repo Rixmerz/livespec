@@ -2,7 +2,11 @@
   "mcpServers": {
     "livespec": {
       "command": "uvx",
-      "args": ["livespec@0.28.1"],
+      "args": [
+        "--from",
+        "livespec[embeddings]==0.28.1",
+        "livespec"
+      ],
       "env": {}
     }
   }

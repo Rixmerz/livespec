@@ -393,11 +393,12 @@ Always registered (including markdown Spec import + Explorer export).
   chunks are embedded — falls back to FTS-only if the embedder is offline.
   Use when you want "code that talks about X" without an exact
   symbol-name match. Companion tool `embed_chunks()` (also default
-  surface) populates vec0 tables on demand; ~200MB model download on
-  first run, cached afterwards in `~/.cache/livespec-mcp/fastembed`
-  (shared across workspaces; override with `FASTEMBED_CACHE_PATH`).
-  The download shows no progress under MCP — run
-  `livespec-mcp index <repo> --embed` in a terminal to watch it.
+  surface) populates vec0 tables on demand; ~1.6 GB ONNX model download on
+  first run (jina code + multilingual text), cached afterwards under
+  fastembed / `~/.cache/livespec-mcp/fastembed` (shared across workspaces;
+  override with `FASTEMBED_CACHE_PATH`). Requires the `[embeddings]` extra
+  (plugin `.mcp.json` includes it). The download shows no progress under
+  MCP — run `livespec index <repo> --embed` in a terminal to watch it.
 
 #### Code intelligence (14)
 - `find_symbol(query, kind, limit)` — separator-agnostic name lookup.

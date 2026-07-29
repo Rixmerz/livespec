@@ -6,6 +6,14 @@ follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed — plugin MCP ships `[embeddings]` by default
+
+`plugin/.mcp.json` now runs
+`uvx --from 'livespec[embeddings]==0.28.1' livespec` instead of bare
+`uvx livespec@0.28.1`, so marketplace/plugin installs get `fastembed` +
+`sqlite-vec` and `embed_chunks` works without a separate `uv tool install`.
+Docs note ~1.6 GB first-run model download and HuggingFace connectivity.
+
 ## [0.28.1] - 2026-07-28
 
 ### Fixed — Express/Hono handlers resolve via import bindings
