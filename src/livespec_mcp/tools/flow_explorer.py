@@ -178,10 +178,26 @@ def _iter_project_endpoints(pst: AppState, framework: str | None):
             yield ep
 
 
+_INFRA_ROUTE_PATHS = frozenset({
+    "/health",
+    "/liveness",
+    "/readiness",
+    "/ready",
+    "/ping",
+    "/metrics",
+    "/actuator/health",
+    "/actuator/info",
+})
+
+
 def _route_edges(
     conn: Any, name_by_id: dict[int, str]
 ) -> list[dict[str, str | None]]:
-    """Return resolved HTTP hops with endpoint metadata from route_ref."""
+    """Return resolved HTTP hops with endpoint metadata from route_ref.
+
+    Drops infra paths (``/health``, ``/liveness``, …) that cross-match every
+    service and drown the product flow in the Mermaid view.
+    """
     try:
         rows = conn.execute(
             """SELECT src_project.id AS from_pid,
@@ -207,17 +223,24 @@ def _route_edges(
         )
     except Exception:  # noqa: BLE001 — route migration may be absent
         return []
-    return [
-        {
-            "from_project": name_by_id.get(int(row["from_pid"])),
-            "from_symbol": row["from_symbol"],
-            "method": row["method"],
-            "path": row["path"],
-            "to_project": name_by_id.get(int(row["to_pid"])),
-            "to_symbol": row["to_symbol"],
-        }
-        for row in rows
-    ]
+    out: list[dict[str, str | None]] = []
+    for row in rows:
+        path = row["path"] or ""
+        # Compare without query/trailing slash; infra set is exact paths.
+        norm = (path.split("?", 1)[0].rstrip("/") or "/").lower()
+        if norm in _INFRA_ROUTE_PATHS:
+            continue
+        out.append(
+            {
+                "from_project": name_by_id.get(int(row["from_pid"])),
+                "from_symbol": row["from_symbol"],
+                "method": row["method"],
+                "path": row["path"],
+                "to_project": name_by_id.get(int(row["to_pid"])),
+                "to_symbol": row["to_symbol"],
+            }
+        )
+    return out
 
 
 def compute_flow_explorer_data(

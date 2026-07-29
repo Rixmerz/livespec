@@ -189,6 +189,102 @@ async def test_axios_client_links_to_backend_handler(sample_repo):
 
 
 @pytest.mark.asyncio
+async def test_express_route_links_axios_template_client(sample_repo):
+    """Express server registrations and `${base}/path` axios calls join."""
+    (sample_repo / "results.ts").write_text(
+        "export function registerResultsRoutes() {\n"
+        "  router.post('/flights/v2', submitResults);\n"
+        "}\n"
+        "function submitResults() {}\n"
+    )
+    (sample_repo / "composer.ts").write_text(
+        "export async function submitSearch(base) {\n"
+        "  return axios.post(`${base}/flights/v2`);\n"
+        "}\n"
+    )
+    async with Client(mcp) as c:
+        await c.call_tool("index_project", {"workspace": str(sample_repo)})
+        callers = (
+            await c.call_tool(
+                "who_calls", {"qname": "results.registerResultsRoutes"}
+            )
+        ).data
+        callees = (
+            await c.call_tool(
+                "who_does_this_call", {"qname": "composer.submitSearch"}
+            )
+        ).data
+    assert any(
+        x["qualified_name"] == "composer.submitSearch"
+        for x in callers.get("route_callers", [])
+    )
+    assert any(
+        x["qualified_name"] == "results.registerResultsRoutes"
+        for x in callees.get("invokes_endpoints", [])
+    )
+
+
+@pytest.mark.asyncio
+async def test_express_route_links_axios_identifier_template_client(sample_repo):
+    """A same-function URL binding resolves before axios route matching."""
+    (sample_repo / "results.ts").write_text(
+        "export function registerResultsRoutes() {\n"
+        "  router.post('/flights/v2', submitResults);\n"
+        "}\n"
+        "function submitResults() {}\n"
+    )
+    (sample_repo / "composer.ts").write_text(
+        "export async function submitSearch(base) {\n"
+        "  const requestUrl = `${base}/flights/v2`;\n"
+        "  return axios.post(requestUrl);\n"
+        "}\n"
+    )
+    async with Client(mcp) as c:
+        await c.call_tool("index_project", {"workspace": str(sample_repo)})
+        callees = (
+            await c.call_tool(
+                "who_does_this_call", {"qname": "composer.submitSearch"}
+            )
+        ).data
+    assert any(
+        x["qualified_name"] == "results.registerResultsRoutes"
+        for x in callees.get("invokes_endpoints", [])
+    )
+
+
+@pytest.mark.asyncio
+async def test_axios_post_url_var_and_body_ident_is_client(sample_repo):
+    """a client Composer pattern: ``const url = `${base}/flights/v2`; axios.post(url, body)``.
+
+    Second-arg identifiers are request payloads, not Express handlers — must
+    still emit a client route_ref and join to the backend.
+    """
+    (sample_repo / "back.py").write_text(
+        "from fastapi import FastAPI\n"
+        "app = FastAPI()\n"
+        "@app.post('/flights/v2')\n"
+        "def search():\n"
+        "    return {}\n"
+    )
+    (sample_repo / "front.js").write_text(
+        "async function getFlightsV2(body) {\n"
+        "  const baseUrl = 'https://composer.example';\n"
+        "  const url = `${baseUrl}/flights/v2`;\n"
+        "  return axios.post(url, body);\n"
+        "}\n"
+    )
+    async with Client(mcp) as c:
+        await c.call_tool("index_project", {"workspace": str(sample_repo)})
+        callees = (
+            await c.call_tool(
+                "who_does_this_call", {"qname": "front.getFlightsV2"}
+            )
+        ).data
+        ep = callees.get("invokes_endpoints", [])
+        assert any(x["qualified_name"] == "back.search" for x in ep)
+
+
+@pytest.mark.asyncio
 async def test_bare_got_client_links_to_backend_handler(sample_repo):
     """got('/x') uses the same method-agnostic route matching as fetch."""
     (sample_repo / "back.py").write_text(BACKEND)

@@ -6,11 +6,27 @@ follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed — axios client routes discarded when 2nd arg is an identifier
+
+`_TS_HANDLER_ARG_TYPES` included `identifier`, so a client's
+`axios.post(url, body)` was treated as an Express server registration and
+emitted no client `route_ref`. Client detection now only treats function/
+arrow args as handlers; `router.post('/x', ctrl.fn)` stays on `_server_route`.
+
+### Added — Express/Hono server `route_ref` + template/ident URL clients
+
+Indexing persists Express/Hono `router.verb('/path', handler)` as server
+routes. Client axios/fetch/got resolve `` `${base}/path` `` templates and
+same-function `const url = …` bindings. Java `@GetMapping("/x")` emits
+server routes too.
+
 ### Added — Flow Explorer HTTP filter + `route_edges`
 
 `export_flow_explorer` keeps only concrete HTTP routes (drops Angular
 `@Component` noise), exports resolved `route_ref` / `invokes_route` hops as
 `route_edges` + Mermaid edges, and reports an accurate `route_ref` count.
+Infra paths (`/health`, `/liveness`, …) are omitted so cross-service noise
+does not drown product hops.
 
 ### Added — `got` client routes
 

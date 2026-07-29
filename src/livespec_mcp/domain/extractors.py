@@ -308,6 +308,10 @@ def _emit_py_callback_refs(node: ast.Call, src_qname: str, out: ExtractResult) -
 
 
 _HTTP_CLIENT_VERBS = frozenset({"get", "post", "put", "delete", "patch", "head", "options"})
+_TS_TEMPLATE_URL_WITH_SLASH = _re_rs.compile(r"^\$\{[^}]{1,80}\}(/[^`${]{1,200})$")
+_TS_TEMPLATE_URL_WITHOUT_SLASH = _re_rs.compile(
+    r"^\$\{[^}]{1,80}\}([^`${/][^`${]{0,200})$"
+)
 # TS/JS: object identifiers that denote an HTTP client, so `axios.get('/x')` is
 # a client call but Hono's `app.get('/x', handler)` (object `app`) is not. The
 # allowlist is a first filter only — the definitive server-vs-client
@@ -673,6 +677,40 @@ _ANONYMOUS_FN_TYPES = {
 }
 
 
+_JAVA_MAPPING_PATH = _re_rs.compile(
+    r"@(Get|Post|Put|Patch|Delete)Mapping\s*\(\s*"
+    r"(?:value\s*=\s*|path\s*=\s*)?"
+    r"[\"'](/[^\"']{0,200})[\"']"
+)
+_JAVA_MAPPING_VERB = {
+    "Get": "GET",
+    "Post": "POST",
+    "Put": "PUT",
+    "Patch": "PATCH",
+    "Delete": "DELETE",
+}
+
+
+def _java_mapping_routes(node, src_bytes: bytes) -> list[tuple[str, str, int]]:
+    """``@GetMapping("/x")`` on a Java method → server route triples."""
+    out: list[tuple[str, str, int]] = []
+    for child in node.children:
+        if child.type != "modifiers":
+            continue
+        for mod in child.children:
+            if mod.type not in ("annotation", "marker_annotation"):
+                continue
+            raw = src_bytes[mod.start_byte : mod.end_byte].decode("utf-8", errors="replace")
+            m = _JAVA_MAPPING_PATH.search(raw[:400])
+            if m is None:
+                continue
+            verb = _JAVA_MAPPING_VERB.get(m.group(1))
+            if verb is None:
+                continue
+            out.append((verb, m.group(2), mod.start_point[0] + 1))
+    return out
+
+
 def _ts_node_decorators(node, src_bytes: bytes, language: str) -> list[str]:
     """Decorator / annotation names for a tree-sitter declaration node.
 
@@ -918,6 +956,17 @@ def _ts_extract(
                 decorators=_ts_node_decorators(node, src_bytes, language),
             )
         )
+        if language == "java" and kind in ("method", "function"):
+            for method, path, line in _java_mapping_routes(node, src_bytes):
+                out.routes.append(
+                    ExtractedRoute(
+                        src_qname=qname,
+                        role="server",
+                        method=method,
+                        path=path,
+                        line=line,
+                    )
+                )
         return qname
 
     def impl_target_name(impl_node) -> str | None:
@@ -1510,6 +1559,81 @@ def _ts_collect_calls(def_node, src_qname: str, src_bytes: bytes, out: ExtractRe
             )
         )
 
+    def _url_path(node) -> str | None:
+        """Extract a concrete route path from a string, template, or bound URL."""
+        value = node
+        if node.type == "identifier":
+            value = url_bindings.get(text(node))
+            if value is None:
+                return None
+        if value.type not in ("string", "template_string"):
+            return None
+        raw = text(value)
+        raw = raw[1:-1] if len(raw) >= 2 else raw
+        if raw.startswith(("/", "http")):
+            return raw
+        matched = _TS_TEMPLATE_URL_WITH_SLASH.fullmatch(raw[:300])
+        if matched is not None:
+            return matched.group(1)
+        matched = _TS_TEMPLATE_URL_WITHOUT_SLASH.fullmatch(raw[:300])
+        if matched is not None:
+            return f"/{matched.group(1)}"
+        return None
+
+    def _url_bindings() -> dict[str, object]:
+        """Find same-scope URL literals so ``axios.post(url)`` stays linkable."""
+        bindings: dict[str, object] = {}
+
+        def walk_bindings(node) -> None:
+            if node is not def_node and _is_named_scope_boundary(node):
+                return
+            if node.type == "variable_declarator":
+                name = node.child_by_field_name("name")
+                value = node.child_by_field_name("value")
+                if name is not None and value is not None and name.type == "identifier":
+                    bindings[text(name)] = value
+            elif node.type == "assignment_expression":
+                name = node.child_by_field_name("left")
+                value = node.child_by_field_name("right")
+                if name is not None and value is not None and name.type == "identifier":
+                    bindings[text(name)] = value
+            for child in node.children:
+                walk_bindings(child)
+
+        walk_bindings(def_node)
+        return bindings
+
+    url_bindings = _url_bindings()
+
+    def _server_route(call_node) -> tuple[str, str] | None:
+        """Return an Express/Hono server route registration, if present."""
+        fn = call_node.child_by_field_name("function")
+        if fn is None or fn.type != "member_expression":
+            return None
+        prop = fn.child_by_field_name("property")
+        obj = fn.child_by_field_name("object")
+        if prop is None or obj is None:
+            return None
+        verb = text(prop).lower()
+        receiver = _ts_leftmost_ident(obj, text)
+        if verb not in _HONO_ROUTE_VERBS or not _is_http_route_receiver(receiver):
+            return None
+        args_node = call_node.child_by_field_name("arguments")
+        positional = [
+            arg for arg in (args_node.children if args_node is not None else [])
+            if arg.type not in ("(", ")", ",", "comment")
+        ]
+        if not positional:
+            return None
+        path = _url_path(positional[0])
+        if path is None:
+            return None
+        has_handler = any(
+            arg.type in _TS_HANDLER_ARG_TYPES or _route_handler_binding(arg, text)[0]
+            for arg in positional[1:]
+        )
+        return (verb.upper(), path) if has_handler else None
+
     def _client_route(call_node):
         """v0.21 P2: (method, path) for a fetch/axios client call, else None.
 
@@ -1544,37 +1668,49 @@ def _ts_collect_calls(def_node, src_qname: str, src_bytes: bytes, out: ExtractRe
             a for a in args_node.children
             if a.type not in ("(", ")", ",", "comment")
         ]
-        if not positional or positional[0].type not in ("string", "template_string"):
+        if not positional:
             return None
-        raw = text(positional[0])
-        path = raw[1:-1] if len(raw) >= 2 else raw
-        if not (path.startswith("/") or path.startswith("http")):
+        path = _url_path(positional[0])
+        if path is None or not path.startswith(("/", "http")):
             return None
-        # A later positional handler arg (named function or arrow) means this is
-        # a SERVER route registration — `api.get('/x', handler)` / Express /
-        # Hono — not a client call. This is the definitive discriminator: the
-        # object-name allowlist alone is leaky (a router is commonly named
-        # `api`/`client`/`request`), but a client call passes only a URL (and
-        # maybe a config OBJECT), never a handler function/identifier. Client
-        # calls with a bare-identifier config var are rare; precision wins.
-        if any(a.type in _TS_HANDLER_ARG_TYPES for a in positional[1:]):
+        # A later FUNCTION/ARROW handler means SERVER registration
+        # (`app.get('/x', handler)`). Do NOT treat bare identifiers as handlers
+        # here — `axios.post(url, body)` / `axios.post(url, headers)` pass data
+        # variables as identifiers and must stay client routes. Server
+        # `router.post('/x', ctrl.fn)` is handled by `_server_route` using
+        # `_is_http_route_receiver`.
+        _FN_HANDLER_TYPES = _TS_HANDLER_ARG_TYPES - {"identifier"}
+        if any(a.type in _FN_HANDLER_TYPES for a in positional[1:]):
             return None
         return method, path
 
     def walk(node):
         if node.type in _CALL_NODE_TYPES:
-            route = _client_route(node)
+            route = _server_route(node)
             if route is not None:
                 method, path = route
                 out.routes.append(
                     ExtractedRoute(
                         src_qname=src_qname,
-                        role="client",
+                        role="server",
                         method=method,
                         path=path,
                         line=node.start_point[0] + 1,
                     )
                 )
+            else:
+                route = _client_route(node)
+                if route is not None:
+                    method, path = route
+                    out.routes.append(
+                        ExtractedRoute(
+                            src_qname=src_qname,
+                            role="client",
+                            method=method,
+                            path=path,
+                            line=node.start_point[0] + 1,
+                        )
+                    )
             tgt, leftmost = call_target_and_leftmost(node)
             if tgt:
                 # P1.A1: scope_module from imports map. Direct hit on target name
