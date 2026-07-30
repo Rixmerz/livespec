@@ -37,7 +37,7 @@ Todo el stack es local-first: 0 servicios externos, 0 API keys obligatorias, 0 D
 
 ## 3. Estado actual
 
-**Unreleased (en curso): audit checklist CERRADO + limpieza.**
+**HEAD Unreleased on `main`:** `565718f`. Tests **625**. Checklist flow-group PASS.
 - Checklist validación flow-group **PASS** (STATUS.txt + CHECKLIST_VALIDATION.json).
 - **P0 FIX:** symbol lookup group-wide — Composer→HotelSvc `who_calls.route_callers=2`.
 - **IMPROVE:** legacy infra filter; Express/Hono default endpoints;
