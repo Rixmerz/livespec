@@ -55,13 +55,14 @@ DOCS_PLUGIN_TOOL_NAMES = frozenset(
         "generate_docs",
         "list_docs",
         "export_documentation",
+        "export_explorer",
+        "export_flow_explorer",
     }
 )
 
 # Core surface tools registered by plugins but always visible (not gated).
 CORE_PLUGIN_TOOL_NAMES = frozenset(
     {
-        "export_explorer",
         "import_specs_from_markdown",
         "sync_openspec",
     }

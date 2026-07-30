@@ -75,8 +75,9 @@ async def test_audit_coverage_summary_only(workspace):
         out = (await c.call_tool("audit_coverage", {"summary_only": True})).data
         assert "counts" in out
         assert isinstance(out["counts"]["modules_without_spec"], int)
-        # Summary mode skips the lists themselves
+        # Summary mode skips the lists themselves but includes a sample
         assert "modules_without_spec" not in out
+        assert "modules_truly_orphan_sample" in out
 
 
 @pytest.mark.asyncio

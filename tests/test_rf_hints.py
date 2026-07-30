@@ -102,3 +102,18 @@ async def test_scan_docstrings_summary_only(workspace):
     assert "count" in out
     assert "verb_histogram_top" in out
     assert "hints" not in out
+
+
+@pytest.mark.asyncio
+async def test_scan_docstrings_skips_non_python_workspace(workspace):
+    """TS-only repos soft-skip — docstring hints are Python-biased."""
+    (workspace / "src").mkdir()
+    (workspace / "src" / "app.ts").write_text(
+        "/** Validates the request body. */\nexport function validate() { return 1; }\n"
+    )
+    async with Client(mcp) as c:
+        await c.call_tool("index_project", {})
+        out = (await c.call_tool("scan_docstrings_for_spec_hints", {})).data
+    assert out.get("skipped") is True
+    assert out.get("hints") == []
+    assert "Python" in (out.get("reason") or "")

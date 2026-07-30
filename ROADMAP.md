@@ -19,14 +19,21 @@
 
 ## 0. Estado v0.20 (addendum, reemplaza al "Estado v0.7" del final)
 
+**Addendum Unreleased — dense vectors removed.** `search` stays on the
+**core** surface as **FTS5-only**. Dropped: `embed_chunks`, `[embeddings]`
+extra (fastembed + sqlite-vec), RRF hybrid lane, mig **v19**. Earlier
+curation notes that parked `search` in a RAG plugin "auto-on with
+embeddings" are obsolete — keyword search is enough for agentic use;
+vector cost/ROI on large SPAs was the failure mode.
+
 v0.20 cerró con: (a) el hard-cut RF→Spec + taxonomía `kind`, y (b) una
 auditoría exhaustiva de 8 dimensiones cuyos ~50 hallazgos se corrigieron en
 seis tandas (P1 packaging/boot, P2 storage/concurrencia, P3 correctness del
 domain, P4 capa tools, P5 performance, P6 tests/docs). El build vuelve a
 compilar (`uv build` en CI), las migraciones son transaccionales, hay
 `UNIQUE(project.root)`, el watcher corre aislado, y los hotspots de Django
-(coverage O(V+E), PageRank cacheado, chunking que preserva embeddings) están
-resueltos. Suite: ~403 tests.
+(coverage O(V+E), PageRank cacheado, chunking AST-aware) están
+resueltos. Suite: ~403 tests (hoy ~611).
 
 ### Próximo pilar: **features cross-project (polyrepo / microservicios)**
 
@@ -211,9 +218,9 @@ Estos tools son features de **humanos** que querían bulk doc gen, no de
 
 ### Speculative (esperar a que falte de verdad)
 
-7. **`agent_scratch(qname, note)` / `agent_scratch_clear()`** — anotaciones
-   provisorias durante work del agente sin contaminar RFs reales. Hoy no
-   hay forma limpia de "marcá que estoy investigando esto" sin abusar RFs.
+7. ~~**`agent_scratch(qname, note)` / `agent_scratch_clear()`**~~ — shipped
+   then **dropped** (Unreleased curation): agents use host chat notes /
+   Spec links instead of a parallel scratch store.
 
 ---
 

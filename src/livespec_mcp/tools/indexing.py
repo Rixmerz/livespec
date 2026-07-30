@@ -16,7 +16,7 @@ from typing import Any
 from fastmcp import FastMCP
 
 from livespec_mcp.domain.indexer import index_project as run_index
-from livespec_mcp.domain.rag import embed_pending, rebuild_chunks
+from livespec_mcp.domain.rag import rebuild_chunks
 from livespec_mcp.state import AppState, get_state
 from livespec_mcp.workspace_param import WORKSPACE_DOCSTRING_NOTE, Workspace
 
@@ -59,25 +59,22 @@ def compute_index_status(st: AppState) -> dict[str, Any]:
     }
 
 
-def run_index_pipeline(st: AppState, *, force: bool = False, embed: bool = False) -> dict[str, Any]:
-    """Index + idempotent chunk rebuild + optional embed. Shared by the
-    `index_project` MCP tool and the `livespec-mcp index` CLI subcommand —
-    both surfaces must report the same payload shape."""
+def run_index_pipeline(st: AppState, *, force: bool = False) -> dict[str, Any]:
+    """Index + idempotent chunk rebuild. Shared by the `index_project` MCP
+    tool and the `livespec index` CLI subcommand — both surfaces must report
+    the same payload shape."""
     with st.lock():
         stats = run_index(st.settings, st.conn, force=force)
         existing = st.conn.execute(
             "SELECT COUNT(*) c FROM chunk WHERE project_id=?", (st.project_id,)
         ).fetchone()["c"]
         # A deletion-only change increments nothing in files_changed, but its
-        # chunks (FTS + vectors) must be pruned — otherwise search keeps
-        # returning hits for deleted files. stats.files_deleted covers that.
+        # chunks (FTS) must be pruned — otherwise search keeps returning hits
+        # for deleted files. stats.files_deleted covers that.
         if force or stats.files_changed or stats.files_deleted or existing == 0:
             chunk_stats: dict[str, Any] = dict(rebuild_chunks(st.conn, st.project_id))
         else:
             chunk_stats = {"skipped": "no file changes"}
-        embed_stats: dict[str, Any] = {"requested": embed}
-        if embed:
-            embed_stats.update(embed_pending(st.conn, st.project_id))
     return {
         "files_total": stats.files_total,
         "files_changed": stats.files_changed,
@@ -93,7 +90,6 @@ def run_index_pipeline(st: AppState, *, force: bool = False, embed: bool = False
         "workspace": str(st.settings.workspace),
         "watcher_started": False,
         "chunks": chunk_stats,
-        "embeddings": embed_stats,
     }
 
 
@@ -149,7 +145,6 @@ def register(mcp: FastMCP) -> None:
     def index_project(
         force: bool = False,
         watch: bool = False,
-        embed: bool = False,
         explorer: bool = False,
         workspace: Workspace | None = None,
     ) -> dict[str, Any]:
@@ -160,13 +155,11 @@ def register(mcp: FastMCP) -> None:
         root ([index] table: ignore, languages, max_file_bytes — config
         patterns outrank .gitignore). Pass watch=True to also start a
         filesystem watcher after indexing so subsequent edits trigger
-        automatic re-index (debounce 2s).
-        Pass embed=True to populate vector embeddings after chunking
-        (requires the [embeddings] extra: fastembed + sqlite-vec). First
-        run downloads ~1.6 GB of ONNX weights; FTS5 lane works without it.
-        Pass explorer=True to (re)generate the static Spec Explorer bundle
-        (.mcp-docs/explorer/) after indexing; it is also auto-refreshed
-        whenever that bundle already exists, so the viewer never goes stale.
+        automatic re-index (debounce 2s). Rebuilds FTS5 search chunks
+        idempotently. Pass explorer=True to (re)generate the static Spec
+        Explorer bundle (.mcp-docs/explorer/) after indexing; it is also
+        auto-refreshed whenever that bundle already exists, so the viewer
+        never goes stale.
         When ``[specs].sync_from`` is set in ``.livespec.toml``, markdown
         specs are re-imported after each index (idempotent). Optional
         ``[specs].links_seed`` replays ``bulk_link_spec_symbols`` from JSON.
@@ -178,7 +171,7 @@ def register(mcp: FastMCP) -> None:
         Use after pulling new commits or when documentation feels stale.
         """
         st = get_state(workspace, create=True)
-        result = run_index_pipeline(st, force=force, embed=embed)
+        result = run_index_pipeline(st, force=force)
         result["explorer_regenerated"] = _maybe_regenerate_explorer(st, explorer)
         try:
             from livespec_mcp.domain.specs_sync import sync_specs_from_config

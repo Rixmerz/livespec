@@ -1,14 +1,9 @@
-"""RAG layer: AST-aware chunking, optional dual-model embeddings, hybrid search.
+"""AST-aware chunking + FTS5 keyword search over symbols and Specs.
 
-Embeddings are optional. When `fastembed` and `sqlite-vec` are present we add a
-vector lane to the search; otherwise we fall back to FTS5 + BM25 keyword search,
-which still benefits from AST chunking (chunks preserve symbol boundaries).
-
-Models when enabled (via `pip install -e .[embeddings]`):
-  - jinaai/jina-embeddings-v2-base-code   (768d, code)
-  - intfloat/multilingual-e5-base         (768d, EN+ES text)
+Chunks preserve symbol/Spec boundaries. ``search`` (via ``keyword_search`` /
+``hybrid_search`` alias) is FTS5-only — dense vectors / sqlite-vec / fastembed
+were removed.
 """
-
 from __future__ import annotations
 
 import re
@@ -171,137 +166,7 @@ def chunk_spec(spec_row: sqlite3.Row) -> list[Chunk]:
     return out
 
 
-# ---------- Embeddings (optional) ----------
-
-
-_CODE_EMBEDDER = None
-_TEXT_EMBEDDER = None
-
-
-def _embed_cache_dir() -> str:
-    """Persistent, workspace-shared model cache.
-
-    fastembed's default is ``$TMPDIR/fastembed_cache`` — on tmpfs systems
-    that's wiped every reboot, re-downloading ~1.6 GB of weights. We pin
-    XDG cache instead (`~/.cache/livespec-mcp/fastembed`), shared across
-    all workspaces (models are workspace-independent). An explicit
-    ``FASTEMBED_CACHE_PATH`` env var still wins."""
-    import os
-
-    env = os.getenv("FASTEMBED_CACHE_PATH")
-    if env:
-        return env
-    base = Path(os.getenv("XDG_CACHE_HOME") or Path.home() / ".cache")
-    cache = base / "livespec-mcp" / "fastembed"
-    cache.mkdir(parents=True, exist_ok=True)
-    return str(cache)
-
-
-def have_embeddings() -> bool:
-    try:
-        import fastembed  # noqa: F401
-        return True
-    except ImportError:
-        return False
-
-
-def _code_embedder():
-    global _CODE_EMBEDDER
-    if _CODE_EMBEDDER is None:
-        from fastembed import TextEmbedding
-
-        _CODE_EMBEDDER = TextEmbedding(
-            model_name="jinaai/jina-embeddings-v2-base-code",
-            cache_dir=_embed_cache_dir(),
-        )
-    return _CODE_EMBEDDER
-
-
-def _text_embedder():
-    global _TEXT_EMBEDDER
-    if _TEXT_EMBEDDER is None:
-        from fastembed import TextEmbedding
-
-        # 768-dim multilingual model that matches the chunk_vec_text vec0 table.
-        # (intfloat/multilingual-e5-base is not in fastembed's catalog as of
-        # late 2025 — only the -large 1024-dim variant is, which would require
-        # a wider vec0 table.)
-        _TEXT_EMBEDDER = TextEmbedding(
-            model_name="sentence-transformers/paraphrase-multilingual-mpnet-base-v2",
-            cache_dir=_embed_cache_dir(),
-        )
-    return _TEXT_EMBEDDER
-
-
-def embed_texts(texts: list[str], kind: str) -> list[list[float]]:
-    if not have_embeddings():
-        return [[] for _ in texts]
-    embedder = _code_embedder() if kind == "code" else _text_embedder()
-    return [list(v) for v in embedder.embed(texts)]
-
-
-# ---------- Vector store (sqlite-vec) ----------
-
-
-# Connections that have already loaded the sqlite-vec extension. Keyed by
-# id(conn); the extension persists for the life of the connection, so
-# re-loading it on every search (vec_search + the lanes payload) was pure
-# overhead. A closed connection's id may be reused, but re-loading an
-# already-loaded extension is harmless — this is a fast-path cache, not a lock.
-# No id()-keyed cache here: CPython reuses object ids after collection, and a
-# sqlite3.Connection cannot be weak-referenced, so a set of id(conn) says
-# "already loaded" about a brand-new connection that merely landed on a freed
-# address. Measured: 399 of 400 sequentially opened-and-closed connections
-# reused an id. Ask the connection instead of remembering — see below.
-
-
-def have_sqlite_vec(conn: sqlite3.Connection) -> bool:
-    """True if sqlite-vec is usable on *this* connection, loading it if needed.
-
-    Asks the connection whether the extension is live rather than consulting a
-    memo. The previous memo was keyed by id(conn) and reported "loaded" for
-    connections that had never loaded anything, which surfaced downstream as
-    `OperationalError: no such module: vec0` from ensure_vec_tables — a failure
-    that looks like a missing dependency and is really a stale cache. The probe
-    is one trivial scalar call.
-    """
-    try:
-        conn.execute("SELECT vec_version()").fetchone()
-        return True
-    except sqlite3.Error:
-        pass  # not loaded on this connection yet — fall through and load it
-
-    try:
-        import sqlite_vec
-    except ImportError:
-        return False
-    try:
-        conn.enable_load_extension(True)
-        sqlite_vec.load(conn)
-        conn.enable_load_extension(False)
-        return True
-    except Exception:
-        return False
-
-
-def ensure_vec_tables(conn: sqlite3.Connection) -> None:
-    """Create vec0 virtual tables if sqlite-vec is loaded."""
-    conn.execute(
-        """CREATE VIRTUAL TABLE IF NOT EXISTS chunk_vec_code USING vec0(
-            chunk_id INTEGER PRIMARY KEY,
-            embedding FLOAT[768]
-        )"""
-    )
-    conn.execute(
-        """CREATE VIRTUAL TABLE IF NOT EXISTS chunk_vec_text USING vec0(
-            chunk_id INTEGER PRIMARY KEY,
-            embedding FLOAT[768]
-        )"""
-    )
-
-
 # ---------- Persistence ----------
-
 
 def upsert_chunks(conn: sqlite3.Connection, project_id: int, chunks: Iterable[Chunk]) -> list[int]:
     """Replace a source's chunks only when its full chunk set changed.
@@ -311,8 +176,7 @@ def upsert_chunks(conn: sqlite3.Connection, project_id: int, chunks: Iterable[Ch
     symbol that splits into N chunks, chunk 2's delete wiped chunk 1 that the
     same loop had just inserted, leaving only the LAST chunk (and aliased
     rowids in the returned list). Comparing the whole hash sequence per source
-    also lets an unchanged symbol keep its existing rows (and their
-    ``embedded_at``) instead of re-inserting.
+    also lets an unchanged symbol keep its existing rows instead of re-inserting.
     """
     grouped: OrderedDict[tuple[str, int | None], list[Chunk]] = OrderedDict()
     for ch in chunks:
@@ -328,8 +192,7 @@ def upsert_chunks(conn: sqlite3.Connection, project_id: int, chunks: Iterable[Ch
         ).fetchall()
         incoming_hashes = [c.content_hash for c in group]
         if [r["content_hash"] for r in existing] == incoming_hashes:
-            # Identical chunk set in the same order — reuse rows verbatim so
-            # embeddings survive (no FTS churn, no re-embed).
+            # Identical chunk set in the same order — reuse rows (no FTS churn).
             ids.extend(int(r["id"]) for r in existing)
             continue
         # Changed set: replace all of this source's chunks in one shot.
@@ -358,15 +221,13 @@ def upsert_chunks(conn: sqlite3.Connection, project_id: int, chunks: Iterable[Ch
     return ids
 
 
+
 def rebuild_chunks(conn: sqlite3.Connection, project_id: int) -> dict[str, int]:
     """Re-chunk every symbol and Spec for the project. Idempotent.
 
-    Preserves embeddings across rebuilds: instead of ``DELETE`` + re-insert
-    (which reset every ``embedded_at`` to NULL and forced a full re-embed on
-    any change), it upserts each source — ``upsert_chunks`` REUSES a source's
-    existing rows verbatim when its chunk set is unchanged — and then deletes
-    only the chunks whose source no longer exists. Reads each file ONCE (all
-    its symbols share the read) rather than once per symbol.
+    Idempotent upsert: ``upsert_chunks`` reuses a source's rows when the
+    chunk set is unchanged; then deletes chunks whose source no longer exists.
+    Reads each file ONCE (all its symbols share the read).
     """
     workspace = Path(
         conn.execute("SELECT root FROM project WHERE id=?", (project_id,)).fetchone()["root"]
@@ -376,7 +237,6 @@ def rebuild_chunks(conn: sqlite3.Connection, project_id: int) -> dict[str, int]:
     spec_count = 0
     kept_ids: list[int] = []
 
-    # Symbols — grouped by file so each file is read exactly once.
     rows = conn.execute(
         """SELECT s.id, s.qualified_name, s.kind, s.signature, s.docstring,
                   s.start_line, s.end_line, f.path AS file_path
@@ -403,7 +263,6 @@ def rebuild_chunks(conn: sqlite3.Connection, project_id: int) -> dict[str, int]:
             kept_ids.extend(upsert_chunks(conn, project_id, chunks))
             sym_count += len(chunks)
 
-    # Specs
     specs = conn.execute(
         "SELECT id, spec_id, title, description FROM spec WHERE project_id=?", (project_id,)
     ).fetchall()
@@ -412,8 +271,6 @@ def rebuild_chunks(conn: sqlite3.Connection, project_id: int) -> dict[str, int]:
         kept_ids.extend(upsert_chunks(conn, project_id, chunks))
         spec_count += len(chunks)
 
-    # Delete chunks whose source disappeared (deleted symbols/specs). Uses a
-    # temp table so it stays under SQLite's host-parameter cap on big repos.
     conn.execute("CREATE TEMP TABLE IF NOT EXISTS _kept_chunks(id INTEGER PRIMARY KEY)")
     conn.execute("DELETE FROM _kept_chunks")
     conn.executemany("INSERT OR IGNORE INTO _kept_chunks(id) VALUES(?)", [(i,) for i in kept_ids])
@@ -423,75 +280,13 @@ def rebuild_chunks(conn: sqlite3.Connection, project_id: int) -> dict[str, int]:
     )
     conn.execute("DELETE FROM _kept_chunks")
 
-    # Prune orphaned vectors (chunk_vec_* rows whose chunk was deleted) so the
-    # vec index doesn't grow monotonically and eat KNN slots. Best-effort.
-    _prune_orphan_vectors(conn)
-
     return {"symbol_chunks": sym_count, "spec_chunks": spec_count}
 
 
-def _prune_orphan_vectors(conn: sqlite3.Connection) -> None:
-    for tbl in ("chunk_vec_code", "chunk_vec_text"):
-        try:
-            conn.execute(
-                f"DELETE FROM {tbl} WHERE chunk_id NOT IN (SELECT id FROM chunk)"
-            )
-        except sqlite3.OperationalError:
-            # vec table absent (sqlite-vec not loaded) — nothing to prune.
-            pass
-
-
-def embed_pending(conn: sqlite3.Connection, project_id: int) -> dict[str, int]:
-    """Embed any chunk that has no embedding yet. Requires fastembed + sqlite-vec.
-
-    Returns counts. No-op if embeddings stack missing.
-    """
-    if not have_embeddings():
-        return {"skipped": 1, "reason": "fastembed not installed"}
-    if not have_sqlite_vec(conn):
-        return {"skipped": 1, "reason": "sqlite-vec not installed"}
-    ensure_vec_tables(conn)
-    code_rows = conn.execute(
-        """SELECT id, text FROM chunk
-           WHERE project_id=? AND text_kind='code' AND embedded_at IS NULL""",
-        (project_id,),
-    ).fetchall()
-    text_rows = conn.execute(
-        """SELECT id, text FROM chunk
-           WHERE project_id=? AND text_kind='text' AND embedded_at IS NULL""",
-        (project_id,),
-    ).fetchall()
-
-    def _embed(rows, kind, table):
-        if not rows:
-            return 0
-        ids = [int(r["id"]) for r in rows]
-        texts = [r["text"] for r in rows]
-        vecs = embed_texts(texts, kind)
-        for cid, vec in zip(ids, vecs, strict=False):
-            conn.execute(
-                f"INSERT OR REPLACE INTO {table}(chunk_id, embedding) VALUES(?, ?)",
-                (cid, _floats_blob(vec)),
-            )
-            conn.execute(
-                "UPDATE chunk SET embedded_at = datetime('now') WHERE id=?", (cid,)
-            )
-        return len(ids)
-
-    code_n = _embed(code_rows, "code", "chunk_vec_code")
-    text_n = _embed(text_rows, "text", "chunk_vec_text")
-    return {"code_embedded": code_n, "text_embedded": text_n}
-
-
-def _floats_blob(vec: list[float]) -> bytes:
-    import struct
-
-    return struct.pack(f"{len(vec)}f", *vec)
-
-
-# ---------- Hybrid search ----------
+# ---------- FTS5 search ----------
 
 _FTS_TOKEN_SPLIT = re.compile(r"[_\-.]+")
+_PHRASE_RE = re.compile(r'"([^"]+)"')
 
 
 def _fts_query_tokens(query: str) -> list[str]:
@@ -508,19 +303,48 @@ def _fts_query_tokens(query: str) -> list[str]:
     return out
 
 
+def _fts_match_expr(query: str) -> tuple[str, str]:
+    """Build an FTS5 MATCH expression.
+
+    Quoted phrases become phrase queries; remaining tokens are OR'd.
+    Returns ``(expr, mode)`` where mode is ``phrase``, ``tokens``, or ``mixed``.
+    """
+    phrases = [m.group(1).strip() for m in _PHRASE_RE.finditer(query) if m.group(1).strip()]
+    remainder = _PHRASE_RE.sub(" ", query)
+    tokens = _fts_query_tokens(remainder)
+    parts: list[str] = []
+    for ph in phrases:
+        clean = " ".join(
+            _fts_query_tokens(ph)
+            or [t for t in ph.replace('"', "").split() if t.isalnum()]
+        )
+        if clean:
+            parts.append(f'"{clean}"')
+    if tokens:
+        parts.append(" OR ".join(tokens))
+    if not parts:
+        return "", "tokens"
+    if phrases and tokens:
+        mode = "mixed"
+        expr = " AND ".join(parts) if len(parts) > 1 else parts[0]
+    elif phrases:
+        mode = "phrase"
+        expr = " AND ".join(parts)
+    else:
+        mode = "tokens"
+        expr = parts[0]
+    return expr, mode
+
+
 def fts_search(
     conn: sqlite3.Connection, project_id: int, query: str, limit: int, scope: str
 ) -> list[tuple[int, float, dict]]:
-    """FTS5 over chunks. Returns (chunk_id, bm25_score, payload).
-
-    Lower bm25 = better; we invert to score = 1 / (1 + bm25) so larger is better.
-    """
+    """FTS5 over chunks. Returns (chunk_id, bm25_score, payload)."""
     if not query.strip():
         return []
-    tokens = _fts_query_tokens(query)
-    if not tokens:
+    fts_query, _mode = _fts_match_expr(query)
+    if not fts_query:
         return []
-    fts_query = " OR ".join(tokens)
     sql = [
         """SELECT c.id, c.source_type, c.source_id, c.file_path, c.start_line, c.end_line,
                   c.text_kind, substr(c.text, 1, 240) AS snippet, bm25(chunk_fts) AS bm
@@ -539,8 +363,6 @@ def fts_search(
         rows = conn.execute(" ".join(sql), args).fetchall()
     except (sqlite3.OperationalError, sqlite3.IntegrityError):
         return []
-    # FTS5 bm25() returns negative values where smaller = better. Invert so the
-    # downstream contract (larger score = better) holds without overflow risk.
     for r in rows:
         bm = float(r["bm"])
         score = -bm
@@ -548,104 +370,51 @@ def fts_search(
     return out
 
 
-def _vec_k(conn: sqlite3.Connection, project_id: int, limit: int) -> int:
-    """How many nearest neighbors to ask sqlite-vec for.
+def chunks_index_fresh(
+    conn: sqlite3.Connection, project_id: int, workspace: Path
+) -> dict:
+    """Whether chunk source files still match indexed ``file.content_hash``."""
+    from livespec_mcp.domain.indexer import _hash_bytes
 
-    The vec tables have no project column, so ``v.embedding MATCH ? AND k=?``
-    returns the globally-nearest k across ALL projects and the JOIN filters to
-    this project afterwards. In a single-project DB (the common case) k=limit*2
-    is plenty; in a multi-project DB it could return far fewer than ``limit``
-    for this project, so over-fetch in proportion to this project's share of
-    chunks (bounded, so a hostile split can't blow up the KNN)."""
-    total = conn.execute("SELECT COUNT(*) c FROM chunk").fetchone()["c"] or 1
-    mine = conn.execute(
-        "SELECT COUNT(*) c FROM chunk WHERE project_id=?", (project_id,)
-    ).fetchone()["c"] or 1
-    if mine >= total:
-        return limit * 2
-    import math
-
-    factor = math.ceil(total / mine)
-    return min(limit * max(2, factor), total, 2000)
-
-
-def vec_search(
-    conn: sqlite3.Connection, project_id: int, query: str, limit: int, scope: str
-) -> list[tuple[int, float, dict]]:
-    """Vector search via sqlite-vec. Returns (chunk_id, score, payload)."""
-    if not have_embeddings() or not have_sqlite_vec(conn):
-        return []
-    ensure_vec_tables(conn)
-    k = _vec_k(conn, project_id, limit)
-    try:
-        code_q = (
-            list(embed_texts([query], "code")[0]) if scope in ("all", "code") else None
-        )
-        text_q = (
-            list(embed_texts([query], "text")[0])
-            if scope in ("all", "specs")
-            else None
-        )
-    except Exception:
-        # ponytail: embedder offline (hub/onnx) — FTS-only hybrid_search still works
-        return []
-    out: list[tuple[int, float, dict]] = []
-    if code_q:
-        rows = conn.execute(
-            """SELECT v.chunk_id, v.distance, c.source_type, c.source_id, c.file_path,
-                      c.start_line, c.end_line, c.text_kind,
-                      substr(c.text, 1, 240) AS snippet
-               FROM chunk_vec_code v JOIN chunk c ON c.id = v.chunk_id
-               WHERE v.embedding MATCH ? AND k = ?
-                 AND c.project_id = ?""",
-            (_floats_blob(code_q), k, project_id),
-        ).fetchall()
-        for r in rows:
-            score = 1.0 / (1.0 + float(r["distance"]))
-            out.append((int(r["chunk_id"]), score, dict(r)))
-    if text_q:
-        rows = conn.execute(
-            """SELECT v.chunk_id, v.distance, c.source_type, c.source_id, c.file_path,
-                      c.start_line, c.end_line, c.text_kind,
-                      substr(c.text, 1, 240) AS snippet
-               FROM chunk_vec_text v JOIN chunk c ON c.id = v.chunk_id
-               WHERE v.embedding MATCH ? AND k = ?
-                 AND c.project_id = ?""",
-            (_floats_blob(text_q), k, project_id),
-        ).fetchall()
-        for r in rows:
-            score = 1.0 / (1.0 + float(r["distance"]))
-            out.append((int(r["chunk_id"]), score, dict(r)))
-    return out
+    rows = conn.execute(
+        """SELECT DISTINCT c.file_path, f.content_hash
+           FROM chunk c
+           LEFT JOIN file f ON f.project_id=c.project_id AND f.path=c.file_path
+           WHERE c.project_id=? AND c.file_path IS NOT NULL AND c.file_path != ''""",
+        (project_id,),
+    ).fetchall()
+    stale: list[str] = []
+    for r in rows:
+        path = r["file_path"]
+        expected = r["content_hash"]
+        if not expected:
+            continue
+        fp = workspace / path
+        if not fp.is_file():
+            stale.append(path)
+            continue
+        try:
+            raw = fp.read_bytes()
+        except OSError:
+            stale.append(path)
+            continue
+        if _hash_bytes(raw) != expected:
+            stale.append(path)
+    return {
+        "index_fresh": not stale,
+        "stale_files_count": len(stale),
+        "stale_files": sorted(stale)[:20],
+    }
 
 
-def reciprocal_rank_fusion(
-    *result_lists: list[tuple[int, float, dict]],
-    k: int = 60,
-) -> list[tuple[int, float, dict]]:
-    """RRF: combine multiple ranked lists. Returns merged list sorted by score."""
-    scores: dict[int, float] = {}
-    payloads: dict[int, dict] = {}
-    for results in result_lists:
-        for rank, (cid, _score, payload) in enumerate(results):
-            scores[cid] = scores.get(cid, 0.0) + 1.0 / (k + rank + 1)
-            if cid not in payloads:
-                payloads[cid] = payload
-    merged = sorted(scores.items(), key=lambda x: x[1], reverse=True)
-    return [(cid, score, payloads[cid]) for cid, score in merged]
-
-
-def hybrid_search(
+def keyword_search(
     conn: sqlite3.Connection, project_id: int, query: str, scope: str, limit: int
-) -> list[dict]:
+) -> tuple[list[dict], str]:
+    """FTS5 keyword search over AST-aware chunks. Returns (results, query_mode)."""
+    _, mode = _fts_match_expr(query)
     fts = fts_search(conn, project_id, query, limit, scope)
-    vec = vec_search(conn, project_id, query, limit, scope)
-    if vec:
-        merged = reciprocal_rank_fusion(fts, vec)
-    else:
-        merged = fts
     out = []
-    for cid, score, payload in merged[:limit]:
+    for cid, score, payload in fts[:limit]:
         out.append({
             "chunk_id": cid,
             "score": round(float(score), 6),
@@ -657,4 +426,12 @@ def hybrid_search(
             "end_line": payload.get("end_line"),
             "snippet": payload.get("snippet"),
         })
-    return out
+    return out, mode
+
+
+def hybrid_search(
+    conn: sqlite3.Connection, project_id: int, query: str, scope: str, limit: int
+) -> list[dict]:
+    """Alias for ``keyword_search`` (stable call-site name; vectors removed)."""
+    results, _mode = keyword_search(conn, project_id, query, scope, limit)
+    return results

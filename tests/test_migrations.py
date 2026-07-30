@@ -183,6 +183,43 @@ def test_m012_dedupes_preexisting_duplicate_projects(tmp_path: Path):
     conn.close()
 
 
+def test_m019_drop_vec_tables_tolerates_missing_vec0_module(tmp_path: Path):
+    """Real group DBs may have sqlite-vec virtual tables; DROP without the
+    extension loaded raises ``no such module: vec0``. Migration must still
+    apply (leave orphan tables; FTS path ignores them)."""
+    from livespec_mcp.storage.db import _m019_drop_vector_search
+
+    db = tmp_path / "with-vec-name.db"
+    conn = sqlite3.connect(str(db))
+    conn.row_factory = sqlite3.Row
+    conn.execute("CREATE TABLE chunk (id INTEGER PRIMARY KEY, embedded_at TEXT)")
+    conn.execute("CREATE TABLE chunk_vec_code (id INTEGER)")
+    conn.execute("CREATE TABLE chunk_vec_text (id INTEGER)")
+    conn.commit()
+
+    # Happy path: ordinary tables drop fine.
+    _m019_drop_vector_search(conn)
+    names = {r[0] for r in conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table'"
+    )}
+    assert "chunk_vec_code" not in names
+    assert "chunk_vec_text" not in names
+    conn.close()
+
+    # Failure path: DROP raises OperationalError (vec0 missing) — swallow.
+    class _Vec0Missing:
+        def execute(self, sql, *a):
+            if isinstance(sql, str) and sql.startswith("DROP TABLE"):
+                raise sqlite3.OperationalError("no such module: vec0")
+            if isinstance(sql, str) and sql.startswith("PRAGMA table_info"):
+                return []
+            if isinstance(sql, str) and sql.startswith("ALTER TABLE"):
+                return None
+            raise AssertionError(f"unexpected SQL: {sql!r}")
+
+    _m019_drop_vector_search(_Vec0Missing())  # type: ignore[arg-type]
+
+
 def test_reextract_flag_survives_until_cleared(tmp_path: Path):
     """v0.20 M18: peek does not clear; clear is explicit (so a crashed index
     leaves the flag set instead of losing the forced re-extract)."""

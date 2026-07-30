@@ -301,23 +301,8 @@
   },
   {
     "spec_id": "SPEC-006",
-    "qname": "src.livespec_mcp.domain.rag.vec_search",
-    "relation": "implements"
-  },
-  {
-    "spec_id": "SPEC-006",
-    "qname": "src.livespec_mcp.tools.search.register.embed_chunks",
-    "relation": "implements"
-  },
-  {
-    "spec_id": "SPEC-006",
     "qname": "src.livespec_mcp.tools.search.register.search",
     "relation": "implements"
-  },
-  {
-    "spec_id": "SPEC-006",
-    "qname": "tests.test_search.test_hybrid_search_uses_vector_lane",
-    "relation": "tests"
   },
   {
     "spec_id": "SPEC-006",

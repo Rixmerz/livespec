@@ -154,3 +154,106 @@ async def test_dead_code_angular_protection(workspace):
         assert not any("DashComponent" in q for q in qnames), qnames
         # Non-exported dead TS fn still flagged (exported one needs include_public)
         assert any(q.endswith("localDead") for q in qnames), qnames
+
+
+@pytest.mark.asyncio
+async def test_dead_code_spring_service_methods_protected(workspace):
+    """@Service methods with zero in-project callers must not be dead — DI."""
+    (workspace / "UserService.java").write_text(
+        "package com.example.api;\n"
+        "\n"
+        "import org.springframework.stereotype.Service;\n"
+        "\n"
+        "@Service\n"
+        "public class UserService {\n"
+        "    public String findById(String id) {\n"
+        "        return id;\n"
+        "    }\n"
+        "\n"
+        "    public void save(String id) {}\n"
+        "}\n"
+    )
+    (workspace / "Orphan.java").write_text(
+        "public class Orphan {\n"
+        "    public static String unusedHelper() { return \"dead\"; }\n"
+        "}\n"
+    )
+    async with Client(mcp) as c:
+        await c.call_tool("index_project", {})
+        out = (
+            await c.call_tool(
+                "find_dead_code",
+                {"include_non_python": True, "include_public": True},
+            )
+        ).data
+    qnames = {d["qualified_name"] for d in out["dead_symbols"]}
+    assert not any(q.endswith("findById") for q in qnames), qnames
+    assert not any(q.endswith("save") for q in qnames), qnames
+    assert not any(q.endswith("UserService") for q in qnames), qnames
+    assert any(q.endswith("unusedHelper") for q in qnames), qnames
+
+
+@pytest.mark.asyncio
+async def test_dead_code_angular_injectable_methods_protected(workspace):
+    """@Injectable service methods are DI-invoked — not dead without callers."""
+    (workspace / "api.service.ts").write_text(
+        "import { Injectable } from '@angular/core';\n"
+        "\n"
+        "@Injectable({ providedIn: 'root' })\n"
+        "export class ApiService {\n"
+        "  fetchUsers(): void {}\n"
+        "  ngOnDestroy(): void {}\n"
+        "}\n"
+    )
+    (workspace / "util.ts").write_text(
+        "function localDead(): number { return 2; }\n"
+    )
+    async with Client(mcp) as c:
+        await c.call_tool("index_project", {})
+        out = (
+            await c.call_tool("find_dead_code", {"include_non_python": True})
+        ).data
+    qnames = {d["qualified_name"] for d in out["dead_symbols"]}
+    assert not any("ApiService" in q for q in qnames), qnames
+    assert any(q.endswith("localDead") for q in qnames), qnames
+
+
+@pytest.mark.asyncio
+async def test_dead_code_fastapi_routes_and_lifespan_protected(workspace):
+    """FastAPI @app/@router handlers + lifespan kwarg must not be dead."""
+    (workspace / "main.py").write_text(
+        "from fastapi import FastAPI, APIRouter\n"
+        "\n"
+        "router = APIRouter()\n"
+        "\n"
+        "@router.get('/items')\n"
+        "def list_items():\n"
+        "    return []\n"
+        "\n"
+        "async def lifespan(app):\n"
+        "    yield\n"
+        "\n"
+        "app = FastAPI(lifespan=lifespan)\n"
+        "app.include_router(router)\n"
+        "\n"
+        "@app.post('/users')\n"
+        "def create_user():\n"
+        "    return {'ok': True}\n"
+        "\n"
+        "def truly_dead():\n"
+        "    return 1\n"
+    )
+    async with Client(mcp) as c:
+        await c.call_tool("index_project", {})
+        out = (await c.call_tool("find_dead_code", {})).data
+        endpoints = (
+            await c.call_tool("find_endpoints", {"framework": "fastapi"})
+        ).data
+    qnames = {d["qualified_name"] for d in out["dead_symbols"]}
+    ep_qnames = {e["qualified_name"] for e in endpoints["endpoints"]}
+    assert any(q.endswith("list_items") for q in ep_qnames), ep_qnames
+    assert any(q.endswith("create_user") for q in ep_qnames), ep_qnames
+    assert not any(q.endswith("list_items") for q in qnames), qnames
+    assert not any(q.endswith("create_user") for q in qnames), qnames
+    assert not any(q.endswith("lifespan") for q in qnames), qnames
+    assert any(q.endswith("truly_dead") for q in qnames), qnames

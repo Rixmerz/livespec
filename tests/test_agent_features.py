@@ -1,4 +1,4 @@
-"""v0.18 agent UX: payload warnings, grep_in_indexed_files, agent_scratch."""
+"""v0.18 agent UX: payload warnings, grep_in_indexed_files, explorer gating."""
 
 from __future__ import annotations
 
@@ -177,29 +177,24 @@ async def test_grep_response_contract_unchanged(sample_repo):
 
 
 @pytest.mark.asyncio
-async def test_agent_scratch_roundtrip(sample_repo):
-    ws = str(sample_repo)
-    async with Client(mcp) as c:
-        await c.call_tool("index_project", {"workspace": ws})
-        saved = (
-            await c.call_tool(
-                "agent_scratch",
-                {
-                    "qname": "pkg.auth.login",
-                    "note": "entry point for auth",
-                    "workspace": ws,
-                },
-            )
-        ).data
-        assert saved["saved"] is True
-        cleared = (await c.call_tool("agent_scratch_clear", {"workspace": ws})).data
-    assert cleared["cleared"] >= 1
-
-
-@pytest.mark.asyncio
-async def test_export_explorer_visible_on_fresh_workspace(workspace, monkeypatch):
+async def test_export_explorer_hidden_on_fresh_without_docs_plugin(workspace, monkeypatch):
     monkeypatch.delenv("LIVESPEC_PLUGINS", raising=False)
-    async with Client(mcp) as c:
+    # Use a visibility-aware minimal surface — full server conftest forces =all.
+    from fastmcp import FastMCP
+
+    from livespec_mcp.plugin_visibility import PluginVisibilityMiddleware
+    from livespec_mcp.tools import analysis, indexing, search, specs
+    from livespec_mcp.tools.plugins import register_all_plugins
+
+    m = FastMCP(name="fresh-vis")
+    m.add_middleware(PluginVisibilityMiddleware())
+    indexing.register(m)
+    analysis.register(m)
+    specs.register(m)
+    search.register(m)
+    register_all_plugins(m)
+    async with Client(m) as c:
         names = {t.name for t in await c.list_tools()}
-    assert "export_explorer" in names
+    assert "export_explorer" not in names
     assert "import_specs_from_markdown" in names
+    assert "agent_scratch" not in names

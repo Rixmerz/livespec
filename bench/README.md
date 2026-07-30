@@ -85,4 +85,4 @@ trend data.
 - TS/Go/Rust real repos (need a fixture beyond Python)
 - Memory footprint of the NetworkX graph (RSS sampling)
 - Search latency at p50/p95
-- Vector-lane benchmarks (depends on `[embeddings]` extras)
+- Search latency at scale (FTS5)

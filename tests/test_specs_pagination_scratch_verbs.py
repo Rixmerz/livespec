@@ -2,9 +2,7 @@
 
 1. `list_specs` pagination (cursor/summary_only/truncated) — a flat,
    un-paginated dump exceeded MCP's token limit on a 185-spec repo.
-2. `agent_scratch` warns (not errors) on an unknown qname, and
-   `agent_scratch_get` reads a note back.
-3. `scan_annotation_verbs`'s `did_you_mean` uses the payload shape
+2. `scan_annotation_verbs`'s `did_you_mean` uses the payload shape
    (`BE-RF-080`-like) to suggest `@spec`, not pure edit distance
    (which picks `@see` for `@rf`).
 """
@@ -88,64 +86,6 @@ async def test_list_specs_limit_hard_capped(workspace):
         # LIMIT, not correctness for small sets.
         assert out["total"] == 1
         assert len(out["specs"]) == 1
-
-
-@pytest.mark.asyncio
-async def test_agent_scratch_unknown_qname_warns_not_errors(sample_repo):
-    ws = str(sample_repo)
-    async with Client(mcp) as c:
-        await c.call_tool("index_project", {"workspace": ws})
-        saved = (
-            await c.call_tool(
-                "agent_scratch",
-                {"qname": "pkg.auth.does_not_exist", "note": "orphaned note", "workspace": ws},
-            )
-        ).data
-        assert saved["saved"] is True
-        assert "find_symbol" in saved["warning"]
-
-
-@pytest.mark.asyncio
-async def test_agent_scratch_known_qname_no_warning(sample_repo):
-    ws = str(sample_repo)
-    async with Client(mcp) as c:
-        await c.call_tool("index_project", {"workspace": ws})
-        saved = (
-            await c.call_tool(
-                "agent_scratch",
-                {"qname": "pkg.auth.login", "note": "entry point", "workspace": ws},
-            )
-        ).data
-        assert saved["saved"] is True
-        assert "warning" not in saved
-
-
-@pytest.mark.asyncio
-async def test_agent_scratch_get_roundtrip(sample_repo):
-    ws = str(sample_repo)
-    async with Client(mcp) as c:
-        await c.call_tool("index_project", {"workspace": ws})
-        await c.call_tool(
-            "agent_scratch",
-            {"qname": "pkg.auth.login", "note": "hot path", "workspace": ws},
-        )
-        got = (
-            await c.call_tool("agent_scratch_get", {"qname": "pkg.auth.login", "workspace": ws})
-        ).data
-        assert got["found"] is True
-        assert got["note"] == "hot path"
-
-
-@pytest.mark.asyncio
-async def test_agent_scratch_get_missing_note(sample_repo):
-    ws = str(sample_repo)
-    async with Client(mcp) as c:
-        await c.call_tool("index_project", {"workspace": ws})
-        got = (
-            await c.call_tool("agent_scratch_get", {"qname": "pkg.auth.login", "workspace": ws})
-        ).data
-        assert got["found"] is False
-        assert got["note"] is None
 
 
 @pytest.mark.asyncio

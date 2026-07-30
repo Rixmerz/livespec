@@ -874,9 +874,12 @@ def register(
             "Manages...", etc.)
           - the symbol metadata
 
-        Useful when adopting livespec on an existing project: instead of
-        guessing at specs from scratch, the agent reads a few hundred of
-        these hints and proposes specs grouped by leading verb / module.
+        Useful when adopting livespec on an existing **Python** project:
+        instead of guessing at specs from scratch, the agent reads a few
+        hundred of these hints and proposes specs grouped by leading verb /
+        module. On TypeScript/JavaScript-only workspaces this tool soft-skips
+        (empty ``hints``, ``skipped=True``) — prefer
+        ``propose_specs_from_codebase`` or OpenSpec import.
 
         Returns also a `verb_histogram` so the agent can see which actions
         dominate the codebase ("47 'Validates...', 31 'Handles...'") —
@@ -887,6 +890,24 @@ def register(
         """
         st = get_state(workspace)
         pid = st.project_id
+
+        py_files = st.conn.execute(
+            """SELECT COUNT(*) AS c FROM file
+               WHERE project_id=? AND language='python'""",
+            (pid,),
+        ).fetchone()["c"]
+        if int(py_files) == 0:
+            return {
+                "hints": [],
+                "count": 0,
+                "verb_histogram_top": [],
+                "skipped": True,
+                "reason": "no Python files indexed — docstring Spec hints are Python-biased",
+                "hint": (
+                    "Use propose_specs_from_codebase or import_specs_from_markdown "
+                    "/ sync_openspec on TS/JS repos"
+                ),
+            }
 
         rows = st.conn.execute(
             """SELECT s.id, s.qualified_name, s.kind, s.docstring,

@@ -155,7 +155,7 @@ The same indexing pipeline without an MCP host — for cron, systemd
 timers, pre-commit hooks, CI:
 
 ```bash
-livespec-mcp index /path/to/repo [--force] [--embed]   # JSON stats to stdout
+livespec-mcp index /path/to/repo [--force]             # JSON stats to stdout
 livespec-mcp status /path/to/repo                      # index status JSON
 ```
 
@@ -327,32 +327,30 @@ gates it, you build with live links; *brownfield* → `/livespec-onboard` orient
 `propose_specs_from_codebase` reconstructs intent, **author OpenSpec first**
 (export only as a bootstrap dump).
 
-## Tools (44 total: 29 core + 12 Spec plugin + 3 docs plugin)
+## Tools (44 total: 27 core + 12 Spec plugin + 5 docs plugin)
 
 Every tool requires `workspace` (absolute project root). Pass it on each call;
 omitting it is an error (no env fallback). LRU cache (8 workspaces) — one MCP
 server, many projects, no restart.
 
 **Menu (v0.19):** plugins register at boot but `PluginVisibilityMiddleware`
-hides Spec mutation / doc tools from `tools/list` until the workspace has
-`spec` rows, a `.mcp-docs/explorer/` bundle (docs plugin), or you set
-`LIVESPEC_PLUGINS`. **`import_specs_from_markdown`** and
-**`export_explorer`** are always visible (brownfield bootstrap — no
-chicken-and-egg). After the first `workspace=` call on a repo with Specs +
-explorer, the menu grows to **44** tools. Reconnect the MCP host if your
-client cached an old tool list.
+hides Spec mutation / doc tools (including Explorer export) from `tools/list`
+until the workspace has `spec` rows, a `.mcp-docs/explorer/` bundle, or you
+set `LIVESPEC_PLUGINS`. **`import_specs_from_markdown`** and
+**`sync_openspec`** stay always visible (brownfield bootstrap). After the
+first `workspace=` call on a repo with Specs + explorer, the menu grows to
+**44** tools. Reconnect the MCP host if your client cached an old tool list.
 
-### Default surface — code intel + Spec agentic (29)
+### Default surface — code intel + Spec agentic (27)
 
 These tools answer the questions an agent ASKS on an unfamiliar codebase.
-Always registered (including markdown Spec import + Explorer export).
+Always registered (including markdown Spec import + OpenSpec sync).
 
 #### Indexing (1)
-- `index_project(force=False, watch=False, embed=False, explorer=False)` — walk, parse,
+- `index_project(force=False, watch=False, explorer=False)` — walk, parse,
   persist. Also rebuilds search chunks idempotently. Respects
   `.gitignore` (root + nested, negations included) on top of the
-  built-in ignore list (v0.14). Pass `embed=True` to populate vector
-  embeddings (requires `[embeddings]` extra). Auto-builds the Spec Explorer
+  built-in ignore list (v0.14). Auto-builds the Spec Explorer
   bundle when `.mcp-docs/explorer/` already exists, `explorer=True`, or a
   FastAPI entry is detected (see **FastAPI integration** above). Read the
   `project://index/status` resource for current status (the legacy
@@ -385,20 +383,12 @@ Always registered (including markdown Spec import + Explorer export).
   mount_path = "/explorer"              # FastAPI mount prefix for autowire
   ```
 
-#### Search (1, v0.12)
-- `search(query, scope='all'|'code'|'specs', limit=20)` — hybrid
-  retrieval over AST-aware chunks of symbols + Specs. FTS5 keyword lane
-  always live (splits `snake_case` into OR tokens); vector lane fuses via
-  Reciprocal Rank Fusion (k=60) when `[embeddings]` extra is installed and
-  chunks are embedded — falls back to FTS-only if the embedder is offline.
-  Use when you want "code that talks about X" without an exact
-  symbol-name match. Companion tool `embed_chunks()` (also default
-  surface) populates vec0 tables on demand; ~1.6 GB ONNX model download on
-  first run (jina code + multilingual text), cached afterwards under
-  fastembed / `~/.cache/livespec-mcp/fastembed` (shared across workspaces;
-  override with `FASTEMBED_CACHE_PATH`). Requires the `[embeddings]` extra
-  (plugin `.mcp.json` includes it). The download shows no progress under
-  MCP — run `livespec index <repo> --embed` in a terminal to watch it.
+#### Search (1, v0.12; vectors removed)
+- `search(query, scope='all'|'code'|'specs', limit=20)` — FTS5 keyword
+  retrieval over AST-aware chunks of symbols + Specs (splits `snake_case`
+  into OR tokens). Use when you want "code that talks about X" without an
+  exact symbol-name match. Dense-vector / sqlite-vec / `embed_chunks` were
+  removed — keyword search is the only lane.
 
 #### Code intelligence (14)
 - `find_symbol(query, kind, limit)` — separator-agnostic name lookup.
@@ -423,6 +413,10 @@ Always registered (including markdown Spec import + Explorer export).
 - `find_dead_code(include_infrastructure=False)` — symbols with zero
   callers and zero Spec links. Skips entry-point paths, framework
   decorators, `__main__` guards, list-stored callbacks.
+- `find_legacy_flows(project?, include_infra=False)` — likely-unused HTTP
+  flows (`route_ref` + `invokes_route`, best with `group_db`): servers with
+  no indexed client hop + clients with no matched server. Graph only —
+  confirm with traffic before deleting.
 - `find_orphan_tests(max_depth=10)` — test functions whose forward cone
   never reaches a non-test symbol.
 - `find_endpoints(framework=None)` — framework entry points. Decorator
@@ -436,8 +430,6 @@ Always registered (including markdown Spec import + Explorer export).
   fixtures).
 - `grep_in_indexed_files(pattern, path_glob?, kind?, limit=50)` — search
   only files present in the index (avoids `node_modules` / `.venv`).
-- `agent_scratch(qname, note)` / `agent_scratch_clear(qname?)` — ephemeral
-  agent notes per project (SQLite, not Specs). Omit `qname` on clear to wipe all.
 - `audit_coverage()` — Spec coverage report: modules without direct Spec,
   modules implicitly covered (transitively reached), modules truly orphan,
   modules in languages whose annotation extractor isn't wired yet
@@ -492,12 +484,13 @@ an individual scenario with `link_scenario_symbol` (Spec plugin).
 - `list_spec_changes(status?)` / `get_spec_change(name)` — inspect change
   proposals (proposal/design/tasks prose + ADD/MODIFY/REMOVE/RENAME deltas).
 
-#### Spec Explorer (1, always visible)
+#### Spec Explorer (docs plugin — not always-visible)
 - `export_explorer(base?, head?, generated_at?)` — writes
   `.mcp-docs/explorer/` (`data.json` + `index.html`). Swagger-style view by
   Spec; **v0.19** HTTP Try-it for routes with method/path; FastAPI
   autowire on export/index. Preview: `livespec-mcp explorer serve` →
-  `http://127.0.0.1:8765/explorer/`.
+  `http://127.0.0.1:8765/explorer/`. Unlock with `LIVESPEC_PLUGINS=docs`
+  or `index_project(explorer=True)`.
 
 ### `livespec-spec` plugin — Spec mutation (12)
 
@@ -543,10 +536,11 @@ Or add `[specs].sync_from` to `.livespec.toml` and run
 `uv run python scripts/sync_livespec_specs.py /path/to/repo` after editing the
 spec without a full re-index.
 
-### `livespec-docs` plugin — doc generation (3)
+### `livespec-docs` plugin — docs + Explorer (5)
 
 Visible when the workspace has `doc` rows, a `.mcp-docs/explorer/` bundle, or
-`LIVESPEC_PLUGINS` includes `docs`. Human-tier ceremony for managing generated docs.
+`LIVESPEC_PLUGINS` includes `docs`. Human-tier ceremony for generated docs and
+static Explorer bundles.
 
 - `generate_docs(target_type, identifier, content?, max_tokens?)` —
   three modes: caller_supplied / sampling / needs_caller_content. Works
@@ -554,6 +548,9 @@ Visible when the workspace has `doc` rows, a `.mcp-docs/explorer/` bundle, or
 - `list_docs(target_type, only_stale=False)` — list or surface drifted
   docs (drift triggers on body_hash OR signature_hash mismatch).
 - `export_documentation(format, out_subdir)` — markdown or JSON.
+- `export_explorer(base?, head?, generated_at?)` — Spec Explorer static
+  bundle under `.mcp-docs/explorer/`.
+- `export_flow_explorer(...)` — Flow Explorer companion bundle.
 
 ### Migrating from older versions
 
@@ -562,7 +559,8 @@ Visible when the workspace has `doc` rows, a `.mcp-docs/explorer/` bundle, or
 | `find_references` (v0.1) | `analyze_impact(target_type='symbol', target=qname, max_depth=1)` |
 | `get_symbol_info` (v0.7) | `quick_orient` (composite) + `get_symbol_source` (body) |
 | `get_call_graph` (v0.7) | `who_calls` + `who_does_this_call` |
-| `search`, `rebuild_chunks` (v0.7, dropped v0.8) | `search` is **back in v0.12** wired to a real chunk pipeline + vector lane via Reciprocal Rank Fusion. `rebuild_chunks` is now auto-run inside `index_project` (no separate tool). `find_symbol` + `quick_orient` still cover exact-name lookup. |
+| `agent_scratch` / `_get` / `_clear` (Unreleased) | drop — use host chat notes / Spec links |
+| `search`, `rebuild_chunks` (v0.7, dropped v0.8) | `search` is **back in v0.12** as FTS5 over AST-aware chunks (dense vectors removed Unreleased). `rebuild_chunks` is now auto-run inside `index_project` (no separate tool). `find_symbol` + `quick_orient` still cover exact-name lookup. |
 | `list_files` (v0.7) | grep / ripgrep host with path glob |
 | `start_watcher` / `stop_watcher` / `watcher_status` (v0.7) | re-run `index_project` on demand (watcher race-condition trap for editing agents) |
 | `link_requirement_to_code` (v0.6 alias) | `link_spec_symbol` |
@@ -661,7 +659,7 @@ data trumped the prior intuition.
 | 1 — Indexing | ✅ | tree-sitter + Python AST, file-incremental, call graph |
 | 2 — Analysis | ✅ | NetworkX, impact, PageRank |
 | 3 — Requirements | ✅ | CRUD + linking + annotation matcher |
-| 4 — RAG/Embeddings | ✅ | AST chunking, FTS5, fastembed + sqlite-vec optional, RRF |
+| 4 — RAG/Embeddings | ✅ | AST chunking + FTS5 (dense vectors removed; was optional sqlite-vec/RRF) |
 | 5 — Doc generation | ✅ | `generate_docs` (dual-mode), drift detect (body+signature), export |
 | 6 — Polish | ✅ | 7 prompts, doc:// resources, two-level @rf: matcher with negation guard |
 | 7 — v0.2 | ✅ | Multi-tenant state, tool consolidation 25→23, persistent refs, watcher, bench suite |

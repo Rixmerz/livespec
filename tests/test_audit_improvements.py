@@ -42,7 +42,7 @@ def test_filter_endpoints_excludes_pytest_fixtures(workspace: Path):
     st = get_state(str(workspace), create=True)
     from livespec_mcp.tools.indexing import run_index_pipeline
 
-    run_index_pipeline(st, force=True, embed=False)
+    run_index_pipeline(st, force=True)
     raw = compute_endpoints(st, None)
     filtered = filter_api_endpoints(raw, None)
     handlers = {e["qualified_name"] for e in filtered}
@@ -63,7 +63,7 @@ def test_specs_sync_from_config(tmp_path: Path):
     st = get_state(str(tmp_path), create=True)
     from livespec_mcp.tools.indexing import run_index_pipeline
 
-    run_index_pipeline(st, force=True, embed=False)
+    run_index_pipeline(st, force=True)
     out = sync_specs_from_config(st)
     assert out is not None
     assert out["imports"][0]["parsed"] == 1

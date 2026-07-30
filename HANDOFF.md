@@ -28,14 +28,27 @@
 - **xxhash** para content/body/signature hashing
 - FTS5 BM25 lane usa el bm25 nativo de SQLite (la dep `rank-bm25` se removió en v0.20 — nunca se importaba)
 - **watchdog>=4.0** para file watcher
-- **fastembed + sqlite-vec** OPCIONALES via `pip install -e ".[embeddings]"` — modelos `jinaai/jina-embeddings-v2-base-code` (768d code) + `sentence-transformers/paraphrase-multilingual-mpnet-base-v2` (768d text)
 - **hypothesis + psutil** en `[dev]` extras
+- ~~fastembed + sqlite-vec~~ **eliminados** (Unreleased) — `search` es FTS5-only; mig v19 limpia `chunk_vec_*` / `embedded_at`
 
 Todo el stack es local-first: 0 servicios externos, 0 API keys obligatorias, 0 Docker.
 
 ---
 
 ## 3. Estado actual
+
+**Unreleased (en curso): audit checklist CERRADO + limpieza.**
+- Checklist validación flow-group **PASS** (STATUS.txt + CHECKLIST_VALIDATION.json).
+- **P0 FIX:** symbol lookup group-wide — Composer→HotelSvc `who_calls.route_callers=2`.
+- **IMPROVE:** legacy infra filter; Express/Hono default endpoints;
+  `find_dead_code` auto `include_non_python` en TS-only; Spring hint bajo group_db.
+- **DEMOTE:** `scan_docstrings` soft-skip sin Python.
+- Dropped **`agent_scratch*`**; Explorer → plugin docs (5 tools).
+- Vectors out (FTS5-only, mig v19); `find_legacy_flows`; Tier-B; route fixes.
+- Surface: **27** core + **12** Spec + **5** docs = **44**. Tests **625**.
+- Pendiente humano: **reconnect MCP** en Cursor. Deferred: propose_specs noise.
+
+### v0.23+ / OpenSpec resumen (referencia)
 
 **Nomenclatura (authoring):** OpenSpec markdown (`openspec/specs/...` con
 `### Requirement:` + `#### Scenario:`) es la **SSoT de autoría**. Livespec es el
@@ -50,7 +63,7 @@ trabajo post-0.20 (cross-repo routes P2, grouped DB P1, callback edges),
 **compatibilidad OpenSpec completa** (round-trip + change lifecycle +
 scenario-level traceability + discoverability para agentes), el fix py3.10
 (`datetime.UTC`), y el **rebrand de producto a `livespec`** (el paquete/comando
-siguen siendo `livespec-mcp`). Tools 36 → 44. Migraciones append-only hasta
+siguen siendo `livespec-mcp`). Tools 36 → 44 (pre-vector-removal). Migraciones append-only hasta
 **v17**. CI verde py3.10/3.11/3.12. Pendiente: publicar a PyPI para que
 `uvx livespec-mcp` sirva 0.22 (hasta entonces el plugin corre 0.20). Detalle del
 batch OpenSpec abajo.

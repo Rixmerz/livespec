@@ -1,21 +1,13 @@
-"""Regression tests for the audit batch P5 performance fixes (FTS-path only —
-embeddings smoke needs network for the model download)."""
+"""Regression tests for the audit batch P5 performance fixes (FTS path)."""
 
 from __future__ import annotations
 
-import struct
 from pathlib import Path
 
 import networkx as nx
-import pytest
 
 from livespec_mcp.domain.graph import GraphView, graph_pagerank
-from livespec_mcp.domain.rag import (
-    _prune_orphan_vectors,
-    ensure_vec_tables,
-    have_sqlite_vec,
-    rebuild_chunks,
-)
+from livespec_mcp.domain.rag import rebuild_chunks
 from livespec_mcp.storage.db import connect, get_or_create_project
 
 
@@ -48,17 +40,23 @@ def test_graph_pagerank_is_cached_on_view():
     assert r1 is r2  # same object, not recomputed
 
 
-def test_rebuild_chunks_preserves_embedded_at_when_unchanged(tmp_path: Path):
+def test_rebuild_chunks_reuses_rowids_when_unchanged(tmp_path: Path):
     conn, pid = _seed_symbol_db(tmp_path)
     rebuild_chunks(conn, pid)
-    n1 = conn.execute("SELECT COUNT(*) c FROM chunk WHERE project_id=?", (pid,)).fetchone()["c"]
-    conn.execute("UPDATE chunk SET embedded_at='2020-01-01' WHERE project_id=?", (pid,))
-    rebuild_chunks(conn, pid)  # unchanged -> reuse rows, keep embedded_at
-    preserved = conn.execute(
-        "SELECT COUNT(*) c FROM chunk WHERE project_id=? AND embedded_at IS NOT NULL", (pid,)
-    ).fetchone()["c"]
-    n2 = conn.execute("SELECT COUNT(*) c FROM chunk WHERE project_id=?", (pid,)).fetchone()["c"]
-    assert n1 == n2 and preserved == n2
+    ids1 = [
+        r["id"]
+        for r in conn.execute(
+            "SELECT id FROM chunk WHERE project_id=? ORDER BY id", (pid,)
+        )
+    ]
+    rebuild_chunks(conn, pid)  # unchanged -> reuse rows
+    ids2 = [
+        r["id"]
+        for r in conn.execute(
+            "SELECT id FROM chunk WHERE project_id=? ORDER BY id", (pid,)
+        )
+    ]
+    assert ids1 == ids2 and len(ids1) >= 2
 
 
 def test_rebuild_chunks_deletes_stale_source(tmp_path: Path):
@@ -70,24 +68,11 @@ def test_rebuild_chunks_deletes_stale_source(tmp_path: Path):
     remaining = {
         r["source_id"]
         for r in conn.execute(
-            "SELECT source_id FROM chunk WHERE project_id=? AND source_type='symbol'", (pid,)
+            "SELECT source_id FROM chunk WHERE project_id=? AND source_type='symbol'",
+            (pid,),
         )
     }
-    a_id = conn.execute("SELECT id FROM symbol WHERE qualified_name='m.a'").fetchone()["id"]
+    a_id = conn.execute("SELECT id FROM symbol WHERE qualified_name='m.a'").fetchone()[
+        "id"
+    ]
     assert remaining == {a_id}
-
-
-@pytest.mark.embeddings
-def test_prune_orphan_vectors(tmp_path: Path):
-    conn, pid = _seed_symbol_db(tmp_path)
-    rebuild_chunks(conn, pid)
-    if not have_sqlite_vec(conn):
-        pytest.skip("sqlite-vec not installed")
-    ensure_vec_tables(conn)
-    cid = conn.execute("SELECT id FROM chunk WHERE project_id=?", (pid,)).fetchone()["id"]
-    blob = struct.pack(f"{768}f", *([0.1] * 768))
-    conn.execute("INSERT INTO chunk_vec_code(chunk_id, embedding) VALUES(?,?)", (cid, blob))
-    conn.execute("INSERT INTO chunk_vec_code(chunk_id, embedding) VALUES(?,?)", (999999, blob))
-    _prune_orphan_vectors(conn)
-    after = conn.execute("SELECT COUNT(*) c FROM chunk_vec_code").fetchone()["c"]
-    assert after == 1

@@ -312,6 +312,225 @@ _TS_TEMPLATE_URL_WITH_SLASH = _re_rs.compile(r"^\$\{[^}]{1,80}\}(/[^`${]{1,200})
 _TS_TEMPLATE_URL_WITHOUT_SLASH = _re_rs.compile(
     r"^\$\{[^}]{1,80}\}([^`${/][^`${]{0,200})$"
 )
+
+
+def _strip_balanced_template_interps(raw: str, *, max_len: int = 500) -> str:
+    """Replace ``${...}`` (nested-brace aware, bounded) with ``{}``."""
+    s = raw[:max_len]
+    out: list[str] = []
+    i = 0
+    n = len(s)
+    while i < n:
+        if s[i] == "$" and i + 1 < n and s[i + 1] == "{":
+            depth = 0
+            j = i + 1
+            end = min(n, i + 240)
+            while j < end:
+                ch = s[j]
+                if ch == "{":
+                    depth += 1
+                elif ch == "}":
+                    depth -= 1
+                    if depth == 0:
+                        j += 1
+                        break
+                j += 1
+            out.append("{}")
+            i = j
+        else:
+            out.append(s[i])
+            i += 1
+    return "".join(out)
+
+
+def _path_from_template_raw(raw: str) -> str | None:
+    """Turn a template/string URL into a path matchable by ``normalize_route_path``.
+
+    Handles ``${base}/flights/v2``, multi-segment
+    ``${base}/list/${a}/${b}/${c}``, and nested-ternary a client HotelSvc builders
+    that collapse to ``/list/{}/{}/{}``.
+
+    Do **not** strip on bare ``?`` before collapsing: JS ternaries inside
+    ``${cond ? `x/` : ""}`` contain ``?`` and are not query strings.
+    Query/fragment are stripped after collapse (or by ``normalize_route_path``).
+    """
+    raw = raw.strip()
+    if not raw:
+        return None
+    if "${" not in raw:
+        raw = raw.split("?", 1)[0].split("#", 1)[0].strip()
+        return raw if raw.startswith(("/", "http")) else None
+    matched = _TS_TEMPLATE_URL_WITH_SLASH.fullmatch(raw[:300])
+    if matched is not None:
+        return matched.group(1)
+    matched = _TS_TEMPLATE_URL_WITHOUT_SLASH.fullmatch(raw[:300])
+    if matched is not None:
+        return f"/{matched.group(1)}"
+    collapsed = _strip_balanced_template_interps(raw)
+    collapsed = collapsed.split("?", 1)[0].split("#", 1)[0]
+    if collapsed.startswith("{}"):
+        collapsed = collapsed[2:]
+    if not collapsed.startswith("/"):
+        return None
+    # Adjacent interps from optional ternaries (`${a}${b}${c}`) become
+    # `{}{}{}` — split into path segments so they match `/list/{}/{}/{}`.
+    while "{}{}" in collapsed:
+        collapsed = collapsed.replace("{}{}", "{}/{}", 1)
+    parts = [p for p in collapsed.split("/") if p != ""]
+    return "/" + "/".join(parts) if parts else None
+
+
+def _ts_call_fn_node(call_node):
+    """Return the callee node, unwrapping ``await_expression`` if needed.
+
+    tree-sitter-typescript quirk: ``await axios.get<T>(...)`` (and the same
+    shape for wrapper calls) puts ``await_expression`` in the call's function
+    field when type arguments are present.
+    """
+    fn = (
+        call_node.child_by_field_name("function")
+        if hasattr(call_node, "child_by_field_name")
+        else None
+    )
+    while fn is not None and fn.type == "await_expression":
+        fn = next((c for c in fn.children if c.type != "await"), None)
+    return fn
+
+
+def _ts_http_call_uses_param(call_node, param: str, text) -> bool:
+    """True if ``call_node`` is fetch/axios/got whose first arg is ``param``."""
+    fn = _ts_call_fn_node(call_node)
+    if fn is None:
+        return False
+    is_http = False
+    if fn.type == "identifier" and text(fn) in ("fetch", "axios", "got"):
+        is_http = True
+    elif fn.type == "member_expression":
+        prop = fn.child_by_field_name("property")
+        obj = fn.child_by_field_name("object")
+        if prop is None or obj is None:
+            return False
+        if text(prop).lower() not in _HTTP_CLIENT_VERBS:
+            return False
+        obj_name = (_ts_leftmost_ident(fn, text) or text(obj)).lower().lstrip("$")
+        if obj_name not in _TS_HTTP_CLIENT_OBJS:
+            return False
+        is_http = True
+    if not is_http:
+        return False
+    args_node = call_node.child_by_field_name("arguments")
+    if args_node is None:
+        return False
+    positional = [
+        a for a in args_node.children if a.type not in ("(", ")", ",", "comment")
+    ]
+    return bool(positional) and positional[0].type == "identifier" and text(positional[0]) == param
+
+
+def _ts_fn_first_param(fn_node, text) -> str | None:
+    """First formal parameter name of a JS/TS function-like node."""
+    params = None
+    if hasattr(fn_node, "child_by_field_name"):
+        params = fn_node.child_by_field_name("parameters")
+        if params is None:
+            params = fn_node.child_by_field_name("formal_parameters")
+        # Single-param arrow: ``url =>`` uses a bare `parameter` field.
+        if params is None:
+            single = fn_node.child_by_field_name("parameter")
+            if single is not None and single.type == "identifier":
+                return text(single)
+            if single is not None:
+                ident = single.child_by_field_name("pattern") or single.child_by_field_name(
+                    "name"
+                )
+                if ident is not None and ident.type == "identifier":
+                    return text(ident)
+    if params is None:
+        return None
+    for child in params.children:
+        if child.type == "identifier":
+            return text(child)
+        if child.type in ("required_parameter", "optional_parameter", "assignment_pattern"):
+            pat = child.child_by_field_name("pattern") or child.child_by_field_name("name")
+            if pat is not None and pat.type == "identifier":
+                return text(pat)
+            for c in child.children:
+                if c.type == "identifier":
+                    return text(c)
+    return None
+
+
+def _ts_find_http_wrappers(root, src_bytes: bytes) -> frozenset[str]:
+    """Same-file helpers whose first param is forwarded to fetch/axios/got.
+
+    Covers a client ``makeRequest(url, body)`` wrappers: callers pass a URL
+    template and the helper performs the HTTP call. Names only — method stays
+    agnostic at the call site (matches ``fetch`` weight).
+    """
+
+    def text(n) -> str:
+        return src_bytes[n.start_byte : n.end_byte].decode("utf-8", errors="replace")
+
+    wrappers: set[str] = set()
+
+    def body_forwards_param(body, param: str) -> bool:
+        stack = [body]
+        while stack:
+            node = stack.pop()
+            if node.type == "call_expression" and _ts_http_call_uses_param(
+                node, param, text
+            ):
+                return True
+            # Do not descend into nested named functions (their params differ).
+            if node is not body and node.type in (
+                "function_declaration",
+                "function_expression",
+                "arrow_function",
+                "method_definition",
+            ):
+                continue
+            stack.extend(node.children)
+        return False
+
+    def consider(name: str | None, fn_node) -> None:
+        if not name:
+            return
+        param = _ts_fn_first_param(fn_node, text)
+        if not param:
+            return
+        body = (
+            fn_node.child_by_field_name("body")
+            if hasattr(fn_node, "child_by_field_name")
+            else None
+        )
+        if body is None:
+            return
+        if body_forwards_param(body, param):
+            wrappers.add(name)
+
+    stack = [root]
+    while stack:
+        node = stack.pop()
+        if node.type == "function_declaration":
+            name_node = node.child_by_field_name("name")
+            consider(text(name_node) if name_node else None, node)
+        elif node.type == "method_definition":
+            name_node = node.child_by_field_name("name")
+            consider(text(name_node) if name_node else None, node)
+        elif node.type == "variable_declarator":
+            name_node = node.child_by_field_name("name")
+            value = node.child_by_field_name("value")
+            if (
+                name_node is not None
+                and name_node.type == "identifier"
+                and value is not None
+                and value.type in ("arrow_function", "function_expression")
+            ):
+                consider(text(name_node), value)
+        stack.extend(node.children)
+    return frozenset(wrappers)
+
+
 # TS/JS: object identifiers that denote an HTTP client, so `axios.get('/x')` is
 # a client call but Hono's `app.get('/x', handler)` (object `app`) is not. The
 # allowlist is a first filter only — the definitive server-vs-client
@@ -909,8 +1128,10 @@ def _ts_extract(
     src_bytes = source.encode("utf-8", errors="replace")
     tree = parser.parse(src_bytes)
 
+    http_wrappers: frozenset[str] = frozenset()
     if language in ("javascript", "typescript", "tsx"):
         out.imports.update(_ts_collect_imports(tree.root_node, src_bytes, current_dir))
+        http_wrappers = _ts_find_http_wrappers(tree.root_node, src_bytes)
     elif language == "go":
         out.imports.update(_go_collect_imports(tree.root_node, src_bytes))
     elif language == "ruby":
@@ -1009,7 +1230,7 @@ def _ts_extract(
                 name = find_name(node)
                 if name:
                     qname = emit_symbol(value, name, parent_qname, "function")
-                    _ts_collect_calls(value, qname, src_bytes, out)
+                    _ts_collect_calls(value, qname, src_bytes, out, http_wrappers)
                     return  # do not double-walk
             # otherwise let normal recursion continue
 
@@ -1052,7 +1273,7 @@ def _ts_extract(
                     name = module_name.rsplit(".", 1)[-1] or "default"
                 kind = "class" if "class" in value.type else "function"
                 qname = emit_symbol(value, name, parent_qname, kind)
-                _ts_collect_calls(value, qname, src_bytes, out)
+                _ts_collect_calls(value, qname, src_bytes, out, http_wrappers)
                 for c in value.children:
                     walk(c, qname)
                 return
@@ -1072,7 +1293,7 @@ def _ts_extract(
                 else:
                     kind = "function"
                 qname = emit_symbol(node, name, parent_qname, kind)
-                _ts_collect_calls(node, qname, src_bytes, out)
+                _ts_collect_calls(node, qname, src_bytes, out, http_wrappers)
                 for c in node.children:
                     walk(c, qname)
                 return
@@ -1086,7 +1307,7 @@ def _ts_extract(
             name = find_name(node)
             if name:
                 qname = emit_symbol(node, name, parent_qname, "method", qname_sep="::")
-                _ts_collect_calls(node, qname, src_bytes, out)
+                _ts_collect_calls(node, qname, src_bytes, out, http_wrappers)
                 return
         for c in node.children:
             walk_rust_method(c, parent_qname)
@@ -1119,7 +1340,7 @@ def _ts_extract(
                 parent_qname=None,
             )
         )
-        _ts_collect_calls(tree.root_node, module_qname, src_bytes, out)
+        _ts_collect_calls(tree.root_node, module_qname, src_bytes, out, http_wrappers)
 
     return out
 
@@ -1415,7 +1636,13 @@ def _is_named_scope_boundary(node) -> bool:
     return False
 
 
-def _ts_collect_calls(def_node, src_qname: str, src_bytes: bytes, out: ExtractResult) -> None:
+def _ts_collect_calls(
+    def_node,
+    src_qname: str,
+    src_bytes: bytes,
+    out: ExtractResult,
+    http_wrappers: frozenset[str] = frozenset(),
+) -> None:
     def text(n) -> str:
         return src_bytes[n.start_byte : n.end_byte].decode("utf-8", errors="replace")
 
@@ -1570,15 +1797,7 @@ def _ts_collect_calls(def_node, src_qname: str, src_bytes: bytes, out: ExtractRe
             return None
         raw = text(value)
         raw = raw[1:-1] if len(raw) >= 2 else raw
-        if raw.startswith(("/", "http")):
-            return raw
-        matched = _TS_TEMPLATE_URL_WITH_SLASH.fullmatch(raw[:300])
-        if matched is not None:
-            return matched.group(1)
-        matched = _TS_TEMPLATE_URL_WITHOUT_SLASH.fullmatch(raw[:300])
-        if matched is not None:
-            return f"/{matched.group(1)}"
-        return None
+        return _path_from_template_raw(raw)
 
     def _url_bindings() -> dict[str, object]:
         """Find same-scope URL literals so ``axios.post(url)`` stays linkable."""
@@ -1639,13 +1858,22 @@ def _ts_collect_calls(def_node, src_qname: str, src_bytes: bytes, out: ExtractRe
 
         Conservative: bare ``fetch(...)`` / ``axios(...)`` / ``got(...)``, or ``<client>.verb(...)``
         where the object is a known HTTP-client identifier — so Hono's
-        ``app.get('/x', handler)`` (server) never registers as a client call."""
-        fn = call_node.child_by_field_name("function") if hasattr(call_node, "child_by_field_name") else None
+        ``app.get('/x', handler)`` (server) never registers as a client call.
+
+        Also covers same-file thin wrappers (``makeRequest(url)``) whose first
+        param is forwarded to fetch/axios/got — see ``http_wrappers``.
+        """
+        fn = _ts_call_fn_node(call_node)
         if fn is None:
             return None
         method: str | None = None
         if fn.type == "identifier":
-            if text(fn) not in ("fetch", "axios", "got"):
+            name = text(fn)
+            if name in ("fetch", "axios", "got"):
+                pass  # method stays None (method-agnostic)
+            elif name in http_wrappers:
+                pass  # thin wrapper — method-agnostic like fetch
+            else:
                 return None
         elif fn.type == "member_expression":
             prop = fn.child_by_field_name("property")

@@ -5,7 +5,7 @@ mcp.json out there already uses, so it must never change. Subcommands give
 the same indexing pipeline a scriptable surface (cron, systemd timers,
 pre-commit hooks, CI) without an MCP host in the middle:
 
-    livespec index <path> [--force] [--embed]   # index + chunks, JSON out
+    livespec index <path> [--force]             # index + chunks, JSON out
     livespec status <path>                      # index status, JSON out
     livespec explorer serve [path] [--port 8765]  # Spec Explorer at /explorer/
     livespec fastapi init [path]                  # index + Explorer + Cursor assets
@@ -29,11 +29,11 @@ def _serve() -> None:
     mcp.run()  # stdio transport by default
 
 
-def _cmd_index(path: str, *, force: bool, embed: bool) -> dict[str, Any]:
+def _cmd_index(path: str, *, force: bool) -> dict[str, Any]:
     from livespec_mcp.state import get_state
     from livespec_mcp.tools.indexing import run_index_pipeline
 
-    return run_index_pipeline(get_state(path, create=True), force=force, embed=embed)
+    return run_index_pipeline(get_state(path, create=True), force=force)
 
 
 def _cmd_status(path: str) -> dict[str, Any]:
@@ -65,9 +65,6 @@ def main(argv: list[str] | None = None) -> int:
     p_index = sub.add_parser("index", help="index a repo and print JSON stats")
     p_index.add_argument("path", help="absolute or relative path to the repo root")
     p_index.add_argument("--force", action="store_true", help="re-extract every file")
-    p_index.add_argument(
-        "--embed", action="store_true", help="populate vector embeddings ([embeddings] extra)"
-    )
 
     p_status = sub.add_parser("status", help="print index status JSON for a repo")
     p_status.add_argument("path", help="absolute or relative path to the repo root")
@@ -161,7 +158,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     try:
         if args.cmd == "index":
-            payload = _cmd_index(args.path, force=args.force, embed=args.embed)
+            payload = _cmd_index(args.path, force=args.force)
         else:
             payload = _cmd_status(args.path)
     except (FileNotFoundError, ValueError) as e:

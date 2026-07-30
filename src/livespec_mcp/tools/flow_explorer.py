@@ -15,12 +15,11 @@ from pathlib import Path
 from typing import Any
 
 from livespec_mcp.config import Settings
+from livespec_mcp.domain.legacy_flows import is_infra_route_path
 from livespec_mcp.state import AppState
 from livespec_mcp.tools.analysis import compute_endpoints
 
 _HTTP_VERBS = frozenset({"GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"})
-
-# Spring @XxxMapping("…") — bound lengths (ReDoS-safe).
 _SPRING_MAPPING = re.compile(
     r"@(Get|Post|Put|Patch|Delete)Mapping\s*\(\s*"
     r"(?:value\s*=\s*|path\s*=\s*)?"
@@ -154,7 +153,8 @@ def _is_http_endpoint(ep: dict[str, Any], *, root: Path | None = None) -> bool:
 def _iter_project_endpoints(pst: AppState, framework: str | None):
     """Union decorator endpoints with Express/Hono call-style scanners.
 
-    ``compute_endpoints(framework=None)`` skips Express/Hono (opt-in scanners).
+    ``compute_endpoints(framework=None)`` includes Express/Hono call-style
+    routes (same as ``find_endpoints`` default).
     Flow Explorer always needs those for Node composers.
     """
     seen: set[tuple[Any, ...]] = set()
@@ -176,18 +176,6 @@ def _iter_project_endpoints(pst: AppState, framework: str | None):
                 continue
             seen.add(key)
             yield ep
-
-
-_INFRA_ROUTE_PATHS = frozenset({
-    "/health",
-    "/liveness",
-    "/readiness",
-    "/ready",
-    "/ping",
-    "/metrics",
-    "/actuator/health",
-    "/actuator/info",
-})
 
 
 def _route_edges(
@@ -226,9 +214,7 @@ def _route_edges(
     out: list[dict[str, str | None]] = []
     for row in rows:
         path = row["path"] or ""
-        # Compare without query/trailing slash; infra set is exact paths.
-        norm = (path.split("?", 1)[0].rstrip("/") or "/").lower()
-        if norm in _INFRA_ROUTE_PATHS:
+        if is_infra_route_path(path):
             continue
         out.append(
             {
@@ -483,11 +469,19 @@ def compute_flow_explorer_data(
                 "route_ref": route_ref_n,
             },
             "bridge_note": (
+                (
+                    "This workspace is not using group_db — Flow Explorer shows "
+                    "this project only. Set [workspace] group_db for cross-repo hops. "
+                )
+                if not st.settings.grouped
+                else ""
+            )
+            + (
                 "Cross-repo links include resolved HTTP route hops from the "
                 "indexer."
                 if route_edges
                 else "No HTTP route hops resolved yet (need literal/env-resolvable "
-                "client URLs matching server routes)."
+                "client URLs matching server routes."
             ),
         },
         "projects": project_summaries,

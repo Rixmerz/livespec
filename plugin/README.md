@@ -3,15 +3,15 @@
 Packages the **livespec** MCP server as a Claude Code plugin, plus a specialized
 subagent and a preloaded Skill so agents make better decisions about *how* to use
 the tools. (The MCP server is distributed as the `livespec` package /
-`uvx --from 'livespec[embeddings]' livespec` command; the plugin — and everything
-an agent sees — is `livespec`.)
+`uvx livespec@…` command; the plugin — and everything an agent sees — is
+`livespec`.)
 
 ## What's inside
 
 ```
 plugin/
 ├── .claude-plugin/plugin.json   # plugin manifest
-├── .mcp.json                    # runs livespec MCP with [embeddings] extra
+├── .mcp.json                    # runs uvx livespec@<pinned version>
 ├── agents/livespec.md           # specialized subagent; preloads the livespec Skill
 ├── skills/livespec/SKILL.md     # operating manual: tool map, workspace rule, contracts
 └── commands/livespec-onboard.md # /livespec-onboard [repo] — cold-open + orientation
@@ -33,10 +33,9 @@ without rediscovering conventions each time.
 
 ### Local checkout (dev / testing unreleased fixes)
 
-Keep the published `plugin/.mcp.json` on
-`uvx --from 'livespec[embeddings]==…' livespec`. For a local checkout, register
-the editable install in **`~/.cursor/mcp.json`** (server name `livespec` → shows
-as `user-livespec`) so the agent picks up Unreleased code even when the
+Keep the published `plugin/.mcp.json` on `uvx livespec@…`. For a local checkout,
+register the editable install in **`~/.cursor/mcp.json`** (server name `livespec`
+→ shows as `user-livespec`) so the agent picks up Unreleased code even when the
 marketplace plugin still pins PyPI:
 
 ```json
@@ -48,8 +47,6 @@ marketplace plugin still pins PyPI:
         "--directory",
         "/ABS/PATH/TO/livespec-mcp",
         "run",
-        "--extra",
-        "embeddings",
         "livespec"
       ]
     }
@@ -66,11 +63,8 @@ may leave a long-lived stdio process on the old code.
 The published plugin runs:
 
 ```text
-uvx --from 'livespec[embeddings]==<version>' livespec
+uvx livespec@<version>
 ```
-
-That pulls `fastembed` + `sqlite-vec` into uv's cache so `embed_chunks` works.
-Bare `uvx livespec@x.y.z` (no `[embeddings]`) leaves vector search offline.
 
 Ensure `uv` is installed. Then add this plugin to a marketplace and install it, or
 point Claude Code at this directory as a local plugin.
@@ -79,11 +73,5 @@ point Claude Code at this directory as a local plugin.
 > `plugin/.claude-plugin/plugin.json` on the same version. Local checkout mode
 > above always runs the working tree (including Unreleased nomenclature changes).
 
-> **First `embed_chunks`:** downloads ONNX model weights (~1.6 GB total: jina
-> code + multilingual text) into `~/.cache/fastembed` (or
-> `FASTEMBED_CACHE_PATH` / livespec's XDG cache). Needs outbound access to
-> `huggingface.co`. If that host is DNS-sinkholed, allowlist it or pre-seed the
-> cache offline.
-
-The MCP server exposes 46 tools (31 core + 12 Spec + 3 docs). See the repo
-`README.md`, `docs/AGENT_PLAYBOOK.md`, and `CHANGELOG.md` for the full surface.
+`search` is FTS5-only (no model download). See the repo `README.md`,
+`docs/AGENT_PLAYBOOK.md`, and `CHANGELOG.md` for the full surface.

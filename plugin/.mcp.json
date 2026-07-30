@@ -3,9 +3,7 @@
     "livespec": {
       "command": "uvx",
       "args": [
-        "--from",
-        "livespec[embeddings]==0.28.1",
-        "livespec"
+        "livespec@0.28.1"
       ],
       "env": {}
     }

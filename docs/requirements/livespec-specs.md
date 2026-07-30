@@ -85,9 +85,8 @@ This is the differentiator: Functional Requirement (and other spec kinds)
 ## SPEC-006: Hybrid search & RAG
 **Prioridad:** media · **Módulo:** rag
 
-Provide AST-aware chunking of source, full-text search via SQLite FTS5,
-and optional dense-vector search via sqlite-vec, fused with Reciprocal
-Rank Fusion (RRF) for hybrid retrieval over symbols and specs.
+Provide AST-aware chunking of source and full-text search via SQLite
+FTS5 over symbols and specs. (Dense-vector / sqlite-vec lane removed.)
 
 ## SPEC-007: Dead-code & coverage analysis
 **Prioridad:** media · **Módulo:** analysis

@@ -116,9 +116,18 @@ async def test_find_endpoints_express(workspace):
     )
     async with Client(mcp) as c:
         await c.call_tool("index_project", {})
-        empty = (await c.call_tool("find_endpoints", {})).data
-        assert empty["count"] == 0
-        assert "express" in (empty.get("not_swept") or [])
+        # Default sweep now includes Express call-style routes.
+        out = (await c.call_tool("find_endpoints", {})).data
+        assert out["count"] >= 4
+        assert "not_swept" not in out
+        routes = {
+            (e.get("express_method") or e.get("http_method"), e.get("express_path") or e.get("http_path"))
+            for e in out["endpoints"]
+        }
+        assert ("GET", "/health") in routes, routes
+        assert ("GET", "/live") in routes
+        assert ("GET", "/list") in routes
+        assert ("POST", "/search") in routes
 
         out = (await c.call_tool("find_endpoints", {"framework": "express"})).data
         routes = {(e["express_method"], e["express_path"]) for e in out["endpoints"]}

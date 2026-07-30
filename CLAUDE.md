@@ -54,9 +54,8 @@ read before starting any feature work in v0.8+.
 ### Tests
 
 ```bash
-uv run pytest -q -m "not embeddings"      # default suite (no model downloads)
-uv run pytest -m embeddings                # add the embeddings smoke (~30s first run)
-uv run livespec-mcp explorer serve .       # Spec Explorer at http://127.0.0.1:8765/explorer/
+uv run pytest -q                           # full default suite
+uv run livespec explorer serve .           # Spec Explorer at http://127.0.0.1:8765/explorer/
 uv run pytest tests/test_rf_deps.py -v     # single file (Spec dependency graph tests)
 uv run pytest tests/test_rf_deps.py::test_link_and_walk_dependencies -v   # single test
 ```
@@ -110,25 +109,26 @@ populates new fields.
 ### Layered stack
 
 ```
-tools/          MCP-exposed surface (44 tools: 29 core + 12 Spec + 3 docs)
+tools/          MCP-exposed surface (44 tools: 27 core + 12 Spec + 5 docs)
   analysis.py     find_symbol, quick_orient, get_symbol_source, who_calls,
                   who_does_this_call, analyze_impact, audit_coverage,
-                  find_dead_code, find_orphan_tests, find_endpoints,
-                  git_diff_impact, get_project_overview
+                  find_dead_code, find_legacy_flows, find_orphan_tests,
+                  find_endpoints, git_diff_impact, get_project_overview
   specs.py        Spec agentic queries (list_specs,
                   get_spec_implementation) + brownfield
                   (propose_specs_from_codebase) + bulk_link_spec_symbols
                   + Spec mutation tools (create/update/delete_spec, etc.
                   gated by register(mcp, agentic=, mutation=))
-  indexing.py     index_project (runs rebuild_chunks + optional embed inside)
-  search.py       search (hybrid FTS5 + sqlite-vec RRF) + embed_chunks
+  indexing.py     index_project (runs rebuild_chunks inside)
+  search.py       search (FTS5 over AST-aware chunks)
   docs.py         shared doc helpers (doc tools live in plugins/docs.py)
   plugins/spec.py Spec mutation: create/update/delete_spec,
                   link_spec_symbol, link/unlink_spec_dependency,
                   get_spec_dependency_graph, scan_spec_annotations,
                   scan_docstrings_for_spec_hints, import_specs_from_markdown
                   (delegates to specs.py:register(mutation=True))
-  plugins/docs.py generate_docs, list_docs, export_documentation
+  plugins/docs.py generate_docs, list_docs, export_documentation,
+                  export_explorer, export_flow_explorer
   _errors.py      mcp_error() helper — every tool error returns
                   {error, isError, did_you_mean?, hint?}
 
@@ -145,7 +145,7 @@ domain/         Pure business logic, no MCP coupling
   matcher.py      @spec: annotation parser (multi-Spec, confidence override,
                   @not_spec negation, verb-anchored level-2 with negation guard)
   md_specs.py     markdown spec importer (v0.20, was md_rfs.py)
-  rag.py          AST-aware chunking + FTS5 + optional sqlite-vec via RRF
+  rag.py          AST-aware chunking + FTS5 keyword search
   watcher.py      watchdog wrapper used by index_project(watch=True) + atexit
                   cleanup (watcher MCP tools dropped in v0.8)
 
@@ -196,22 +196,26 @@ produce duplicate symbols at the same line. Keep the first occurrence
 The v0.8 curation pass shipped: battle-test data (3 sessions, 40 calls,
 11 bug fixes) drove the tier split. Current state:
 
-- **29 core tools** always registered: code intel (find_symbol,
+- **27 core tools** always registered: code intel (find_symbol,
   quick_orient, get_symbol_source, who_calls, who_does_this_call,
-  analyze_impact, git_diff_impact, find_dead_code, find_orphan_tests,
-  find_endpoints, get_project_overview, index_project, search,
-  embed_chunks, grep_in_indexed_files, agent_scratch, agent_scratch_clear)
+  analyze_impact, git_diff_impact, find_dead_code, find_legacy_flows,
+  find_orphan_tests, find_endpoints, get_project_overview, index_project,
+  search, grep_in_indexed_files)
   + Spec agentic (audit_coverage, list_specs,
   get_spec_implementation, propose_specs_from_codebase,
   bulk_link_spec_symbols, import_specs_from_markdown)
   + OpenSpec interop (sync_openspec, export_openspec, validate_openspec,
   list_spec_changes, get_spec_change — v0.22)
-  + export_explorer (always visible, v0.19).
-- **Plugin `livespec-spec` (11 tools)** — Spec mutation ceremony: CRUD,
+  + scan_annotation_verbs.
+- **Plugin `livespec-spec` (12 tools)** — Spec mutation ceremony: CRUD,
   link/unlink, Spec-Spec graph, scans (import moved to core v0.19),
   OpenSpec change lifecycle (apply_spec_change, archive_spec_change — v0.22).
-- **Plugin `livespec-docs` (3 tools)** — generate_docs, list_docs,
-  export_documentation.
+- **Plugin `livespec-docs` (5 tools)** — generate_docs, list_docs,
+  export_documentation, export_explorer, export_flow_explorer
+  (Explorer demoted from always-visible core; unlock via docs plugin /
+  explorer bundle / `LIVESPEC_PLUGINS`).
+- **Dropped (Unreleased):** agent_scratch / agent_scratch_get /
+  agent_scratch_clear.
 - **Dropped (v0.8-v0.9)**: list_files, get_index_status (resource
   `project://index/status`), get_symbol_info, get_call_graph,
   rebuild_chunks (runs inside index_project), watcher trio
@@ -352,6 +356,6 @@ user wants to override.
 - **Don't add a custom error shape.** Use `mcp_error()`. If the existing
   shape doesn't fit, propose extending it (new field), don't bypass it.
 - **Don't bypass the pagination contract** when adding aggregator tools.
-- **Don't commit without running the full suite** (`uv run pytest -q -m "not embeddings"`).
+- **Don't commit without running the full suite** (`uv run pytest -q`).
 - **Don't write `--no-verify`** to skip pre-commit hooks. Fix the
   underlying issue.

@@ -24,9 +24,9 @@ from livespec_mcp.server import mcp
 
 
 @pytest.mark.asyncio
-async def test_find_dead_code_ts_only_repo_reports_not_swept(workspace):
-    """A TS-only repo scanned with defaults (Python-only sweep) must say
-    it didn't sweep the corpus, not just report count=0."""
+async def test_find_dead_code_ts_only_repo_auto_includes_non_python(workspace):
+    """TS-only repos auto-enable include_non_python (silent Python-only zero
+    was an audit false negative on a client Express hubs)."""
     (workspace / "src").mkdir()
     (workspace / "src" / "code.ts").write_text(
         "function deadFn() {\n  return 1;\n}\n"
@@ -34,17 +34,14 @@ async def test_find_dead_code_ts_only_repo_reports_not_swept(workspace):
     async with Client(mcp) as c:
         await c.call_tool("index_project", {})
         out = (await c.call_tool("find_dead_code", {"summary_only": True})).data
-        assert out["count"] == 0
-        assert "non-python" in out["not_swept"]
-        assert "include_non_python=True" in out["hint"]
-
-        # Opting in makes the real dead code appear — proves the hint was
-        # correct, not just decorative.
-        opted_in = (
+        assert out["count"] >= 1
+        assert "include_non_python" in (out.get("auto_enabled") or [])
+        # Explicit False still forces the old Python-only path via... we can't
+        # pass False to undo auto. Documented: zero-python ⇒ auto on.
+        opted = (
             await c.call_tool("find_dead_code", {"include_non_python": True})
         ).data
-        assert opted_in["count"] >= 1
-        assert "not_swept" not in opted_in
+        assert opted["count"] >= 1
 
 
 @pytest.mark.asyncio
@@ -96,7 +93,8 @@ HONO_APP = (
 
 
 @pytest.mark.asyncio
-async def test_find_endpoints_default_reports_hono_not_swept(workspace):
+async def test_find_endpoints_default_includes_hono(workspace):
+    """Express/Hono call-style routes are part of the default sweep."""
     (workspace / "src").mkdir()
     (workspace / "src" / "app.ts").write_text(HONO_APP)
     async with Client(mcp) as c:
@@ -104,9 +102,8 @@ async def test_find_endpoints_default_reports_hono_not_swept(workspace):
         out = (
             await c.call_tool("find_endpoints", {"summary_only": True})
         ).data
-        assert out["count"] == 0
-        assert out["not_swept"] == ["hono"]
-        assert "framework='hono'" in out["hint"]
+        assert out["count"] >= 1
+        assert "not_swept" not in out
 
         hono_out = (
             await c.call_tool("find_endpoints", {"framework": "hono"})

@@ -6,6 +6,123 @@ follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Improved — `find_dead_code` auto-enables non-Python on TS/JS-only repos
+
+When the workspace has zero indexed Python files, ``include_non_python``
+turns on automatically (``auto_enabled`` in the payload). Avoids the
+silent ``count: 0`` + ``not_swept: ["non-python"]`` trap on Express hubs.
+
+### Improved — Spring `find_endpoints` hint under ``group_db``
+
+``framework='spring'`` with ``count: 0`` on a hub workspace that shares a
+group DB now lists sibling projects that have Java files and tells the
+agent to call with ``workspace=<sibling>``.
+
+### Fixed — group_db symbol lookup spans the whole shared DB
+
+``find_symbol``, ``who_calls``, ``who_does_this_call``, ``quick_orient``,
+``get_symbol_source``, and ``analyze_impact(target_type=symbol)`` resolve
+qualified names across every project in a ``[workspace] group_db`` (home
+project preferred). NetworkX still loads the **owning** project's graph;
+``route_callers`` / ``invokes_endpoints`` remain DB-wide. Fixes the audit
+failure where Composer could not resolve a HotelSvc controller qname.
+
+### Improved — `find_legacy_flows` / Flow Explorer infra filter
+
+Also exclude docs/UI operator paths: ``/api-docs``, ``/v3/api-docs``,
+``/openapi.yaml``, ``/ui``, ``/playground``, ``/info``, plus prefixes
+``/metrics/…``, ``/actuator/…``. Shared helper ``is_infra_route_path``.
+
+### Improved — Express/Hono in default `find_endpoints` sweep
+
+``framework=None`` now includes call-style Express/Hono routes (no more
+``count: 0`` + ``not_swept: ["express"]`` trap). Explicit
+``framework='express'|'hono'`` still filters.
+
+### Changed — `scan_docstrings_for_spec_hints` soft-skips non-Python
+
+When the workspace has zero indexed Python files, returns
+``skipped=True`` + empty hints (TS/JS repos should use
+``propose_specs_from_codebase`` / OpenSpec import).
+
+### Removed — `agent_scratch*` + demoted Explorer from always-visible core
+
+- Dropped MCP tools ``agent_scratch``, ``agent_scratch_get``,
+  ``agent_scratch_clear`` (and ``scratch_note`` on ``quick_orient``).
+  Table ``agent_scratch`` remains (migrations append-only).
+- ``export_explorer`` / ``export_flow_explorer`` move into the
+  ``livespec-docs`` plugin (5 tools with generate/list/export docs).
+  Unlock via ``LIVESPEC_PLUGINS=docs|all``, Spec/docs rows, or an
+  on-disk ``.mcp-docs/explorer/`` bundle (`index_project(explorer=True)`).
+- Surface: **27** always-visible core + **12** Spec + **5** docs = **44**
+  registered (tools/list still grows with plugins).
+
+### Added — `find_legacy_flows` (likely-unused HTTP flows)
+
+New aggregator over ``route_ref`` + ``invokes_route`` (works best with
+``[workspace] group_db``). Reports **server** routes with no indexed client
+hop (`legacy_server`) and **client** calls with no matched server
+(`orphan_client`). Graph evidence only — not production traffic; payload
+carries an explicit hint. Paginated (`limit`/`cursor`/`summary_only`).
+
+### Improved — Tier-B noise reductions (dead_code / orphan / audit / grep / search)
+
+- **`find_dead_code`**: protect Hono/Express handlers with the same
+  import-map resolution as `find_endpoints`; new
+  `include_ts_framework_routes` (FS-routing skip no longer tied to
+  `include_infrastructure`); `skipped_fs_routing_count`; optional
+  `min_weight` on inbound edges.
+- **Framework DI / entry points**: Spring stereotype classes
+  (`@Service`/`@Repository`/`@RestController`/…) protect all methods;
+  Angular `@Injectable` protects service methods (not only lifecycle);
+  FastAPI `include_router` / `add_api_route` / `FastAPI(lifespan=…)`
+  registration + `@on_event` entry-point lastseg.
+- **`find_orphan_tests`**: skip harness files (FastMCP Client / TestClient /
+  supertest) and fixture/conftest paths by default; per-row `confidence` +
+  `reasons`; optional `min_weight`.
+- **`audit_coverage`**: per-list `cursors` input; content-aware empty
+  `index.ts` markers; `modules_truly_orphan_sample` on `summary_only`;
+  surface snapshot write failures as `warning`.
+- **`grep_in_indexed_files`**: `match_mode`; ReDoS-prone / overlong patterns
+  fall back to literal; `per_file_limit`; optional `fts_prefilter`.
+- **`search`**: `keyword_search` (+ `hybrid_search` alias); quoted phrase
+  mode; `index_fresh` / `query_mode` in payload.
+
+### Fixed — mig v19 DROP of ``vec0`` tables without sqlite-vec
+
+Opening a DB that still has ``chunk_vec_*`` virtual tables (e.g. the
+flow-group ``group_db``) failed with ``no such module: vec0`` when the
+extension is not loaded. DROP is now best-effort; orphan vec tables are
+left in place (FTS path ignores them).
+
+Vector embeddings and Reciprocal Rank Fusion are gone. ``search`` is
+**FTS5-only** (AST-aware chunks unchanged). Dropped: MCP tool
+``embed_chunks``, ``index_project(embed=…)`` / CLI ``--embed``, optional
+extra ``[embeddings]`` (fastembed + sqlite-vec), CI embeddings job.
+Migration **v19** drops ``chunk_vec_*`` tables and ``chunk.embedded_at``.
+Plugin ``.mcp.json`` launches bare ``livespec@…`` (no extras).
+
+### Added — thin HTTP wrapper client routes (`makeRequest(url)`)
+
+Same-file helpers whose first param is forwarded to `fetch`/`axios`/`got`
+are treated as HTTP wrappers. Callers like a client's
+`makeRequest(\`${baseUrl}/search\`, body)` emit a client `route_ref` on the
+caller (not the wrapper). Non-forwarding helpers are ignored.
+
+### Fixed — `await axios.get<T>(url)` dropped as client route
+
+tree-sitter-typescript puts an `await_expression` in the call's function
+field when generics combine with `await`. Client route detection now unwraps
+that so a client's `await axios.get<Hotel[]>(requestUrl)` emits `route_ref`.
+
+### Fixed — JS ternary `?` truncated multi-segment template URLs
+
+`_path_from_template_raw` stripped on the first `?`, which broke
+`${cond ? `x/` : ""}` builders (composer-service→HotelSvc `/list/{}/{}/{}`).
+Query/fragment are stripped only after `${...}` collapse (or on plain
+literals). Nested-ternary paths collapse to match Spring
+`/list/{arrival}/{departure}/{hotels}`.
+
 ### Fixed — axios client routes discarded when 2nd arg is an identifier
 
 `_TS_HANDLER_ARG_TYPES` included `identifier`, so a client's

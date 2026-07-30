@@ -9,7 +9,10 @@ from __future__ import annotations
 import pytest
 from fastmcp import Client
 
-from livespec_mcp.domain.extractors import normalize_route_path
+from livespec_mcp.domain.extractors import (
+    _path_from_template_raw,
+    normalize_route_path,
+)
 from livespec_mcp.server import mcp
 
 
@@ -28,6 +31,118 @@ from livespec_mcp.server import mcp
 )
 def test_normalize_route_path(raw, expected):
     assert normalize_route_path(raw) == expected
+
+
+@pytest.mark.parametrize(
+    "raw,expected",
+    [
+        ("${base}/flights/v2", "/flights/v2"),
+        ("${base}/flights/v2?x=1", "/flights/v2?x=1"),  # query kept; normalize strips
+        (
+            "${url}/list/${a}/${b}/${c}",
+            "/list/{}/{}/{}",
+        ),
+        # a client HotelSvc: ternaries contain `?` — must NOT truncate as query string
+        (
+            "${url}/list/${params.checkIn ? `${params.checkIn}/` : \"\"}"
+            "${params.checkOut ? `${params.checkOut}/` : \"\"}"
+            "${params.hotelIds ? `${params.hotelIds}` : \"\"}",
+            "/list/{}/{}/{}",
+        ),
+        ("/list/a/b?x=1", "/list/a/b"),
+        ("https://hotelsvc.example/list/a/b/c", "https://hotelsvc.example/list/a/b/c"),
+        ("", None),
+        ("not-a-url", None),
+    ],
+)
+def test_path_from_template_raw(raw, expected):
+    assert _path_from_template_raw(raw) == expected
+
+
+@pytest.mark.asyncio
+async def test_thin_http_wrapper_makeRequest_emits_client_route(sample_repo):
+    """a client third-party client pattern: ``makeRequest(`${base}/search`, body)`` where
+    ``makeRequest`` forwards its first param to ``fetch`` — the CALLER must
+    get the client route_ref (not the wrapper itself)."""
+    (sample_repo / "back.py").write_text(
+        "from fastapi import FastAPI\n"
+        "app = FastAPI()\n"
+        "@app.post('/search')\n"
+        "def search():\n"
+        "    return {}\n"
+        "@app.post('/coverage')\n"
+        "def coverage():\n"
+        "    return {}\n"
+    )
+    (sample_repo / "facade.js").write_text(
+        "const baseUrl = 'https://third-party-spa.example';\n"
+        "async function callthird-party client(body, params) {\n"
+        "  return await makeRequest(`${baseUrl}/search`, body, params);\n"
+        "}\n"
+        "async function callCoverage(body, params) {\n"
+        "  return await makeRequest(`${baseUrl}/coverage`, body, params);\n"
+        "}\n"
+        "async function makeRequest(url, bodyRequest, paramsRequest) {\n"
+        "  return await fetch(url, { method: 'POST', body: JSON.stringify(bodyRequest) });\n"
+        "}\n"
+        "async function notAWrapper(url) {\n"
+        "  return url.toUpperCase();\n"
+        "}\n"
+        "async function decoy(body) {\n"
+        "  return await notAWrapper(`${baseUrl}/search`);\n"
+        "}\n"
+    )
+    async with Client(mcp) as c:
+        await c.call_tool("index_project", {"workspace": str(sample_repo)})
+        search_callers = (
+            await c.call_tool("who_calls", {"qname": "back.search"})
+        ).data.get("route_callers", [])
+        coverage_callers = (
+            await c.call_tool("who_calls", {"qname": "back.coverage"})
+        ).data.get("route_callers", [])
+    search_files = {x["qualified_name"] for x in search_callers}
+    assert any("callthird-party client" in q for q in search_files), search_callers
+    assert not any("decoy" in q for q in search_files), search_callers
+    assert not any("makeRequest" == q.split(".")[-1] for q in search_files), search_callers
+    assert any("callCoverage" in x["qualified_name"] for x in coverage_callers), coverage_callers
+
+
+@pytest.mark.asyncio
+async def test_hotelsvc_multi_segment_template_links_java_handler(sample_repo):
+    """composer-service→HotelSvc: nested-ternary `/list/${a}/${b}/${c}` joins
+    Spring ``@GetMapping("/list/{arrival}/{departure}/{hotels}")``."""
+    (sample_repo / "ListController.java").write_text(
+        "package com.example;\n"
+        "import org.springframework.web.bind.annotation.GetMapping;\n"
+        "import org.springframework.web.bind.annotation.RestController;\n"
+        "@RestController\n"
+        "public class ListController {\n"
+        "  @GetMapping(\"/list/{arrival}/{departure}/{hotels}\")\n"
+        "  public String list() { return \"ok\"; }\n"
+        "}\n"
+    )
+    (sample_repo / "suppliers.ts").write_text(
+        "export async function listByChunka supplier(url, params) {\n"
+        "  const requestUrl = `${url}/list/${\n"
+        "    params.checkIn ? `${params.checkIn}/` : \"\"\n"
+        "  }${params.checkOut ? `${params.checkOut}/` : \"\"}${\n"
+        "    params.hotelIds ? `${params.hotelIds}` : \"\"\n"
+        "  }`;\n"
+        # Real a client shape: await + TS generics — tree-sitter puts await in
+        # the call's function field; must still emit a client route_ref.
+        "  return await axios.get<Hotel[]>(requestUrl);\n"
+        "}\n"
+    )
+    async with Client(mcp) as c:
+        await c.call_tool("index_project", {"workspace": str(sample_repo)})
+        callees = (
+            await c.call_tool(
+                "who_does_this_call",
+                {"qname": "suppliers.listByChunka supplier"},
+            )
+        ).data
+    ep = callees.get("invokes_endpoints", [])
+    assert any("ListController" in x["qualified_name"] for x in ep), ep
 
 
 BACKEND = (
@@ -98,6 +213,44 @@ async def test_cross_repo_route_edge_via_group_db(tmp_path):
         assert any("ui" in x["file"] for x in rc)
         # fetch() has no explicit method → method-agnostic match, weight 0.8.
         assert all(0.0 < x["confidence"] <= 1.0 for x in rc)
+
+
+@pytest.mark.asyncio
+async def test_cross_repo_who_calls_from_frontend_workspace(tmp_path):
+    """group_db: resolve a backend qname from the frontend workspace and still
+    surface route_callers (P0 audit fix — symbol lookup is group-wide)."""
+    shared = tmp_path / "grp2" / "shared.db"
+    back = tmp_path / "back2"
+    front = tmp_path / "front2"
+    for root in (back, front):
+        root.mkdir(parents=True)
+        (root / ".livespec.toml").write_text(f'[workspace]\ngroup_db = "{shared}"\n')
+    (back / "api.py").write_text(BACKEND)
+    (front / "ui.ts").write_text(FRONT_TS)
+
+    async with Client(mcp) as c:
+        await c.call_tool("index_project", {"workspace": str(front)})
+        await c.call_tool("index_project", {"workspace": str(back)})
+
+        found = (
+            await c.call_tool(
+                "find_symbol",
+                {"workspace": str(front), "query": "get_user", "limit": 10},
+            )
+        ).data
+        assert any(
+            m.get("qualified_name") == "api.get_user" for m in found.get("matches") or []
+        ), found
+
+        callers = (
+            await c.call_tool(
+                "who_calls",
+                {"workspace": str(front), "qname": "api.get_user"},
+            )
+        ).data
+        assert not callers.get("isError"), callers
+        rc = callers.get("route_callers") or []
+        assert any("ui" in (x.get("file") or "") for x in rc), callers
 
 
 @pytest.mark.asyncio

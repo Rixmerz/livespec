@@ -308,8 +308,7 @@ CREATE TABLE IF NOT EXISTS chunk (
     start_line INTEGER,
     end_line INTEGER,
     text TEXT NOT NULL,
-    content_hash TEXT NOT NULL,
-    embedded_at TEXT
+    content_hash TEXT NOT NULL
 );
 
 CREATE INDEX IF NOT EXISTS idx_chunk_project ON chunk(project_id);
@@ -327,9 +326,7 @@ END;
 CREATE TRIGGER IF NOT EXISTS chunk_ad AFTER DELETE ON chunk BEGIN
     INSERT INTO chunk_fts(chunk_fts, rowid, text) VALUES('delete', old.id, old.text);
 END;
--- Only rewrite FTS when the text actually changed. `embed_pending` does a
--- per-chunk `UPDATE chunk SET embedded_at=...` that must NOT churn FTS
--- (thousands of pointless delete+reinserts per embed run otherwise).
+-- Only rewrite FTS when the text actually changed (not on metadata-only updates).
 CREATE TRIGGER IF NOT EXISTS chunk_au AFTER UPDATE ON chunk
 WHEN old.text IS NOT new.text BEGIN
     INSERT INTO chunk_fts(chunk_fts, rowid, text) VALUES('delete', old.id, old.text);

@@ -19,10 +19,6 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-embeddings = [
-    "fastembed>=0.4",
-    "sqlite-vec>=0.1.6",
-]
 dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.23",
@@ -63,9 +59,6 @@ exclude = [".coverage", "*.png", ".mcp-docs*", ".playwright-mcp"]
 asyncio_mode = "auto"
 testpaths = ["tests"]
 pythonpath = ["src"]
-markers = [
-    "embeddings: tests that require the [embeddings] extras (fastembed + sqlite-vec); skipped otherwise",
-]
 
 [tool.ruff]
 line-length = 100

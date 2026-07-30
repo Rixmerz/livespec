@@ -33,24 +33,29 @@ async def main() -> int:
 
         for required in (
             "index_project",
-            "export_explorer",
             "grep_in_indexed_files",
-            "agent_scratch",
-            "agent_scratch_clear",
             "find_endpoints",
             "search",
             "list_specs",
             "git_diff_impact",
+            "find_legacy_flows",
+            "import_specs_from_markdown",
+            "sync_openspec",
         ):
             if required not in names:
                 fail("core tools visible", f"missing {required}")
             else:
-                ok(f"tool registered", required)
+                ok("tool registered", required)
 
-        if "export_explorer" not in names:
-            fail("export_explorer core", "not in tools/list")
+        if "agent_scratch" in names:
+            fail("agent_scratch removed", "still in tools/list")
         else:
-            ok("export_explorer", "always visible in menu (pre-workspace menu)")
+            ok("agent_scratch dropped", "not in tools/list")
+
+        if "export_explorer" in names:
+            ok("export_explorer", "visible (LIVESPEC_PLUGINS or prior docs unlock)")
+        else:
+            ok("export_explorer", "gated until docs plugin / explorer bundle")
 
         pre_count = len(names)
         idx = await client.call_tool(
@@ -117,43 +122,6 @@ async def main() -> int:
         else:
             matches = gp.get("matches") or []
             ok("grep_in_indexed_files", f"{len(matches)} hits for mount_explorer")
-
-        # agent_scratch round-trip
-        await client.call_tool(
-            "agent_scratch",
-            {
-                "workspace": str(WS),
-                "qname": "dogfood.v019.probe",
-                "note": "dogfood session",
-            },
-        )
-        scratch = await client.call_tool(
-            "grep_in_indexed_files",
-            {"workspace": str(WS), "pattern": "dogfood", "limit": 1},
-        )
-        # verify scratch via direct read — grep won't find scratch in files
-        from livespec_mcp.state import get_state
-
-        st = get_state(str(WS))
-        row = st.conn.execute(
-            "SELECT note FROM agent_scratch WHERE qname=? AND project_id=?",
-            ("dogfood.v019.probe", st.project_id),
-        ).fetchone()
-        if row and "dogfood" in row["note"]:
-            ok("agent_scratch", row["note"][:40])
-        else:
-            fail("agent_scratch", "row not found in DB")
-
-        await client.call_tool(
-            "agent_scratch_clear", {"workspace": str(WS)}
-        )
-        row2 = st.conn.execute(
-            "SELECT 1 FROM agent_scratch WHERE project_id=?", (st.project_id,)
-        ).fetchone()
-        if row2 is None:
-            ok("agent_scratch_clear", "table empty for project")
-        else:
-            fail("agent_scratch_clear", "rows remain")
 
         # search snake_case fix
         sr = await client.call_tool(

@@ -495,6 +495,30 @@ def _m018_change_delta_rename_from(conn: sqlite3.Connection) -> None:
     _try_add_column(conn, "spec_change_delta", "rename_from", "TEXT")
 
 
+def _m019_drop_vector_search(conn: sqlite3.Connection) -> None:
+    """Drop dense-vector search (sqlite-vec + embedded_at).
+
+    Search is FTS5-only. Best-effort DROP of vec0 tables and the unused
+    ``chunk.embedded_at`` column. No re-extract required.
+
+    ``DROP TABLE`` on a ``vec0`` virtual table requires the sqlite-vec
+    extension to be loaded; without it SQLite raises ``no such module: vec0``.
+    Leave those tables in place — nothing in the FTS path reads them.
+    """
+    for tbl in ("chunk_vec_code", "chunk_vec_text"):
+        try:
+            conn.execute(f"DROP TABLE IF EXISTS {tbl}")
+        except sqlite3.OperationalError:
+            # Extension not loaded (or table is a broken vec0 shadow).
+            pass
+    if _has_column(conn, "chunk", "embedded_at"):
+        try:
+            conn.execute("ALTER TABLE chunk DROP COLUMN embedded_at")
+        except sqlite3.OperationalError:
+            # Older SQLite without DROP COLUMN — leave the unused column.
+            pass
+
+
 # Ordered registry. Append-only — never reuse a version number.
 MIGRATIONS: list[Migration] = [
     (1, "drop_dead_tables", _m001_drop_dead_tables),
@@ -515,6 +539,7 @@ MIGRATIONS: list[Migration] = [
     (16, "spec_change", _m016_spec_change),
     (17, "scenario_symbol", _m017_scenario_symbol),
     (18, "change_delta_rename_from", _m018_change_delta_rename_from),
+    (19, "drop_vector_search", _m019_drop_vector_search),
 ]
 
 

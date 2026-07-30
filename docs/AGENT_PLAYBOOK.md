@@ -57,7 +57,7 @@ client cached the short tool list.
 | What does this call? | `who_does_this_call(qname, max_depth=1)` | Forward cone |
 | Blast radius + Spec rollup | `analyze_impact(target_type, target, max_depth)` | `symbol` \| `file` \| `spec` |
 | PR / diff scope | `git_diff_impact(base_ref, head_ref)` | Inside a git repo only |
-| Semantic grep | `search(query, scope)` | FTS5; optional vectors if embedded |
+| Semantic grep | `search(query, scope)` | FTS5 over AST chunks + Specs |
 | Spec list | `list_specs(...)` | Filters: status, module, `kind`, `has_implementation` |
 | What implements SPEC-NNN? | `get_spec_implementation(spec_id)` | One round-trip |
 | Coverage gaps | `audit_coverage()` | Orphans, low-confidence links |

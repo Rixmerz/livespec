@@ -40,6 +40,7 @@ from livespec_mcp.domain.graph import (
 )
 from livespec_mcp.domain.indexer import DEFAULT_IGNORES, _hash_bytes, _iter_files
 from livespec_mcp.domain.languages import detect_language
+from livespec_mcp.domain.legacy_flows import compute_legacy_flows
 from livespec_mcp.domain.test_coverage_reports import discover_report_coverage
 from livespec_mcp.state import AppState, get_state
 from livespec_mcp.tools._errors import mcp_error
@@ -60,6 +61,34 @@ _DEFAULT_META_BYTES = 400
 # caller cone on a huge repo can exceed it, raising a raw OperationalError from
 # an `IN (?, ?, ...)` clause. Chunk such queries under a cap safe on every build.
 _SQL_IN_CHUNK = 900
+
+# Grep: reject catastrophic regex shapes (Sonar S5852); bound pattern length.
+_GREP_PATTERN_MAX = 200
+_GREP_LINE_MAX = 4000
+_GREP_PER_FILE_DEFAULT = 20
+_REDOS_NESTED = re.compile(
+    r"\([^)]*[+*][^)]*\)[+*]|\([^)]*[+*][^)]*\|[^)]*[+*][^)]*\)[+*]"
+)
+
+
+def _grep_compile_pattern(pattern: str) -> tuple[re.Pattern[str] | None, str, str | None]:
+    """Return (compiled|None, match_mode, error_hint).
+
+    match_mode is ``regex`` or ``literal``. Hostile / overlong patterns fail
+    closed to literal with a hint rather than hanging the MCP process.
+    """
+    if len(pattern) > _GREP_PATTERN_MAX:
+        return None, "literal", (
+            f"pattern longer than {_GREP_PATTERN_MAX} chars — using literal match"
+        )
+    if _REDOS_NESTED.search(pattern):
+        return None, "literal", (
+            "pattern looks ReDoS-prone (nested quantifiers) — using literal match"
+        )
+    try:
+        return re.compile(pattern), "regex", None
+    except re.error:
+        return None, "literal", None
 
 
 def _like_escape(s: str) -> str:
@@ -195,6 +224,9 @@ def _grep_indexed_files_core(
     kind: str | None,
     limit: int,
     cursor: int,
+    *,
+    per_file_limit: int = _GREP_PER_FILE_DEFAULT,
+    fts_prefilter: bool = False,
 ) -> dict[str, Any]:
     """Search indexed file contents on disk (substring or regex)."""
     pid = st.project_id
@@ -209,13 +241,21 @@ def _grep_indexed_files_core(
     sql += " ORDER BY path"
     file_rows = st.conn.execute(sql, params).fetchall()
 
-    try:
-        regex = re.compile(pattern)
-        use_regex = True
-    except re.error:
-        regex = None
-        use_regex = False
-        needle = pattern
+    regex, match_mode, mode_hint = _grep_compile_pattern(pattern)
+    use_regex = regex is not None
+    needle = pattern
+
+    fts_paths: set[str] | None = None
+    if fts_prefilter:
+        from livespec_mcp.domain.rag import fts_search
+
+        # Strip regex metacharacters for a loose FTS probe.
+        probe = re.sub(r"[^\w\s\-_.]+", " ", pattern).strip() or pattern
+        hits = fts_search(st.conn, pid, probe, limit=500, scope="all")
+        fts_paths = {h[2].get("file_path") for h in hits if h[2].get("file_path")}
+        # Empty FTS → fall back to full scan (don't hide literal-only matches).
+        if not fts_paths:
+            fts_paths = None
 
     matches: list[dict[str, Any]] = []
     indexed_paths: set[str] = set()
@@ -225,6 +265,8 @@ def _grep_indexed_files_core(
         path = row["path"]
         indexed_paths.add(path)
         if path_glob and not fnmatch.fnmatch(path, path_glob):
+            continue
+        if fts_paths is not None and path not in fts_paths:
             continue
         fp = ws / path
         if not fp.is_file():
@@ -240,7 +282,10 @@ def _grep_indexed_files_core(
         if row["content_hash"] and _hash_bytes(raw) != row["content_hash"]:
             changed_on_disk.append(path)
         lines = raw.decode("utf-8", errors="replace").splitlines()
+        file_hits = 0
         for line_no, line in enumerate(lines, start=1):
+            if len(line) > _GREP_LINE_MAX:
+                line = line[:_GREP_LINE_MAX]
             if use_regex:
                 if regex is None or not regex.search(line):
                     continue
@@ -252,17 +297,28 @@ def _grep_indexed_files_core(
                 "line": line_no,
                 "text": line[:240],
             })
+            file_hits += 1
+            if file_hits >= per_file_limit:
+                break
 
     total = len(matches)
     page = matches[cursor : cursor + limit]
     next_cursor = cursor + limit if cursor + limit < total else None
-    return {
+    out: dict[str, Any] = {
         "pattern": pattern,
+        "match_mode": match_mode,
         "matches": page,
         "count": total,
         "next_cursor": next_cursor,
+        "per_file_limit": per_file_limit,
         **_grep_scope_staleness(st, indexed_paths, changed_on_disk, path_glob, kind),
     }
+    if mode_hint:
+        out["hint"] = mode_hint
+    if fts_prefilter:
+        out["fts_prefilter"] = True
+        out["fts_candidate_files"] = len(fts_paths) if fts_paths is not None else None
+    return out
 
 # v0.5 P1: framework decorator names that imply hidden callers (HTTP routers,
 # CLI dispatchers, test frameworks, plugin systems, message brokers, MCP).
@@ -273,6 +329,8 @@ _ENTRY_POINT_DECORATOR_LASTSEG = frozenset({
     # HTTP verbs (Flask/FastAPI/Bottle/etc.)
     "route", "get", "post", "put", "delete", "patch", "head", "options",
     "api_route", "websocket",
+    # FastAPI lifespan / startup hooks
+    "on_event", "lifespan",
     # Flask/FastAPI hooks
     "before_request", "after_request", "errorhandler", "teardown_appcontext",
     "before_first_request", "context_processor",
@@ -341,9 +399,26 @@ _NG_LIFECYCLE_HOOKS = frozenset({
 # be referenced from HTML the indexer can't parse (`(click)="save()"`), so
 # every method of such a class is protected from dead-code flagging.
 _NG_TEMPLATE_DECORATOR_LASTSEGS = frozenset({"component", "directive", "pipe"})
-_NG_ANY_DECORATOR_LASTSEGS = _NG_TEMPLATE_DECORATOR_LASTSEGS | frozenset(
-    {"injectable", "ngmodule"}
+# Injectable services are DI-invoked from components/templates with zero
+# in-project call edges — protect all their methods too (not just lifecycle).
+_NG_DI_CLASS_LASTSEGS = frozenset({"injectable"})
+_NG_ANY_DECORATOR_LASTSEGS = (
+    _NG_TEMPLATE_DECORATOR_LASTSEGS | _NG_DI_CLASS_LASTSEGS | frozenset({"ngmodule"})
 )
+
+# Spring stereotypes: the DI container instantiates these and may invoke any
+# public method via proxies / other beans. Method-level @GetMapping already
+# protects mapped handlers; class-level stereotypes protect the rest.
+_SPRING_STEREOTYPE_LASTSEGS = frozenset({
+    "restcontroller",
+    "controller",
+    "service",
+    "repository",
+    "component",
+    "configuration",
+    "controlleradvice",
+    "restcontrolleradvice",
+})
 
 
 def _decorator_lastseg(name: str) -> str:
@@ -674,6 +749,20 @@ _REGISTRATION_VERBS: frozenset[str] = frozenset({
     "add_listener",
     "on",
     "use",
+    # FastAPI / Starlette
+    "include_router",
+    "add_api_route",
+    "add_exception_handler",
+    "add_event_handler",
+    "mount",
+    "add_websocket_route",
+})
+
+# Constructor callables whose keyword Name args are framework entry points
+# (e.g. ``FastAPI(lifespan=lifespan)``).
+_FRAMEWORK_CTOR_NAMES = frozenset({"FastAPI", "Flask", "APIRouter"})
+_FRAMEWORK_CTOR_KW = frozenset({
+    "lifespan", "on_startup", "on_shutdown", "dependencies",
 })
 
 
@@ -710,6 +799,20 @@ def _runtime_registered_names(file_path_abs: str, mtime: float) -> frozenset[str
         if not isinstance(node, ast.Call):
             continue
         func = node.func
+        # FastAPI(lifespan=fn) / Flask(on_startup=[...]) — Name kwargs.
+        ctor_name = None
+        if isinstance(func, ast.Name):
+            ctor_name = func.id
+        elif isinstance(func, ast.Attribute):
+            ctor_name = func.attr
+        if ctor_name in _FRAMEWORK_CTOR_NAMES:
+            for kw in node.keywords:
+                if kw.arg in _FRAMEWORK_CTOR_KW and isinstance(kw.value, ast.Name):
+                    out.add(kw.value.id)
+                elif kw.arg in _FRAMEWORK_CTOR_KW and isinstance(kw.value, (ast.List, ast.Tuple)):
+                    for elt in kw.value.elts:
+                        if isinstance(elt, ast.Name):
+                            out.add(elt.id)
         # Must be an attribute call: x.register_lookup(...)
         if not isinstance(func, ast.Attribute):
             continue
@@ -1388,14 +1491,21 @@ def compute_endpoints(
             seen_qnames.add(r["qualified_name"])
 
     # v0.13 P3 / Unreleased: call-style HTTP routes (Hono + Express).
-    # Opt-in (reads files on demand). Same AST scanner — both frameworks use
-    # `app|router.get('/path', handler)` shapes. Pre-filter by framework marker
+    # Same AST scanner — both frameworks use `app|router.get('/path', handler)`.
+    # Included in ``framework=None`` (default) as well as explicit opt-in —
+    # agents calling find_endpoints() without a framework must see Express
+    # routes on real-world-style repos (audit 2026-07-30). Pre-filter by marker
     # in source so we don't scan every TS/JS file.
-    if framework in ("hono", "express"):
+    call_style_frameworks = (
+        (framework,)
+        if framework in ("hono", "express")
+        else (("hono", "express") if framework is None else ())
+    )
+    for call_fw in call_style_frameworks:
         workspace_path = st.settings.workspace
-        marker = "hono" if framework == "hono" else "express"
-        method_key = "hono_method" if framework == "hono" else "express_method"
-        path_key = "hono_path" if framework == "hono" else "express_path"
+        marker = "hono" if call_fw == "hono" else "express"
+        method_key = "hono_method" if call_fw == "hono" else "express_method"
+        path_key = "hono_path" if call_fw == "hono" else "express_path"
         for fr in st.conn.execute(
             """SELECT id, path, language FROM file
                WHERE project_id=? AND language IN
@@ -1446,7 +1556,7 @@ def compute_endpoints(
                     path_key: rt["path"],
                     "http_method": rt["method"],
                     "http_path": rt["path"],
-                    "http_framework": framework,
+                    "http_framework": call_fw,
                 })
                 seen_qnames.add(route_key)
 
@@ -1727,12 +1837,20 @@ def compute_coverage(st: AppState, *, record: bool = True) -> dict[str, Any]:
         "package-info.java",
         "mod.rs",
         "lib.rs",
-        "index.ts",  # only when content-empty / re-export only — kept here for the common case
-        "index.js",
+    })
+    _INDEX_BASENAMES = frozenset({
+        "index.ts", "index.js", "index.tsx", "index.jsx", "index.mjs",
     })
 
+    ws_root = st.settings.workspace
+
     def _is_package_marker(path: str) -> bool:
-        return path.rsplit("/", 1)[-1] in _PACKAGE_MARKER_BASENAMES
+        base = path.rsplit("/", 1)[-1]
+        if base in _PACKAGE_MARKER_BASENAMES:
+            return True
+        if base in _INDEX_BASENAMES:
+            return _package_marker_is_emptyish(ws_root, path)
+        return False
 
     from pathlib import Path as _Path
 
@@ -1899,6 +2017,7 @@ def compute_coverage(st: AppState, *, record: bool = True) -> dict[str, Any]:
     # failure must never break the audit itself. v0.20 M19: skip recording on
     # summary_only / cursor pages / explorer regen (record=False) so a
     # readOnlyHint tool doesn't write on every paginated fetch or bundle build.
+    snapshot_warning: str | None = None
     if record:
         try:
             # `datetime.UTC` is Python 3.11+; the project supports >=3.10, where
@@ -1917,8 +2036,8 @@ def compute_coverage(st: AppState, *, record: bool = True) -> dict[str, Any]:
                 verified_count=specs_with_derived_test_coverage,
                 ts=datetime.now(timezone.utc).isoformat(),
             )
-        except Exception:
-            pass
+        except Exception as exc:
+            snapshot_warning = f"coverage snapshot not recorded: {type(exc).__name__}: {exc}"
 
     counts = {
         "modules_without_spec": len(modules_no_spec),
@@ -1952,6 +2071,7 @@ def compute_coverage(st: AppState, *, record: bool = True) -> dict[str, Any]:
         "avg_test_coverage": avg_test_coverage,
         "specs_with_derived_test_coverage": specs_with_derived_test_coverage,
         "spec_test_coverage": spec_test_coverage,
+        "snapshot_warning": snapshot_warning,
     }
 
 
@@ -2288,28 +2408,59 @@ def _is_infrastructure(meta: dict) -> bool:
     return False
 
 
-def _resolve_symbol(conn, project_id: int, identifier: str) -> dict | None:
-    """Resolve a symbol by qualified_name (exact) or short name (best match)."""
+def _as_project_ids(project_id: int | list[int]) -> list[int]:
+    if isinstance(project_id, int):
+        return [project_id]
+    return [int(x) for x in project_id]
+
+
+def _resolve_symbol(
+    conn,
+    project_id: int | list[int],
+    identifier: str,
+) -> dict | None:
+    """Resolve a symbol by qualified_name (exact) or short name (best match).
+
+    ``project_id`` may be a single id or a list (home-first group ids from
+    ``AppState.group_project_ids()``). Exact qname prefers earlier ids in the
+    list; short-name fallback only when unambiguous across the whole set.
+    Returned dict includes ``project_id`` + ``project_root`` for cross-repo
+    source reads and per-project ``load_graph``.
+    """
+    ids = _as_project_ids(project_id)
+    if not ids:
+        return None
+    placeholders = ",".join("?" for _ in ids)
+    order = " ".join(f"WHEN {pid} THEN {i}" for i, pid in enumerate(ids))
+    select = f"""SELECT s.*, f.path AS file_path, f.project_id AS project_id,
+                        p.root AS project_root
+                 FROM symbol s
+                 JOIN file f ON f.id=s.file_id
+                 JOIN project p ON p.id=f.project_id
+                 WHERE f.project_id IN ({placeholders})"""
     row = conn.execute(
-        """SELECT s.*, f.path as file_path FROM symbol s
-           JOIN file f ON f.id=s.file_id
-           WHERE f.project_id=? AND s.qualified_name=? LIMIT 1""",
-        (project_id, identifier),
+        f"""{select} AND s.qualified_name=?
+            ORDER BY CASE f.project_id {order} END LIMIT 1""",
+        (*ids, identifier),
     ).fetchone()
     if row:
         return dict(row)
     rows = conn.execute(
-        """SELECT s.*, f.path as file_path FROM symbol s
-           JOIN file f ON f.id=s.file_id
-           WHERE f.project_id=? AND s.name=? LIMIT 5""",
-        (project_id, identifier),
+        f"""{select} AND s.name=?
+            ORDER BY CASE f.project_id {order} END LIMIT 5""",
+        (*ids, identifier),
     ).fetchall()
     if len(rows) == 1:
         return dict(rows[0])
     return None
 
 
-def did_you_mean_symbols(conn, project_id: int, identifier: str, limit: int = 3) -> list[dict]:
+def did_you_mean_symbols(
+    conn,
+    project_id: int | list[int],
+    identifier: str,
+    limit: int = 3,
+) -> list[dict]:
     """Top-N symbol suggestions for a misspelled or partial identifier.
 
     Used by tools that raise 'Symbol not found' to surface likely intended
@@ -2318,14 +2469,20 @@ def did_you_mean_symbols(conn, project_id: int, identifier: str, limit: int = 3)
          prefix mistypes).
       2. difflib SequenceMatcher ratio on the short name (catches typos
          where the substring path doesn't fire — e.g. 'logn' ≈ 'login').
-    Ranked by ratio descending. Project-scoped.
+    Ranked by ratio descending. Scoped to ``project_id`` or the whole group.
     """
+    ids = _as_project_ids(project_id)
+    if not ids:
+        return []
     short = identifier.split(".")[-1]
+    placeholders = ",".join("?" for _ in ids)
     rows = conn.execute(
-        """SELECT s.qualified_name, s.kind, f.path AS file_path, s.name
-           FROM symbol s JOIN file f ON f.id=s.file_id
-           WHERE f.project_id=?""",
-        (project_id,),
+        f"""SELECT s.qualified_name, s.kind, f.path AS file_path, s.name,
+                   p.name AS project_name
+            FROM symbol s JOIN file f ON f.id=s.file_id
+            JOIN project p ON p.id=f.project_id
+            WHERE f.project_id IN ({placeholders})""",
+        ids,
     ).fetchall()
     if not rows:
         return []
@@ -2349,9 +2506,10 @@ def did_you_mean_symbols(conn, project_id: int, identifier: str, limit: int = 3)
             if qn in seen:
                 continue
             seen.add(qn)
-            out.append(
-                {"qualified_name": qn, "kind": r["kind"], "file_path": r["file_path"]}
-            )
+            item = {"qualified_name": qn, "kind": r["kind"], "file_path": r["file_path"]}
+            if r["project_name"]:
+                item["project"] = r["project_name"]
+            out.append(item)
     for m in matches:
         if len(out) >= limit:
             break
@@ -2360,21 +2518,42 @@ def did_you_mean_symbols(conn, project_id: int, identifier: str, limit: int = 3)
             if qn in seen:
                 continue
             seen.add(qn)
-            out.append(
-                {"qualified_name": qn, "kind": r["kind"], "file_path": r["file_path"]}
-            )
+            item = {"qualified_name": qn, "kind": r["kind"], "file_path": r["file_path"]}
+            if r["project_name"]:
+                item["project"] = r["project_name"]
+            out.append(item)
             if len(out) >= limit:
                 break
     return out
 
 
-def symbol_not_found_error(conn, project_id: int, identifier: str) -> dict:
+def symbol_not_found_error(
+    conn,
+    project_id: int | list[int],
+    identifier: str,
+) -> dict:
     """Build the standard 'Symbol not found' error payload with did_you_mean."""
     return mcp_error(
         f"Symbol '{identifier}' not found",
         did_you_mean=did_you_mean_symbols(conn, project_id, identifier),
-        hint="run `find_symbol(query=<short_name>)` to discover qualified names",
+        hint=(
+            "run `find_symbol(query=<short_name>)` to discover qualified names"
+            " (searches the whole group_db when configured)"
+        ),
     )
+
+
+def _graph_project_id(sym: dict, home_pid: int) -> int:
+    """Project that owns ``sym`` — used to load the correct NetworkX graph."""
+    pid = sym.get("project_id")
+    return int(pid) if pid is not None else home_pid
+
+
+def _symbol_source_path(st: AppState, sym: dict) -> Path:
+    """Filesystem path for a symbol body — uses owning project root when set."""
+    root = sym.get("project_root")
+    base = Path(root) if root else st.settings.workspace
+    return base / sym["file_path"]
 
 
 def _route_edge_peers(conn, symbol_id: int, *, incoming: bool) -> list[dict]:
@@ -2407,6 +2586,111 @@ def _route_edge_peers(conn, symbol_id: int, *, incoming: bool) -> list[dict]:
     ]
 
 
+def _call_style_handler_qnames(st: AppState, project_id: int) -> set[str]:
+    """Qualified names of Hono/Express handlers resolved like ``find_endpoints``.
+
+    Protects import-mapped handlers (``wrap(details)`` → controller) that the
+    short-name ``ts_registered_callback_names`` scan can miss. Pseudo
+    ``file:line`` entries for inline arrows are skipped.
+    """
+    out: set[str] = set()
+    workspace_path = st.settings.workspace
+    for framework, marker in (("hono", "hono"), ("express", "express")):
+        for fr in st.conn.execute(
+            """SELECT id, path, language FROM file
+               WHERE project_id=? AND language IN
+                 ('typescript', 'javascript', 'tsx')
+               ORDER BY path""",
+            (project_id,),
+        ).fetchall():
+            try:
+                src = (workspace_path / fr["path"]).read_text(
+                    encoding="utf-8", errors="replace"
+                )
+            except OSError:
+                continue
+            if marker not in src.lower():
+                continue
+            for rt in scan_hono_routes(src, fr["language"]):
+                if not rt.get("handler_name"):
+                    continue
+                sym = _resolve_call_style_handler(
+                    st.conn,
+                    project_id,
+                    int(fr["id"]),
+                    fr["path"],
+                    src,
+                    fr["language"],
+                    rt.get("handler_name"),
+                    rt.get("handler_import") or rt.get("handler_name"),
+                )
+                if sym is None:
+                    continue
+                qn = sym["qualified_name"]
+                if qn:
+                    out.add(qn)
+    return out
+
+
+def _is_fixture_only_path(file_path: str) -> bool:
+    """conftest / fixtures / test helpers — not runners to flag as orphan tests."""
+    fp = file_path.replace("\\", "/").lstrip("/")
+    base = fp.rsplit("/", 1)[-1]
+    if base == "conftest.py" or base.startswith("conftest_"):
+        return True
+    for seg in ("/fixtures/", "/__fixtures__/", "/test_utils/", "/test_helpers/"):
+        if seg in f"/{fp}":
+            return True
+    return False
+
+
+_HARNESS_MARKERS = (
+    "from fastmcp",
+    "import fastmcp",
+    "Client(mcp)",
+    "Client(mcp,",
+    "supertest",
+    "request(app)",
+    "TestClient(",
+    "AsyncClient(",
+)
+
+
+def _file_has_harness_indirection(abs_path: Path) -> bool:
+    try:
+        text = abs_path.read_text(encoding="utf-8", errors="replace")[:50_000]
+    except OSError:
+        return False
+    return any(m in text for m in _HARNESS_MARKERS)
+
+
+def _package_marker_is_emptyish(ws: Path, rel_path: str) -> bool:
+    """True if index.ts/js is empty or re-export-only (safe to exclude from orphans)."""
+    base = rel_path.rsplit("/", 1)[-1]
+    if base not in ("index.ts", "index.js", "index.tsx", "index.jsx", "index.mjs"):
+        return True  # non-index markers always treated as markers
+    try:
+        text = (ws / rel_path).read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return True
+    body = re.sub(r"/\*.*?\*/", "", text, flags=re.DOTALL)
+    body = re.sub(r"//[^\n]*", "", body)
+    body = re.sub(r"^\s*export\s+\{[^}]*\}\s*;?\s*$", "", body, flags=re.MULTILINE)
+    body = re.sub(
+        r"^\s*export\s+\*\s+from\s+['\"][^'\"]+['\"]\s*;?\s*$",
+        "",
+        body,
+        flags=re.MULTILINE,
+    )
+    body = re.sub(
+        r"^\s*export\s+\{[^}]*\}\s+from\s+['\"][^'\"]+['\"]\s*;?\s*$",
+        "",
+        body,
+        flags=re.MULTILINE,
+    )
+    return not body.strip()
+
+
 def _attach_dead_code_not_swept(
     payload: dict[str, Any],
     *,
@@ -2415,15 +2699,22 @@ def _attach_dead_code_not_swept(
     total: int,
     include_non_python: bool,
     include_public: bool,
+    fs_routing_skipped: int = 0,
 ) -> None:
     """When `find_dead_code` returns a zero count because a default filter
     excluded the whole corpus (not because the corpus is clean), say so.
 
-    A plain ``count: 0`` is indistinguishable from "nothing found" and
-    "nothing swept" — the caller can't tell whether to trust the zero.
-    Grounds the hint in the actual indexed-file language mix and the raw
-    zero-caller/zero-spec-link candidate rows, not a static string.
+    Also reports ``skipped_fs_routing_count`` whenever filesystem-routing
+    symbols were filtered (even if ``count > 0``).
     """
+    if fs_routing_skipped:
+        payload["skipped_fs_routing_count"] = fs_routing_skipped
+        payload.setdefault(
+            "hint",
+            "pass include_ts_framework_routes=True to include Fresh/Next/"
+            "SvelteKit/Remix filesystem-routing symbols",
+        )
+
     if total != 0:
         return
     not_swept: list[str] = []
@@ -2456,51 +2747,26 @@ def _attach_dead_code_not_swept(
                 "candidate(s) are public/exported symbols excluded by default"
             )
 
+    if fs_routing_skipped:
+        not_swept.append("ts_framework_routes")
+        hints.append(
+            f"pass include_ts_framework_routes=True — {fs_routing_skipped} "
+            "filesystem-routing symbol(s) skipped by default"
+        )
+
     if not_swept:
         payload["not_swept"] = not_swept
-        payload["hint"] = " | ".join(hints)
+        existing = payload.get("hint")
+        joined = " | ".join(hints)
+        payload["hint"] = f"{existing} | {joined}" if existing and hints else (existing or joined)
 
 
 def _attach_endpoints_not_swept(payload: dict[str, Any], *, st: AppState, framework: str | None, total: int) -> None:
-    """When `find_endpoints(framework=None)` returns zero, say whether an
-    explicit-opt-in framework (Hono / Express — see `compute_endpoints`)
-    was excluded from the default sweep rather than genuinely absent.
+    """No-op: Express/Hono are included in the ``framework=None`` sweep.
+
+    Kept so existing call sites stay valid after the opt-in→default change.
     """
-    if total != 0 or framework is not None:
-        return
-    hono_files = 0
-    express_files = 0
-    ws = st.settings.workspace
-    for fr in st.conn.execute(
-        """SELECT path FROM file
-           WHERE project_id=? AND language IN ('typescript', 'javascript', 'tsx')""",
-        (st.project_id,),
-    ).fetchall():
-        try:
-            src = (ws / fr["path"]).read_text(encoding="utf-8", errors="replace").lower()
-        except OSError:
-            continue
-        if "hono" in src:
-            hono_files += 1
-        if "express" in src:
-            express_files += 1
-    not_swept: list[str] = []
-    hints: list[str] = []
-    if hono_files:
-        not_swept.append("hono")
-        hints.append(
-            f"pass framework='hono' — {hono_files} indexed file(s) reference "
-            "Hono; it is explicit opt-in and is not part of the default sweep"
-        )
-    if express_files:
-        not_swept.append("express")
-        hints.append(
-            f"pass framework='express' — {express_files} indexed file(s) reference "
-            "Express; call-style router.get/post is explicit opt-in"
-        )
-    if not_swept:
-        payload["not_swept"] = not_swept
-        payload["hint"] = " | ".join(hints)
+    del payload, st, framework, total
 
 
 def register(mcp: FastMCP) -> None:
@@ -2516,13 +2782,17 @@ def register(mcp: FastMCP) -> None:
         Returns lightweight refs (qualified_name, file, line, signature, kind).
         Use `get_symbol_info` for full details on a single match.
 
+        When the workspace uses ``[workspace] group_db``, search spans every
+        project in the shared DB (home project ranked first by qname length
+        only — matches may include a ``project`` field).
+
         v0.7 (B5): separator-agnostic match. The query and the qualified_name
         are both normalized so that `Type::method`, `Type.method`, and
         `module/Type::method` all match the same symbols. Useful in Rust
         repos where qnames mix `.` (file path) and `::` (impl method)
         separators.""" + WORKSPACE_DOCSTRING_NOTE
         st = get_state(workspace)
-        pid = st.project_id
+        pids = st.group_project_ids()
         # Clamp limit: a negative value becomes SQLite `LIMIT -1` (unbounded).
         safe_limit = max(1, min(int(limit), 1000))
 
@@ -2535,17 +2805,20 @@ def register(mcp: FastMCP) -> None:
         normalized_query = query.replace("::", ".").replace("/", ".")
         raw_like = f"%{_like_escape(query)}%"
         norm_like = f"%{_like_escape(normalized_query)}%"
+        placeholders = ",".join("?" for _ in pids)
         sql = [
-            """SELECT s.id, s.name, s.qualified_name, s.kind, s.signature,
-                      s.start_line, s.end_line, f.path as file_path
+            f"""SELECT s.id, s.name, s.qualified_name, s.kind, s.signature,
+                      s.start_line, s.end_line, f.path as file_path,
+                      p.name AS project
                FROM symbol s JOIN file f ON f.id=s.file_id
-               WHERE f.project_id=? AND (
+               JOIN project p ON p.id=f.project_id
+               WHERE f.project_id IN ({placeholders}) AND (
                    s.name LIKE ? ESCAPE '\\'
                    OR s.qualified_name LIKE ? ESCAPE '\\'
                    OR REPLACE(s.qualified_name, '::', '.') LIKE ? ESCAPE '\\'
                )"""
         ]
-        args: list[Any] = [pid, raw_like, raw_like, norm_like]
+        args: list[Any] = [*pids, raw_like, raw_like, norm_like]
         if kind:
             sql.append("AND s.kind = ?")
             args.append(kind)
@@ -2553,12 +2826,14 @@ def register(mcp: FastMCP) -> None:
         args.append(safe_limit)
         rows = st.conn.execute(" ".join(sql), args).fetchall()
         out: dict[str, Any] = {"matches": [dict(r) for r in rows]}
+        if st.settings.grouped:
+            out["grouped"] = True
         if not rows:
             # v0.14: zero matches on the project's own fuzzy-lookup tool is
             # a dead end for an agent — surface typo-distance suggestions
             # the same way the not-found errors do. Not an error payload:
             # empty matches is a valid result, did_you_mean rides along.
-            suggestions = did_you_mean_symbols(st.conn, pid, query)
+            suggestions = did_you_mean_symbols(st.conn, pids, query)
             if suggestions:
                 out["did_you_mean"] = suggestions
         return out
@@ -2576,12 +2851,12 @@ def register(mcp: FastMCP) -> None:
         qualified name (preferred) or a short name when unambiguous.
         """
         st = get_state(workspace)
-        pid = st.project_id
-        sym = _resolve_symbol(st.conn, pid, qname)
+        pids = st.group_project_ids()
+        sym = _resolve_symbol(st.conn, pids, qname)
         if not sym:
-            return symbol_not_found_error(st.conn, pid, qname)
+            return symbol_not_found_error(st.conn, pids, qname)
         try:
-            fp = st.settings.workspace / sym["file_path"]
+            fp = _symbol_source_path(st, sym)
             lines = fp.read_text(encoding="utf-8", errors="replace").splitlines()
             start = max(sym["start_line"] - 1, 0)
             end = min(sym["end_line"], len(lines))
@@ -2591,7 +2866,7 @@ def register(mcp: FastMCP) -> None:
                 f"file unreadable: {sym['file_path']}",
                 hint=str(e),
             )
-        return {
+        out = {
             "qualified_name": sym["qualified_name"],
             "file_path": sym["file_path"],
             "start_line": sym["start_line"],
@@ -2599,6 +2874,9 @@ def register(mcp: FastMCP) -> None:
             "source": source,
             "body_hash": sym["body_hash"],
         }
+        if st.settings.grouped and sym.get("project_root"):
+            out["project_root"] = sym["project_root"]
+        return out
 
     @mcp.tool(annotations={"readOnlyHint": True, "idempotentHint": True})
     def who_calls(
@@ -2630,11 +2908,12 @@ def register(mcp: FastMCP) -> None:
         Pass ``min_weight=0.0`` to see the unfiltered cone (legacy).
         """
         st = get_state(workspace)
-        pid = st.project_id
-        sym = _resolve_symbol(st.conn, pid, qname)
+        pids = st.group_project_ids()
+        sym = _resolve_symbol(st.conn, pids, qname)
         if not sym:
-            return symbol_not_found_error(st.conn, pid, qname)
-        view = load_graph(st.conn, pid)
+            return symbol_not_found_error(st.conn, pids, qname)
+        graph_pid = _graph_project_id(sym, st.project_id)
+        view = load_graph(st.conn, graph_pid)
         sid = int(sym["id"])
         callers = (
             ancestors_within(view.g, sid, max_depth, min_weight=min_weight)
@@ -2689,11 +2968,12 @@ def register(mcp: FastMCP) -> None:
         Same v0.9 P3 fan-out filter: ``min_weight=0.6`` by default.
         """
         st = get_state(workspace)
-        pid = st.project_id
-        sym = _resolve_symbol(st.conn, pid, qname)
+        pids = st.group_project_ids()
+        sym = _resolve_symbol(st.conn, pids, qname)
         if not sym:
-            return symbol_not_found_error(st.conn, pid, qname)
-        view = load_graph(st.conn, pid)
+            return symbol_not_found_error(st.conn, pids, qname)
+        graph_pid = _graph_project_id(sym, st.project_id)
+        view = load_graph(st.conn, graph_pid)
         sid = int(sym["id"])
         callees = (
             descendants_within(view.g, sid, max_depth, min_weight=min_weight)
@@ -2744,12 +3024,13 @@ def register(mcp: FastMCP) -> None:
         instead of `find_symbol` -> `get_symbol_info` -> `analyze_impact`
         -> `get_spec_implementation`, run this once.""" + WORKSPACE_DOCSTRING_NOTE
         st = get_state(workspace)
-        pid = st.project_id
-        sym = _resolve_symbol(st.conn, pid, qname)
+        pids = st.group_project_ids()
+        sym = _resolve_symbol(st.conn, pids, qname)
         if not sym:
-            return symbol_not_found_error(st.conn, pid, qname)
+            return symbol_not_found_error(st.conn, pids, qname)
         sid = int(sym["id"])
-        view = load_graph(st.conn, pid)
+        graph_pid = _graph_project_id(sym, st.project_id)
+        view = load_graph(st.conn, graph_pid)
         ranks = graph_pagerank(view) if sid in view.g else {}
 
         # v0.9 P3: filter out resolver fan-out (weight 0.5 — short-name
@@ -2816,14 +3097,6 @@ def register(mcp: FastMCP) -> None:
             except (json.JSONDecodeError, TypeError):
                 pass
 
-        # v0.20 M16: surface any agent_scratch note for this qname so notes
-        # written via agent_scratch() are actually readable (the tool was
-        # write-only before — nothing ever SELECTed them back).
-        scratch_row = st.conn.execute(
-            "SELECT note, updated_at FROM agent_scratch WHERE project_id=? AND qname=?",
-            (pid, sym["qualified_name"]),
-        ).fetchone()
-
         return {
             "qualified_name": sym["qualified_name"],
             "kind": sym["kind"],
@@ -2839,11 +3112,6 @@ def register(mcp: FastMCP) -> None:
             "top_callers": _topn(callers_all),
             "top_callees": _topn(callees_all),
             "specs": [dict(r) for r in specs],
-            "scratch_note": (
-                {"note": scratch_row["note"], "updated_at": scratch_row["updated_at"]}
-                if scratch_row
-                else None
-            ),
         }
 
     @mcp.tool(annotations={"readOnlyHint": True, "idempotentHint": True})
@@ -2879,6 +3147,7 @@ def register(mcp: FastMCP) -> None:
         """
         st = get_state(workspace)
         pid = st.project_id
+        pids = st.group_project_ids()
         view = load_graph(st.conn, pid)
 
         def specs_for_symbols(ids: set[int]) -> list[dict]:
@@ -2895,10 +3164,10 @@ def register(mcp: FastMCP) -> None:
                 )
             ]
 
-        def _paginate_meta(ids: set[int]) -> tuple[list[dict], int, int | None]:
+        def _paginate_meta(ids: set[int], graph_view: GraphView) -> tuple[list[dict], int, int | None]:
             """Sort + slice. Returns (page, total, next_cursor)."""
             sorted_meta = sorted(
-                (view.sym_meta[i] for i in ids if i in view.sym_meta),
+                (graph_view.sym_meta[i] for i in ids if i in graph_view.sym_meta),
                 key=lambda m: (m.get("file_path", ""), m.get("start_line", 0)),
             )
             total = len(sorted_meta)
@@ -2907,10 +3176,12 @@ def register(mcp: FastMCP) -> None:
             return page, total, next_c
 
         if target_type == "symbol":
-            sym = _resolve_symbol(st.conn, pid, target)
+            sym = _resolve_symbol(st.conn, pids, target)
             if not sym:
-                return symbol_not_found_error(st.conn, pid, target)
+                return symbol_not_found_error(st.conn, pids, target)
             sid = int(sym["id"])
+            graph_pid = _graph_project_id(sym, pid)
+            view = load_graph(st.conn, graph_pid)
             impacted = (
                 ancestors_within(view.g, sid, max_depth, min_weight=min_weight)
                 if sid in view.g
@@ -2930,8 +3201,8 @@ def register(mcp: FastMCP) -> None:
                         "affected_specs": len(specs_for_symbols(impacted | {sid})),
                     },
                 }
-            callers_page, callers_total, callers_next = _paginate_meta(impacted)
-            calls_page, calls_total, calls_next = _paginate_meta(forward)
+            callers_page, callers_total, callers_next = _paginate_meta(impacted, view)
+            calls_page, calls_total, calls_next = _paginate_meta(forward, view)
             warn = _payload_warning(
                 max(callers_total, calls_total),
                 limit=limit,
@@ -2983,7 +3254,7 @@ def register(mcp: FastMCP) -> None:
                         ),
                     },
                 }
-            callers_page, callers_total, callers_next = _paginate_meta(impacted)
+            callers_page, callers_total, callers_next = _paginate_meta(impacted, view)
             return _attach_payload_warning(
                 {
                     "file": target,
@@ -3078,9 +3349,9 @@ def register(mcp: FastMCP) -> None:
                         "upstream_callers": len([n for n in backward if n in view.sym_meta]),
                     },
                 }
-            impl_page, impl_total, impl_next = _paginate_meta(impl_ids)
-            down_page, down_total, down_next = _paginate_meta(forward)
-            up_page, up_total, up_next = _paginate_meta(backward)
+            impl_page, impl_total, impl_next = _paginate_meta(impl_ids, view)
+            down_page, down_total, down_next = _paginate_meta(forward, view)
+            up_page, up_total, up_next = _paginate_meta(backward, view)
             warn = _payload_warning(
                 max(impl_total, down_total, up_total),
                 limit=limit,
@@ -3144,6 +3415,8 @@ def register(mcp: FastMCP) -> None:
         include_infrastructure: bool = False,
         include_public: bool = False,
         include_non_python: bool = False,
+        include_ts_framework_routes: bool = False,
+        min_weight: float = 0.0,
         limit: int = 200,
         cursor: int = 0,
         summary_only: bool = False,
@@ -3167,42 +3440,60 @@ def register(mcp: FastMCP) -> None:
           flagged dead just because their callers are in non-Python
           callsites the scanner can't read. Surfaced by Django where
           70+ vendored xregexp.js helpers were over-reported. Pass
-          `include_non_python=True` to surface them.
+          `include_non_python=True` to surface them. **Unreleased:** when
+          the workspace has zero Python files, this flag auto-enables
+          (see ``auto_enabled`` in the payload).
         - **TS framework filesystem-routing files** (v0.11 P1, bug #19).
           Functions/classes in Fresh ``islands/``, Next.js ``pages/`` /
           ``app/``, SvelteKit ``routes/``, and Remix ``app/routes/`` are
           reachable via filesystem routing, not call edges. Skipped by
-          default; pass `include_infrastructure=True` to surface them.
+          default; pass `include_ts_framework_routes=True` to surface them
+          (independent of `include_infrastructure`).
+        - With `include_non_python=True`, Hono/Express named handlers resolved
+          the same way as `find_endpoints` are protected (import-map aware).
+
+        `min_weight` (default 0.0): when >0, an inbound edge below this weight
+        does not count as a caller (aligns with graph impact filters; try 0.6).
 
         v0.7 (B3): paginated. `limit` (default 200) caps `dead_symbols` per
         call; `cursor` resumes from a previous call's `next_cursor`;
         `summary_only=True` returns just the count + breakdown without the
         list. The total count is always exact, regardless of pagination.
-
-        v0.7 (B4): visibility-aware. The 23K dead-flagged symbols on the
-        a large Rust monorepo Rust monorepo dropped to a manageable list once `pub` items
-        were skipped — they have callers across crate boundaries that the
-        in-project graph can't see.
-
-        Useful sanity check before a refactor: anything in the result is
-        unreachable from in-project callers AND not traceably implementing
-        any Spec AND not exposed publicly.
-        """
+        """ + WORKSPACE_DOCSTRING_NOTE
         st = get_state(workspace)
         pid = st.project_id
+        auto_enabled: list[str] = []
+        # TS/JS-only repos: Python-only default is a silent false zero. Auto-
+        # enable non-Python sweep (audit: Composer reported count=0 + not_swept).
+        if not include_non_python:
+            py_n = int(
+                st.conn.execute(
+                    "SELECT COUNT(*) AS c FROM file WHERE project_id=? AND language='python'",
+                    (pid,),
+                ).fetchone()["c"]
+            )
+            if py_n == 0:
+                include_non_python = True
+                auto_enabled.append("include_non_python")
+        edge_extra = ""
+        edge_params: list[Any] = [pid]
+        if min_weight > 0.0:
+            edge_extra = " AND e.weight >= ?"
+            edge_params = [pid, float(min_weight)]
         rows = st.conn.execute(
-            """SELECT s.id, s.qualified_name, s.name, s.kind, s.decorators,
+            f"""SELECT s.id, s.qualified_name, s.name, s.kind, s.decorators,
                       s.visibility, s.start_line, s.end_line, f.path AS file_path
                FROM symbol s JOIN file f ON f.id=s.file_id
                WHERE f.project_id=?
                  AND NOT EXISTS (
-                   SELECT 1 FROM symbol_edge e WHERE e.dst_symbol_id=s.id
+                   SELECT 1 FROM symbol_edge e
+                   WHERE e.dst_symbol_id=s.id{edge_extra}
                  )
                  AND NOT EXISTS (
                    SELECT 1 FROM spec_symbol rs WHERE rs.symbol_id=s.id
                  )
                ORDER BY f.path, s.start_line""",
-            (pid,),
+            tuple(edge_params),
         ).fetchall()
 
         def is_entry_point_path(p: str) -> bool:
@@ -3275,6 +3566,7 @@ def register(mcp: FastMCP) -> None:
         # closure-capture scan (nested fn referenced in parent body) for
         # TS/JS/TSX and Rust — Go has no named nested fns, nothing to scan.
         # Only pay the file reads when non-Python symbols are in scope.
+        call_style_qnames: set[str] = set()
         if include_non_python:
             for path_row in st.conn.execute(
                 """SELECT path, language FROM file
@@ -3292,6 +3584,7 @@ def register(mcp: FastMCP) -> None:
                         nested_uses_by_file[path_row["path"]] = nested_uses
                 except Exception:
                     continue
+            call_style_qnames = _call_style_handler_qnames(st, pid)
 
         # v0.8 P2 sessions 02 fix (bug #6 method propagation): a class
         # whose CONSTRUCTOR is called from anywhere in the indexed code
@@ -3317,10 +3610,15 @@ def register(mcp: FastMCP) -> None:
 
         # v0.13 P2: Angular-decorated classes. Template-bound decorators
         # (Component/Directive/Pipe) protect EVERY method — templates the
-        # indexer can't parse may call any of them. Any Angular decorator
-        # protects the lifecycle hooks by name.
+        # indexer can't parse may call any of them. Injectable (DI) is the
+        # same shape for service methods. Lifecycle hooks stay protected on
+        # any Angular decorator (incl. NgModule).
+        # Spring stereotypes (@Service/@Repository/@RestController/…): DI
+        # container may invoke any public method with zero in-project edges.
         ng_template_classes: set[str] = set()
         ng_any_classes: set[str] = set()
+        ng_di_classes: set[str] = set()
+        spring_stereotype_classes: set[str] = set()
         for r in st.conn.execute(
             """SELECT s.qualified_name, s.decorators FROM symbol s
                JOIN file f ON f.id=s.file_id
@@ -3334,11 +3632,16 @@ def register(mcp: FastMCP) -> None:
                 continue
             if segs & _NG_TEMPLATE_DECORATOR_LASTSEGS:
                 ng_template_classes.add(r["qualified_name"])
+            if segs & _NG_DI_CLASS_LASTSEGS:
+                ng_di_classes.add(r["qualified_name"])
             if segs & _NG_ANY_DECORATOR_LASTSEGS:
                 ng_any_classes.add(r["qualified_name"])
+            if segs & _SPRING_STEREOTYPE_LASTSEGS:
+                spring_stereotype_classes.add(r["qualified_name"])
 
         alias_lastsegs = frozenset(decorator_aliases)
         filtered: list[dict[str, Any]] = []
+        fs_routing_skipped = 0
         for r in rows:
             meta = dict(r)
             if is_entry_point_path(meta["file_path"]):
@@ -3346,10 +3649,8 @@ def register(mcp: FastMCP) -> None:
             if _is_bundler_output_path(meta["file_path"]):
                 continue
             # v0.11 P1 (bug #19): TS framework filesystem-routing entry points.
-            # Fresh islands, Next.js pages/app, SvelteKit routes, Remix routes
-            # are reachable via path conventions — they have zero call edges
-            # by design but are never dead.
-            if not include_infrastructure and _is_ts_framework_entry_point(meta):
+            if not include_ts_framework_routes and _is_ts_framework_entry_point(meta):
+                fs_routing_skipped += 1
                 continue
             if not include_non_python and not meta["file_path"].endswith(".py"):
                 continue
@@ -3364,6 +3665,8 @@ def register(mcp: FastMCP) -> None:
             if not include_infrastructure and meta["name"].lower() in alias_lastsegs:
                 continue
             if not include_public and (meta.get("visibility") in _PUBLIC_VIS):
+                continue
+            if meta["qualified_name"] in call_style_qnames:
                 continue
 
             # v0.8 P2 sessions 02 fix (bugs #4 #5 #6): symbol is referenced
@@ -3396,6 +3699,10 @@ def register(mcp: FastMCP) -> None:
                     # v0.13 P2: Angular template reachability + lifecycle.
                     if parent_class_qname in ng_template_classes:
                         continue
+                    if parent_class_qname in ng_di_classes:
+                        continue
+                    if parent_class_qname in spring_stereotype_classes:
+                        continue
                     if (
                         meta["name"] in _NG_LIFECYCLE_HOOKS
                         and parent_class_qname in ng_any_classes
@@ -3418,6 +3725,8 @@ def register(mcp: FastMCP) -> None:
             "by_kind": by_kind,
             "by_top_dir": by_dir,
         }
+        if auto_enabled:
+            payload["auto_enabled"] = auto_enabled
         _attach_dead_code_not_swept(
             payload,
             st=st,
@@ -3425,6 +3734,7 @@ def register(mcp: FastMCP) -> None:
             total=total,
             include_non_python=include_non_python,
             include_public=include_public,
+            fs_routing_skipped=fs_routing_skipped,
         )
 
         if summary_only:
@@ -3488,20 +3798,11 @@ def register(mcp: FastMCP) -> None:
         v8 re-extract); ``framework='angular'`` surfaces @Component /
         @Injectable / @Directive / @Pipe / @NgModule classes.
 
-        v0.13 P3: ``framework='hono'`` scans indexed TS/JS files whose
-        source mentions Hono for call-style route registrations
-        (``app.get('/users', handler)``, ``app.on(...)``,
-        ``app.route('/api', sub)``). Each route reports ``hono_method`` /
-        ``hono_path``; ``qualified_name`` resolves to the handler symbol
-        when the handler is a named identifier. Explicit-opt-in only (not
-        part of the ``framework=None`` sweep — it reads files on demand).
-
-        Unreleased: ``framework='express'`` uses the same call-style scanner
-        for Express ``router.get/post/...`` (files that mention ``express``).
-        Reports ``express_method`` / ``express_path`` plus ``http_*``.
-        Handlers resolve via the route file's import map (``wrap(details)`` →
-        imported controller, not a same-named symbol elsewhere) and anonymous
-        ``export default`` controllers mint a basename symbol.
+        v0.13 P3: ``framework='hono'`` / ``'express'`` (and ``None``) scan
+        indexed TS/JS files for call-style route registrations
+        (``app.get('/users', handler)``, ``router.post(...)``). Each route
+        reports ``http_method`` / ``http_path`` (plus ``hono_*`` /
+        ``express_*``). Handlers resolve via the route file's import map.
         """
         st = get_state(workspace)
 
@@ -3513,6 +3814,33 @@ def register(mcp: FastMCP) -> None:
         total = len(endpoints)
         payload: dict[str, Any] = {"framework": framework, "count": total}
         _attach_endpoints_not_swept(payload, st=st, framework=framework, total=total)
+        # Spring (and other decorator frameworks) stay project-scoped. In a
+        # group_db, agents often call from the hub repo — hint sibling roots.
+        if (
+            framework == "spring"
+            and total == 0
+            and st.settings.grouped
+        ):
+            java_elsewhere = st.conn.execute(
+                """SELECT p.name AS project, COUNT(*) AS files
+                   FROM file f JOIN project p ON p.id=f.project_id
+                   WHERE f.project_id != ? AND f.language='java'
+                   GROUP BY p.name ORDER BY files DESC LIMIT 5""",
+                (st.project_id,),
+            ).fetchall()
+            if java_elsewhere:
+                names = ", ".join(
+                    f"{r['project']} ({r['files']} java files)" for r in java_elsewhere
+                )
+                payload["hint"] = (
+                    f"no Spring endpoints in this project; Java is indexed in "
+                    f"group siblings — call find_endpoints(workspace=<sibling>, "
+                    f"framework='spring'). Found: {names}"
+                )
+                payload["group_java_projects"] = [
+                    {"project": r["project"], "java_files": int(r["files"])}
+                    for r in java_elsewhere
+                ]
         if summary_only:
             return payload
         page = endpoints[cursor : cursor + limit]
@@ -3522,9 +3850,71 @@ def register(mcp: FastMCP) -> None:
         return payload
 
     @mcp.tool(annotations={"readOnlyHint": True, "idempotentHint": True})
+    def find_legacy_flows(
+        project: str | None = None,
+        include_infra: bool = False,
+        include_orphan_clients: bool = True,
+        limit: int = 200,
+        cursor: int = 0,
+        summary_only: bool = False,
+        workspace: Workspace | None = None,
+    ) -> dict[str, Any]:
+        """Likely-unused HTTP flows from indexed ``route_ref`` + ``invokes_route``.
+
+        **Server legacy:** server routes with zero incoming cross-repo (or
+        same-DB) client hops — nothing in this index calls that path.
+        **Client orphans:** client calls with no matched server hop (dead
+        front call or a SA missing from ``group_db``).
+
+        Best with ``[workspace] group_db`` (polyrepo). Solo repos still work
+        when front+back share one DB. This is **graph evidence**, not
+        production traffic — confirm with APM/logs before deleting.
+
+        ``project`` filters by project name/basename. Infra paths
+        (``/health``, …) are dropped unless ``include_infra=True``.
+        Paginated like other aggregators (`limit`/`cursor`/`summary_only`).
+        """ + WORKSPACE_DOCSTRING_NOTE
+        st = get_state(workspace)
+        raw = compute_legacy_flows(
+            st.conn,
+            project=project,
+            include_infra=include_infra,
+            include_orphan_clients=include_orphan_clients,
+        )
+        servers = raw["legacy_servers"]
+        clients = raw["orphan_clients"]
+        # Unified list for simple pagination (servers first).
+        flows = [{**s, "flow_kind": "legacy_server"} for s in servers] + [
+            {**c, "flow_kind": "orphan_client"} for c in clients
+        ]
+        total = len(flows)
+        payload: dict[str, Any] = {
+            "grouped": bool(st.settings.grouped),
+            "group_db": str(st.settings.db_path) if st.settings.grouped else None,
+            "count": total,
+            "legacy_server_count": raw["legacy_server_count"],
+            "orphan_client_count": raw["orphan_client_count"],
+            "server_route_count": raw["server_route_count"],
+            "client_route_count": raw["client_route_count"],
+            "live_server_count": raw["live_server_count"],
+            "live_client_count": raw["live_client_count"],
+            "hint": raw["hint"],
+        }
+        if summary_only:
+            payload["legacy_servers_sample"] = servers[:10]
+            payload["orphan_clients_sample"] = clients[:10]
+            return payload
+        page = flows[cursor : cursor + limit]
+        next_cursor = cursor + limit if cursor + limit < total else None
+        payload["flows"] = page
+        payload["next_cursor"] = next_cursor
+        return payload
+
+    @mcp.tool(annotations={"readOnlyHint": True, "idempotentHint": True})
     def audit_coverage(
         limit: int = 200,
         cursor: int = 0,
+        cursors: dict[str, int] | None = None,
         summary_only: bool = False,
         workspace: Workspace | None = None,
     ) -> dict[str, Any]:
@@ -3566,24 +3956,21 @@ def register(mcp: FastMCP) -> None:
         legitimately disagree — they are not two views of one number:
         `specs_with_linked_tests` counts EXPLICIT `relation='tests'` links;
         `specs_with_derived_test_coverage` counts Specs whose derived ratio
-        is > 0. (These were previously named `specs_with_test_coverage` /
-        `specs_with_any_test_coverage`, which read as contradictory.)
+        is > 0.
 
-        v0.7 (B3): paginated. `limit` (default 200) caps each list per
-        call; `cursor` resumes; `summary_only=True` returns only the
-        counts. Counts are always exact regardless of pagination.
-
-        v0.8 P2 fix #8: package-marker files (`__init__.py`,
-        `package-info.java`, `mod.rs`) are auto-excluded from
-        `modules_without_spec` — `@spec:` annotations on a no-op import
-        marker would never be the right place anyway.
-        """
+        Pagination: `limit` caps each list. Pass ``cursors`` (keys matching
+        list names → int offset) to page lists independently — preferred.
+        Legacy ``cursor`` applies the same offset to every list when
+        ``cursors`` is omitted. ``summary_only=True`` returns counts plus a
+        sample of up to 10 ``modules_truly_orphan`` paths.
+        """ + WORKSPACE_DOCSTRING_NOTE
         st = get_state(workspace)
 
         # v0.7 B3: pagination over the shared compute helper. v0.20 M19: only
         # record a trend snapshot on the primary (first-page, full) fetch —
         # not on summary_only or cursor pages.
-        cov = compute_coverage(st, record=(cursor == 0 and not summary_only))
+        primary = cursor == 0 and not cursors and not summary_only
+        cov = compute_coverage(st, record=primary)
         counts = cov["counts"]
         modules_no_spec = cov["modules_without_spec"]
         modules_implicit = cov["modules_implicitly_covered"]
@@ -3594,22 +3981,31 @@ def register(mcp: FastMCP) -> None:
         spec_test_coverage = cov["spec_test_coverage"]
         spec_coverage = cov["spec_coverage"]
         if summary_only:
-            return {"counts": counts}
+            out: dict[str, Any] = {
+                "counts": counts,
+                "modules_truly_orphan_sample": modules_truly_orphan[:10],
+            }
+            if cov.get("snapshot_warning"):
+                out["warning"] = cov["snapshot_warning"]
+            return out
 
-        def _page(items: list, c: int = cursor, n: int = limit) -> tuple[list, int | None]:
-            sliced = items[c : c + n]
-            nxt = c + n if c + n < len(items) else None
+        cur_map = cursors or {}
+
+        def _page(items: list, key: str) -> tuple[list, int | None]:
+            c = int(cur_map.get(key, cursor))
+            sliced = items[c : c + limit]
+            nxt = c + limit if c + limit < len(items) else None
             return sliced, nxt
 
-        mw_p, mw_next = _page(modules_no_spec)
-        mi_p, mi_next = _page(modules_implicit)
-        mt_p, mt_next = _page(modules_truly_orphan)
-        mu_p, mu_next = _page(modules_unsupported_language)
-        specn_p, specn_next = _page(specs_no_impl)
-        specl_p, specl_next = _page(specs_low_conf)
-        spectc_p, spectc_next = _page(spec_test_coverage)
-        speccov_p, speccov_next = _page(spec_coverage)
-        return {
+        mw_p, mw_next = _page(modules_no_spec, "modules_without_spec")
+        mi_p, mi_next = _page(modules_implicit, "modules_implicitly_covered")
+        mt_p, mt_next = _page(modules_truly_orphan, "modules_truly_orphan")
+        mu_p, mu_next = _page(modules_unsupported_language, "modules_unsupported_language")
+        specn_p, specn_next = _page(specs_no_impl, "specs_without_implementation")
+        specl_p, specl_next = _page(specs_low_conf, "specs_low_confidence")
+        spectc_p, spectc_next = _page(spec_test_coverage, "spec_test_coverage")
+        speccov_p, speccov_next = _page(spec_coverage, "spec_coverage")
+        payload: dict[str, Any] = {
             "counts": counts,
             "modules_without_spec": mw_p,
             "modules_implicitly_covered": mi_p,
@@ -3632,10 +4028,16 @@ def register(mcp: FastMCP) -> None:
                 "spec_coverage": speccov_next,
             },
         }
+        if cov.get("snapshot_warning"):
+            payload["warning"] = cov["snapshot_warning"]
+        return payload
 
     @mcp.tool(annotations={"readOnlyHint": True, "idempotentHint": True})
     def find_orphan_tests(
         max_depth: int = 10,
+        min_weight: float = 0.0,
+        include_harness: bool = False,
+        include_fixtures: bool = False,
         limit: int = 200,
         cursor: int = 0,
         summary_only: bool = False,
@@ -3643,22 +4045,19 @@ def register(mcp: FastMCP) -> None:
     ) -> dict[str, Any]:
         """Test functions whose descendant cone never reaches production code.
 
-        Heuristic: any function/method in a `tests/` folder (or matching
-        `*_test.*` / `test_*.*` naming) whose forward call graph contains
-        zero non-test symbols. Either disconnected fixtures, helpers used only
-        by other tests, or actually orphaned tests.
+        Heuristic: any function/method in a test path whose forward call graph
+        contains zero non-test symbols. Either disconnected fixtures, helpers
+        used only by other tests, or actually orphaned tests.
 
-        v0.7 (B3): paginated. `limit`/`cursor`/`summary_only` work as in
-        find_dead_code.
+        - ``min_weight`` (try 0.6): skip ambiguous resolver edges in the cone.
+        - ``include_fixtures=False`` (default): skip conftest/fixtures/helpers.
+        - ``include_harness=False`` (default): skip tests whose file imports an
+          in-process harness (FastMCP Client, TestClient, supertest, …) —
+          those are systematic false positives for the static graph.
+        Each row carries ``confidence`` (0–1) and ``reasons``.
 
-        v0.14: the payload carries a ``caveat`` field. The forward call
-        graph is static; tests that drive production code through an
-        indirection the analyzer can't see — most commonly an in-process
-        MCP/RPC harness like FastMCP ``Client(mcp)`` that dispatches tool
-        handlers by string name — have a descendant cone that never
-        reaches production symbols and are over-reported here. Treat the
-        count as an upper bound, not a verdict.
-        """
+        v0.7 (B3): paginated. Payload always includes ``caveat``.
+        """ + WORKSPACE_DOCSTRING_NOTE
         st = get_state(workspace)
         pid = st.project_id
         view = load_graph(st.conn, pid)
@@ -3668,10 +4067,13 @@ def register(mcp: FastMCP) -> None:
             "can't follow (e.g. an in-process MCP/RPC harness like FastMCP "
             "Client(mcp) that dispatches handlers by string name) reach zero "
             "production symbols in the cone and are reported as orphan. "
-            "Treat this as an upper bound."
+            "Treat this as an upper bound. Default filters exclude harness "
+            "files and fixture-only paths — pass include_harness=True / "
+            "include_fixtures=True to see them."
         )
 
         is_test_path = _is_test_file_path
+        ws = st.settings.workspace
 
         test_rows = st.conn.execute(
             """SELECT s.id, s.qualified_name, s.kind, f.path AS file_path
@@ -3682,11 +4084,27 @@ def register(mcp: FastMCP) -> None:
         ).fetchall()
         test_syms = [dict(r) for r in test_rows if is_test_path(r["file_path"])]
 
+        harness_cache: dict[str, bool] = {}
         orphans: list[dict[str, Any]] = []
+        harness_skipped = 0
+        fixture_skipped = 0
         for r in test_syms:
+            fp = r["file_path"]
+            if not include_fixtures and _is_fixture_only_path(fp):
+                fixture_skipped += 1
+                continue
+            if fp not in harness_cache:
+                harness_cache[fp] = _file_has_harness_indirection(ws / fp)
+            is_harness = harness_cache[fp]
+            if is_harness and not include_harness:
+                harness_skipped += 1
+                continue
+
             sid = int(r["id"])
             descendants = (
-                descendants_within(view.g, sid, max_depth) if sid in view.g else set()
+                descendants_within(view.g, sid, max_depth, min_weight)
+                if sid in view.g
+                else set()
             )
             reaches_prod = False
             for did in descendants:
@@ -3694,27 +4112,42 @@ def register(mcp: FastMCP) -> None:
                 if meta and not is_test_path(meta.get("file_path", "")):
                     reaches_prod = True
                     break
-            if not reaches_prod:
-                orphans.append({
-                    "qualified_name": r["qualified_name"],
-                    "file_path": r["file_path"],
-                    "kind": r["kind"],
-                    "reason": (
-                        "no outgoing calls" if not descendants
-                        else "descendant cone never escapes test files"
-                    ),
-                })
+            if reaches_prod:
+                continue
+
+            reasons: list[str] = []
+            if not descendants:
+                reasons.append("no_outgoing_calls")
+                confidence = 0.85
+            else:
+                reasons.append("cone_stays_in_tests")
+                confidence = 0.55
+            if is_harness:
+                reasons.append("harness_indirection")
+                confidence = min(confidence, 0.3)
+
+            orphans.append({
+                "qualified_name": r["qualified_name"],
+                "file_path": fp,
+                "kind": r["kind"],
+                "reason": reasons[0],
+                "reasons": reasons,
+                "confidence": confidence,
+            })
         total = len(orphans)
+        payload: dict[str, Any] = {
+            "count": total,
+            "caveat": _ORPHAN_CAVEAT,
+            "harness_skipped_count": harness_skipped,
+            "fixture_skipped_count": fixture_skipped,
+        }
         if summary_only:
-            return {"count": total, "caveat": _ORPHAN_CAVEAT}
+            return payload
         page = orphans[cursor : cursor + limit]
         next_cursor = cursor + limit if cursor + limit < total else None
-        return {
-            "orphan_tests": page,
-            "count": total,
-            "next_cursor": next_cursor,
-            "caveat": _ORPHAN_CAVEAT,
-        }
+        payload["orphan_tests"] = page
+        payload["next_cursor"] = next_cursor
+        return payload
 
     @mcp.tool(annotations={"readOnlyHint": True, "idempotentHint": True})
     def git_diff_impact(
@@ -3918,106 +4351,37 @@ def register(mcp: FastMCP) -> None:
         kind: str | None = None,
         limit: int = 50,
         cursor: int = 0,
+        per_file_limit: int = 20,
+        fts_prefilter: bool = False,
         workspace: Workspace | None = None,
     ) -> dict[str, Any]:
         """Search only indexed files (SQLite ``file`` table) on disk.
 
-        ``pattern`` is tried as a regex first; invalid regex falls back to
-        literal substring match. ``path_glob`` uses shell-style globs on the
-        indexed relative path (e.g. ``src/**/*.py``). ``kind`` filters the
-        indexed ``language`` column (e.g. ``python``). Results are paginated
-        with ``limit`` (default 50) and ``cursor``.
+        ``pattern`` is tried as a regex first; invalid, overlong, or
+        ReDoS-prone patterns fall back to literal substring match — see
+        ``match_mode`` in the response. ``path_glob`` uses shell-style globs
+        on the indexed relative path (e.g. ``src/**/*.py``). ``kind`` filters
+        the indexed ``language`` column. ``per_file_limit`` caps hits per
+        file before the global ``limit``. ``fts_prefilter=True`` narrows to
+        files that hit FTS5 first (faster on large repos; falls back to full
+        scan if FTS finds nothing).
 
         Only files in the index are searched, so a stale index can make a real
         match invisible. Every response therefore carries ``scope_fresh``:
         ``True`` means the files this call covered are byte-identical to what
         was indexed AND no unindexed file falls in scope — an empty ``matches``
         really means "no matches". ``False`` adds ``stale_files`` /
-        ``unindexed_files`` (+ ``_count``) and a ``hint``; ``unindexed_files``
-        in particular were **not searched at all**. The verdict is bounded by
-        ``path_glob``/``kind`` — it describes the searched scope, not the whole
-        index. Fix with ``index_project(workspace=..., force=false)``.
-        """
+        ``unindexed_files`` (+ ``_count``) and a ``hint``.
+        """ + WORKSPACE_DOCSTRING_NOTE
         st = get_state(workspace)
         return _grep_indexed_files_core(
-            st, pattern, path_glob, kind, limit, cursor
+            st,
+            pattern,
+            path_glob,
+            kind,
+            limit,
+            cursor,
+            per_file_limit=per_file_limit,
+            fts_prefilter=fts_prefilter,
         )
-
-    @mcp.tool(annotations={"readOnlyHint": False, "idempotentHint": True})
-    def agent_scratch(
-        qname: str,
-        note: str,
-        workspace: Workspace | None = None,
-    ) -> dict[str, Any]:
-        """Store or update a short agent note keyed by symbol qualified name.
-
-        ``qname`` is not required to match an indexed symbol — the note is
-        still saved (a symbol renamed out from under a note shouldn't lose
-        it) — but when it doesn't, the response carries a ``warning`` naming
-        the unknown qname and suggesting ``find_symbol`` to check for a typo
-        or a rename.
-        """
-        st = get_state(workspace)
-        st.conn.execute(
-            """INSERT INTO agent_scratch (project_id, qname, note, updated_at)
-               VALUES (?, ?, ?, datetime('now'))
-               ON CONFLICT(project_id, qname) DO UPDATE SET
-                 note=excluded.note,
-                 updated_at=datetime('now')""",
-            (st.project_id, qname, note),
-        )
-        st.conn.commit()
-        result: dict[str, Any] = {"qname": qname, "note": note, "saved": True}
-        known = st.conn.execute(
-            """SELECT 1 FROM symbol s JOIN file f ON f.id=s.file_id
-               WHERE f.project_id=? AND s.qualified_name=? LIMIT 1""",
-            (st.project_id, qname),
-        ).fetchone()
-        if not known:
-            result["warning"] = (
-                f"qname {qname!r} is not an indexed symbol — the note was still "
-                "saved. Run find_symbol to confirm the intended qname."
-            )
-        return result
-
-    @mcp.tool(annotations={"readOnlyHint": True, "idempotentHint": True})
-    def agent_scratch_get(
-        qname: str,
-        workspace: Workspace | None = None,
-    ) -> dict[str, Any]:
-        """Read back the agent scratch note (if any) for a symbol qualified name."""
-        st = get_state(workspace)
-        row = st.conn.execute(
-            "SELECT note, updated_at FROM agent_scratch WHERE project_id=? AND qname=?",
-            (st.project_id, qname),
-        ).fetchone()
-        return {
-            "qname": qname,
-            "note": row["note"] if row else None,
-            "updated_at": row["updated_at"] if row else None,
-            "found": row is not None,
-        }
-
-    @mcp.tool(annotations={"readOnlyHint": False, "idempotentHint": True})
-    def agent_scratch_clear(
-        qname: str | None = None,
-        workspace: Workspace | None = None,
-    ) -> dict[str, Any]:
-        """Delete agent scratch notes for the active project.
-
-        Pass ``qname`` to clear one note; omit to clear all notes for the project.
-        """
-        st = get_state(workspace)
-        if qname:
-            cur = st.conn.execute(
-                "DELETE FROM agent_scratch WHERE project_id=? AND qname=?",
-                (st.project_id, qname),
-            )
-        else:
-            cur = st.conn.execute(
-                "DELETE FROM agent_scratch WHERE project_id=?",
-                (st.project_id,),
-            )
-        st.conn.commit()
-        return {"cleared": cur.rowcount, "qname": qname}
 

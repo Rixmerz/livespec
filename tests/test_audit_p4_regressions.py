@@ -137,17 +137,6 @@ async def test_analyze_impact_spec_branch_paginates(sample_repo):
 
 
 @pytest.mark.asyncio
-async def test_quick_orient_surfaces_scratch_note(sample_repo):
-    async with Client(mcp) as c:
-        await c.call_tool("index_project", {})
-        await c.call_tool(
-            "agent_scratch", {"qname": "pkg.auth.login", "note": "hot path"}
-        )
-        res = (await c.call_tool("quick_orient", {"qname": "pkg.auth.login"})).data
-        assert res["scratch_note"] and res["scratch_note"]["note"] == "hot path"
-
-
-@pytest.mark.asyncio
 async def test_workspace_error_returns_shaped_mcp_error():
     """M8: a missing/invalid workspace surfaces {error,isError,hint}, not a
     raw protocol error. Uses a real bad path (no conftest binding needed —

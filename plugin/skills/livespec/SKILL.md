@@ -53,21 +53,19 @@ it is not a background watcher you should lean on while editing.
 | What does this call? | `who_does_this_call(qname, max_depth=1)` |
 | Blast radius + Spec rollup | `analyze_impact(target_type, target, max_depth)` — `symbol`\|`file`\|`spec` |
 | PR / diff scope | `git_diff_impact(base_ref, head_ref)` — git repos only |
-| Semantic + lexical grep | `search(query, scope)` — FTS5 + optional vectors |
+| Keyword search over chunks | `search(query, scope)` — FTS5 over AST-aware symbol + Spec chunks |
 | Literal string search over indexed files | `grep_in_indexed_files(pattern)` — check `scope_fresh`, see the staleness trap below |
 | Dead-code candidates | `find_dead_code()` — respects entry points / `pub` / frameworks |
+| Likely-unused HTTP flows | `find_legacy_flows()` — servers with no client hop + orphan clients (`group_db`) |
 | Orphan tests | `find_orphan_tests()` |
 | HTTP/CLI entry points | `find_endpoints(framework=None)` — see the Hono trap below; prefer `summary_only=True` if JSON is huge |
 | Project snapshot | `get_project_overview()` — test-file symbols are excluded from `top_symbols` |
-| Vector embeddings for `search` | `embed_chunks()` — backfills any unembedded chunks. Needs MCP launched with `livespec[embeddings]` (plugin `.mcp.json` default). If the tool says fastembed is missing, the host is still on bare `uvx livespec` — fix the MCP command and restart. First run downloads ~1.6 GB of ONNX weights from HuggingFace. |
-| Static Spec Explorer bundle | `export_explorer(base?, head?, framework?)` |
-| Scratch note on a symbol | `agent_scratch(qname, note)` / `agent_scratch_get(qname)` / `agent_scratch_clear(qname?)` |
+| Static Spec Explorer bundle | `export_explorer(base?, head?, framework?)` — docs plugin; unlock with `LIVESPEC_PLUGINS=docs` or `index_project(explorer=True)` |
 
-**`find_endpoints` — Hono / Express traps.** Both are **explicit-opt-in** and
-excluded from `framework=None`. On Express a client APIs the default call returns
-**`count: 0`** with `not_swept: ["express"]` — pass `framework="express"`. On
-Hono pass `framework="hono"`. Only receivers like `app` / `router` / `*Router`
-count (axios/cache/headers `.get` are ignored).
+**`find_endpoints` — Hono / Express.** Call-style `router.get/post` routes
+are included in the **default** sweep (`framework=None`). Pass
+`framework="express"` or `"hono"` to filter to one framework. Receivers like
+`app` / `router` / `*Router` count (axios/cache/headers `.get` are ignored).
 
 **What counts as a test file.** `find_orphan_tests`, the auto-derived Spec test
 coverage in `audit_coverage`, and the `top_symbols` filter in
