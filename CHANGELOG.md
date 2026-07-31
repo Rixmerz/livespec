@@ -6,7 +6,18 @@ follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
-### Changed — license MIT → GNU AGPL v3.0 (`AGPL-3.0-only`)
+### Fixed — MCP tool schemas show typed params (Cursor `any` / empty Description)
+
+``Workspace`` was ``Annotated[str | None, …]`` plus ``Workspace | None = None``,
+which emitted **nested** ``anyOf`` and made Cursor’s tools UI render every
+parameter as ``Type: any`` with no description. ``Workspace`` is now plain
+``str``; ``SchemaCompatMiddleware`` flattens remaining ``anyOf[T, null]`` on
+``tools/list`` (advertises ``workspace`` as required ``string``); shared
+``tool_params`` (``QName``, ``Limit``, …) add Field descriptions on core
+analysis tools. Runtime still accepts omitted ``workspace`` in tests via the
+existing resolve monkeypatch / middleware.
+
+### Docs — README badges, Spec Explorer screenshot, for/not-for
 
 Project is now licensed under the **GNU Affero General Public License v3.0**
 only. Adds `LICENSE` (official AGPLv3 text), updates `pyproject.toml`

@@ -42,11 +42,14 @@ class WorkspaceNotIndexedError(ValueError):
     """
 
 
-# Annotated alias: MCP clients expose Field.description + examples on the parameter.
+# Plain ``str`` (not ``str | None``): Cursor and other MCP hosts mishandle
+# nested ``anyOf`` / nullable unions and often render every param as ``any``
+# with an empty description. Optional-in-signature ``Workspace | None = None``
+# used to expand to anyOf[anyOf[str,null], null]. Make the parameter required
+# in the JSON Schema instead — runtime already rejects a missing workspace.
 Workspace = Annotated[
-    str | None,
+    str,
     Field(
-        default=None,
         description=WORKSPACE_DESCRIPTION,
         min_length=1,
         examples=[

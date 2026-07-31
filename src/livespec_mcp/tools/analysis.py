@@ -44,6 +44,15 @@ from livespec_mcp.domain.legacy_flows import compute_legacy_flows
 from livespec_mcp.domain.test_coverage_reports import discover_report_coverage
 from livespec_mcp.state import AppState, get_state
 from livespec_mcp.tools._errors import mcp_error
+from livespec_mcp.tool_params import (
+    Cursor,
+    Limit,
+    MaxDepth,
+    MinWeight,
+    QName,
+    SummaryOnly,
+    SymbolQuery,
+)
 from livespec_mcp.workspace_param import WORKSPACE_DOCSTRING_NOTE, Workspace
 
 _INFRA_NAME_SUFFIXES = ("_state", "_settings", "_config", "_session")
@@ -2772,7 +2781,7 @@ def _attach_endpoints_not_swept(payload: dict[str, Any], *, st: AppState, framew
 def register(mcp: FastMCP) -> None:
     @mcp.tool(annotations={"readOnlyHint": True, "idempotentHint": True})
     def find_symbol(
-        query: str,
+        query: SymbolQuery,
         kind: str | None = None,
         limit: int = 50,
         workspace: Workspace | None = None,
@@ -2880,12 +2889,12 @@ def register(mcp: FastMCP) -> None:
 
     @mcp.tool(annotations={"readOnlyHint": True, "idempotentHint": True})
     def who_calls(
-        qname: str,
-        max_depth: int = 1,
-        limit: int = 200,
-        cursor: int = 0,
-        summary_only: bool = False,
-        min_weight: float = 0.6,
+        qname: QName,
+        max_depth: MaxDepth = 1,
+        limit: Limit = 200,
+        cursor: Cursor = 0,
+        summary_only: SummaryOnly = False,
+        min_weight: MinWeight = 0.6,
         workspace: Workspace | None = None,
     ) -> dict[str, Any]:
         """Symbols that call `qname` (transitive backward cone up to max_depth).
@@ -2953,12 +2962,12 @@ def register(mcp: FastMCP) -> None:
 
     @mcp.tool(annotations={"readOnlyHint": True, "idempotentHint": True})
     def who_does_this_call(
-        qname: str,
-        max_depth: int = 1,
-        limit: int = 200,
-        cursor: int = 0,
-        summary_only: bool = False,
-        min_weight: float = 0.6,
+        qname: QName,
+        max_depth: MaxDepth = 1,
+        limit: Limit = 200,
+        cursor: Cursor = 0,
+        summary_only: SummaryOnly = False,
+        min_weight: MinWeight = 0.6,
         workspace: Workspace | None = None,
     ) -> dict[str, Any]:
         """Symbols that `qname` calls (transitive forward cone up to max_depth).
@@ -3118,11 +3127,11 @@ def register(mcp: FastMCP) -> None:
     def analyze_impact(
         target_type: Literal["symbol", "file", "spec"],
         target: str,
-        max_depth: int = 5,
-        limit: int = 200,
-        cursor: int = 0,
-        summary_only: bool = False,
-        min_weight: float = 0.6,
+        max_depth: MaxDepth = 5,
+        limit: Limit = 200,
+        cursor: Cursor = 0,
+        summary_only: SummaryOnly = False,
+        min_weight: MinWeight = 0.6,
         workspace: Workspace | None = None,
     ) -> dict[str, Any]:
         """Topological impact analysis: what changes if `target` changes.

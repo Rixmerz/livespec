@@ -8,6 +8,7 @@ from livespec_mcp import prompts, resources
 from livespec_mcp.error_middleware import WorkspaceErrorMiddleware
 from livespec_mcp.instrumentation import AgentLogMiddleware
 from livespec_mcp.plugin_visibility import PluginVisibilityMiddleware
+from livespec_mcp.schema_compat import SchemaCompatMiddleware
 from livespec_mcp.tools import analysis, indexing, search, specs
 from livespec_mcp.tools.plugins import register_all_plugins
 
@@ -28,9 +29,9 @@ mcp = FastMCP(
     ),
 )
 
-# Added first → outermost: pre-validates `workspace` and returns a shaped
-# mcp_error BEFORE the tool (or the other middlewares) touch state, so a
-# missing/invalid workspace doesn't surface as a raw protocol error.
+# Added first → outermost. SchemaCompat rewrites tools/list JSON Schema so
+# Cursor does not render every param as ``any`` (nested anyOf / null unions).
+mcp.add_middleware(SchemaCompatMiddleware())
 mcp.add_middleware(WorkspaceErrorMiddleware())
 mcp.add_middleware(AgentLogMiddleware())
 mcp.add_middleware(PluginVisibilityMiddleware())
