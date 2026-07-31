@@ -45,6 +45,39 @@ def read_openspec_config(root: Path) -> dict[str, Any]:
     return {}
 
 
+def _retire_specs_absent_from_tree(st: Any, seen_ids: list[str]) -> list[str]:
+    """Deprecate specs this tree used to own but no longer declares.
+
+    An OpenSpec requirement has no id of its own — livespec derives it from the
+    `### Requirement:` heading — so renaming the heading creates a new spec and
+    leaves the old row behind, links and all, indistinguishable in `list_specs`
+    from a live one. Status goes to ``deprecated`` rather than the row being
+    deleted: the traceability it carries is the evidence that something needs
+    re-pointing. Scoped to ``source='openspec'``, so hand-made specs and rows
+    written before provenance existed are never touched. Re-adding the
+    requirement flips the status back on the next sync.
+    """
+    if not seen_ids:
+        return []
+    placeholders = ",".join("?" for _ in seen_ids)
+    rows = st.conn.execute(
+        f"""SELECT spec_id FROM spec
+            WHERE project_id=? AND source='openspec' AND status != 'deprecated'
+              AND spec_id NOT IN ({placeholders})
+            ORDER BY spec_id""",
+        (st.project_id, *seen_ids),
+    ).fetchall()
+    retired = [r["spec_id"] for r in rows]
+    if retired:
+        st.conn.executemany(
+            """UPDATE spec SET status='deprecated', updated_at=datetime('now')
+               WHERE project_id=? AND spec_id=?""",
+            [(st.project_id, sid) for sid in retired],
+        )
+        st.conn.commit()
+    return retired
+
+
 def sync_openspec_tree(st: Any, root: Path) -> dict[str, Any]:
     """Import specs + changes from an OpenSpec ``root`` in one pass.
 
@@ -62,8 +95,13 @@ def sync_openspec_tree(st: Any, root: Path) -> dict[str, Any]:
     # canonical set then comes from applying changes.
     if specs_dir.is_dir():
         specs_result = import_specs_from_markdown_file(
-            st, specs_dir, fmt="openspec", check_duplicates=False
+            st, specs_dir, fmt="openspec", check_duplicates=False, source="openspec"
         )
+        retired = _retire_specs_absent_from_tree(
+            st, specs_result.pop("spec_ids", [])
+        )
+        if retired:
+            specs_result["retired"] = retired
     else:
         specs_result = {
             "created": 0,

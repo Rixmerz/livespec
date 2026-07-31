@@ -519,6 +519,17 @@ def _m019_drop_vector_search(conn: sqlite3.Connection) -> None:
             pass
 
 
+def _m020_spec_source(conn: sqlite3.Connection) -> None:
+    """v0.31: ``spec.source`` — where a spec came from.
+
+    ``sync_openspec`` can only retire a spec that vanished from its tree if it
+    knows the spec came from that tree; a hand-made ``create_spec`` has to
+    survive the sweep. Rows written before this column existed stay NULL and
+    are never swept — provenance can't be invented after the fact. Additive,
+    no re-extract."""
+    _try_add_column(conn, "spec", "source", "TEXT")
+
+
 # Ordered registry. Append-only — never reuse a version number.
 MIGRATIONS: list[Migration] = [
     (1, "drop_dead_tables", _m001_drop_dead_tables),
@@ -540,6 +551,7 @@ MIGRATIONS: list[Migration] = [
     (17, "scenario_symbol", _m017_scenario_symbol),
     (18, "change_delta_rename_from", _m018_change_delta_rename_from),
     (19, "drop_vector_search", _m019_drop_vector_search),
+    (20, "spec_source", _m020_spec_source),
 ]
 
 

@@ -6,6 +6,26 @@ follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed — renaming an OpenSpec requirement no longer leaves a ghost spec
+
+An OpenSpec requirement has no id of its own, so livespec derives one from the
+`### Requirement:` heading. Renaming the heading created a *second* spec and
+left the first one in the store — same status, links intact, indistinguishable
+in `list_specs` from a live one. On a real service: 10 specs before the rename,
+11 live after, with no way to tell which one the tree still declares.
+
+`sync_openspec` now sets any spec it used to own but the tree no longer
+declares to `status='deprecated'` and reports them as `specs.retired`.
+Deprecated rather than deleted: the traceability the old spec carries is
+exactly the evidence of what needs re-pointing. Re-adding the requirement
+flips it back on the next sync.
+
+The sweep is scoped by provenance (**migration v20**, additive `spec.source`,
+no re-extract): only specs written by an OpenSpec tree sync are eligible.
+Hand-made `create_spec` rows and rows written before the column existed have
+no provenance to sweep on and are never touched. Measured across 14 real repos
+with existing databases: **0 specs retired**, idempotent on a second pass.
+
 ### Improved — `scan_spec_annotations` names the ids nothing answers to
 
 An OpenSpec requirement has no id of its own: livespec derives one from the

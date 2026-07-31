@@ -236,3 +236,27 @@ def test_reextract_flag_survives_until_cleared(tmp_path: Path):
     clear_reextract_flag(conn)
     assert peek_reextract_flag(conn) is False
     conn.close()
+
+
+def test_m020_adds_spec_source_to_an_existing_db(tmp_path: Path):
+    """Provenance lands on an already-populated DB, and old rows stay NULL.
+
+    A spec written before the column existed can't be attributed to an
+    OpenSpec tree after the fact, so the sync sweep must never claim it.
+    """
+    db = tmp_path / "existing.db"
+    conn = connect(db)
+    conn.execute("INSERT INTO project(id, name, root) VALUES(1, 'p', '/p')")
+    conn.execute(
+        "INSERT INTO spec(project_id, spec_id, title) VALUES(1, 'SPEC-001', 'Legacy')"
+    )
+    conn.commit()
+    conn.execute("DELETE FROM schema_migrations WHERE version=20")
+    conn.execute("ALTER TABLE spec DROP COLUMN source")
+    conn.commit()
+    conn.close()
+
+    conn = connect(db)
+    row = conn.execute("SELECT source FROM spec WHERE spec_id='SPEC-001'").fetchone()
+    assert row["source"] is None
+    conn.close()

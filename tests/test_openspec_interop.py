@@ -547,3 +547,59 @@ async def test_apply_dry_run_and_warnings(sample_repo):
         ).data
         assert applied["applied"]["modified"] == 1
         assert applied["warnings"]
+
+
+CANONICAL_RENAMED = CANONICAL.replace(
+    "### Requirement: Theme selection",
+    "### Requirement: Theme selection and persistence",
+)
+
+
+@pytest.mark.asyncio
+async def test_rename_retires_the_spec_it_replaces(sample_repo):
+    """A renamed requirement used to leave a ghost in `list_specs`.
+
+    OpenSpec has no ids: livespec derives one from the heading, so a rename
+    produces a second spec and the old row survives with its links, looking
+    exactly as live as the new one.
+    """
+    tree = sample_repo / "openspec" / "specs" / "theming"
+    tree.mkdir(parents=True)
+    (tree / "spec.md").write_text(CANONICAL)
+    async with Client(mcp) as c:
+        await c.call_tool("index_project", {})
+        await c.call_tool("sync_openspec", {})
+
+        (tree / "spec.md").write_text(CANONICAL_RENAMED)
+        synced = (await c.call_tool("sync_openspec", {})).data
+        assert synced["specs"]["retired"] == ["theming-theme-selection"], synced
+
+        specs = (await c.call_tool("list_specs", {})).data["specs"]
+        by_id = {s["spec_id"]: s for s in specs}
+        assert by_id["theming-theme-selection"]["status"] == "deprecated"
+        assert by_id["theming-theme-selection-and-persistence"]["status"] != "deprecated"
+
+        # Restoring the heading brings the spec back — the sweep isn't a delete.
+        (tree / "spec.md").write_text(CANONICAL)
+        again = (await c.call_tool("sync_openspec", {})).data
+        assert again["specs"]["retired"] == ["theming-theme-selection-and-persistence"]
+        specs = {s["spec_id"]: s for s in (await c.call_tool("list_specs", {})).data["specs"]}
+        assert specs["theming-theme-selection"]["status"] != "deprecated"
+
+
+@pytest.mark.asyncio
+async def test_sweep_leaves_hand_made_specs_alone(sample_repo):
+    """`create_spec` and legacy rows have no OpenSpec provenance to sweep on."""
+    tree = sample_repo / "openspec" / "specs" / "theming"
+    tree.mkdir(parents=True)
+    (tree / "spec.md").write_text(CANONICAL)
+    async with Client(mcp) as c:
+        await c.call_tool("index_project", {})
+        await c.call_tool(
+            "create_spec", {"title": "Handmade rule", "spec_id": "SPEC-900"}
+        )
+        synced = (await c.call_tool("sync_openspec", {})).data
+        assert "retired" not in synced["specs"], synced
+
+        specs = {s["spec_id"]: s for s in (await c.call_tool("list_specs", {})).data["specs"]}
+        assert specs["SPEC-900"]["status"] != "deprecated"

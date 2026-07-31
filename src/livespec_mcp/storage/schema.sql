@@ -141,6 +141,7 @@ CREATE TABLE IF NOT EXISTS spec (
     module_id INTEGER REFERENCES module(id) ON DELETE SET NULL,
     status TEXT NOT NULL DEFAULT 'draft',   -- draft | active | deprecated
     priority TEXT NOT NULL DEFAULT 'medium',-- low | medium | high | critical
+    source TEXT,                            -- openspec | markdown | NULL (manual/legacy)
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now')),
     UNIQUE(project_id, spec_id)

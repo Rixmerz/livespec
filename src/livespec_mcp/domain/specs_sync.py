@@ -141,6 +141,7 @@ def import_specs_from_markdown_file(
     *,
     fmt: str = "auto",
     check_duplicates: bool = True,
+    source: str = "markdown",
 ) -> dict[str, Any]:
     """Shared import logic for MCP tool and index post-hook.
 
@@ -148,6 +149,10 @@ def import_specs_from_markdown_file(
     ``## SPEC-NNN:`` headers), ``"openspec"`` (Fission-AI OpenSpec
     ``### Requirement:`` anchors), or ``"auto"`` (default — sniff per file,
     and treat a directory ``path`` as an OpenSpec tree).
+
+    ``source`` is stamped on every spec written, so a later full-tree sync can
+    tell its own specs from hand-made ones. The result carries ``spec_ids``
+    (everything this pass wrote) for the caller that needs to compare.
     """
     pid = st.project_id
     p = Path(path)
@@ -196,7 +201,8 @@ def import_specs_from_markdown_file(
             spec_pk = int(existing["id"])
             st.conn.execute(
                 """UPDATE spec SET title=?, description=?, status=?, priority=?,
-                   module_id=?, kind=?, updated_at=datetime('now') WHERE id=?""",
+                   module_id=?, kind=?, source=?, updated_at=datetime('now')
+                   WHERE id=?""",
                 (
                     pspec.title,
                     pspec.description,
@@ -204,14 +210,16 @@ def import_specs_from_markdown_file(
                     pspec.priority,
                     module_id,
                     pspec.kind,
+                    source,
                     spec_pk,
                 ),
             )
             updated += 1
         else:
             cur = st.conn.execute(
-                """INSERT INTO spec(project_id, spec_id, title, description, module_id, status, priority, kind)
-                   VALUES(?,?,?,?,?,?,?,?)""",
+                """INSERT INTO spec(project_id, spec_id, title, description, module_id,
+                                    status, priority, kind, source)
+                   VALUES(?,?,?,?,?,?,?,?,?)""",
                 (
                     pid,
                     pspec.spec_id,
@@ -221,6 +229,7 @@ def import_specs_from_markdown_file(
                     pspec.status,
                     pspec.priority,
                     pspec.kind,
+                    source,
                 ),
             )
             spec_pk = int(cur.lastrowid)
@@ -232,6 +241,7 @@ def import_specs_from_markdown_file(
         "parsed": len(parsed),
         "created": created,
         "updated": updated,
+        "spec_ids": [ps.spec_id for ps in parsed],
     }
     if check_duplicates:
         dupes = scan_duplicate_spec_markdown_specs(st.settings.workspace, exclude=p)
@@ -403,7 +413,9 @@ def sync_specs_from_config(st: Any) -> dict[str, Any] | None:
     result: dict[str, Any] = {"imports": [], "links": None}
     for rel in cfg.specs_sync_from:
         try:
-            result["imports"].append(import_specs_from_markdown_file(st, rel))
+            imported = import_specs_from_markdown_file(st, rel)
+            imported.pop("spec_ids", None)
+            result["imports"].append(imported)
         except FileNotFoundError as e:
             result["imports"].append({"path": rel, "error": str(e)})
     if cfg.specs_openspec_dir:

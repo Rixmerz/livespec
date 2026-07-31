@@ -638,7 +638,10 @@ def register(
                 import_specs_from_markdown_file,
             )
 
-            return import_specs_from_markdown_file(st, path, fmt=fmt)
+            out = import_specs_from_markdown_file(st, path, fmt=fmt)
+            # Internal bookkeeping for the full-tree sweep, not payload.
+            out.pop("spec_ids", None)
+            return out
         except FileNotFoundError:
             return mcp_error(
                 f"file not found: {path}",

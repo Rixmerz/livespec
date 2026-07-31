@@ -43,7 +43,7 @@ Todo el stack es local-first: 0 servicios externos, 0 API keys obligatorias, 0 D
 
 ## 3. Estado actual
 
-**HEAD: backlog del barrido cerrado (puntos 1, 2 y 3) + anotaciones huérfanas visibles. Tests 648.**
+**HEAD: backlog del barrido cerrado (puntos 1, 2 y 3) + anotaciones huérfanas visibles + specs fantasma. Tests 651.**
 Sin tag nuevo — todo bajo `[Unreleased]`.
 
 Qué landeó, con evidencia sobre repos reales (antes → después):
@@ -56,6 +56,17 @@ Qué landeó, con evidencia sobre repos reales (antes → después):
   sus edges *son* los del handler. Nuevo campo `handler_resolution`
   (`handler` | `enclosing_scope` | `unresolved`). 13 repos reales:
   **93 endpoints call-style, IDs muertos 14 → 0**, sin cambiar el conteo.
+- **Renombrar una requirement OpenSpec ya no deja una spec fantasma.** Como el
+  ID se deriva del encabezado, el rename creaba una spec nueva y dejaba la
+  vieja con sus links, idéntica a una viva en `list_specs` (servicio real: 10
+  specs antes, 11 vivas después). `sync_openspec` ahora pasa a `deprecated`
+  las specs que el árbol dejó de declarar y las reporta en `specs.retired`;
+  no las borra, porque su traceability es la evidencia de qué hay que
+  reapuntar. El barrido se limita por procedencia (**migración v20**, columna
+  aditiva `spec.source`, sin re-extract): las specs hechas a mano con
+  `create_spec` y las filas anteriores a la columna nunca se tocan. 14 repos
+  reales con DB existente: **0 specs retiradas**, idempotente en la segunda
+  pasada.
 - **`scan_spec_annotations` nombra los IDs que no existen.** Una requirement
   OpenSpec no tiene ID propio: se deriva del encabezado, así que renombrarlo
   cambia el slug y todo `@spec:` que lo usaba deja de matchear. Antes el payload
