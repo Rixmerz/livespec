@@ -1963,8 +1963,12 @@ function sourceBadge(src) {
 
 // A declared status looks stale when evidence has clearly moved past it:
 // dev_state is implemented/verified but the human still marks it draft/
-// in-review/proposed (i.e. not an "advanced" declared status).
-const ADVANCED_STATUS = new Set(['approved', 'done', 'implemented', 'verified', 'released', 'complete']);
+// in-review/proposed. Livespec's native Spec lifecycle is
+// draft | active | deprecated — ``active`` means the Spec is live, so it
+// is NOT stale when code evidence says verified/implemented.
+const ADVANCED_STATUS = new Set([
+  'active', 'approved', 'done', 'implemented', 'verified', 'released', 'complete',
+]);
 function statusLooksStale(spec) {
   if (spec.dev_state !== 'implemented' && spec.dev_state !== 'verified') return false;
   const declared = String(spec.status || '').toLowerCase();

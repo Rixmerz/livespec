@@ -6,6 +6,12 @@ follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed — Explorer false “declared status not updated” on ``active`` Specs
+
+``statusLooksStale`` treated only ``approved``/``verified``/… as caught-up,
+but livespec Spec lifecycle is ``draft|active|deprecated``. Verified Specs
+with declared ``active`` no longer show the stale warning.
+
 ### Added — Spec Explorer MCP playground (executable Try it)
 
 ``livespec explorer serve`` exposes ``GET /explorer/api/playground`` and
