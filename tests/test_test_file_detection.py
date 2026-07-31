@@ -121,6 +121,34 @@ async def test_find_orphan_tests_jest_anonymous_honest_zero(workspace):
 
 
 @pytest.mark.asyncio
+async def test_find_orphan_tests_flags_blind_files_in_polyglot_repo(workspace):
+    """The Jest blind spot must stay visible when another language has tests.
+
+    Gating the diagnostic on "no test symbols in the whole project" made it
+    vanish as soon as one Python test contributed a named function, which is
+    every real polyglot repo — the Jest files were silently unscanned.
+    """
+    (workspace / "src").mkdir()
+    (workspace / "src" / "math.ts").write_text(
+        "export function add(a: number, b: number) { return a + b; }\n"
+    )
+    (workspace / "src" / "math.test.ts").write_text(
+        "import { add } from './math';\n"
+        'test("adds", () => { expect(add(1, 2)).toBe(3); });\n'
+    )
+    (workspace / "test_py_side.py").write_text(
+        "def test_named():\n    assert True\n"
+    )
+    async with Client(mcp) as c:
+        await c.call_tool("index_project", {})
+        out = (await c.call_tool("find_orphan_tests", {"summary_only": True})).data
+    assert out["test_function_symbols"] >= 1, out
+    assert out["test_files_without_symbols"] == 1, out
+    assert out["test_files_without_symbols_sample"] == ["src/math.test.ts"], out
+    assert "Jest" in (out.get("hint") or ""), out
+
+
+@pytest.mark.asyncio
 async def test_find_orphan_tests_sees_typescript_tests(workspace):
     """`find_orphan_tests` must not report a flat zero on a TS repo.
 

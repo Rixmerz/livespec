@@ -43,6 +43,45 @@ Todo el stack es local-first: 0 servicios externos, 0 API keys obligatorias, 0 D
 
 ## 3. Estado actual
 
+**HEAD: backlog del barrido, puntos 1-2 (post-`4b8ab2b`). Tests 643.**
+Sin tag nuevo — todo bajo `[Unreleased]`.
+
+Qué landeó, con evidencia sobre repos reales (antes → después):
+
+- **Spring con ruta.** `compute_endpoints` joinea `route_ref` (role `server`) y
+  emite `http_method`/`http_path`/`http_framework` como express/hono/python.
+  La ruta ya estaba indexada; solo la leía `find_legacy_flows`. Servicio Spring
+  real: endpoints con ruta **0 → 4 de 8**. Sin migración ni re-extract.
+  Sigue faltando (extractor + re-extract): prefijo `@RequestMapping` de clase,
+  `@RequestMapping(method=…)` y mapping sin path.
+- **Flow Explorer dejó de inventar rutas Spring.** `_spring_route_from_source`
+  tomaba la *primera* anotación de una ventana de 25 líneas, así que cada
+  handler heredaba la ruta del anterior. Borrada.
+- **`find_orphan_tests` declara los archivos ciegos por archivo**
+  (`test_files_without_symbols` + sample capado). El hint de 0.29 se apagaba en
+  cuanto otro lenguaje aportaba un test nombrado. Repo Node real: campo ausente
+  → `1`, hint `False` → `True`.
+- **CI verde otra vez.** El job `ruff + package build` estaba rojo en `main`
+  (reglas nuevas de ruff: `I001`, `RUF100`, `B007`, `RUF001`); los tests
+  siempre pasaron.
+- **`CONTRIBUTING.md`** — la barra de evidencia: nada se sube sin antes/después
+  contra una superficie de aplicación real, y borrar una tool que la evidencia
+  no sostiene es contribución de primera clase.
+
+**Rechazado por evidencia (no reintentar sin datos nuevos):** frenar el picking
+de handler de Express en la flecha inline final. Contra un servicio Express real
+convirtió `/health` → `healthController.check` (correcto) en un centinela, y no
+arregló ningún caso medible. Las rutas reales cierran con error handler
+`(err, req, res, next)` o una flecha de logging; la aridad tampoco discrimina
+(el tail de logging es de 2). Detalle en `CHANGELOG.md` `[Unreleased]`.
+
+Backlog vivo del barrido: IDs `archivo.js:linea` no navegables en rutas
+call-style (punto 1, sigue abierto — el arreglo real exige emitir símbolo para
+la flecha inline, con re-extract), y `find_symbol` responde `grouped: true` con
+`group_db: null` (punto 3).
+
+### v0.30.0 / v0.30.1 resumen (referencia)
+
 **Release `v0.30.0` on `main`.** Tests **639**. PyPI `livespec==0.30.1`
 (Trusted Publishing via tag). Plugin pin `livespec@0.30.1`.
 

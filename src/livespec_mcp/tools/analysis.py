@@ -43,7 +43,6 @@ from livespec_mcp.domain.languages import detect_language
 from livespec_mcp.domain.legacy_flows import compute_legacy_flows
 from livespec_mcp.domain.test_coverage_reports import discover_report_coverage
 from livespec_mcp.state import AppState, get_state
-from livespec_mcp.tools._errors import mcp_error
 from livespec_mcp.tool_params import (
     Cursor,
     Limit,
@@ -53,6 +52,7 @@ from livespec_mcp.tool_params import (
     SummaryOnly,
     SymbolQuery,
 )
+from livespec_mcp.tools._errors import mcp_error
 from livespec_mcp.workspace_param import WORKSPACE_DOCSTRING_NOTE, Workspace
 
 _INFRA_NAME_SUFFIXES = ("_state", "_settings", "_config", "_session")
@@ -1336,8 +1336,8 @@ def compute_endpoints(
     pid = st.project_id
 
     rows = st.conn.execute(
-        """SELECT s.qualified_name, s.kind, s.decorators, s.start_line, s.end_line,
-                  f.path AS file_path
+        """SELECT s.id AS symbol_id, s.qualified_name, s.kind, s.decorators,
+                  s.start_line, s.end_line, f.path AS file_path
            FROM symbol s JOIN file f ON f.id=s.file_id
            WHERE f.project_id=? AND s.decorators IS NOT NULL
            ORDER BY f.path, s.start_line""",
@@ -1411,6 +1411,36 @@ def compute_endpoints(
             entry["http_path"] = route["http_path"]
             entry["http_framework"] = infer_python_http_framework(source)
 
+    # Java annotations reach `decorators` as bare names (`GetMapping`) — the
+    # argument holding the path is dropped there but the extractor already
+    # persists it as a `route_ref` server row. Join it so Spring handlers carry
+    # the same http_method/http_path contract as express/hono/python instead of
+    # listing a handler with no route.
+    server_routes: dict[int, tuple[str | None, str]] = {}
+    for rr in st.conn.execute(
+        """SELECT rr.symbol_id, rr.method, rr.path
+           FROM route_ref rr
+           JOIN symbol s ON s.id=rr.symbol_id
+           JOIN file f ON f.id=s.file_id
+           WHERE f.project_id=? AND rr.role='server'
+           ORDER BY rr.line, rr.id""",
+        (pid,),
+    ):
+        server_routes.setdefault(int(rr["symbol_id"]), (rr["method"], rr["path"]))
+
+    def _attach_indexed_http_route(entry: dict[str, Any], symbol_id: int) -> None:
+        if entry.get("http_path") is not None:
+            return
+        route = server_routes.get(symbol_id)
+        if route is None:
+            return
+        method, path = route
+        if method:
+            entry["http_method"] = method
+        entry["http_path"] = path
+        if entry["file_path"].endswith(".java"):
+            entry["http_framework"] = "spring"
+
     for r in rows:
         try:
             decs = json.loads(r["decorators"] or "[]")
@@ -1428,6 +1458,7 @@ def compute_endpoints(
             "decorators": matching,
         }
         _attach_python_http_route(entry, matching)
+        _attach_indexed_http_route(entry, int(r["symbol_id"]))
         endpoints.append(entry)
         seen_qnames.add(r["qualified_name"])
 
@@ -2661,7 +2692,7 @@ def _call_style_handler_qnames(st: AppState, project_id: int) -> set[str]:
     """
     out: set[str] = set()
     workspace_path = st.settings.workspace
-    for framework, marker in (("hono", "hono"), ("express", "express")):
+    for _framework, marker in (("hono", "hono"), ("express", "express")):
         for fr in st.conn.execute(
             """SELECT id, path, language FROM file
                WHERE project_id=? AND language IN
@@ -4128,7 +4159,7 @@ def register(mcp: FastMCP) -> None:
         - ``include_harness=False`` (default): skip tests whose file imports an
           in-process harness (FastMCP Client, TestClient, supertest, …) —
           those are systematic false positives for the static graph.
-        Each row carries ``confidence`` (0–1) and ``reasons``.
+        Each row carries ``confidence`` (0-1) and ``reasons``.
 
         v0.7 (B3): paginated. Payload always includes ``caveat``.
         """ + WORKSPACE_DOCSTRING_NOTE
@@ -4157,7 +4188,8 @@ def register(mcp: FastMCP) -> None:
                 "SELECT path FROM file WHERE project_id=?", (pid,)
             )
         ]
-        test_files_count = sum(1 for p in all_file_paths if is_test_path(p))
+        test_file_paths = [p for p in all_file_paths if is_test_path(p)]
+        test_files_count = len(test_file_paths)
 
         test_rows = st.conn.execute(
             """SELECT s.id, s.qualified_name, s.kind, f.path AS file_path
@@ -4167,6 +4199,18 @@ def register(mcp: FastMCP) -> None:
             (pid,),
         ).fetchall()
         test_syms = [dict(r) for r in test_rows if is_test_path(r["file_path"])]
+
+        # A test file the extractor saw no function/method in is invisible to
+        # the orphan scan (Jest/vitest write anonymous `it()` callbacks). Track
+        # it per file: a project-wide "no test symbols at all" check goes quiet
+        # as soon as one other language contributes a named test.
+        files_with_test_syms = {r["file_path"] for r in test_syms}
+        blind_test_files = [
+            p
+            for p in test_file_paths
+            if p not in files_with_test_syms
+            and (include_fixtures or not _is_fixture_only_path(p))
+        ]
 
         harness_cache: dict[str, bool] = {}
         orphans: list[dict[str, Any]] = []
@@ -4226,13 +4270,16 @@ def register(mcp: FastMCP) -> None:
             "fixture_skipped_count": fixture_skipped,
             "test_files_count": test_files_count,
             "test_function_symbols": len(test_syms),
+            "test_files_without_symbols": len(blind_test_files),
+            "test_files_without_symbols_sample": sorted(blind_test_files)[:10],
         }
-        if test_files_count > 0 and not test_syms:
+        if blind_test_files:
             payload["hint"] = (
-                "Indexed test files exist but no function/method symbols "
-                "inside them (common with Jest/vitest anonymous "
-                "`test()`/`it()` callbacks). count=0 is extractor coverage, "
-                "not proof the suite has no orphans."
+                f"{len(blind_test_files)} of {test_files_count} indexed test "
+                "files contributed no function/method symbol (common with "
+                "Jest/vitest anonymous `test()`/`it()` callbacks). Those files "
+                "were not scanned for orphans, so this count reflects "
+                "extractor coverage, not proof their suites have none."
             )
         if summary_only:
             return payload

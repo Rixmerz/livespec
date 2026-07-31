@@ -41,6 +41,25 @@ SPRING_SRC = (
     "}\n"
 )
 
+SPRING_MULTI_SRC = (
+    "package com.example.api;\n"
+    "\n"
+    "import org.springframework.web.bind.annotation.*;\n"
+    "\n"
+    "@RestController\n"
+    "public class HotelController {\n"
+    "\n"
+    "    @GetMapping(\"/hotels\")\n"
+    "    public String list() { return \"[]\"; }\n"
+    "\n"
+    "    @PostMapping(\"/hotels/search\")\n"
+    "    public String search() { return \"[]\"; }\n"
+    "\n"
+    "    @DeleteMapping(\"/hotels/{id}\")\n"
+    "    public String remove() { return \"ok\"; }\n"
+    "}\n"
+)
+
 ANGULAR_SRC = (
     "import { Component } from '@angular/core';\n"
     "\n"
@@ -69,6 +88,51 @@ async def test_find_endpoints_spring(workspace):
         assert any(q.endswith("create") for q in by_qname)
         # un-annotated helper is NOT an endpoint
         assert not any(q.endswith("helper") for q in by_qname)
+
+
+@pytest.mark.asyncio
+async def test_find_endpoints_spring_carries_method_and_path(workspace):
+    """Spring handlers must expose http_method/http_path like express/hono.
+
+    The path lives in `route_ref` (the Java annotation extractor keeps only
+    the annotation *name* in `decorators`), so listing a handler without its
+    route left the agent unable to tell `GET /hotels` from `DELETE /hotels/{id}`.
+    """
+    (workspace / "HotelController.java").write_text(SPRING_MULTI_SRC)
+    async with Client(mcp) as c:
+        await c.call_tool("index_project", {})
+        out = (await c.call_tool("find_endpoints", {"framework": "spring"})).data
+    routes = {
+        (e.get("http_method"), e.get("http_path"))
+        for e in out["endpoints"]
+        if e.get("http_path")
+    }
+    assert ("GET", "/hotels") in routes, out["endpoints"]
+    assert ("POST", "/hotels/search") in routes, out["endpoints"]
+    assert ("DELETE", "/hotels/{id}") in routes, out["endpoints"]
+    handlers = {
+        e["qualified_name"].rsplit(".", 1)[-1]: e
+        for e in out["endpoints"]
+        if e.get("http_path")
+    }
+    # Each handler keeps its OWN route — a nearby-annotation scan used to give
+    # every method in the controller the first handler's route.
+    assert handlers["search"]["http_path"] == "/hotels/search"
+    assert handlers["remove"]["http_method"] == "DELETE"
+    assert handlers["list"]["http_framework"] == "spring"
+
+
+@pytest.mark.asyncio
+async def test_find_endpoints_spring_bare_mapping_has_no_invented_route(workspace):
+    """`@GetMapping` with no path inherits the class prefix, which the
+    extractor does not capture yet. Report no route rather than a wrong one."""
+    (workspace / "UserController.java").write_text(SPRING_SRC)
+    async with Client(mcp) as c:
+        await c.call_tool("index_project", {})
+        out = (await c.call_tool("find_endpoints", {"framework": "spring"})).data
+    by_name = {e["qualified_name"].rsplit(".", 1)[-1]: e for e in out["endpoints"]}
+    assert by_name["create"]["http_path"] == "/create"
+    assert by_name["list"].get("http_path") is None, by_name["list"]
 
 
 @pytest.mark.asyncio

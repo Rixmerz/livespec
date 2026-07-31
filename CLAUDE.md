@@ -331,6 +331,7 @@ user wants to override.
 | When you want to... | Read |
 |---------------------|------|
 | Pick up after `/clear` | `HANDOFF.md` |
+| Know what counts as proof for a change | `CONTRIBUTING.md` |
 | Plan v0.8+ work | `ROADMAP.md` |
 | Understand version history | `CHANGELOG.md` |
 | See public surface | `README.md` |

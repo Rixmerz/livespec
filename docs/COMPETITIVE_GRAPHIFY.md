@@ -4,7 +4,10 @@
 beta core. Overlap is real (tree-sitter call graph + MCP + anti-vector);
 livespec’s wedge remains Spec↔code + polyrepo routes + framework endpoints.
 
-Sources: https://graphify.com/concepts · https://github.com/Graphify-Labs/graphify
+Sources: https://graphify.net/ · https://github.com/Graphify-Labs/graphify
+(re-checked 2026-07-31: MIT license, 36 declared languages, Leiden + god
+nodes, `graph.json` with HTML/Obsidian/Neo4j export, LLM pass only for
+docs/media.)
 
 ## Verdict
 
@@ -20,7 +23,7 @@ OpenSpec, `group_db` HTTP joins, and agent ops (`find_dead_code`,
 | Leiden communities + HTML map | Explorer exists; PageRank covers ranking; new dep + surface |
 | PDF / image / SQL / Terraform → graph | Needs LLM pass; fights FTS-only / local-first core |
 | New `provenance` column | Already encoded as `symbol_edge.weight` + `edge_type` |
-| Apache-style permissive default | Product stays AGPL-3.0-only by choice |
+| MIT-style permissive default | Product stays AGPL-3.0-only by choice |
 
 ## Mapping we already have (no schema change)
 

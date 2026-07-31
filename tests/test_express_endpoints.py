@@ -74,6 +74,47 @@ EXPRESS_DEFAULT_EXPORT_PROJECT = {
 }
 
 
+EXPRESS_TRAILING_ARROWS = (
+    "const express = require('express');\n"
+    "const searchController = require('../controller/searchController');\n"
+    "const healthController = require('../controller/healthController');\n"
+    "const router = express.Router();\n"
+    "\n"
+    "function requireAuth(req, res, next) { next(); }\n"
+    "function listHotels(req, res) { res.json([]); }\n"
+    "\n"
+    # Trailing 4-arity arrow: Express error handler.
+    "router.post(\n"
+    "  '/search',\n"
+    "  requireAuth,\n"
+    "  searchController.getFlights,\n"
+    "  (error, _req, _res, _next) => { console.error(error); }\n"
+    ");\n"
+    # Trailing 2-arity arrow: a logging tail after the real handler.
+    "router.get('/health', requireAuth, healthController.check, (_req, _res) => {\n"
+    "  console.log('checked');\n"
+    "});\n"
+    "router.get('/named', requireAuth, listHotels);\n"
+)
+
+
+def test_scan_looks_past_trailing_arrow_to_the_named_handler():
+    """A trailing inline arrow is a tail, not the endpoint's handler.
+
+    Real Express code closes a route with an error handler
+    `(err, req, res, next)` or a small logging arrow, so the rightmost NAMED
+    argument is the answer. Stopping at the trailing arrow instead pointed
+    `/health` at nothing on a real service.
+    """
+    routes = {r["path"]: r for r in scan_hono_routes(
+        EXPRESS_TRAILING_ARROWS, "javascript"
+    )}
+    assert routes["/search"]["handler_name"] == "getFlights", routes["/search"]
+    assert routes["/search"]["handler_import"] == "searchController"
+    assert routes["/health"]["handler_name"] == "check", routes["/health"]
+    assert routes["/named"]["handler_name"] == "listHotels"
+
+
 def test_scan_skips_non_router_receivers():
     routes = scan_hono_routes(EXPRESS_WITH_NOISE, "javascript")
     paths = {r["path"] for r in routes}

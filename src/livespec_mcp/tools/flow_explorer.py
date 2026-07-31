@@ -10,7 +10,6 @@ resolved HTTP route hops come from ``invokes_route`` graph edges.
 from __future__ import annotations
 
 import json
-import re
 from pathlib import Path
 from typing import Any
 
@@ -20,18 +19,6 @@ from livespec_mcp.state import AppState
 from livespec_mcp.tools.analysis import compute_endpoints
 
 _HTTP_VERBS = frozenset({"GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"})
-_SPRING_MAPPING = re.compile(
-    r"@(Get|Post|Put|Patch|Delete)Mapping\s*\(\s*"
-    r"(?:value\s*=\s*|path\s*=\s*)?"
-    r"[\"'](/[^\"']{0,200})[\"']",
-)
-_SPRING_VERB = {
-    "Get": "GET",
-    "Post": "POST",
-    "Put": "PUT",
-    "Patch": "PATCH",
-    "Delete": "DELETE",
-}
 
 
 def _ephemeral_project_state(st: AppState, root: Path, project_id: int) -> AppState:
@@ -64,44 +51,13 @@ def _project_rows(st: AppState) -> list[dict[str, Any]]:
     ]
 
 
-def _spring_route_from_source(
-    root: Path, file_path: str | None, start_line: int | None
-) -> tuple[str | None, str | None]:
-    """Best-effort method/path from Java ``@GetMapping("/x")`` near ``start_line``."""
-    if not file_path or not start_line:
-        return None, None
-    abs_path = root / file_path
-    if abs_path.suffix != ".java" or not abs_path.is_file():
-        return None, None
-    try:
-        lines = abs_path.read_text(encoding="utf-8", errors="replace").splitlines()
-    except OSError:
-        return None, None
-    # Scan a small window above the method (annotations live there).
-    lo = max(0, int(start_line) - 25)
-    hi = min(len(lines), int(start_line))
-    window = "\n".join(lines[lo:hi])[:4000]
-    m = _SPRING_MAPPING.search(window)
-    if not m:
-        return None, None
-    return _SPRING_VERB.get(m.group(1)), m.group(2)
-
-
-def _endpoint_http_fields(
-    ep: dict[str, Any], *, root: Path | None = None
-) -> tuple[str | None, str | None]:
+def _endpoint_http_fields(ep: dict[str, Any]) -> tuple[str | None, str | None]:
     method = (
         ep.get("http_method")
         or ep.get("hono_method")
         or ep.get("express_method")
     )
     path = ep.get("http_path") or ep.get("hono_path") or ep.get("express_path")
-    if (not method or not path) and root is not None:
-        sm, sp = _spring_route_from_source(
-            root, ep.get("file_path"), ep.get("start_line")
-        )
-        method = method or sm
-        path = path or sp
     if isinstance(method, str):
         method = method.upper()
     else:
@@ -111,11 +67,9 @@ def _endpoint_http_fields(
     return method, path
 
 
-def _endpoint_entry(
-    ep: dict[str, Any], project: str, *, root: Path | None = None
-) -> dict[str, Any]:
+def _endpoint_entry(ep: dict[str, Any], project: str) -> dict[str, Any]:
     """Normalize compute_endpoints rows for the flow viewer."""
-    method, path = _endpoint_http_fields(ep, root=root)
+    method, path = _endpoint_http_fields(ep)
     return {
         "project": project,
         "kind": ep.get("kind") or ep.get("ts_framework") or "other",
@@ -134,9 +88,9 @@ def _endpoint_entry(
     }
 
 
-def _is_http_endpoint(ep: dict[str, Any], *, root: Path | None = None) -> bool:
+def _is_http_endpoint(ep: dict[str, Any]) -> bool:
     """Keep only endpoint rows with a concrete HTTP route (not ``*`` catch-alls)."""
-    method, path = _endpoint_http_fields(ep, root=root)
+    method, path = _endpoint_http_fields(ep)
     if method and path and path.startswith("/") and path != "*":
         return method in _HTTP_VERBS
     # Normalized viewer shape (already through _endpoint_entry).
@@ -209,7 +163,7 @@ def _route_edges(
                ORDER BY src_project.id, src.qualified_name, client.path,
                         dst_project.id, dst.qualified_name"""
         )
-    except Exception:  # noqa: BLE001 — route migration may be absent
+    except Exception:
         return []
     out: list[dict[str, str | None]] = []
     for row in rows:
@@ -274,14 +228,14 @@ def compute_flow_explorer_data(
             try:
                 pst = _ephemeral_project_state(st, root, pid)
                 for ep in _iter_project_endpoints(pst, framework):
-                    if not _is_http_endpoint(ep, root=root):
+                    if not _is_http_endpoint(ep):
                         continue
-                    entry = _endpoint_entry(ep, pname, root=root)
+                    entry = _endpoint_entry(ep, pname)
                     if not _is_http_endpoint(entry):
                         continue
                     eps.append(entry)
                     all_endpoints.append(entry)
-            except Exception as e:  # noqa: BLE001 — keep bundle resilient
+            except Exception as e:
                 eps = [{"project": pname, "error": str(e)}]
 
         local_explorer = root / ".mcp-docs" / "explorer" / "index.html"
@@ -452,7 +406,7 @@ def compute_flow_explorer_data(
     route_ref_n = 0
     try:
         route_ref_n = int(conn.execute("SELECT COUNT(*) FROM route_ref").fetchone()[0])
-    except Exception:  # noqa: BLE001
+    except Exception:
         route_ref_n = 0
 
     return {

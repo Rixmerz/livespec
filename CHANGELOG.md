@@ -6,6 +6,62 @@ follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed — Spring endpoints carry `http_method` / `http_path`
+
+`find_endpoints(framework="spring")` listed Java handlers with no route, so an
+agent could see `getHotelDetail` but not that it serves
+`GET /details/{arrival}/{departure}/{hotel}`. The route was already extracted —
+`_java_mapping_routes` writes it to `route_ref` (role `server`), which is why
+`find_legacy_flows` could show it — but `compute_endpoints` only read the
+`decorators` column, and the Java annotation extractor keeps annotation *names*
+without their arguments. `compute_endpoints` now joins `route_ref` and emits the
+same `http_method` / `http_path` / `http_framework` contract as express, hono
+and python. **No migration and no re-extract**: already-indexed repos gain the
+fields on the next call. Measured on a real Spring service: endpoints carrying a
+route 0 → 4 of 8.
+
+Still missing (extractor work, needs a re-extract): the class-level
+`@RequestMapping("/api/v1")` prefix, so paths are relative to the controller;
+`@RequestMapping(method = RequestMethod.X)`; and a bare `@GetMapping` whose path
+comes entirely from the class. Those handlers report no route rather than a
+guessed one.
+
+### Fixed — Flow Explorer no longer invents Spring routes
+
+`_spring_route_from_source` re-read the `.java` file and took the *first*
+`@*Mapping` in a 25-line window above the handler. Controller methods sit closer
+than that, so every handler inherited the first one's route: a 4-handler
+controller reported the same `GET` path four times. Deleted — `compute_endpoints`
+now supplies the values from the index, and a handler with no `route_ref` row
+reports no route instead of a wrong one.
+
+### Improved — `find_orphan_tests` reports blind test files per file
+
+The Jest/vitest diagnostic added in 0.29 was gated on the project having **no**
+test symbols at all, so a single named test in another language silenced it
+while every anonymous `it()` file stayed unscanned. The payload now carries
+`test_files_without_symbols` and a capped
+`test_files_without_symbols_sample`, and the hint fires whenever any indexed
+test file contributed no function or method symbol.
+
+### Fixed — CI lint
+
+New ruff releases enabled rules the tree did not satisfy (`I001`, `RUF100`,
+`B007`, `RUF001`), turning the `ruff + package build` job red on `main` while
+tests stayed green.
+
+### Investigated and rejected — Express middleware misattribution
+
+`scan_hono_routes` picks the rightmost argument that yields a name, which in
+theory attributes `router.get('/x', requireAuth, (req, res) => {...})` to the
+middleware. Stopping at a trailing inline arrow was implemented, validated
+against a real Express service, and **reverted**: real routes close with an
+error handler `(err, req, res, next)` or a small logging arrow, so the change
+turned a correct answer (`/health` → `healthController.check`) into an
+unresolved one and fixed nothing measurable. Arity does not separate the two
+cases either — the logging tail is 2-arity. Recorded here so the idea is not
+re-attempted without new evidence.
+
 ## [0.30.1] - 2026-07-31
 
 ### Changed — no private paths or third-party repo names in the distribution

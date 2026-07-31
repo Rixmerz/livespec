@@ -5,14 +5,14 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from starlette.applications import Starlette
+from starlette.responses import PlainTextResponse
+from starlette.routing import Route
 from starlette.testclient import TestClient
 
 from livespec_mcp.config import RepoConfig
 from livespec_mcp.explorer.asgi import create_explorer_host_app, mount_explorer
 from livespec_mcp.explorer.playground import playground_enabled, playground_mode
-from starlette.applications import Starlette
-from starlette.responses import PlainTextResponse
-from starlette.routing import Route
 
 
 def _write_minimal_bundle(workspace: Path) -> None:

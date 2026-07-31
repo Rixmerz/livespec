@@ -719,3 +719,10 @@ FTS5-only in v0.29 — do not confuse that with the old “drop search” opinio
 | 24 — v0.23 | ✅ | Cross-repo route edges (`route_ref`, mig v14 — `who_calls.route_callers` / `who_does_this_call.invokes_endpoints`), grouped DB (`[workspace] group_db`), Python callback-arg edges. **Full OpenSpec (Fission-AI) compatibility:** scenarios first-class (migs v15/v17 `spec_scenario`/`scenario_symbol`), `export_openspec` round-trip, `validate_openspec`, change lifecycle (mig v16 `spec_change`/`spec_change_delta`; `sync_openspec`/`apply_spec_change`/`archive_spec_change` — RENAMED FROM/TO + `dry_run`/warnings, mig v18), scenario-level traceability (`link_scenario_symbol`), Purpose round-trip, and agent discoverability (`openspec_workflow` prompt). **Battle-tested** against the real Fission-AI/OpenSpec tree (2 layout bugs fixed). Tools 36 → 44. Rebrand: product name `livespec` + `livespec` command alias (dist/package stay `livespec-mcp`). Trusted-Publishing release workflow. (Supersedes the tag-only, unpublished v0.22.0.) |
 | 25 — v0.29 | ✅ | FTS-only search (drop vectors/`embed_chunks`, mig v19); `find_legacy_flows`; group_db symbol lookup; Tier-B noise; Express/Hono in default endpoints; demote Explorer to docs plugin + drop `agent_scratch*`; audit IMPROVE (propose/orphan/git_diff/JSDoc); plugin Skill+agent polyrepo/legacy-safety. **627** default tests |
 | 26 — v0.30 | ✅ | Explorer MCP playground (`call_tool` / Try it); product-only orphan KPIs; typed Explorer `parameters` + Cursor schema honesty (`SchemaCompat` + `param_descriptions`); OpenSpec self-tree strict-valid; harness test-credit for verified Specs; AGPL-3.0-only. **639** default tests |
+
+## Contributing
+
+Read [`CONTRIBUTING.md`](CONTRIBUTING.md) first. The short version: a green
+test suite is necessary but not sufficient — every change ships with
+before/after evidence from a real repository, and *deleting* a tool that the
+evidence cannot justify is a first-class contribution.
