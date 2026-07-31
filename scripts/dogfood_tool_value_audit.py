@@ -75,6 +75,10 @@ def _signal(payload: dict[str, Any]) -> dict[str, Any]:
         "valid",
         "issue_count",
         "warning_count",
+        "skipped_covered_count",
+        "test_files_count",
+        "test_function_symbols",
+        "dry_run",
     ):
         if k in payload:
             sig[k] = payload[k]
@@ -174,17 +178,73 @@ async def _seed(client: Client, workspace: str) -> dict[str, Any]:
     specs = (_data(ls).get("specs") or [])
     if specs:
         seed["spec_id"] = specs[0].get("spec_id") or specs[0].get("id")
+        # Prefer a Spec that already has scenarios (link_scenario_symbol)
+        for sp in specs:
+            sid = sp.get("spec_id") or sp.get("id")
+            if not sid:
+                continue
+            try:
+                impl = _data(
+                    await client.call_tool(
+                        "get_spec_implementation",
+                        {"workspace": workspace, "spec_id": sid},
+                    )
+                )
+            except Exception:  # noqa: BLE001
+                continue
+            scens = impl.get("scenarios") or []
+            if scens and scens[0].get("name"):
+                seed["spec_id"] = sid
+                seed["scenario_name"] = scens[0]["name"]
+                break
+        if not seed.get("scenario_name") and seed.get("spec_id"):
+            try:
+                impl = _data(
+                    await client.call_tool(
+                        "get_spec_implementation",
+                        {"workspace": workspace, "spec_id": seed["spec_id"]},
+                    )
+                )
+                scens = impl.get("scenarios") or []
+                if scens and scens[0].get("name"):
+                    seed["scenario_name"] = scens[0]["name"]
+            except Exception:  # noqa: BLE001
+                pass
     lsc = await client.call_tool("list_spec_changes", {"workspace": workspace})
     changes = (_data(lsc).get("changes") or _data(lsc).get("spec_changes") or [])
-    if changes:
-        seed["change_name"] = changes[0].get("name") or changes[0].get("id")
+    proposed = [c for c in changes if (c.get("status") or "") != "archived"]
+    if proposed:
+        seed["change_name"] = proposed[0].get("name") or proposed[0].get("id")
+    else:
+        # Temporary OpenSpec change so get/apply/archive are exercised
+        change_name = "audit-tool-probe"
+        root = Path(workspace) / "openspec" / "changes" / change_name
+        cap = "audit"
+        (root / "specs" / cap).mkdir(parents=True, exist_ok=True)
+        (root / "proposal.md").write_text(
+            "# Audit tool probe\n\nTemporary dogfood change.\n", encoding="utf-8"
+        )
+        (root / "specs" / cap / "spec.md").write_text(
+            "## ADDED Requirements\n\n"
+            "### Requirement: Audit probe only\n"
+            "Temporary.\n\n"
+            "#### Scenario: Audit probe scenario\n"
+            "- **WHEN** audit runs\n"
+            "- **THEN** change tools are exercised\n",
+            encoding="utf-8",
+        )
+        seed["change_name"] = change_name
+        seed["change_dir"] = str(root)
+        await client.call_tool("sync_openspec", {"workspace": workspace})
     return seed
+
 
 def _cases(seed: dict[str, Any], *, mode: str) -> list[tuple[str, dict[str, Any]]]:
     ws = seed["workspace"]
     qname = seed.get("qname") or "does.not.exist"
     spec_id = seed.get("spec_id") or "SPEC-MISSING"
     change = seed.get("change_name")
+    scenario = seed.get("scenario_name")
 
     cases: list[tuple[str, dict[str, Any]]] = [
         ("get_project_overview", {"workspace": ws, "include_structural_patterns": False}),
@@ -212,7 +272,14 @@ def _cases(seed: dict[str, Any], *, mode: str) -> list[tuple[str, dict[str, Any]
         ),
         ("audit_coverage", {"workspace": ws, "limit": LIMIT, "summary_only": True}),
         ("git_diff_impact", {"workspace": ws, "summary_only": True}),
-        ("grep_in_indexed_files", {"workspace": ws, "pattern": "route_ref", "limit": 10}),
+        (
+            "grep_in_indexed_files",
+            {
+                "workspace": ws,
+                "pattern": seed.get("find_symbol_query") or qname.rsplit(".", 1)[-1],
+                "limit": 10,
+            },
+        ),
         ("search", {"workspace": ws, "query": "search", "limit": 10}),
         ("list_specs", {"workspace": ws, "limit": LIMIT, "summary_only": True}),
         ("get_spec_implementation", {"workspace": ws, "spec_id": spec_id}),
@@ -303,6 +370,35 @@ def _cases(seed: dict[str, Any], *, mode: str) -> list[tuple[str, dict[str, Any]
         cases.append(("get_spec_change", {"workspace": ws, "name": change}))
         cases.append(
             ("apply_spec_change", {"workspace": ws, "name": change, "dry_run": True})
+        )
+        cases.append(("archive_spec_change", {"workspace": ws, "name": change}))
+
+    if scenario and seed.get("spec_id"):
+        cases.append(
+            (
+                "link_scenario_symbol",
+                {
+                    "workspace": ws,
+                    "spec_id": seed["spec_id"],
+                    "scenario_name": scenario,
+                    "symbol_qname": qname,
+                    "relation": "implements",
+                    "confidence": 0.5,
+                    "source": "manual",
+                },
+            )
+        )
+        cases.append(
+            (
+                "link_scenario_symbol",
+                {
+                    "workspace": ws,
+                    "spec_id": seed["spec_id"],
+                    "scenario_name": scenario,
+                    "symbol_qname": qname,
+                    "unlink": True,
+                },
+            )
         )
 
     # Spec graph / link probes after create (caller sequences them)
@@ -406,7 +502,7 @@ def _cases(seed: dict[str, Any], *, mode: str) -> list[tuple[str, dict[str, Any]
             ("import_specs_from_markdown", {"workspace": ws, "path": "openspec"}),
         )
 
-    # archive_spec_change intentionally omitted (destructive)
+    # archive_spec_change is probed (dry lifecycle) when a change seed exists
     return cases
 
 
@@ -418,10 +514,17 @@ async def _run_mode(client: Client, workspace: str, mode: str) -> dict[str, Any]
         # Deduplicate tool name tracking but allow multiple arg variants
         row = await _call(client, name, args)
         row["variant"] = ",".join(f"{k}={args[k]!r}" for k in args if k not in ("workspace",) and k in (
-            "framework", "project", "target_type", "summary_only", "dry_run", "force"
+            "framework", "project", "target_type", "summary_only", "dry_run", "force", "unlink"
         ))
         results.append(row)
         seen_tools.add(name)
+
+    # Cleanup temp change dir if we created one
+    change_dir = seed.get("change_dir")
+    if change_dir:
+        import shutil
+
+        shutil.rmtree(change_dir, ignore_errors=True)
 
     # Tools registered but never called in this mode
     all_tools = {t.name for t in await client.list_tools()}
@@ -434,6 +537,7 @@ async def _run_mode(client: Client, workspace: str, mode: str) -> dict[str, Any]
             "spec_id": seed.get("spec_id"),
             "change_name": seed.get("change_name"),
             "find_symbol_query": seed.get("find_symbol_query"),
+            "scenario_name": seed.get("scenario_name"),
         },
         "results": results,
         "tools_touched": sorted(seen_tools),

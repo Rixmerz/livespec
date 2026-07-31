@@ -2,10 +2,12 @@
 name: livespec
 description: >-
   Operate the livespec MCP server on any codebase: index, orient, trace the call
-  graph, run impact/blast-radius analysis, and maintain bidirectional Spec<->code
-  traceability (FRs, ADRs, NFRs). Use whenever the user asks "what calls this?",
-  "what breaks if I change X?", "what code implements SPEC-NNN?", "what Specs touch
-  this file?", or mentions livespec, the Spec Explorer, or code-intelligence indexing.
+  graph, run impact/blast-radius analysis, find likely-unused HTTP flows across a
+  polyrepo group_db, and maintain bidirectional Spec<->code traceability (FRs,
+  ADRs, NFRs). Use whenever the user asks "what calls this?", "what breaks if I
+  change X?", "what code implements SPEC-NNN?", "what Specs touch this file?",
+  "which flows/routes look unused?", or mentions livespec, the Spec Explorer,
+  Flow Explorer, or code-intelligence indexing.
 ---
 
 # Livespec — code intelligence & Spec traceability
@@ -27,6 +29,38 @@ env var and **no** cwd fallback; omitting it returns a shaped `mcp_error`.
 - Switch repos by changing `workspace=` only.
 
 State lives at `<repo>/.mcp-docs/docs.db` — safe to delete to reset; never commit secrets there.
+
+## Polyrepo / `group_db` (cross-repo HTTP)
+
+Several sibling repos can share one SQLite via `.livespec.toml`:
+
+```toml
+[workspace]
+group_db = "../.livespec-group/flow-group.db"
+```
+
+Call tools from **any** member workspace (usually the hub/composer). Then:
+
+| Intent | Tool |
+|--------|------|
+| Client → server hops | `who_does_this_call` → `invokes_endpoints` |
+| Server → client hops | `who_calls` → `route_callers` |
+| Symbol in another repo | `find_symbol` / `get_symbol_source` / `quick_orient` (group-wide lookup) |
+| Likely-unused HTTP flows | `find_legacy_flows(summary_only=True)` — then full list |
+| Flow UI bundle | `export_flow_explorer` (docs plugin) |
+
+**`find_legacy_flows` traps (critical):**
+
+- Evidence is the **static graph**, not production traffic. Payload
+  `confidence` is usually `low`. **Never tell the user to delete code** from
+  this tool alone — say "candidate; confirm with APM/logs".
+- `legacy_server` = indexed server route with no client hop in this DB.
+- `orphan_client` = client call with no matching server in this DB — often a
+  **missing SA/repo** outside the group, not dead code.
+- Infra paths (`/health`, `/metrics`, `/api-docs`, `/ui`, …) are filtered by
+  default (`include_infra=False`).
+- Spring endpoints: call with `workspace=<java-repo>` (or use the
+  `group_java_projects` hint). Hub TS workspaces return Spring `count: 0`.
 
 ## Cold open — every new session / after big pulls
 
@@ -55,9 +89,9 @@ it is not a background watcher you should lean on while editing.
 | PR / diff scope | `git_diff_impact(base_ref, head_ref)` — git repos only |
 | Keyword search over chunks | `search(query, scope)` — FTS5 over AST-aware symbol + Spec chunks |
 | Literal string search over indexed files | `grep_in_indexed_files(pattern)` — check `scope_fresh`, see the staleness trap below |
-| Dead-code candidates | `find_dead_code()` — respects entry points / `pub` / frameworks |
-| Likely-unused HTTP flows | `find_legacy_flows()` — servers with no client hop + orphan clients (`group_db`) |
-| Orphan tests | `find_orphan_tests()` |
+| Dead-code candidates | `find_dead_code()` — respects entry points / `pub` / frameworks; TS-only auto-enables `include_non_python` |
+| Likely-unused HTTP flows | `find_legacy_flows()` — see polyrepo section; graph ≠ traffic |
+| Orphan tests | `find_orphan_tests()` — check `test_files_count` / `test_function_symbols` + `hint` (Jest anonymous `test()` → honest zero) |
 | HTTP/CLI entry points | `find_endpoints(framework=None)` — see the Hono trap below; prefer `summary_only=True` if JSON is huge |
 | Project snapshot | `get_project_overview()` — test-file symbols are excluded from `top_symbols` |
 | Static Spec Explorer bundle | `export_explorer(base?, head?, framework?)` — docs plugin; unlock with `LIVESPEC_PLUGINS=docs` or `index_project(explorer=True)` |
@@ -119,7 +153,7 @@ fixed cost it doesn't otherwise need.
 | What Specs exist? | `list_specs(status?, module?, kind?, has_implementation?)` |
 | What implements SPEC-NNN? | `get_spec_implementation(spec_id)` — one round-trip |
 | Coverage gaps / orphans | `audit_coverage(summary_only=True)` |
-| Brownfield Spec proposals | `propose_specs_from_codebase()` — heuristic; **user approves before create** |
+| Brownfield Spec proposals | `propose_specs_from_codebase()` — skips groups with **any** Spec link by default (`skipped_covered_count`); **user approves before create** |
 | Batch link (configs, SQL, no-annotation langs) | `bulk_link_spec_symbols(mappings)` |
 | Import specs from markdown | `import_specs_from_markdown(path, fmt?)` — `fmt` is `"livespec"` \| `"openspec"`, auto-detected |
 | Which `@word:` comments the matcher ignores | `scan_annotation_verbs()` |
@@ -173,14 +207,16 @@ cached a short tool list) or set the override.
 
 ### Docs — `livespec-docs` plugin
 
-`generate_docs`, `list_docs`, `export_documentation` — human-facing Markdown docs.
+`generate_docs`, `list_docs`, `export_documentation`, `export_explorer`,
+`export_flow_explorer` — human-facing Markdown + static Explorer bundles.
+Unlock with Spec/docs rows, on-disk explorer bundle, or `LIVESPEC_PLUGINS=docs|all`.
 
 ## Pagination contract
 
 Aggregators (`find_dead_code`, `audit_coverage`, `find_orphan_tests`, `find_endpoints`,
-`git_diff_impact`) accept `limit` (default 200) + `cursor` + `summary_only=False`. Counts
-are always exact regardless of pagination. If a payload comes back with `payload_warning`,
-switch to `summary_only=True` and paginate.
+`find_legacy_flows`, `git_diff_impact`) accept `limit` (default 200) + `cursor` +
+`summary_only=False`. Counts are always exact regardless of pagination. If a
+payload comes back with `payload_warning`, switch to `summary_only=True` and paginate.
 
 ## `@spec:` annotations (keeping links live)
 
@@ -195,8 +231,11 @@ For the full annotation grammar and examples, fetch the MCP prompt `agent_playbo
 1. **Orient** — `get_project_overview`; index if the DB is stale/missing.
 2. **Locate** — `find_symbol` → `quick_orient`.
 3. **Assess** — `analyze_impact` / `who_calls` before touching anything risky.
-4. **Specs** (if adopted) — `list_specs`, `get_spec_implementation`, `audit_coverage(summary_only=True)`.
-5. **After edits** — `git_diff_impact(summary_only=True)`; re-`index_project` to refresh.
+4. **Cross-repo flows** (if `group_db`) — `find_legacy_flows(summary_only=True)`;
+   classify orphan clients as missing-SA vs candidate-dead before recommending work.
+5. **Specs** (if adopted) — `list_specs`, `get_spec_implementation`, `audit_coverage(summary_only=True)`.
+6. **After edits** — `git_diff_impact(summary_only=True)`; re-`index_project` if
+   `hint` says unindexed/non-code paths or results look empty.
 
 ## Do not
 
@@ -211,5 +250,9 @@ For the full annotation grammar and examples, fetch the MCP prompt `agent_playbo
   OpenSpec markdown is the preferred authoring SSoT; native headers are legacy import.
 - Do not mix OpenSpec `### Requirement:` and native `## SPEC-NNN:` catalogs in the
   same repo (duplicate ids / noisy validate).
-- Do not read `find_endpoints()` returning 0 as "no routes" on a Hono repo — pass
-  `framework="hono"`.
+- Do not treat `find_legacy_flows` / `find_dead_code` as proof code is unused in
+  production — graph evidence only; confirm with traffic before delete.
+- Do not treat `orphan_client` as dead code when the SA/repo is simply outside
+  the indexed `group_db`.
+- Do not call `embed_chunks` / `agent_scratch*` — removed (FTS5-only search;
+  scratch dropped from the surface).

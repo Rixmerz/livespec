@@ -6,6 +6,32 @@ follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.29.0] - 2026-07-31
+
+### Improved — plugin Skill + subagent (polyrepo / legacy safety)
+
+`plugin/skills/livespec/SKILL.md` and `plugin/agents/livespec.md`: document
+`group_db` cross-repo tools, `find_legacy_flows` traps (graph ≠ traffic;
+orphan_client often = missing SA), honest Jest orphan zeros, docs-plugin
+Explorer tools, and agent rules that forbid delete recommendations without
+APM caveats.
+
+### Improved — tool-value audit follow-ups (propose / orphan / git_diff / JSDoc)
+
+- **`propose_specs_from_codebase`**: `skip_already_covered` now skips a module
+  group when **any** symbol is already Spec-linked (was ≥50%). Payload adds
+  ``skipped_covered_count``. Cuts duplicate proposals on brownfield hubs that
+  already have Specs but sparse links.
+- **`find_orphan_tests`**: always reports ``test_files_count`` /
+  ``test_function_symbols``; when Jest/vitest leave only anonymous ``test()``
+  callbacks (no function symbols), ``count: 0`` carries an honest ``hint``.
+- **`git_diff_impact`**: when the diff is only unindexed/non-code paths and
+  ``changed_symbols=0``, returns a ``hint`` (run ``index_project`` / expect no
+  symbols from ``.dockerignore`` etc.).
+- **`scan_docstrings_for_spec_hints`**: no longer soft-skips TS/JS-only repos —
+  JSDoc already lives on ``symbol.docstring``. Dogfood grep seed uses the
+  ``find_symbol`` query (was hardcoded ``route_ref``).
+
 ### Improved — `find_dead_code` auto-enables non-Python on TS/JS-only repos
 
 When the workspace has zero indexed Python files, ``include_non_python``
@@ -39,11 +65,11 @@ Also exclude docs/UI operator paths: ``/api-docs``, ``/v3/api-docs``,
 ``count: 0`` + ``not_swept: ["express"]`` trap). Explicit
 ``framework='express'|'hono'`` still filters.
 
-### Changed — `scan_docstrings_for_spec_hints` soft-skips non-Python
+### Changed — `scan_docstrings_for_spec_hints` uses JSDoc too
 
-When the workspace has zero indexed Python files, returns
-``skipped=True`` + empty hints (TS/JS repos should use
-``propose_specs_from_codebase`` / OpenSpec import).
+~~Earlier Unreleased note soft-skipped non-Python.~~ Superseded: the tool
+now scans all languages; JSDoc on TS/JS symbols is included (see audit
+follow-ups above).
 
 ### Removed — `agent_scratch*` + demoted Explorer from always-visible core
 
@@ -176,14 +202,6 @@ MCP try-it block and trend “Verified Specs” meta). The SyntaxError aborted t
 whole script so only the header painted. Regenerated explorers need a hard
 refresh. Regression: `node --check` on the inlined viewer JS in
 `test_export_explorer_writes_both_files`.
-
-### Changed — plugin MCP ships `[embeddings]` by default
-
-`plugin/.mcp.json` now runs
-`uvx --from 'livespec[embeddings]==0.28.1' livespec` instead of bare
-`uvx livespec@0.28.1`, so marketplace/plugin installs get `fastembed` +
-`sqlite-vec` and `embed_chunks` works without a separate `uv tool install`.
-Docs note ~1.6 GB first-run model download and HuggingFace connectivity.
 
 ## [0.28.1] - 2026-07-28
 

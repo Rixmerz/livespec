@@ -100,6 +100,27 @@ def _write_ts_repo(workspace):
 
 
 @pytest.mark.asyncio
+async def test_find_orphan_tests_jest_anonymous_honest_zero(workspace):
+    """Jest-style anonymous `test()` leaves only module symbols — count=0
+    must carry diagnostics so agents don't read it as 'no test files'."""
+    (workspace / "src").mkdir()
+    (workspace / "src" / "math.ts").write_text(
+        "export function add(a: number, b: number) { return a + b; }\n"
+    )
+    (workspace / "src" / "math.test.ts").write_text(
+        "import { add } from './math';\n"
+        'test("adds", () => { expect(add(1, 2)).toBe(3); });\n'
+    )
+    async with Client(mcp) as c:
+        await c.call_tool("index_project", {})
+        out = (await c.call_tool("find_orphan_tests", {"summary_only": True})).data
+    assert out["count"] == 0
+    assert out["test_files_count"] >= 1
+    assert out["test_function_symbols"] == 0
+    assert "Jest" in (out.get("hint") or "") or "anonymous" in (out.get("hint") or "")
+
+
+@pytest.mark.asyncio
 async def test_find_orphan_tests_sees_typescript_tests(workspace):
     """`find_orphan_tests` must not report a flat zero on a TS repo.
 

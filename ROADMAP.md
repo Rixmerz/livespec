@@ -19,12 +19,13 @@
 
 ## 0. Estado v0.20 (addendum, reemplaza al "Estado v0.7" del final)
 
-**Addendum Unreleased — dense vectors removed.** `search` stays on the
+**Addendum v0.29.0 — dense vectors removed.** `search` stays on the
 **core** surface as **FTS5-only**. Dropped: `embed_chunks`, `[embeddings]`
 extra (fastembed + sqlite-vec), RRF hybrid lane, mig **v19**. Earlier
 curation notes that parked `search` in a RAG plugin "auto-on with
 embeddings" are obsolete — keyword search is enough for agentic use;
-vector cost/ROI on large SPAs was the failure mode.
+vector cost/ROI on large SPAs was the failure mode. Also in 0.29:
+`find_legacy_flows`, group_db symbol lookup, Skill/agent polyrepo rules.
 
 v0.20 cerró con: (a) el hard-cut RF→Spec + taxonomía `kind`, y (b) una
 auditoría exhaustiva de 8 dimensiones cuyos ~50 hallazgos se corrigieron en

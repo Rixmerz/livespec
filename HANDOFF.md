@@ -37,16 +37,19 @@ Todo el stack es local-first: 0 servicios externos, 0 API keys obligatorias, 0 D
 
 ## 3. Estado actual
 
-**HEAD Unreleased on `main`:** `565718f`. Tests **625**. Checklist flow-group PASS.
-- Checklist validación flow-group **PASS** (STATUS.txt + CHECKLIST_VALIDATION.json).
-- **P0 FIX:** symbol lookup group-wide — Composer→HotelSvc `who_calls.route_callers=2`.
-- **IMPROVE:** legacy infra filter; Express/Hono default endpoints;
-  `find_dead_code` auto `include_non_python` en TS-only; Spring hint bajo group_db.
-- **DEMOTE:** `scan_docstrings` soft-skip sin Python.
-- Dropped **`agent_scratch*`**; Explorer → plugin docs (5 tools).
-- Vectors out (FTS5-only, mig v19); `find_legacy_flows`; Tier-B; route fixes.
-- Surface: **27** core + **12** Spec + **5** docs = **44**. Tests **625**.
-- Pendiente humano: **reconnect MCP** en Cursor. Deferred: propose_specs noise.
+**Release `v0.29.0` on `main`.** Tests **627**. PyPI `livespec==0.29.0`
+(Trusted Publishing via tag). Plugin pin `livespec@0.29.0`.
+
+Highlights: FTS-only (vectors out, mig v19); `find_legacy_flows`; group_db
+symbol lookup; Tier-B noise; Express/Hono default endpoints; audit IMPROVE
+follow-ups (propose skip-any-link, orphan Jest hint, git_diff hint, JSDoc);
+plugin Skill/agent polyrepo + legacy-safety rules. Surface **27** core +
+**12** Spec + **5** docs = **44**.
+
+### v0.28.1 resumen (referencia)
+
+**HEAD was `e02c424` / `565718f` Unreleased.** Checklist flow-group PASS.
+P0 group lookup; legacy infra filter; dead_code auto non-python; Spring hint.
 
 ### v0.23+ / OpenSpec resumen (referencia)
 

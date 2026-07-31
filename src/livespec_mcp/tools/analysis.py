@@ -4075,6 +4075,16 @@ def register(mcp: FastMCP) -> None:
         is_test_path = _is_test_file_path
         ws = st.settings.workspace
 
+        # Count test files even when Jest/vitest only leave `kind=module`
+        # (anonymous `test("…", () => {})` callbacks are not function symbols).
+        all_file_paths = [
+            r["path"]
+            for r in st.conn.execute(
+                "SELECT path FROM file WHERE project_id=?", (pid,)
+            )
+        ]
+        test_files_count = sum(1 for p in all_file_paths if is_test_path(p))
+
         test_rows = st.conn.execute(
             """SELECT s.id, s.qualified_name, s.kind, f.path AS file_path
                FROM symbol s JOIN file f ON f.id=s.file_id
@@ -4140,7 +4150,16 @@ def register(mcp: FastMCP) -> None:
             "caveat": _ORPHAN_CAVEAT,
             "harness_skipped_count": harness_skipped,
             "fixture_skipped_count": fixture_skipped,
+            "test_files_count": test_files_count,
+            "test_function_symbols": len(test_syms),
         }
+        if test_files_count > 0 and not test_syms:
+            payload["hint"] = (
+                "Indexed test files exist but no function/method symbols "
+                "inside them (common with Jest/vitest anonymous "
+                "`test()`/`it()` callbacks). count=0 is extractor coverage, "
+                "not proof the suite has no orphans."
+            )
         if summary_only:
             return payload
         page = orphans[cursor : cursor + limit]
@@ -4303,6 +4322,7 @@ def register(mcp: FastMCP) -> None:
             "affected_specs": len(affected_specs),
             "suggested_tests": len(suggested_tests),
         }
+        unindexed_paths = sorted(set(changed_paths) - indexed_paths)
         base: dict[str, Any] = {
             "base_ref": base_ref,
             "head_ref": head_ref,
@@ -4310,6 +4330,13 @@ def register(mcp: FastMCP) -> None:
             "suggested_tests": suggested_tests,
             "counts": counts,
         }
+        if unindexed_paths and not changed_symbol_meta:
+            base["hint"] = (
+                "Diff touches files with no indexed symbols "
+                f"({len(unindexed_paths)} unindexed). Non-code paths "
+                "(.dockerignore, *.properties, markdown, …) never yield "
+                "symbols. For source files: run `index_project` then retry."
+            )
         if summary_only:
             # v0.16 fix: honor summary_only for real — the full path lists
             # (changed_files / _indexed / _unindexed) were previously
@@ -4319,13 +4346,11 @@ def register(mcp: FastMCP) -> None:
             _SAMPLE = 20
             base["changed_files_sample"] = changed_paths[:_SAMPLE]
             base["changed_files_indexed_sample"] = sorted(indexed_paths)[:_SAMPLE]
-            base["changed_files_unindexed_sample"] = sorted(
-                set(changed_paths) - indexed_paths
-            )[:_SAMPLE]
+            base["changed_files_unindexed_sample"] = unindexed_paths[:_SAMPLE]
             return base
         base["changed_files"] = changed_paths
         base["changed_files_indexed"] = sorted(indexed_paths)
-        base["changed_files_unindexed"] = sorted(set(changed_paths) - indexed_paths)
+        base["changed_files_unindexed"] = unindexed_paths
         page = impacted_meta[impacted_cursor : impacted_cursor + impacted_limit]
         next_cursor = (
             impacted_cursor + impacted_limit

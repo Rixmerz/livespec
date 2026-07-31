@@ -115,18 +115,17 @@ async def test_propose_requirements_spec_ids_unique_and_continuous(workspace):
 
 @pytest.mark.asyncio
 async def test_propose_skips_already_covered(workspace):
-    """A module that's already >50% covered shouldn't appear by default."""
+    """A module with any Spec↔symbol link shouldn't appear by default."""
     _make_layered_repo(workspace)
     async with Client(mcp) as c:
         await c.call_tool("index_project", {})
         await c.call_tool("create_spec", {"spec_id": "Spec-AUTH", "title": "Auth"})
-        # Cover 2/3 auth symbols (>50%)
+        # Cover 1/3 auth symbols — any link is enough to skip
         await c.call_tool(
             "bulk_link_spec_symbols",
             {
                 "mappings": [
                     {"spec_id": "Spec-AUTH", "symbol_qname": "pkg.auth.login.login"},
-                    {"spec_id": "Spec-AUTH", "symbol_qname": "pkg.auth.login.verify"},
                 ]
             },
         )
@@ -138,8 +137,8 @@ async def test_propose_skips_already_covered(workspace):
             )
         ).data
         keys = {p["module_key"] for p in out["proposals"]}
-        # auth was 2/3 covered -> skipped
-        assert "pkg.auth" not in keys, f"covered auth must be skipped: {keys}"
+        assert "pkg.auth" not in keys, f"linked auth must be skipped: {keys}"
+        assert out.get("skipped_covered_count", 0) >= 1
 
         # With skip_already_covered=False, auth resurfaces
         out2 = (

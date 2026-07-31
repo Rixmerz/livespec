@@ -160,3 +160,31 @@ async def test_git_diff_impact_summary_only_no_full_lists(workspace):
         assert "changed_symbols" not in out
         assert "changed_files_sample" in out
         assert "counts" in out
+
+
+@pytest.mark.asyncio
+async def test_git_diff_impact_hints_when_only_unindexed_paths(workspace):
+    """Non-code dirty files → changed_symbols=0 must explain why."""
+    (workspace / "pkg").mkdir()
+    (workspace / "pkg" / "__init__.py").write_text("")
+    (workspace / "pkg" / "a.py").write_text("def f():\n    return 1\n")
+    _git(workspace, "init", "-q")
+    _git(workspace, "config", "user.email", "t@t.local")
+    _git(workspace, "config", "user.name", "t")
+    _git(workspace, "add", "-A")
+    _git(workspace, "commit", "-q", "-m", "base")
+    (workspace / ".dockerignore").write_text("node_modules\n")
+    _git(workspace, "add", "-A")
+    _git(workspace, "commit", "-q", "-m", "docker")
+
+    async with Client(mcp) as c:
+        await c.call_tool("index_project", {})
+        out = (
+            await c.call_tool(
+                "git_diff_impact",
+                {"base_ref": "HEAD~1", "head_ref": "HEAD", "summary_only": True},
+            )
+        ).data
+    assert out["counts"]["changed_symbols"] == 0
+    assert out["changed_files_unindexed_sample"]
+    assert "unindexed" in (out.get("hint") or "").lower()

@@ -690,17 +690,20 @@ def register(
         Filters:
         - Generic module names (src, lib, core, common, utils, ...) are not
           used as Spec titles — fall back to the previous segment.
-        - Already-Spec-covered groups: skipped by default. Pass
-          `skip_already_covered=False` to also propose specs for partially
-          covered modules (useful when adding sub-feature specs alongside an
-          existing feature spec).
+        - Already-Spec-covered groups: skipped by default when **any** symbol
+          in the group is already linked (brownfield repos with Specs were
+          proposing duplicate modules for sparsely-linked groups under the
+          old ≥50% rule). Pass `skip_already_covered=False` to also propose
+          for partially covered modules (sub-feature Specs alongside an
+          existing feature Spec).
         - Infrastructure / dunders / decorated handlers: excluded from
           symbol counts (same heuristic as find_dead_code).
 
         Output is sorted by group score descending. Pair with
         bulk_link_spec_symbols + create_spec to land accepted
         proposals in two calls per spec: create the spec, then bulk-link its
-        symbols.
+        symbols. Payload includes ``skipped_covered_count`` when the skip
+        filter drops groups.
         """
         st = get_state(workspace)
         pid = st.project_id
@@ -756,6 +759,7 @@ def register(
 
         # Build proposals
         proposals: list[dict[str, Any]] = []
+        skipped_covered_count = 0
         from livespec_mcp.domain.md_specs import _ospec_spec_id
 
         existing_ids = {
@@ -770,10 +774,11 @@ def register(
             if len(syms) < min_symbols_per_group:
                 continue
 
-            # Skip groups that are already mostly covered
+            # Skip groups that already have any Spec↔symbol link
             if skip_already_covered:
                 covered = sum(1 for sid, _, _ in syms if sid in linked_sids)
-                if covered >= len(syms) * 0.5:
+                if covered > 0:
+                    skipped_covered_count += 1
                     continue
 
             # Sort by pagerank desc and pick top
@@ -856,6 +861,8 @@ def register(
             "proposals": proposals,
             "total_modules_examined": len(groups),
             "module_depth": module_depth,
+            "skipped_covered_count": skipped_covered_count,
+            "skip_already_covered": skip_already_covered,
         }
 
     @mutation_tool(annotations={"readOnlyHint": True, "idempotentHint": True})
@@ -865,7 +872,7 @@ def register(
         summary_only: bool = False,
         workspace: Workspace | None = None,
     ) -> dict[str, Any]:
-        """Surface Spec candidates from existing docstrings — brownfield helper.
+        """Surface Spec candidates from existing docstrings / JSDoc — brownfield helper.
 
         Walks every symbol that has a docstring AND is not already linked
         to any Spec. For each one, extracts:
@@ -874,12 +881,10 @@ def register(
             "Manages...", etc.)
           - the symbol metadata
 
-        Useful when adopting livespec on an existing **Python** project:
-        instead of guessing at specs from scratch, the agent reads a few
-        hundred of these hints and proposes specs grouped by leading verb /
-        module. On TypeScript/JavaScript-only workspaces this tool soft-skips
-        (empty ``hints``, ``skipped=True``) — prefer
-        ``propose_specs_from_codebase`` or OpenSpec import.
+        Works on Python docstrings and JS/TS JSDoc already stored on
+        ``symbol.docstring`` by the extractors. Pure ``@spec:`` /
+        ``@param`` annotation lines are skipped. Prefer
+        ``propose_specs_from_codebase`` when there are no prose docstrings.
 
         Returns also a `verb_histogram` so the agent can see which actions
         dominate the codebase ("47 'Validates...', 31 'Handles...'") —
@@ -890,24 +895,6 @@ def register(
         """
         st = get_state(workspace)
         pid = st.project_id
-
-        py_files = st.conn.execute(
-            """SELECT COUNT(*) AS c FROM file
-               WHERE project_id=? AND language='python'""",
-            (pid,),
-        ).fetchone()["c"]
-        if int(py_files) == 0:
-            return {
-                "hints": [],
-                "count": 0,
-                "verb_histogram_top": [],
-                "skipped": True,
-                "reason": "no Python files indexed — docstring Spec hints are Python-biased",
-                "hint": (
-                    "Use propose_specs_from_codebase or import_specs_from_markdown "
-                    "/ sync_openspec on TS/JS repos"
-                ),
-            }
 
         rows = st.conn.execute(
             """SELECT s.id, s.qualified_name, s.kind, s.docstring,
@@ -963,24 +950,26 @@ def register(
             verb_histogram.items(), key=lambda kv: kv[1], reverse=True
         )[:25]
 
-        if summary_only:
-            return {
-                "count": len(hints),
-                "verb_histogram_top": [
-                    {"word": w, "n": n} for w, n in top_verbs
-                ],
-            }
-
-        page = hints[cursor : cursor + limit]
-        next_cursor = cursor + limit if cursor + limit < len(hints) else None
-        return {
+        out: dict[str, Any] = {
             "count": len(hints),
             "verb_histogram_top": [
                 {"word": w, "n": n} for w, n in top_verbs
             ],
-            "hints": page,
-            "next_cursor": next_cursor,
         }
+        if not hints and rows:
+            out["hint"] = (
+                "Indexed symbols have docstrings/JSDoc but none yielded "
+                "actionable prose (often pure @spec:/@param lines, or already "
+                "Spec-linked). Prefer propose_specs_from_codebase / OpenSpec."
+            )
+        if summary_only:
+            return out
+
+        page = hints[cursor : cursor + limit]
+        next_cursor = cursor + limit if cursor + limit < len(hints) else None
+        out["hints"] = page
+        out["next_cursor"] = next_cursor
+        return out
 
     @mutation_tool(annotations={"readOnlyHint": False, "idempotentHint": True})
     def scan_spec_annotations(workspace: Workspace | None = None) -> dict[str, Any]:
