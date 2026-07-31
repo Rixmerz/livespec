@@ -6,7 +6,7 @@ Status: **complete** (2026-07-31 docs + dogfood pass).
 
 - [x] README: public **beta** banner (local-first, FTS-only, graph ≠ traffic)
 - [x] No “Unreleased” labels for features already in **0.30.0** (HANDOFF §3 / ROADMAP / deck)
-- [x] Package story = `livespec` / `uvx livespec@0.30.0` (livespec-mcp = alias)
+- [x] Package story = `livespec` / `uvx livespec@0.30.1` (livespec-mcp = alias)
 
 ## Tool surface truth
 

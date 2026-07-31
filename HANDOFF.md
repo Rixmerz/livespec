@@ -16,7 +16,7 @@
   mencionarlo)
 - **Demo project:** `<demo-repo>` (4 archivos Python con `@rf:` annotations en docstrings, ya tiene RFs persistidas en su `.mcp-docs/docs.db`)
 - **MCP server:** Claude Code plugin `livespec@livespec` **0.30.0**
-  (`uvx livespec@0.30.0`) and/or Cursor `user-livespec` pointing at a local
+  (`uvx livespec@0.30.1`) and/or Cursor `user-livespec` pointing at a local
   checkout. **Every tool requires `workspace=/abs/repo`** — there is no
   `LIVESPEC_WORKSPACE` env fallback (removed).
 - **Git user:** Juan Pablo Díaz S.
@@ -43,8 +43,8 @@ Todo el stack es local-first: 0 servicios externos, 0 API keys obligatorias, 0 D
 
 ## 3. Estado actual
 
-**Release `v0.30.0` on `main`.** Tests **639**. PyPI `livespec==0.30.0`
-(Trusted Publishing via tag). Plugin pin `livespec@0.30.0`.
+**Release `v0.30.0` on `main`.** Tests **639**. PyPI `livespec==0.30.1`
+(Trusted Publishing via tag). Plugin pin `livespec@0.30.1`.
 
 Highlights: Spec Explorer MCP playground (Try it / `call_tool`); product-only
 orphan KPIs (`modules_non_product` vs `modules_truly_orphan`); typed Explorer
@@ -53,7 +53,7 @@ OpenSpec self-tree strict-valid; harness test-credit for verified Specs;
 AGPL-3.0-only. Surface **27** core + **12** Spec + **5** docs = **44**.
 
 **Public beta** (not 1.0): README + `docs/BETA_DOGFOOD.md` /
-`docs/BETA_CHECKLIST.md`. Pin `uvx livespec@0.30.0`.
+`docs/BETA_CHECKLIST.md`. Pin `uvx livespec@0.30.1`.
 
 **OpenSpec self-dogfood:** `validate_openspec(strict=True)` green; SPEC-013
 linked; Explorer **13/13 verified**; product orphans **0**.

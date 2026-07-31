@@ -6,6 +6,19 @@ follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.30.1] - 2026-07-31
+
+### Changed — no private paths or third-party repo names in the distribution
+
+Dogfood scripts (`scripts/dogfood_tool_value_audit.py`,
+`scripts/validate_mcp.py`) read their workspaces from the environment
+(`LIVESPEC_AUDIT_SOLO_WS`, `LIVESPEC_AUDIT_CROSS_WS`, `LIVESPEC_AUDIT_OUT`,
+`LIVESPEC_VALIDATE_WS2`) and default to this repo, instead of hardcoding
+absolute local paths. Docs, comments and tests describe the codebases used
+for battle-testing generically. No behaviour change in any tool.
+
+Users on `0.30.0` should move to `0.30.1`; the two are functionally identical.
+
 ## [0.30.0] - 2026-07-31
 
 Explorer playground + Cursor schema honesty + dogfood Spec map cleanup.
