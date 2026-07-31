@@ -17,7 +17,7 @@ parameter as ``Type: any`` with no description. ``Workspace`` is now plain
 analysis tools. Runtime still accepts omitted ``workspace`` in tests via the
 existing resolve monkeypatch / middleware.
 
-### Docs — README badges, Spec Explorer screenshot, for/not-for
+### Changed — license MIT → GNU AGPL v3.0 (`AGPL-3.0-only`)
 
 Project is now licensed under the **GNU Affero General Public License v3.0**
 only. Adds `LICENSE` (official AGPLv3 text), updates `pyproject.toml`
