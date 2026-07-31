@@ -14,6 +14,12 @@ classifiers, and documents the network-copyleft obligation in the README.
 Prior PyPI artifacts tagged under MIT remain as published; **new builds**
 from this tree are AGPL-3.0-only.
 
+### Docs — README badges, Spec Explorer screenshot, for/not-for
+
+README hero: PyPI / Python / AGPL / tests badges; real Spec Explorer
+screenshot (`docs/assets/spec-explorer.png`); short “Who this is for /
+not for” table for human adopters.
+
 ### Docs — public beta surface alignment (post-0.29.0)
 
 Honest product posture across README, CLAUDE, HANDOFF, ROADMAP, AGENT_* ,

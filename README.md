@@ -1,5 +1,10 @@
 # livespec
 
+[![PyPI](https://img.shields.io/pypi/v/livespec.svg)](https://pypi.org/project/livespec/)
+[![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/downloads/)
+[![License: AGPL v3](https://img.shields.io/badge/license-AGPL--3.0--only-blue.svg)](LICENSE)
+[![Tests](https://img.shields.io/badge/tests-627%20passed-brightgreen.svg)](https://github.com/Rixmerz/livespec/actions)
+
 > **Public beta (v0.29).** Local-first code intelligence for AI agents.
 > Call graph, impact analysis, and Spec ↔ code traceability. Search is
 > **FTS5-only** (no embeddings). Dead/legacy findings are **graph evidence**,
@@ -15,6 +20,20 @@
 **Code intelligence for AI agents** — call graph, impact analysis, and
 bidirectional **Spec ↔ code** traceability (functional requirements, ADRs,
 NFRs, and other spec kinds). Local-first, zero external services.
+
+<p align="center">
+  <img src="docs/assets/spec-explorer.png" alt="livespec Spec Explorer — Spec list, coverage, and linked symbols" width="920" />
+</p>
+<p align="center"><em>Spec Explorer (docs plugin) on this repo — Specs, coverage, and linked symbols at a glance.</em></p>
+
+### Who this is for / not for
+
+| For | Not for |
+|-----|---------|
+| Agents cold-opening an unfamiliar repo | “Delete all unused code” without APM/logs |
+| Impact analysis before a refactor or PR | Deep semantic search (vectors removed in 0.29) |
+| Spec ↔ code / OpenSpec traceability | Indexing a parent folder of many unrelated repos |
+| Polyrepo HTTP flows via `group_db` | Replacing tests, human review, or runtime debugging |
 
 Ships as a **Claude Code plugin** bundling three things: the **MCP server**
 (the tools), a specialized **subagent**, and a preloaded **Skill** (the
