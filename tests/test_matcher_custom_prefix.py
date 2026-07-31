@@ -126,3 +126,51 @@ async def test_scan_spec_annotations_no_false_positive_when_prefix_absent(worksp
         await c.call_tool("index_project", {})
         out = (await c.call_tool("scan_spec_annotations", {})).data
         assert out["links_created"] == 0
+
+
+@pytest.mark.asyncio
+async def test_scan_reports_ids_no_spec_answers_to(workspace):
+    """A renamed OpenSpec requirement leaves the code pointing at a dead slug.
+
+    The slug an OpenSpec id derives from is the requirement's heading, so a
+    rename silently invalidates every `@spec:` that used the old one — the
+    scanner links nothing and used to say nothing either.
+    """
+    async with Client(mcp) as c:
+        (workspace / "pkg").mkdir()
+        (workspace / "pkg" / "__init__.py").write_text("")
+        (workspace / "pkg" / "code.py").write_text(
+            'def login():\n    """@spec:auth-user-login"""\n    return 1\n'
+            '\n'
+            'def signout():\n    """@spec:auth-user-signout"""\n    return 2\n'
+            '\n'
+            'def helper():\n    """@see the README for details"""\n    return 3\n'
+        )
+        await c.call_tool("index_project", {})
+        await c.call_tool(
+            "create_spec", {"title": "User login", "spec_id": "auth-user-login"}
+        )
+
+        out = (await c.call_tool("scan_spec_annotations", {})).data
+        assert out["links_created"] == 1  # the live one still links
+        assert out["unknown_annotation_ids"] == ["auth-user-signout"], out
+        assert out["unknown_annotation_sample"][0]["qualified_name"].endswith("signout")
+        assert out["hint"]
+
+
+@pytest.mark.asyncio
+async def test_scan_stays_quiet_when_every_annotation_resolves(workspace):
+    """No `unknown_*` keys on a clean repo — the field is a signal, not noise."""
+    async with Client(mcp) as c:
+        (workspace / "pkg").mkdir()
+        (workspace / "pkg" / "__init__.py").write_text("")
+        (workspace / "pkg" / "code.py").write_text(
+            'def login():\n    """@spec:auth-user-login"""\n    return 1\n'
+        )
+        await c.call_tool("index_project", {})
+        await c.call_tool(
+            "create_spec", {"title": "User login", "spec_id": "auth-user-login"}
+        )
+        out = (await c.call_tool("scan_spec_annotations", {})).data
+        assert out["links_created"] == 1
+        assert "unknown_annotation_ids" not in out, out

@@ -43,7 +43,7 @@ Todo el stack es local-first: 0 servicios externos, 0 API keys obligatorias, 0 D
 
 ## 3. Estado actual
 
-**HEAD: backlog del barrido cerrado (puntos 1, 2 y 3). Tests 646.**
+**HEAD: backlog del barrido cerrado (puntos 1, 2 y 3) + anotaciones huérfanas visibles. Tests 648.**
 Sin tag nuevo — todo bajo `[Unreleased]`.
 
 Qué landeó, con evidencia sobre repos reales (antes → después):
@@ -56,6 +56,16 @@ Qué landeó, con evidencia sobre repos reales (antes → después):
   sus edges *son* los del handler. Nuevo campo `handler_resolution`
   (`handler` | `enclosing_scope` | `unresolved`). 13 repos reales:
   **93 endpoints call-style, IDs muertos 14 → 0**, sin cambiar el conteo.
+- **`scan_spec_annotations` nombra los IDs que no existen.** Una requirement
+  OpenSpec no tiene ID propio: se deriva del encabezado, así que renombrarlo
+  cambia el slug y todo `@spec:` que lo usaba deja de matchear. Antes el payload
+  decía `links_created: 0` y nada más. Ahora trae `unknown_annotation_ids`,
+  un `unknown_annotation_sample` capado con símbolo y archivo, y un hint que
+  apunta a `export_openspec` (el marcador `<!-- livespec:id= -->` fija el ID
+  ante renames). Servicio Node real sin marcadores: de `{links_created: 0}` a
+  3 IDs nombrados con su archivo. 14 repos reales en estado normal: **0 falsos
+  positivos**. `scan_annotations` devuelve `ScanResult` en vez de int (solo
+  llamadores internos).
 - **`find_symbol` en grupo dice qué DB respondió y dónde vive el repo.**
   Devolvía `grouped: true` sin `group_db`, y el `file_path` de un match
   cross-repo es relativo al repo dueño, no al workspace pasado. Ahora emite

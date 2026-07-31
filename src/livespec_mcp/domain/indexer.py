@@ -329,7 +329,9 @@ def index_project(
             # (INSERT OR IGNORE), and prevents traceability from going silently
             # stale when an edited symbol's old spec_symbol row is cascaded away.
             from livespec_mcp.domain.matcher import scan_annotations
-            stats.spec_links_created = scan_annotations(conn, project_id=project_id)
+            stats.spec_links_created = scan_annotations(
+                conn, project_id=project_id
+            ).created
 
             # Restore manual spec_symbol links wiped by the symbol cascade. We
             # re-resolve symbol qname → new symbol_id and INSERT OR IGNORE,

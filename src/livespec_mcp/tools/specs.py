@@ -978,12 +978,28 @@ def register(
         Two-level matcher (P1.4):
         - Explicit prefix `@spec:SPEC-001` / `@implements:SPEC-001` -> confidence 1.0
         - Verb-anchored `implements SPEC-001` (with negation guard) -> 0.7
+        - OpenSpec slugs (`@spec:auth-user-login`) when that id is in the store
         Idempotent: skips existing links.
+
+        Ids annotated in code that match no spec come back as
+        `unknown_annotation_ids` (complete) plus a capped
+        `unknown_annotation_sample` — most often an OpenSpec requirement that
+        was renamed, which changes the slug its id derives from and leaves
+        every `@spec:` pointing at it silently dead.
         """
         st = get_state(workspace)
         pid = st.project_id
-        n = scan_annotations(st.conn, pid)
-        return {"links_created": n}
+        res = scan_annotations(st.conn, pid)
+        out: dict[str, Any] = {"links_created": res.created}
+        if res.unknown_ids:
+            out["unknown_annotation_ids"] = res.unknown_ids
+            out["unknown_annotation_sample"] = res.unknown_sample
+            out["hint"] = (
+                "these ids are annotated in code but no spec answers to them — "
+                "run list_specs to see the current ids, or export_openspec to "
+                "write a <!-- livespec:id= --> marker so renames stop breaking links"
+            )
+        return out
 
     @agentic_tool(annotations={"readOnlyHint": True, "idempotentHint": True})
     def scan_annotation_verbs(

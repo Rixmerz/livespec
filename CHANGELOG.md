@@ -6,6 +6,27 @@ follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Improved — `scan_spec_annotations` names the ids nothing answers to
+
+An OpenSpec requirement has no id of its own: livespec derives one from the
+`### Requirement:` heading (`_ospec_spec_id`). Rename the heading and the slug
+changes, so every `@spec:` in the code that used the old one matches nothing —
+`parse_annotations` produced no hit, `scan_annotations` had nothing to skip, and
+the payload said `links_created: 0` with no indication that three annotations
+had just gone dead. Same silence for a typo'd or deleted `SPEC-NNN`.
+
+The payload now carries `unknown_annotation_ids` (complete), a capped
+`unknown_annotation_sample` with the symbol and file for each, and a hint
+pointing at `export_openspec`, whose `<!-- livespec:id= -->` marker pins the id
+across renames. Only the first token of an `@verb:` payload is considered, and
+only when it is id-shaped, so `@see the README` nominates nothing. Measured on a
+real Node service whose OpenSpec tree had no markers: payload went from
+`{links_created: 0}` to three named ids with their files. Across 14 real repos
+in their normal state: **0 false positives**.
+
+`scan_annotations` now returns a `ScanResult` instead of an int — internal
+callers only (`index_project` reads `.created`).
+
 ### Fixed — call-style route ids are navigable
 
 An Express/Hono route registered with an inline arrow

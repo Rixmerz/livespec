@@ -21,6 +21,11 @@ import sqlite3
 from collections.abc import Iterable
 from dataclasses import dataclass
 from functools import lru_cache
+from typing import Any
+
+# Bounded so a repo that renamed a whole capability doesn't return one entry
+# per annotated symbol. `unknown_ids` stays complete — only the sample is cut.
+_UNKNOWN_SAMPLE_MAX = 20
 
 # Level 1: line starts with @spec | @implements | @tests | @see  -OR-
 #          @not_spec | @!spec  (negation: cancels any hit on the listed specs)
@@ -303,13 +308,71 @@ def parse_annotations(
     return hits
 
 
-def scan_annotations(conn: sqlite3.Connection, project_id: int) -> int:
+# An `@verb:` payload whose first token looks like an id but resolved to
+# nothing. Requires a digit or an inner hyphen so `@see the README` doesn't
+# nominate "the" as a missing spec.
+_ID_SHAPED_RE = re.compile(r"^[A-Za-z][A-Za-z0-9._-]{1,79}$")
+
+
+def find_unknown_annotation_ids(
+    text: str,
+    prefixes: Iterable[str] = ("SPEC",),
+    *,
+    known_ids: Iterable[str] | None = None,
+) -> list[str]:
+    """Ids annotated in ``text`` that no spec in the store answers to.
+
+    A renamed OpenSpec requirement changes the slug its id derives from, and
+    the stale `@spec:` in the code then matches nothing at all — no hit, no
+    link, no complaint. Same for a typo'd or deleted `SPEC-NNN`. This reports
+    those so the silence is visible; it never links anything.
+    """
+    if not text:
+        return []
+    prefixes_key = tuple(sorted({p.upper() for p in prefixes})) or ("SPEC",)
+    token_re = make_spec_token_re(prefixes_key)
+    known = frozenset(known_ids or ())
+    known_fold = {k.casefold() for k in known}
+    out: list[str] = []
+    for m in _PREFIX_HEAD_RE.finditer(text):
+        if m.group("verb").lower() in ("not_spec", "!spec"):
+            continue
+        payload = _CONF_SUFFIX_RE.sub("", m.group("rest"))
+        # The id lives in the first slot; the rest of the line is prose.
+        first = next((t for t in re.split(r"[,;\s]+", payload) if t), "").strip("`")
+        if not first or not _ID_SHAPED_RE.match(first):
+            continue
+        if not ("-" in first[1:] or any(c.isdigit() for c in first)):
+            continue
+        if first.casefold() in known_fold:
+            continue
+        if token_re.fullmatch(first):
+            # PREFIX-NNN shape: normalized before it is looked up in the store.
+            canon = _normalize_spec(first, token_re)
+            if canon.casefold() in known_fold:
+                continue
+            first = canon
+        if first not in out:
+            out.append(first)
+    return out
+
+
+@dataclass
+class ScanResult:
+    created: int
+    unknown_ids: list[str]
+    unknown_sample: list[dict[str, Any]]
+
+
+def scan_annotations(conn: sqlite3.Connection, project_id: int) -> ScanResult:
     """Walk every symbol's docstring; create spec_symbol links from Spec annotations.
 
-    Returns count of links created (skipping duplicates).
+    Returns the number of links created (duplicates skipped) plus the ids that
+    were annotated in code but match no spec in the store — see
+    ``find_unknown_annotation_ids``.
     """
     rows = conn.execute(
-        """SELECT s.id, s.docstring
+        """SELECT s.id, s.docstring, s.qualified_name, f.path AS file_path
            FROM symbol s JOIN file f ON f.id = s.file_id
            WHERE f.project_id = ? AND s.docstring IS NOT NULL""",
         (project_id,),
@@ -325,10 +388,20 @@ def scan_annotations(conn: sqlite3.Connection, project_id: int) -> int:
     known_ids = tuple(spec_map.keys())
 
     created = 0
+    unknown: list[str] = []
+    sample: list[dict[str, Any]] = []
     for r in rows:
-        for hit in parse_annotations(
-            r["docstring"] or "", prefixes, known_ids=known_ids
-        ):
+        doc = r["docstring"] or ""
+        for missing in find_unknown_annotation_ids(doc, prefixes, known_ids=known_ids):
+            if missing not in unknown:
+                unknown.append(missing)
+            if len(sample) < _UNKNOWN_SAMPLE_MAX:
+                sample.append({
+                    "spec_id": missing,
+                    "qualified_name": r["qualified_name"],
+                    "file_path": r["file_path"],
+                })
+        for hit in parse_annotations(doc, prefixes, known_ids=known_ids):
             spec_pk = spec_map.get(hit.spec_id)
             if spec_pk is None:
                 continue
@@ -342,4 +415,4 @@ def scan_annotations(conn: sqlite3.Connection, project_id: int) -> int:
                     created += 1
             except sqlite3.IntegrityError:
                 pass
-    return created
+    return ScanResult(created=created, unknown_ids=unknown, unknown_sample=sample)
