@@ -44,8 +44,8 @@ PARAM_DESCRIPTIONS: dict[str, str] = {
         "``.mcp-docs/explorer/`` after indexing."
     ),
     "include_infrastructure": (
-        "Include infrastructure / generated / migration-style symbols that are "
-        "normally filtered out."
+        "Include infrastructure / generated / migration-style *symbols* that are "
+        "normally filtered out. For HTTP routes see ``include_infra_routes``."
     ),
     "include_structural_patterns": (
         "Include structural/boilerplate symbol names normally filtered from overview."
@@ -61,9 +61,9 @@ PARAM_DESCRIPTIONS: dict[str, str] = {
     "include_ts_framework_routes": (
         "Treat TS/JS framework route handlers as entry points when sweeping dead code."
     ),
-    "include_infra": (
-        "Include infra/docs/UI routes (``/health``, ``/metrics``, swagger, …) "
-        "that are filtered by default."
+    "include_infra_routes": (
+        "Include infra/docs/UI *routes* (``/health``, ``/metrics``, swagger, …) "
+        "that are filtered by default. For symbols see ``include_infrastructure``."
     ),
     "include_orphan_clients": (
         "Include client ``route_ref`` rows with no matching server hop "

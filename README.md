@@ -448,7 +448,7 @@ Always registered (including markdown Spec import + OpenSpec sync).
 - `find_dead_code(include_infrastructure=False)` — symbols with zero
   callers and zero Spec links. Skips entry-point paths, framework
   decorators, `__main__` guards, list-stored callbacks.
-- `find_legacy_flows(project?, include_infra=False)` — likely-unused HTTP
+- `find_legacy_flows(project?, include_infra_routes=False)` — likely-unused HTTP
   flows (`route_ref` + `invokes_route`, best with `group_db`): servers with
   no indexed client hop + clients with no matched server. Graph only —
   confirm with traffic before deleting.

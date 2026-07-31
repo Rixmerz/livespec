@@ -111,7 +111,7 @@ async def test_find_legacy_flows_summary_and_infra(tmp_path: Path):
         with_infra = (
             await c.call_tool(
                 "find_legacy_flows",
-                {"workspace": str(back), "include_infra": True},
+                {"workspace": str(back), "include_infra_routes": True},
             )
         ).data
     assert summary["legacy_server_count"] >= 1
@@ -166,7 +166,7 @@ async def test_find_legacy_flows_filters_api_docs(tmp_path: Path):
         out = (
             await c.call_tool(
                 "find_legacy_flows",
-                {"workspace": str(back), "include_infra": False},
+                {"workspace": str(back), "include_infra_routes": False},
             )
         ).data
         paths = {f.get("path") for f in out.get("flows") or []}

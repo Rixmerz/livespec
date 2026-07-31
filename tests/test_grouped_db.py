@@ -122,12 +122,13 @@ async def test_find_symbol_says_which_db_and_where_the_repo_lives(tmp_path):
         foreign = next(m for m in out["matches"] if m["qualified_name"].endswith(".caller"))
         assert foreign["project_root"] == str(front)
 
-        # An ungrouped workspace keeps the leaner payload.
+        # Ungrouped answers the same question instead of staying silent: an
+        # absent `grouped` couldn't be told apart from a group-blind tool.
         solo_out = (
             await c.call_tool("find_symbol", {"workspace": str(solo), "query": "handler"})
         ).data
-        assert "group_db" not in solo_out
-        assert "grouped" not in solo_out
+        assert solo_out["grouped"] is False
+        assert solo_out["group_db"] is None
         assert all("project_root" not in m for m in solo_out["matches"])
 
 
@@ -149,3 +150,32 @@ def test_config_parses_group_db(tmp_path):
     (tmp_path / ".livespec.toml").write_text('[workspace]\ngroup_db = "../shared.db"\n')
     cfg = load_repo_config(tmp_path)
     assert cfg.group_db == "../shared.db"
+
+
+@pytest.mark.asyncio
+async def test_group_aware_tools_answer_the_group_question_the_same_way(tmp_path):
+    """One convention: both keys, always, from every tool that knows groups.
+
+    Some tools emitted the pair only when a group existed, so an absent
+    `grouped` couldn't be told apart from a tool that ignores groups.
+    """
+    shared = tmp_path / "grp" / "shared.db"
+    back = _make_repo(tmp_path / "back", "back", "handler", group_db=shared)
+    solo = _make_repo(tmp_path / "solo", "solo", "handler", group_db=None)
+
+    async with Client(mcp) as c:
+        for repo in (back, solo):
+            await c.call_tool("index_project", {"workspace": str(repo)})
+
+        for tool, args in (
+            ("find_symbol", {"query": "handler"}),
+            ("find_legacy_flows", {}),
+            ("get_project_overview", {}),
+        ):
+            grouped = (await c.call_tool(tool, {"workspace": str(back), **args})).data
+            assert grouped["grouped"] is True, (tool, grouped)
+            assert grouped["group_db"] == str(shared), (tool, grouped)
+
+            alone = (await c.call_tool(tool, {"workspace": str(solo), **args})).data
+            assert alone["grouped"] is False, (tool, alone)
+            assert alone["group_db"] is None, (tool, alone)

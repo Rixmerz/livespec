@@ -43,7 +43,7 @@ Todo el stack es local-first: 0 servicios externos, 0 API keys obligatorias, 0 D
 
 ## 3. Estado actual
 
-**HEAD: backlog del barrido cerrado (puntos 1, 2 y 3) + anotaciones huérfanas visibles + specs fantasma. Tests 651.**
+**HEAD: backlog del barrido cerrado (puntos 1, 2 y 3) + anotaciones huérfanas visibles + specs fantasma + vocabulario unificado. Tests 654.**
 Sin tag nuevo — todo bajo `[Unreleased]`.
 
 Qué landeó, con evidencia sobre repos reales (antes → después):
@@ -56,6 +56,16 @@ Qué landeó, con evidencia sobre repos reales (antes → después):
   sus edges *son* los del handler. Nuevo campo `handler_resolution`
   (`handler` | `enclosing_scope` | `unresolved`). 13 repos reales:
   **93 endpoints call-style, IDs muertos 14 → 0**, sin cambiar el conteo.
+- **Un solo vocabulario en los payloads.** `count` es el total exacto en todas
+  las tools (`list_specs` decía `total`; ahora devuelve ambos). `find_symbol`
+  cumple el contrato de paginación: aceptaba `limit` sin devolver conteo ni
+  cursor, así que una respuesta truncada parecía completa — en un repo real
+  `limit=5` devolvía 5 de **1812** sin decirlo. `grouped`/`group_db` se
+  reportan siempre juntos y desde toda tool group-aware, incluida
+  `get_project_overview` (en un group_db sus números son solo del proyecto
+  local, y eso antes era mudo). `include_infra` → `include_infra_routes` en
+  `find_legacy_flows`: parecía abreviatura de `include_infrastructure` y
+  significa otra cosa (rutas vs símbolos). Rename duro, sin alias.
 - **Renombrar una requirement OpenSpec ya no deja una spec fantasma.** Como el
   ID se deriva del encabezado, el rename creaba una spec nueva y dejaba la
   vieja con sus links, idéntica a una viva en `list_specs` (servicio real: 10

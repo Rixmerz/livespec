@@ -80,3 +80,62 @@ async def test_find_symbol_path_separator_normalized(workspace):
         assert any("pkg.auth.login" in q for q in qnames), (
             f"auth/login query should reach pkg.auth.login qname: {qnames}"
         )
+
+
+@pytest.mark.asyncio
+async def test_find_symbol_pages_and_counts(workspace):
+    """A `limit` with no count made a truncated answer look complete."""
+    pkg = workspace / "pkg"
+    pkg.mkdir()
+    (pkg / "__init__.py").write_text("")
+    (pkg / "handlers.py").write_text(
+        "".join(f"def handle_{i}():\n    return {i}\n\n" for i in range(7))
+    )
+
+    async with Client(mcp) as c:
+        await c.call_tool("index_project", {})
+
+        first = (await c.call_tool(
+            "find_symbol", {"query": "handle_", "limit": 3}
+        )).data
+        assert first["count"] == 7, first
+        assert len(first["matches"]) == 3
+        assert first["next_cursor"] == 3
+
+        second = (await c.call_tool(
+            "find_symbol", {"query": "handle_", "limit": 3, "cursor": first["next_cursor"]}
+        )).data
+        assert second["count"] == 7
+        assert second["next_cursor"] == 6
+
+        last = (await c.call_tool(
+            "find_symbol", {"query": "handle_", "limit": 3, "cursor": 6}
+        )).data
+        assert last["next_cursor"] is None
+        assert len(last["matches"]) == 1
+
+        seen = {
+            m["qualified_name"]
+            for page in (first, second, last)
+            for m in page["matches"]
+        }
+        assert len(seen) == 7  # the three pages cover the set exactly once
+
+
+@pytest.mark.asyncio
+async def test_paginated_tools_agree_on_the_word_for_a_total(workspace):
+    """`count` means the same thing everywhere — `list_specs` said `total`."""
+    (workspace / "a.py").write_text("def f():\n    return 1\n")
+    async with Client(mcp) as c:
+        await c.call_tool("index_project", {})
+        await c.call_tool("create_spec", {"title": "One rule"})
+
+        specs = (await c.call_tool("list_specs", {})).data
+        assert specs["count"] == specs["total"] == 1
+
+        summary = (await c.call_tool("list_specs", {"summary_only": True})).data
+        assert summary["count"] == summary["total"] == 1
+
+        for tool in ("find_dead_code", "find_endpoints", "find_orphan_tests"):
+            payload = (await c.call_tool(tool, {})).data
+            assert "count" in payload, (tool, sorted(payload))

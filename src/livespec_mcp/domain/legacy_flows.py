@@ -96,7 +96,7 @@ def _list_server_routes(
     conn: sqlite3.Connection,
     *,
     project_name: str | None,
-    include_infra: bool,
+    include_infra_routes: bool,
 ) -> list[dict[str, Any]]:
     sql = """
         SELECT rr.method, rr.path, rr.norm_path, rr.symbol_id,
@@ -120,7 +120,7 @@ def _list_server_routes(
     out: list[dict[str, Any]] = []
     for r in rows:
         path = r["path"] or r["norm_path"] or "/"
-        if not include_infra and is_infra_route_path(path):
+        if not include_infra_routes and is_infra_route_path(path):
             continue
         out.append({
             "kind": "server",
@@ -142,7 +142,7 @@ def _list_client_routes(
     conn: sqlite3.Connection,
     *,
     project_name: str | None,
-    include_infra: bool,
+    include_infra_routes: bool,
 ) -> list[dict[str, Any]]:
     sql = """
         SELECT rr.method, rr.path, rr.norm_path, rr.symbol_id,
@@ -166,7 +166,7 @@ def _list_client_routes(
     out: list[dict[str, Any]] = []
     for r in rows:
         path = r["path"] or r["norm_path"] or "/"
-        if not include_infra and is_infra_route_path(path):
+        if not include_infra_routes and is_infra_route_path(path):
             continue
         out.append({
             "kind": "client",
@@ -188,17 +188,17 @@ def compute_legacy_flows(
     conn: sqlite3.Connection,
     *,
     project: str | None = None,
-    include_infra: bool = False,
+    include_infra_routes: bool = False,
     include_orphan_clients: bool = True,
 ) -> dict[str, Any]:
     """Set-diff server/client ``route_ref`` against live ``invokes_route`` hops."""
     live_servers = live_server_symbol_ids(conn)
     live_clients = live_client_symbol_ids(conn)
     servers = _list_server_routes(
-        conn, project_name=project, include_infra=include_infra
+        conn, project_name=project, include_infra_routes=include_infra_routes
     )
     clients = _list_client_routes(
-        conn, project_name=project, include_infra=include_infra
+        conn, project_name=project, include_infra_routes=include_infra_routes
     )
 
     legacy_servers: list[dict[str, Any]] = []

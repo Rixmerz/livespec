@@ -16,7 +16,7 @@ from typing import Any
 from livespec_mcp.config import Settings
 from livespec_mcp.domain.legacy_flows import is_infra_route_path
 from livespec_mcp.state import AppState
-from livespec_mcp.tools.analysis import compute_endpoints
+from livespec_mcp.tools.analysis import compute_endpoints, group_fields
 
 _HTTP_VERBS = frozenset({"GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"})
 
@@ -412,8 +412,7 @@ def compute_flow_explorer_data(
     return {
         "meta": {
             "kind": "flow",
-            "grouped": bool(st.settings.grouped),
-            "group_db": str(st.settings.db_path) if st.settings.grouped else None,
+            **group_fields(st),
             "caller_workspace": str(st.settings.workspace),
             "generated_at": generated_at,
             "counts": {

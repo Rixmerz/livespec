@@ -2505,6 +2505,10 @@ def compute_project_overview(
     ).fetchone()["c"]
     return {
         "workspace": str(st.settings.workspace),
+        # Every number below counts this workspace only. In a shared group DB
+        # that is a real limit, not a detail: the same call from a sibling repo
+        # answers differently.
+        **group_fields(st),
         "languages": langs,
         "top_symbols": top_syms,
         "structural_patterns_filtered": sorted(structural_names),
@@ -2685,6 +2689,22 @@ def _graph_project_id(sym: dict, home_pid: int) -> int:
     """Project that owns ``sym`` — used to load the correct NetworkX graph."""
     pid = sym.get("project_id")
     return int(pid) if pid is not None else home_pid
+
+
+def group_fields(st: AppState) -> dict[str, Any]:
+    """The `grouped` / `group_db` pair, always both, always present.
+
+    Tools used to disagree: some emitted the pair only when a group existed,
+    so an absent `grouped` could mean "not grouped" or "this tool doesn't know
+    about groups", and one emitted `grouped: true` with no `group_db` at all.
+    Reported together, `group_db: null` says plainly that this workspace has
+    its own database.
+    """
+    grouped = bool(st.settings.grouped)
+    return {
+        "grouped": grouped,
+        "group_db": str(st.settings.db_path) if grouped else None,
+    }
 
 
 def _symbol_source_path(st: AppState, sym: dict) -> Path:
@@ -2913,12 +2933,18 @@ def register(mcp: FastMCP) -> None:
         query: SymbolQuery,
         kind: str | None = None,
         limit: int = 50,
+        cursor: Cursor = 0,
         workspace: Workspace | None = None,
     ) -> dict[str, Any]:
         """Search symbols by name substring or qualified name.
 
         Returns lightweight refs (qualified_name, file, line, signature, kind).
         Use `get_symbol_info` for full details on a single match.
+
+        Paginated like the aggregator tools: ``count`` is the exact number of
+        matches regardless of the page, ``limit`` caps the page, ``cursor``
+        resumes from a prior call's ``next_cursor`` (null when exhausted). A
+        `limit` with no count used to make a truncated answer look complete.
 
         When the workspace uses ``[workspace] group_db``, search spans every
         project in the shared DB (home project ranked first by qname length
@@ -2960,21 +2986,31 @@ def register(mcp: FastMCP) -> None:
         if kind:
             sql.append("AND s.kind = ?")
             args.append(kind)
-        sql.append("ORDER BY length(s.qualified_name) LIMIT ?")
-        args.append(safe_limit)
-        rows = st.conn.execute(" ".join(sql), args).fetchall()
+        body = " ".join(sql)
+        total = int(
+            st.conn.execute(
+                f"SELECT COUNT(*) AS n FROM ({body})", args
+            ).fetchone()["n"]
+        )
+        offset = max(0, int(cursor))
+        rows = st.conn.execute(
+            f"{body} ORDER BY length(s.qualified_name) LIMIT ? OFFSET ?",
+            [*args, safe_limit, offset],
+        ).fetchall()
         matches = [dict(r) for r in rows]
-        out: dict[str, Any] = {"matches": matches}
-        if st.settings.grouped:
-            # `file_path` is relative to the project that owns the symbol, which
-            # in a group is often not the workspace the agent is standing in —
-            # without `project_root` a cross-repo match is unopenable. Same for
-            # `group_db`: `grouped: true` alone doesn't say which DB answered.
-            out["grouped"] = True
-            out["group_db"] = str(st.settings.db_path)
-        else:
+        if not st.settings.grouped:
+            # Outside a group every match is relative to this workspace, so
+            # `project_root` would repeat it on every row. Inside a group it is
+            # what makes a match from another repo openable at all.
             for m in matches:
                 m.pop("project_root", None)
+        next_cursor = offset + safe_limit if offset + safe_limit < total else None
+        out: dict[str, Any] = {
+            "matches": matches,
+            "count": total,
+            "next_cursor": next_cursor,
+            **group_fields(st),
+        }
         if not rows:
             # v0.14: zero matches on the project's own fuzzy-lookup tool is
             # a dead end for an agent — surface typo-distance suggestions
@@ -3999,7 +4035,7 @@ def register(mcp: FastMCP) -> None:
     @mcp.tool(annotations={"readOnlyHint": True, "idempotentHint": True})
     def find_legacy_flows(
         project: str | None = None,
-        include_infra: bool = False,
+        include_infra_routes: bool = False,
         include_orphan_clients: bool = True,
         limit: int = 200,
         cursor: int = 0,
@@ -4018,14 +4054,14 @@ def register(mcp: FastMCP) -> None:
         production traffic — confirm with APM/logs before deleting.
 
         ``project`` filters by project name/basename. Infra paths
-        (``/health``, …) are dropped unless ``include_infra=True``.
+        (``/health``, …) are dropped unless ``include_infra_routes=True``.
         Paginated like other aggregators (`limit`/`cursor`/`summary_only`).
         """ + WORKSPACE_DOCSTRING_NOTE
         st = get_state(workspace)
         raw = compute_legacy_flows(
             st.conn,
             project=project,
-            include_infra=include_infra,
+            include_infra_routes=include_infra_routes,
             include_orphan_clients=include_orphan_clients,
         )
         servers = raw["legacy_servers"]
@@ -4036,8 +4072,7 @@ def register(mcp: FastMCP) -> None:
         ]
         total = len(flows)
         payload: dict[str, Any] = {
-            "grouped": bool(st.settings.grouped),
-            "group_db": str(st.settings.db_path) if st.settings.grouped else None,
+            **group_fields(st),
             "count": total,
             "legacy_server_count": raw["legacy_server_count"],
             "orphan_client_count": raw["orphan_client_count"],

@@ -6,6 +6,29 @@ follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed — one vocabulary across payloads (`count`, `grouped`/`group_db`)
+
+Four surfaces answered the same question in different words, which costs an
+agent a retry each time it guesses wrong:
+
+- **`count` is the exact total everywhere.** `list_specs` called it `total`;
+  six other tools call it `count`. It now returns both — `total` stays for
+  existing callers.
+- **`find_symbol` follows the pagination contract.** It took a `limit` but
+  returned neither a count nor a cursor, so a truncated answer was
+  indistinguishable from a complete one: on a real repo, `limit=5` returned 5
+  of **1812** matches with nothing saying so. Now returns `count` (exact) and
+  `next_cursor`, and accepts `cursor`.
+- **`grouped` / `group_db` are always reported together, by every group-aware
+  tool.** Some emitted the pair only when a group existed, so an absent
+  `grouped` couldn't be told apart from a tool that ignores groups.
+  `get_project_overview` now reports them too — in a shared group DB its
+  numbers cover the home project only, which was silent before.
+- **`include_infra` → `include_infra_routes`** on `find_legacy_flows`. It read
+  as an abbreviation of `include_infrastructure` but means something else:
+  routes (`/health`, swagger) versus symbols (generated, migrations). Hard
+  rename, no alias; both parameter descriptions now point at each other.
+
 ### Fixed — renaming an OpenSpec requirement no longer leaves a ghost spec
 
 An OpenSpec requirement has no id of its own, so livespec derives one from the

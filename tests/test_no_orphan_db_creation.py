@@ -70,7 +70,13 @@ async def test_index_project_then_read_tool_works(tmp_path: Path):
         idx = (await c.call_tool("index_project", {"workspace": str(tmp_path)})).data
         assert idx["symbols_total"] >= 1
         listed = (await c.call_tool("list_specs", {"workspace": str(tmp_path)})).data
-    assert listed == {"specs": [], "total": 0, "next_cursor": None, "truncated": False}
+    assert listed == {
+        "specs": [],
+        "count": 0,
+        "total": 0,
+        "next_cursor": None,
+        "truncated": False,
+    }
     assert (tmp_path / ".mcp-docs" / "docs.db").is_file()
 
 

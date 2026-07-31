@@ -298,7 +298,9 @@ def register(
         ``limit`` (default 100, hard-capped at 200 to bound response size on
         large spec sets — a flat un-paginated dump exceeded MCP's token limit
         on a 185-spec repo) caps the page; ``cursor`` resumes; ``next_cursor``
-        is null when exhausted. ``summary_only=True`` returns just ``total``
+        is null when exhausted. ``count`` is the exact total regardless of the
+        page (``total`` is its long-standing alias, kept for existing callers).
+        ``summary_only=True`` returns just the count
         and the list of ``spec_id``s (no title/description bodies) — use this
         first to size a project before paging bodies.""" + WORKSPACE_DOCSTRING_NOTE
         st = get_state(workspace)
@@ -339,7 +341,9 @@ def register(
                     args,
                 ).fetchall()
             ]
-            return {"total": len(ids), "spec_ids": ids}
+            # `count` is what every other paginated tool calls the exact total;
+            # `total` predates it and stays so existing callers keep working.
+            return {"count": len(ids), "total": len(ids), "spec_ids": ids}
 
         total = int(
             st.conn.execute(
@@ -366,6 +370,7 @@ def register(
         next_cursor = cursor + page_limit if cursor + page_limit < total else None
         return {
             "specs": rows,
+            "count": total,
             "total": total,
             "next_cursor": next_cursor,
             "truncated": next_cursor is not None,
