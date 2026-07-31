@@ -17,6 +17,11 @@ parameter as ``Type: any`` with no description. ``Workspace`` is now plain
 analysis tools. Runtime still accepts omitted ``workspace`` in tests via the
 existing resolve monkeypatch / middleware.
 
+``param_descriptions`` catalog + SchemaCompat fill **every** ``tools/list``
+property with a non-empty ``description`` (44 tools / all plugins), so Cursor
+no longer shows blank Description columns for ``force``, ``limit``, ``spec_id``,
+etc.
+
 ### Changed — license MIT → GNU AGPL v3.0 (`AGPL-3.0-only`)
 
 Project is now licensed under the **GNU Affero General Public License v3.0**

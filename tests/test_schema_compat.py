@@ -1,8 +1,6 @@
-"""SchemaCompat: Cursor-friendly tools/list parameter types."""
+"""SchemaCompat: Cursor-friendly tools/list parameter types + descriptions."""
 
 from __future__ import annotations
-
-import asyncio
 
 import pytest
 from fastmcp import Client
@@ -34,13 +32,27 @@ def test_flatten_unwraps_nested_workspace_anyof() -> None:
         },
         "required": ["qname"],
     }
-    flat = flatten_tool_parameters(raw)
+    flat = flatten_tool_parameters(raw, tool_name="who_calls")
     ws = flat["properties"]["workspace"]
     assert ws.get("type") == "string"
     assert "anyOf" not in ws
     assert ws.get("description", "").startswith("REQUIRED")
     assert "default" not in ws
     assert "workspace" in flat["required"]
+
+
+def test_flatten_fills_missing_param_descriptions() -> None:
+    raw = {
+        "type": "object",
+        "properties": {
+            "force": {"type": "boolean", "default": False},
+            "limit": {"type": "integer", "default": 200},
+        },
+        "required": [],
+    }
+    flat = flatten_tool_parameters(raw, tool_name="index_project")
+    assert "re-extract" in flat["properties"]["force"]["description"].lower()
+    assert "page" in flat["properties"]["limit"]["description"].lower()
 
 
 @pytest.mark.asyncio
@@ -62,3 +74,19 @@ async def test_who_calls_list_schema_has_typed_params_with_descriptions() -> Non
         assert name in props
         assert "description" in props[name], name
         assert props[name].get("type") in {"string", "integer", "boolean", "number"}, props[name]
+
+
+@pytest.mark.asyncio
+async def test_all_listed_tool_params_have_descriptions(monkeypatch) -> None:
+    """Every property on every visible tool carries a non-empty description."""
+    monkeypatch.setenv("LIVESPEC_PLUGINS", "all")
+    async with Client(mcp) as client:
+        tools = await client.list_tools()
+    missing: list[str] = []
+    for tool in tools:
+        props = (tool.inputSchema or {}).get("properties") or {}
+        for name, prop in props.items():
+            desc = prop.get("description") if isinstance(prop, dict) else None
+            if not (isinstance(desc, str) and desc.strip()):
+                missing.append(f"{tool.name}.{name}")
+    assert missing == [], f"params without description: {missing}"

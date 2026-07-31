@@ -1,10 +1,14 @@
-"""Flatten nullable JSON-Schema unions so MCP hosts (esp. Cursor) map types.
+"""Flatten nullable JSON-Schema unions and fill missing parameter descriptions.
 
 Cursor's tool UI often shows ``Type: any`` / empty Description when a property
 uses nested ``anyOf`` (``str | None`` wrapped again as ``Workspace | None``) or
 even a single ``anyOf[T, null]``. Runtime still accepts omitted ``workspace``
 (tests + middleware); the *advertised* schema is a plain ``string`` with
 description so hosts and agents fill it correctly.
+
+Descriptions come from ``Field(description=…)`` on the tool when present;
+otherwise ``param_descriptions.description_for`` fills the gap for every
+known parameter name.
 """
 
 from __future__ import annotations
@@ -14,6 +18,8 @@ from typing import Any
 
 from fastmcp.server.middleware import Middleware
 from fastmcp.tools.base import Tool
+
+from livespec_mcp.param_descriptions import description_for
 
 
 def _unwrap_null_union(prop: dict[str, Any]) -> dict[str, Any]:
@@ -43,8 +49,12 @@ def _unwrap_null_union(prop: dict[str, Any]) -> dict[str, Any]:
     return current
 
 
-def flatten_tool_parameters(schema: dict[str, Any]) -> dict[str, Any]:
-    """Return a copy of an inputSchema with nullable unions flattened."""
+def flatten_tool_parameters(
+    schema: dict[str, Any],
+    *,
+    tool_name: str = "",
+) -> dict[str, Any]:
+    """Return a copy of an inputSchema with nullable unions flattened + descriptions."""
     out = copy.deepcopy(schema)
     props = out.get("properties")
     if not isinstance(props, dict):
@@ -54,6 +64,10 @@ def flatten_tool_parameters(schema: dict[str, Any]) -> dict[str, Any]:
         if not isinstance(prop, dict):
             continue
         flat = _unwrap_null_union(prop)
+        if not (isinstance(flat.get("description"), str) and flat["description"].strip()):
+            catalog = description_for(tool_name, name)
+            if catalog:
+                flat["description"] = catalog
         props[name] = flat
         if name == "workspace" and "workspace" not in required:
             required.append("workspace")
@@ -63,7 +77,7 @@ def flatten_tool_parameters(schema: dict[str, Any]) -> dict[str, Any]:
 
 
 class SchemaCompatMiddleware(Middleware):
-    """Rewrite ``tools/list`` parameter schemas for Cursor-friendly types."""
+    """Rewrite ``tools/list`` parameter schemas for Cursor-friendly types + copy."""
 
     async def on_list_tools(self, context, call_next):  # type: ignore[override]
         tools: list[Tool] = list(await call_next(context))
@@ -73,7 +87,7 @@ class SchemaCompatMiddleware(Middleware):
             if not isinstance(params, dict):
                 fixed.append(tool)
                 continue
-            flat = flatten_tool_parameters(params)
+            flat = flatten_tool_parameters(params, tool_name=tool.name)
             if flat == params:
                 fixed.append(tool)
                 continue
