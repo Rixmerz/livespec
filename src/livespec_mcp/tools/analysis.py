@@ -1676,6 +1676,23 @@ def _is_test_file_path(path: str) -> bool:
     )
 
 
+_NON_PRODUCT_TOP_DIRS = frozenset({"scripts", "bench", "fixtures"})
+
+
+def _is_non_product_orphan_path(path: str) -> bool:
+    """Paths that are not Spec-link candidates in a coverage audit.
+
+    Test files, fixtures, and repo tooling (``scripts/``, ``bench/``) inflate
+    ``modules_truly_orphan`` without being actionable "add a Spec" work —
+    exclude them from the orphan KPI (counted separately as non-product).
+    """
+    fp = path.replace("\\", "/").lstrip("/")
+    if _is_test_file_path(fp):
+        return True
+    top = fp.split("/", 1)[0]
+    return top in _NON_PRODUCT_TOP_DIRS
+
+
 def compute_spec_test_coverage(
     st: AppState,
     view: GraphView,
@@ -1881,11 +1898,14 @@ def compute_coverage(st: AppState, *, record: bool = True) -> dict[str, Any]:
         lang = detect_language(_Path(path))
         return lang in ANNOTATION_SUPPORTED_LANGUAGES
 
-    all_no_spec = [
+    all_no_spec_raw = [
         r["path"]
         for r in st.conn.execute(
             """SELECT f.path FROM file f
                WHERE f.project_id=?
+                 AND EXISTS (
+                   SELECT 1 FROM symbol s WHERE s.file_id=f.id
+                 )
                  AND NOT EXISTS (
                    SELECT 1 FROM symbol s
                    JOIN spec_symbol rs ON rs.symbol_id=s.id
@@ -1898,8 +1918,21 @@ def compute_coverage(st: AppState, *, record: bool = True) -> dict[str, Any]:
     ]
     # Split off files whose language has no annotation extractor —
     # these are not "truly orphan", just outside what we can scan.
-    modules_unsupported_language = [p for p in all_no_spec if not _annotation_supported(p)]
-    modules_no_spec = [p for p in all_no_spec if _annotation_supported(p)]
+    modules_unsupported_language = [
+        p for p in all_no_spec_raw if not _annotation_supported(p)
+    ]
+    # Test/fixture/script/bench noise is not a Spec-map gap — count it
+    # separately so Coverage gaps stays actionable for product code.
+    modules_non_product = [
+        p
+        for p in all_no_spec_raw
+        if _annotation_supported(p) and _is_non_product_orphan_path(p)
+    ]
+    modules_no_spec = [
+        p
+        for p in all_no_spec_raw
+        if _annotation_supported(p) and not _is_non_product_orphan_path(p)
+    ]
 
     # Split direct-orphan into implicitly-covered vs truly-orphan via the
     # call graph: a file is implicitly covered if any of its symbols has
@@ -2062,6 +2095,7 @@ def compute_coverage(st: AppState, *, record: bool = True) -> dict[str, Any]:
         "modules_implicitly_covered": len(modules_implicit),
         "modules_truly_orphan": len(modules_truly_orphan),
         "modules_unsupported_language": len(modules_unsupported_language),
+        "modules_non_product": len(modules_non_product),
         "specs_without_implementation": len(specs_no_impl),
         "specs_low_confidence": len(specs_low_conf),
         # Two DIFFERENT mechanisms, not two views of one number. They used to
@@ -2083,6 +2117,7 @@ def compute_coverage(st: AppState, *, record: bool = True) -> dict[str, Any]:
         "modules_implicitly_covered": modules_implicit,
         "modules_truly_orphan": modules_truly_orphan,
         "modules_unsupported_language": modules_unsupported_language,
+        "modules_non_product": modules_non_product,
         "specs_without_implementation": specs_no_impl,
         "specs_low_confidence": specs_low_conf,
         "spec_coverage": spec_coverage,
@@ -2225,6 +2260,7 @@ def compute_diff_spec_impact(
 
     pid = st.project_id
     view = load_graph(st.conn, pid)
+    all_changed = sorted(changed_paths)
 
     # changed file -> set of symbol ids defined in it
     sids_by_file: dict[str, set[int]] = {}
@@ -2242,7 +2278,14 @@ def compute_diff_spec_impact(
         changed_sym_ids |= ids
 
     if not changed_sym_ids:
-        return empty
+        # Still surface every path from git — Explorer lists them even when
+        # none are indexed / Spec-linked.
+        return {
+            "base": base,
+            "head": head,
+            "files_changed": all_changed,
+            "specs_touched": [],
+        }
 
     # For each changed file, the cone of symbols its change touches
     # (the file's own symbols + their backward callers). Used to map a
@@ -2259,7 +2302,12 @@ def compute_diff_spec_impact(
     for cone in cone_by_file.values():
         all_touched |= cone
     if not all_touched:
-        return empty
+        return {
+            "base": base,
+            "head": head,
+            "files_changed": all_changed,
+            "specs_touched": [],
+        }
 
     # Map every touched symbol id -> the Specs that link it.
     sym_to_specs: dict[int, list[str]] = {}
@@ -2279,7 +2327,7 @@ def compute_diff_spec_impact(
         return {
             "base": base,
             "head": head,
-            "files_changed": sorted(sids_by_file.keys()),
+            "files_changed": all_changed,
             "specs_touched": [],
         }
 
@@ -2308,7 +2356,7 @@ def compute_diff_spec_impact(
     return {
         "base": base,
         "head": head,
-        "files_changed": sorted(sids_by_file.keys()),
+        "files_changed": all_changed,
         "specs_touched": specs_touched,
     }
 
@@ -3939,13 +3987,17 @@ def register(mcp: FastMCP) -> None:
         """Spec coverage audit: what's missing / under-confident.
 
         Six signals:
-        - `modules_without_spec`: files whose symbols have no DIRECT `spec_symbol` link
+        - `modules_without_spec`: product files whose symbols have no DIRECT
+          `spec_symbol` link (tests / ``scripts/`` / ``bench/`` excluded —
+          see `modules_non_product`)
         - `modules_implicitly_covered`: subset of `modules_without_spec` whose
           symbols are called transitively by a spec-linked symbol — covered
           indirectly through the call graph (e.g. a data layer reached via
           API handlers that carry the `@spec:` annotation)
         - `modules_truly_orphan`: subset of `modules_without_spec` with NO direct
           link AND no transitive coverage — the actually-actionable list
+        - `modules_non_product`: test/fixture/``scripts``/``bench`` files with
+          no Spec link — counted separately so they do not inflate orphans
         - `modules_unsupported_language`: files in languages whose extractor
           does not yet read in-source `@spec:` annotations (everything outside
           Python / JS / TS / Java today). Listed separately so they aren't reported
@@ -3994,6 +4046,7 @@ def register(mcp: FastMCP) -> None:
         modules_implicit = cov["modules_implicitly_covered"]
         modules_truly_orphan = cov["modules_truly_orphan"]
         modules_unsupported_language = cov["modules_unsupported_language"]
+        modules_non_product = cov["modules_non_product"]
         specs_no_impl = cov["specs_without_implementation"]
         specs_low_conf = cov["specs_low_confidence"]
         spec_test_coverage = cov["spec_test_coverage"]
@@ -4019,6 +4072,7 @@ def register(mcp: FastMCP) -> None:
         mi_p, mi_next = _page(modules_implicit, "modules_implicitly_covered")
         mt_p, mt_next = _page(modules_truly_orphan, "modules_truly_orphan")
         mu_p, mu_next = _page(modules_unsupported_language, "modules_unsupported_language")
+        mn_p, mn_next = _page(modules_non_product, "modules_non_product")
         specn_p, specn_next = _page(specs_no_impl, "specs_without_implementation")
         specl_p, specl_next = _page(specs_low_conf, "specs_low_confidence")
         spectc_p, spectc_next = _page(spec_test_coverage, "spec_test_coverage")
@@ -4029,6 +4083,7 @@ def register(mcp: FastMCP) -> None:
             "modules_implicitly_covered": mi_p,
             "modules_truly_orphan": mt_p,
             "modules_unsupported_language": mu_p,
+            "modules_non_product": mn_p,
             "specs_without_implementation": specn_p,
             "specs_low_confidence": specl_p,
             "spec_test_coverage": spectc_p,
@@ -4040,6 +4095,7 @@ def register(mcp: FastMCP) -> None:
                 "modules_implicitly_covered": mi_next,
                 "modules_truly_orphan": mt_next,
                 "modules_unsupported_language": mu_next,
+                "modules_non_product": mn_next,
                 "specs_without_implementation": specn_next,
                 "specs_low_confidence": specl_next,
                 "spec_test_coverage": spectc_next,

@@ -221,12 +221,37 @@
   },
   {
     "spec_id": "SPEC-005",
+    "qname": "src.livespec_mcp.prompts.register.extract_specs_from_module",
+    "relation": "implements"
+  },
+  {
+    "spec_id": "SPEC-005",
+    "qname": "src.livespec_mcp.resources.register.list_specs",
+    "relation": "implements"
+  },
+  {
+    "spec_id": "SPEC-005",
+    "qname": "src.livespec_mcp.resources.register.spec",
+    "relation": "implements"
+  },
+  {
+    "spec_id": "SPEC-005",
+    "qname": "src.livespec_mcp.tools.plugins.spec.register",
+    "relation": "implements"
+  },
+  {
+    "spec_id": "SPEC-005",
     "qname": "src.livespec_mcp.tools.specs.register.bulk_link_spec_symbols",
     "relation": "implements"
   },
   {
     "spec_id": "SPEC-005",
     "qname": "src.livespec_mcp.tools.specs.register.create_spec",
+    "relation": "implements"
+  },
+  {
+    "spec_id": "SPEC-005",
+    "qname": "src.livespec_mcp.tools.specs.register.delete_spec",
     "relation": "implements"
   },
   {
@@ -241,12 +266,47 @@
   },
   {
     "spec_id": "SPEC-005",
+    "qname": "src.livespec_mcp.tools.specs.register.import_specs_from_markdown",
+    "relation": "implements"
+  },
+  {
+    "spec_id": "SPEC-005",
+    "qname": "src.livespec_mcp.tools.specs.register.link_spec_dependency",
+    "relation": "implements"
+  },
+  {
+    "spec_id": "SPEC-005",
     "qname": "src.livespec_mcp.tools.specs.register.link_spec_symbol",
     "relation": "implements"
   },
   {
     "spec_id": "SPEC-005",
     "qname": "src.livespec_mcp.tools.specs.register.list_specs",
+    "relation": "implements"
+  },
+  {
+    "spec_id": "SPEC-005",
+    "qname": "src.livespec_mcp.tools.specs.register.propose_specs_from_codebase",
+    "relation": "implements"
+  },
+  {
+    "spec_id": "SPEC-005",
+    "qname": "src.livespec_mcp.tools.specs.register.scan_annotation_verbs",
+    "relation": "implements"
+  },
+  {
+    "spec_id": "SPEC-005",
+    "qname": "src.livespec_mcp.tools.specs.register.scan_docstrings_for_spec_hints",
+    "relation": "implements"
+  },
+  {
+    "spec_id": "SPEC-005",
+    "qname": "src.livespec_mcp.tools.specs.register.unlink_spec_dependency",
+    "relation": "implements"
+  },
+  {
+    "spec_id": "SPEC-005",
+    "qname": "src.livespec_mcp.tools.specs.register.update_spec",
     "relation": "implements"
   },
   {
@@ -316,12 +376,27 @@
   },
   {
     "spec_id": "SPEC-007",
+    "qname": "src.livespec_mcp.domain.legacy_flows.compute_legacy_flows",
+    "relation": "implements"
+  },
+  {
+    "spec_id": "SPEC-007",
+    "qname": "src.livespec_mcp.prompts.register.audit_spec_coverage",
+    "relation": "implements"
+  },
+  {
+    "spec_id": "SPEC-007",
     "qname": "src.livespec_mcp.tools.analysis.register.audit_coverage",
     "relation": "implements"
   },
   {
     "spec_id": "SPEC-007",
     "qname": "src.livespec_mcp.tools.analysis.register.find_dead_code",
+    "relation": "implements"
+  },
+  {
+    "spec_id": "SPEC-007",
+    "qname": "src.livespec_mcp.tools.analysis.register.find_legacy_flows",
     "relation": "implements"
   },
   {
@@ -391,12 +466,47 @@
   },
   {
     "spec_id": "SPEC-009",
+    "qname": "src.livespec_mcp.prompts.register.analyze_change_impact",
+    "relation": "implements"
+  },
+  {
+    "spec_id": "SPEC-009",
+    "qname": "src.livespec_mcp.prompts.register.explain_symbol",
+    "relation": "implements"
+  },
+  {
+    "spec_id": "SPEC-009",
     "qname": "src.livespec_mcp.tools.analysis.register.analyze_impact",
     "relation": "implements"
   },
   {
     "spec_id": "SPEC-009",
+    "qname": "src.livespec_mcp.tools.analysis.register.find_symbol",
+    "relation": "implements"
+  },
+  {
+    "spec_id": "SPEC-009",
+    "qname": "src.livespec_mcp.tools.analysis.register.get_project_overview",
+    "relation": "implements"
+  },
+  {
+    "spec_id": "SPEC-009",
+    "qname": "src.livespec_mcp.tools.analysis.register.get_symbol_source",
+    "relation": "implements"
+  },
+  {
+    "spec_id": "SPEC-009",
     "qname": "src.livespec_mcp.tools.analysis.register.git_diff_impact",
+    "relation": "implements"
+  },
+  {
+    "spec_id": "SPEC-009",
+    "qname": "src.livespec_mcp.tools.analysis.register.grep_in_indexed_files",
+    "relation": "implements"
+  },
+  {
+    "spec_id": "SPEC-009",
+    "qname": "src.livespec_mcp.tools.analysis.register.quick_orient",
     "relation": "implements"
   },
   {
@@ -426,7 +536,42 @@
   },
   {
     "spec_id": "SPEC-010",
+    "qname": "src.livespec_mcp.explorer.fastapi.enable_explorer",
+    "relation": "implements"
+  },
+  {
+    "spec_id": "SPEC-010",
+    "qname": "src.livespec_mcp.prompts.register.document_undocumented_symbols",
+    "relation": "implements"
+  },
+  {
+    "spec_id": "SPEC-010",
+    "qname": "src.livespec_mcp.prompts.register.refresh_stale_docs",
+    "relation": "implements"
+  },
+  {
+    "spec_id": "SPEC-010",
+    "qname": "src.livespec_mcp.resources.register.doc_spec",
+    "relation": "implements"
+  },
+  {
+    "spec_id": "SPEC-010",
+    "qname": "src.livespec_mcp.resources.register.doc_symbol",
+    "relation": "implements"
+  },
+  {
+    "spec_id": "SPEC-010",
     "qname": "src.livespec_mcp.tools.docs.register.export_documentation",
+    "relation": "implements"
+  },
+  {
+    "spec_id": "SPEC-010",
+    "qname": "src.livespec_mcp.tools.docs.register.export_explorer",
+    "relation": "implements"
+  },
+  {
+    "spec_id": "SPEC-010",
+    "qname": "src.livespec_mcp.tools.docs.register.export_flow_explorer",
     "relation": "implements"
   },
   {
@@ -437,6 +582,16 @@
   {
     "spec_id": "SPEC-010",
     "qname": "src.livespec_mcp.tools.docs.register.list_docs",
+    "relation": "implements"
+  },
+  {
+    "spec_id": "SPEC-010",
+    "qname": "src.livespec_mcp.tools.flow_explorer._iter_project_endpoints",
+    "relation": "implements"
+  },
+  {
+    "spec_id": "SPEC-010",
+    "qname": "src.livespec_mcp.tools.plugins.docs.register",
     "relation": "implements"
   },
   {
@@ -502,6 +657,81 @@
   {
     "spec_id": "SPEC-012",
     "qname": "src.livespec_mcp.cli.main",
+    "relation": "implements"
+  },
+  {
+    "spec_id": "SPEC-012",
+    "qname": "src.livespec_mcp.error_middleware.WorkspaceErrorMiddleware",
+    "relation": "implements"
+  },
+  {
+    "spec_id": "SPEC-012",
+    "qname": "src.livespec_mcp.instrumentation.AgentLogMiddleware",
+    "relation": "implements"
+  },
+  {
+    "spec_id": "SPEC-012",
+    "qname": "src.livespec_mcp.param_descriptions.description_for",
+    "relation": "implements"
+  },
+  {
+    "spec_id": "SPEC-012",
+    "qname": "src.livespec_mcp.plugin_visibility.PluginVisibilityMiddleware",
+    "relation": "implements"
+  },
+  {
+    "spec_id": "SPEC-012",
+    "qname": "src.livespec_mcp.prompts.register",
+    "relation": "implements"
+  },
+  {
+    "spec_id": "SPEC-012",
+    "qname": "src.livespec_mcp.prompts.register.agent_playbook",
+    "relation": "implements"
+  },
+  {
+    "spec_id": "SPEC-012",
+    "qname": "src.livespec_mcp.prompts.register.onboard_project",
+    "relation": "implements"
+  },
+  {
+    "spec_id": "SPEC-012",
+    "qname": "src.livespec_mcp.resources.register",
+    "relation": "implements"
+  },
+  {
+    "spec_id": "SPEC-012",
+    "qname": "src.livespec_mcp.resources.register.code_symbol",
+    "relation": "implements"
+  },
+  {
+    "spec_id": "SPEC-012",
+    "qname": "src.livespec_mcp.resources.register.file_view",
+    "relation": "implements"
+  },
+  {
+    "spec_id": "SPEC-012",
+    "qname": "src.livespec_mcp.resources.register.index_status",
+    "relation": "implements"
+  },
+  {
+    "spec_id": "SPEC-012",
+    "qname": "src.livespec_mcp.resources.register.project_overview",
+    "relation": "implements"
+  },
+  {
+    "spec_id": "SPEC-012",
+    "qname": "src.livespec_mcp.resources.register.symbol_view",
+    "relation": "implements"
+  },
+  {
+    "spec_id": "SPEC-012",
+    "qname": "src.livespec_mcp.schema_compat.SchemaCompatMiddleware",
+    "relation": "implements"
+  },
+  {
+    "spec_id": "SPEC-012",
+    "qname": "src.livespec_mcp.schema_compat.flatten_tool_parameters",
     "relation": "implements"
   },
   {
@@ -592,6 +822,11 @@
   {
     "spec_id": "SPEC-013",
     "qname": "src.livespec_mcp.domain.openspec_validate.validate_openspec",
+    "relation": "implements"
+  },
+  {
+    "spec_id": "SPEC-013",
+    "qname": "src.livespec_mcp.prompts.register.openspec_workflow",
     "relation": "implements"
   },
   {

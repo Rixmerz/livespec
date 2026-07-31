@@ -32,7 +32,8 @@ data.json schema:
                       "edges": [{"from", "to", "kind"}]},
       "endpoints": [{"kind": str, "framework"|null, "handler",
                      "signature"|null, "path"|null, "method"|null,
-                     "spec_ids": [str]}],
+                     "spec_ids": [str],
+                     "parameters": [{"name", "type", "description"}]}],
       "fixtures": [{"kind": "fixture", ...same shape as an endpoint...}],
       "coverage": {"orphan_modules": [str], "orphan_endpoints": [str],
                    "totals": {...}},
@@ -78,6 +79,8 @@ unchanged project produce byte-identical ``data.json`` except for it.
 
 from __future__ import annotations
 
+import asyncio
+import concurrent.futures
 import json
 import subprocess
 from pathlib import Path
@@ -85,6 +88,8 @@ from typing import Any
 
 from livespec_mcp.config import load_repo_config
 from livespec_mcp.explorer.autowire import autowire_fastapi_explorer
+from livespec_mcp.param_descriptions import description_for
+from livespec_mcp.schema_compat import flatten_tool_parameters
 from livespec_mcp.state import AppState
 from livespec_mcp.storage.trends import read_trend
 from livespec_mcp.tools.analysis import (
@@ -94,6 +99,108 @@ from livespec_mcp.tools.analysis import (
 )
 
 _COVERAGE_THRESHOLD = 0.7
+
+# tool_name -> [{name, type, description}] from live MCP inputSchemas
+_MCP_TOOL_PARAMS: dict[str, list[dict[str, str]]] | None = None
+
+
+def _params_from_flat_schema(
+    tool_name: str, schema: dict[str, Any]
+) -> list[dict[str, str]]:
+    flat = flatten_tool_parameters(schema, tool_name=tool_name)
+    out: list[dict[str, str]] = []
+    for name, prop in (flat.get("properties") or {}).items():
+        if not isinstance(prop, dict):
+            continue
+        typ = prop.get("type")
+        if not isinstance(typ, str) or not typ:
+            typ = "any"
+        desc = prop.get("description")
+        out.append(
+            {
+                "name": name,
+                "type": typ,
+                "description": desc.strip() if isinstance(desc, str) else "",
+            }
+        )
+    return out
+
+
+def _params_from_signature(
+    signature: str | None, *, tool_name: str = ""
+) -> list[dict[str, str]]:
+    """Fallback when no MCP schema: names from AST signature + catalog copy."""
+    if not signature:
+        return []
+    open_i = signature.find("(")
+    close_i = signature.rfind(")")
+    if open_i < 0 or close_i <= open_i:
+        return []
+    inner = signature[open_i + 1 : close_i].strip()
+    if not inner:
+        return []
+    out: list[dict[str, str]] = []
+    for part in inner.split(","):
+        part = part.strip()
+        if not part or part in {"*", "/"}:
+            continue
+        part = part.lstrip("*")
+        name = part.split("=")[0].split(":")[0].strip()
+        if not name or name in {"self", "cls"}:
+            continue
+        ann = "any"
+        if ":" in part.split("=")[0]:
+            ann = part.split("=")[0].split(":", 1)[1].strip() or "any"
+        out.append(
+            {
+                "name": name,
+                "type": ann,
+                "description": description_for(tool_name, name) or "",
+            }
+        )
+    return out
+
+
+async def _collect_mcp_tool_params() -> dict[str, list[dict[str, str]]]:
+    from livespec_mcp.server import mcp
+
+    tools = await mcp._list_tools()
+    return {
+        t.name: _params_from_flat_schema(t.name, t.parameters or {})
+        for t in tools
+        if getattr(t, "name", None)
+    }
+
+
+def _mcp_tool_params_by_name() -> dict[str, list[dict[str, str]]]:
+    """Cache MCP tool parameter schemas (typed + described) for Explorer."""
+    global _MCP_TOOL_PARAMS
+    if _MCP_TOOL_PARAMS is not None:
+        return _MCP_TOOL_PARAMS
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        _MCP_TOOL_PARAMS = asyncio.run(_collect_mcp_tool_params())
+    else:
+        # export_explorer runs inside an MCP Client async test — nest via thread.
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+            _MCP_TOOL_PARAMS = pool.submit(
+                lambda: asyncio.run(_collect_mcp_tool_params())
+            ).result()
+    return _MCP_TOOL_PARAMS
+
+
+def _endpoint_parameters(
+    *,
+    kind: str,
+    handler: str,
+    signature: str | None,
+    mcp_params: dict[str, list[dict[str, str]]],
+) -> list[dict[str, str]]:
+    tool_name = handler.rsplit(".", 1)[-1] if handler else ""
+    if kind == "tool" and tool_name in mcp_params:
+        return list(mcp_params[tool_name])
+    return _params_from_signature(signature, tool_name=tool_name)
 
 
 def _resolve_diff_range(
@@ -410,17 +517,27 @@ def compute_explorer_data(
                 (pid, qn),
             ).fetchone()
             sig_by_qname[qn] = row["signature"] if row else None
+    mcp_params = _mcp_tool_params_by_name()
     for ep in raw_endpoints:
         handler = ep.get("qualified_name") or ""
         kind = _kind_of_endpoint(ep)
+        signature = sig_by_qname.get(handler)
         entry = {
             "kind": kind,
             "framework": _framework_of_endpoint(ep),
             "handler": handler,
-            "signature": sig_by_qname.get(handler),
+            "signature": signature,
             "path": ep.get("hono_path") or ep.get("http_path"),
             "method": ep.get("hono_method") or ep.get("http_method"),
             "spec_ids": list(qname_to_specids.get(handler, [])),
+            # MCP tools: real JSON Schema types + descriptions (not AST
+            # names-only signatures, which the viewer used to show as `any` / —).
+            "parameters": _endpoint_parameters(
+                kind=kind,
+                handler=handler,
+                signature=signature,
+                mcp_params=mcp_params,
+            ),
         }
         # pytest fixtures are test infrastructure, not API surface — they
         # are kept in a separate, clearly-labelled collection so the
@@ -438,6 +555,7 @@ def compute_explorer_data(
     coverage_section = {
         "orphan_modules": list(cov["modules_truly_orphan"]),
         "orphan_endpoints": orphan_endpoints,
+        "non_product_modules": list(cov["modules_non_product"]),
         "totals": dict(cov["counts"]),
     }
 
@@ -755,11 +873,12 @@ _HTML_TEMPLATE = """<!DOCTYPE html>
   }
   .brand { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
   .brand .mark {
-    width: 30px; height: 30px; border-radius: 9px; flex: none;
+    width: 28px; height: 28px; border-radius: 8px; flex: none;
     display: grid; place-items: center;
     background: linear-gradient(150deg, var(--accent), color-mix(in srgb, var(--accent) 55%, #2a8bd6));
-    color: var(--accent-fg); box-shadow: var(--shadow-sm);
-    font-weight: 700; font-size: 14px; letter-spacing: .5px;
+    color: #fff; box-shadow: var(--shadow-sm);
+    font-weight: 800; font-size: 11px; letter-spacing: -.02em;
+    line-height: 1;
   }
   .brand h1 {
     font-size: 16px; font-weight: 650; margin: 0; letter-spacing: -.01em;
@@ -1082,7 +1201,9 @@ _HTML_TEMPLATE = """<!DOCTYPE html>
     width: 64px; height: 6px; border-radius: 4px; overflow: hidden;
     background: color-mix(in srgb, var(--muted) 24%, transparent);
   }
-  .cov .fill { height: 100%; border-radius: 4px; background: var(--accent); }
+  .cov .fill {
+    display: block; height: 100%; border-radius: 4px; background: var(--accent);
+  }
   .cov.high .fill { background: var(--ok); }
   .cov.mid  .fill { background: var(--warn); }
   .cov.low  .fill { background: var(--danger); }
@@ -1334,6 +1455,46 @@ _HTML_TEMPLATE = """<!DOCTYPE html>
     display: flex; align-items: flex-start; gap: 10px; flex-wrap: wrap;
   }
   .op-try pre.call-shape { flex: 1; min-width: 200px; margin: 0; }
+  .pg-try { display: flex; flex-direction: column; gap: 10px; width: 100%; }
+  .pg-note { font-size: 11.5px; color: var(--muted); margin: 0; line-height: 1.45; max-width: 72ch; }
+  .pg-form {
+    display: flex; flex-direction: column; gap: 8px;
+    background: var(--surface); border: 1px solid var(--line-soft);
+    border-radius: var(--radius-sm); padding: 12px 14px;
+  }
+  .pg-row {
+    display: grid; grid-template-columns: minmax(100px, 28%) 1fr;
+    gap: 10px; align-items: center;
+  }
+  .pg-row label {
+    font-family: var(--mono); font-size: 12px; font-weight: 650; color: var(--fg-soft);
+  }
+  .pg-row .pg-meta { font-size: 10.5px; color: var(--muted); font-weight: 500; display: block; }
+  .pg-row input[type="text"],
+  .pg-row input[type="number"],
+  .pg-row select {
+    width: 100%; font-family: var(--mono); font-size: 12px;
+    padding: 7px 10px; border-radius: 7px;
+    border: 1px solid var(--line); background: var(--surface-2); color: var(--fg);
+  }
+  .pg-row input[type="checkbox"] { width: auto; justify-self: start; }
+  .pg-row.pg-workspace input { opacity: .75; }
+  .pg-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  button.pg-exec {
+    appearance: none; cursor: pointer; font: inherit;
+    font-size: 12px; font-weight: 650; padding: 6px 14px; border-radius: 7px;
+    background: var(--accent); color: var(--accent-fg); border: 0;
+  }
+  button.pg-exec:hover { opacity: .92; }
+  button.pg-exec:disabled { opacity: .55; cursor: wait; }
+  .pg-response {
+    font-family: var(--mono); font-size: 11px; color: var(--fg-soft);
+    margin: 0; padding: 9px 11px; white-space: pre-wrap; word-break: break-word;
+    background: var(--surface); border: 1px solid var(--line-soft); border-radius: var(--radius-sm);
+    max-height: 320px; overflow: auto;
+  }
+  .pg-response.ok { border-color: color-mix(in srgb, var(--ok) 35%, transparent); }
+  .pg-response.err { border-color: color-mix(in srgb, var(--danger) 35%, transparent); }
   .http-try {
     display: flex; flex-direction: column; gap: 8px; width: 100%;
   }
@@ -1457,6 +1618,46 @@ _HTML_TEMPLATE = """<!DOCTYPE html>
     background: var(--accent-weak); color: var(--accent-ink); border: 1px solid var(--accent-line);
   }
   .chg-range .sep { color: var(--muted); margin: 0 4px; }
+  .chg-files {
+    margin: 0 0 16px;
+    border: 1px solid var(--line-soft);
+    border-radius: var(--radius-sm);
+    background: var(--surface-2);
+    padding: 0;
+  }
+  .chg-files > summary {
+    cursor: pointer; list-style: none;
+    display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+    padding: 10px 14px; font-size: 12.5px; font-weight: 650; color: var(--fg-soft);
+    user-select: none;
+  }
+  .chg-files > summary::-webkit-details-marker { display: none; }
+  .chg-files > summary::before {
+    content: '▸'; color: var(--muted); font-size: 11px; width: 12px;
+    transition: transform .12s ease;
+  }
+  .chg-files[open] > summary::before { transform: rotate(90deg); }
+  .chg-files .chg-file-list {
+    list-style: none; margin: 0; padding: 0 10px 10px;
+    display: flex; flex-direction: column; gap: 4px;
+  }
+  .chg-files .chg-file-list li {
+    display: flex; align-items: center; gap: 8px;
+    padding: 6px 10px; border-radius: 6px;
+    background: var(--surface); border: 1px solid var(--line-soft);
+    font-family: var(--mono); font-size: 12px; color: var(--fg);
+    word-break: break-all;
+  }
+  .chg-files .chg-file-list li .idx {
+    flex: 0 0 auto; color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums;
+  }
+  .chg-files .chg-file-list li button.copy-path {
+    margin-left: auto; flex: 0 0 auto;
+    appearance: none; border: 1px solid var(--line); background: var(--surface-2);
+    color: var(--muted); font-size: 11px; font-weight: 650;
+    padding: 3px 8px; border-radius: 999px; cursor: pointer;
+  }
+  .chg-files .chg-file-list li button.copy-path:hover { color: var(--fg); border-color: var(--accent-line); }
   .ratio-bar {
     display: inline-flex; align-items: center; gap: 7px;
   }
@@ -1464,7 +1665,10 @@ _HTML_TEMPLATE = """<!DOCTYPE html>
     width: 70px; height: 6px; border-radius: 4px; overflow: hidden;
     background: color-mix(in srgb, var(--muted) 24%, transparent);
   }
-  .ratio-bar .fill { height: 100%; border-radius: 4px; background: var(--accent); }
+  /* Must be block: inline <span> ignores width/height → bar looked forever gray. */
+  .ratio-bar .fill {
+    display: block; height: 100%; border-radius: 4px; background: var(--accent);
+  }
   .ratio-bar.high .fill { background: var(--ok); }
   .ratio-bar.mid  .fill { background: var(--warn); }
   .ratio-bar.low  .fill { background: var(--danger); }
@@ -1491,6 +1695,9 @@ _HTML_TEMPLATE = """<!DOCTYPE html>
     width: 100%; max-width: 34px; border-radius: 4px 4px 0 0; background: var(--accent);
     min-height: 2px; transition: none;
   }
+  .trend-bars .col .bar.high { background: var(--ok); }
+  .trend-bars .col .bar.mid  { background: var(--warn); }
+  .trend-bars .col .bar.low  { background: var(--danger); }
   .trend-bars .col .lbl { font-size: 9.5px; color: var(--faint); font-variant-numeric: tabular-nums; white-space: nowrap; }
   .trend-meta {
     display: flex; gap: 18px; flex-wrap: wrap; margin-top: 12px;
@@ -1527,7 +1734,7 @@ _HTML_TEMPLATE = """<!DOCTYPE html>
 <body>
 <header class="app">
   <div class="brand">
-    <span class="mark" aria-hidden="true">Spec</span>
+    <span class="mark" aria-hidden="true">LS</span>
     <h1>
       <span class="kicker">Specs Status</span>
       <span class="proj">__PROJECT__</span>
@@ -2266,7 +2473,51 @@ function joinBasePath(base, path) {
   return b + p;
 }
 
-function buildEndpoints() {
+function playgroundApiBase() {
+  const base = (DATA.meta && DATA.meta.base_path) ? String(DATA.meta.base_path) : '/explorer';
+  const origin = (location.protocol === 'file:') ? '' : (location.origin || '');
+  return origin + base.replace(/\\/+$/, '');
+}
+
+async function probePlayground() {
+  if (location.protocol === 'file:') {
+    return { enabled: false, mode: null, workspace: null, hint: 'file:// — run livespec explorer serve .' };
+  }
+  try {
+    const res = await fetch(playgroundApiBase() + '/api/playground', { headers: { Accept: 'application/json' } });
+    if (!res.ok) return { enabled: false, mode: null, workspace: null, hint: 'playground probe failed' };
+    return await res.json();
+  } catch (_) {
+    return { enabled: false, mode: null, workspace: null, hint: 'Run `livespec explorer serve .` for live Try it' };
+  }
+}
+
+function pgInputHtml(param, toolName, idx, workspaceFixed) {
+  const name = param.name;
+  const typ = String(param.type || 'string').toLowerCase();
+  const id = `pg-${toolName}-${idx}-${name}`;
+  if (name === 'workspace' && workspaceFixed) {
+    return `<div class="pg-row pg-workspace"><label for="${esc(id)}">${esc(name)}` +
+      `<span class="pg-meta">injected by server</span></label>` +
+      `<input type="text" id="${esc(id)}" name="${esc(name)}" value="${esc(workspaceFixed)}" readonly></div>`;
+  }
+  if (typ === 'boolean') {
+    return `<div class="pg-row"><label for="${esc(id)}">${esc(name)}` +
+      `<span class="pg-meta">boolean</span></label>` +
+      `<input type="checkbox" id="${esc(id)}" name="${esc(name)}"></div>`;
+  }
+  if (typ === 'integer' || typ === 'number') {
+    return `<div class="pg-row"><label for="${esc(id)}">${esc(name)}` +
+      `<span class="pg-meta">${esc(typ)}</span></label>` +
+      `<input type="number" id="${esc(id)}" name="${esc(name)}" step="${typ === 'integer' ? '1' : 'any'}"></div>`;
+  }
+  return `<div class="pg-row"><label for="${esc(id)}">${esc(name)}` +
+    `<span class="pg-meta">${esc(typ || 'string')}</span></label>` +
+    `<input type="text" id="${esc(id)}" name="${esc(name)}" autocomplete="off" spellcheck="false"></div>`;
+}
+
+function buildEndpoints(playground) {
+  const pg = playground || { enabled: false };
   const eps = DATA.endpoints || [];
   const fixtures = DATA.fixtures || [];
   const groups = {};
@@ -2274,8 +2525,11 @@ function buildEndpoints() {
   const keys = Object.keys(groups).sort(
     (a, b) => EP_KIND_ORDER.indexOf(a) - EP_KIND_ORDER.indexOf(b));
 
-  let h = '<p class="ep-note">Static spec — <b>expand an operation</b> to see parameters. ' +
-    'MCP tools: copy a call shape. HTTP routes (GET/POST/PUT/PATCH/DELETE): use <b>Try it</b> ' +
+  let h = '<p class="ep-note">Expand an operation to see parameters. ' +
+    (pg.enabled
+      ? `<b>MCP tools</b>: live Try it (mode <code class="mono">${esc(pg.mode || 'readonly')}</code>). `
+      : '<b>MCP tools</b>: copy a call shape — live Try it needs <code class="mono">livespec explorer serve</code>. ') +
+    'HTTP routes (GET/POST/PUT/PATCH/DELETE): use <b>Try it</b> ' +
     'to call your API (requires CORS or same origin).</p>';
   h += '<div class="swagger-toolbar">' +
     '<input type="search" id="ep-filter" placeholder="Filter by name, path or handler…" autocomplete="off" spellcheck="false">' +
@@ -2298,7 +2552,9 @@ function buildEndpoints() {
     rows.forEach((ep, i) => {
       const mcls = opMethodClass(ep);
       const path = opDisplayPath(ep);
-      const args = sigArgTypes(ep.signature);
+      const args = (Array.isArray(ep.parameters) && ep.parameters.length)
+        ? ep.parameters
+        : sigArgTypes(ep.signature);
       const shape = callShape(ep);
       const cid = `cc-${k}-${i}`;
       const specs = ep.spec_ids.length
@@ -2323,14 +2579,36 @@ function buildEndpoints() {
         h += '<div class="op-section"><div class="op-section-h">Parameters</div>' +
           '<div class="card"><table class="op-params"><thead><tr><th>Name</th><th>Type</th><th>Description</th></tr></thead><tbody>';
         args.forEach(a => {
-          h += `<tr><td>${esc(a.name)}</td><td>${esc(a.type)}</td><td class="muted">—</td></tr>`;
+          const desc = (a.description && String(a.description).trim())
+            ? esc(a.description)
+            : '<span class="muted">—</span>';
+          h += `<tr><td>${esc(a.name)}</td><td>${esc(a.type || 'any')}</td><td>${desc}</td></tr>`;
         });
         h += '</tbody></table></div></div>';
       }
-      const mcpKinds = new Set(['tool', 'resource', 'prompt']);
-      if (mcpKinds.has(ep.kind)) {
+      const toolName = shortName(ep.handler);
+      if (ep.kind === 'tool' && pg.enabled) {
+        const rid = `pg-out-${k}-${i}`;
+        const formId = `pg-form-${k}-${i}`;
+        const paramsForForm = args.filter(a => a && a.name);
+        h += '<div class="op-section"><div class="op-section-h">Try it out (MCP)</div>' +
+          '<div class="pg-try">' +
+          `<p class="pg-note">Calls tool <code class="mono">${esc(toolName)}</code> via the Explorer playground bridge. ` +
+          `Workspace is fixed to <code class="mono">${esc(pg.workspace || '')}</code>.</p>` +
+          `<form class="pg-form" id="${formId}" data-tool="${esc(toolName)}" data-out="${rid}">` +
+          paramsForForm.map((a, pi) => pgInputHtml(a, toolName, pi, pg.workspace)).join('') +
+          '<div class="pg-actions">' +
+          `<button type="submit" class="pg-exec">Execute</button>` +
+          `<button type="button" class="copy-call" data-copy="${cid}">Copy call</button>` +
+          `<span class="chip muted">${esc(pg.mode || 'readonly')}</span></div></form>` +
+          `<pre class="call-shape" id="${cid}" hidden>${esc(shape)}</pre>` +
+          `<pre class="pg-response" id="${rid}" hidden aria-live="polite"></pre></div></div>`;
+      } else if (ep.kind === 'tool' || ep.kind === 'resource' || ep.kind === 'prompt') {
         h += '<div class="op-section"><div class="op-section-h">Try it out (MCP)</div>' +
           '<div class="op-try">' +
+          (ep.kind === 'tool'
+            ? `<p class="pg-note">${esc(pg.hint || 'Run `livespec explorer serve .` for live Try it')}</p>`
+            : '<p class="pg-note">Resources/prompts: copy shape only in v1 (tools are executable).</p>') +
           `<button type="button" class="copy-call" data-copy="${cid}">Copy call</button>` +
           `<pre class="call-shape" id="${cid}">${esc(shape)}</pre></div></div>`;
       } else if (isHttpTryIt(ep)) {
@@ -2403,6 +2681,58 @@ function buildEndpoints() {
       }
     }));
 
+  el('epmain').querySelectorAll('form.pg-form').forEach(form => {
+    form.addEventListener('submit', async (ev) => {
+      ev.preventDefault();
+      const tool = form.getAttribute('data-tool');
+      const outId = form.getAttribute('data-out');
+      const pre = outId ? el(outId) : null;
+      const btn = form.querySelector('.pg-exec');
+      const arguments_ = {};
+      form.querySelectorAll('input[name]').forEach(inp => {
+        const n = inp.name;
+        if (inp.type === 'checkbox') {
+          arguments_[n] = inp.checked;
+        } else if (inp.type === 'number') {
+          const v = inp.value.trim();
+          if (v !== '') arguments_[n] = inp.step === '1' ? parseInt(v, 10) : parseFloat(v);
+        } else if (n !== 'workspace') {
+          const v = inp.value.trim();
+          if (v !== '') arguments_[n] = v;
+        }
+      });
+      if (btn) btn.disabled = true;
+      if (pre) {
+        pre.hidden = false;
+        pre.className = 'pg-response';
+        pre.textContent = `POST call_tool ${tool}\\n…`;
+      }
+      try {
+        const res = await fetch(playgroundApiBase() + '/api/call_tool', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+          body: JSON.stringify({ name: tool, arguments: arguments_ }),
+        });
+        let body;
+        try { body = await res.json(); } catch (_) { body = { error: 'non-JSON response', isError: true }; }
+        const text = JSON.stringify(body, null, 2);
+        const snippet = text.length > 12000 ? text.slice(0, 12000) + '\\n… (truncated)' : text;
+        if (pre) {
+          const bad = !res.ok || (body && body.isError);
+          pre.className = 'pg-response ' + (bad ? 'err' : 'ok');
+          pre.textContent = `HTTP ${res.status}\\n\\n${snippet}`;
+        }
+      } catch (err) {
+        if (pre) {
+          pre.className = 'pg-response err';
+          pre.textContent = 'Failed: ' + (err && err.message ? err.message : String(err));
+        }
+      } finally {
+        if (btn) btn.disabled = false;
+      }
+    });
+  });
+
   el('epmain').querySelectorAll('.http-exec').forEach(btn =>
     btn.addEventListener('click', async () => {
       const rid = btn.getAttribute('data-http-exec');
@@ -2449,11 +2779,17 @@ function buildEndpoints() {
     }));
 }
 
+async function initEndpoints() {
+  const pg = await probePlayground();
+  buildEndpoints(pg);
+}
+
 // ---- Gaps ----
 const TOTAL_LABELS = {
-  modules_without_spec: 'Modules without Spec',
+  modules_without_spec: 'Product modules without Spec',
   modules_implicitly_covered: 'Implicitly covered',
-  modules_truly_orphan: 'Truly orphan',
+  modules_truly_orphan: 'Truly orphan (product)',
+  modules_non_product: 'Tests / scripts / bench (excluded)',
   modules_unsupported_language: 'Unsupported language',
   specs_without_implementation: 'Specs w/o impl',
   specs_low_confidence: 'Specs low confidence',
@@ -2463,9 +2799,10 @@ const TOTAL_LABELS = {
 };
 function buildGaps() {
   const g = DATA.coverage;
-  let h = '<p class="lead">Code not yet attributed to any spec. ' +
-    'Orphan modules and endpoints are candidates for a new spec link — ' +
-    'they represent functionality the spec map does not yet account for.</p>';
+  let h = '<p class="lead">Product code not yet attributed to any spec. ' +
+    'Tests, fixtures, <code>scripts/</code> and <code>bench/</code> are excluded from ' +
+    'orphan counts — they are not Spec-link candidates. Orphan modules and endpoints ' +
+    'below are the actionable gaps.</p>';
 
   // KPI row from totals
   h += '<div class="kpis">';
@@ -2473,9 +2810,14 @@ function buildGaps() {
     const label = TOTAL_LABELS[k] || k.replace(/_/g, ' ');
     let cls = '';
     if (k === 'modules_truly_orphan' || k === 'modules_without_spec') cls = ' flag';
+    if (k === 'modules_non_product') cls = '';
     if (k === 'specs_with_linked_tests' && v > 0) cls = ' good';
     if (k === 'specs_without_implementation' && v > 0) cls = ' flag';
-    h += `<div class="kpi${cls}"><div class="n">${esc(v)}</div><div class="k">${esc(label)}</div></div>`;
+    let display = v;
+    if (k === 'avg_test_coverage' && typeof v === 'number') {
+      display = Math.round(v * 100) + '%';
+    }
+    h += `<div class="kpi${cls}"><div class="n">${esc(display)}</div><div class="k">${esc(label)}</div></div>`;
   });
   h += '</div>';
 
@@ -2484,7 +2826,7 @@ function buildGaps() {
   h += g.orphan_modules.length
     ? '<ul class="orphan-list">' +
       g.orphan_modules.map(m => `<li>${esc(m)}</li>`).join('') + '</ul>'
-    : '<div class="empty">None — every module is reachable from a spec.</div>';
+    : '<div class="empty">None — every product module is reachable from a spec.</div>';
   h += '</div>';
 
   h += '<div class="sec"><h3 class="sec-h">Orphan endpoints' +
@@ -2494,6 +2836,15 @@ function buildGaps() {
       g.orphan_endpoints.map(m => `<li>${esc(m)}</li>`).join('') + '</ul>'
     : '<div class="empty">None — every endpoint is linked to a spec.</div>';
   h += '</div>';
+
+  const noise = g.non_product_modules || [];
+  if (noise.length) {
+    h += '<div class="sec"><h3 class="sec-h">Excluded (tests / scripts / bench)' +
+      `<span class="ct">${noise.length}</span></h3>` +
+      '<p class="lead" style="margin-top:0">Not Spec gaps — listed for transparency only.</p>' +
+      '<ul class="orphan-list">' +
+      noise.map(m => `<li>${esc(m)}</li>`).join('') + '</ul></div>';
+  }
 
   el('gapmain').innerHTML = h;
 }
@@ -2567,7 +2918,7 @@ function buildTrend() {
   if (series.length === 1) {
     // Single snapshot: one bar, friendly note, no sparkline (no line to draw).
     h += '<div class="trend-bars"><div class="col">' +
-      `<div class="bar" style="height:${Math.max(2, lastPct)}%"></div>` +
+      `<div class="bar ${ratioCls(lastPct)}" style="height:${Math.max(2, lastPct)}%"></div>` +
       `<div class="lbl">${esc(shortTs(last.ts))}</div></div></div>`;
     h += '<div class="trend-single">History starts accumulating — one snapshot so far ' +
       `(${lastPct}% avg ${esc(TEST_COVERAGE_LABEL)}, ${last.verified_count} verified). ` +
@@ -2595,7 +2946,7 @@ function buildTrend() {
     const pct = Math.round((s.avg_test_coverage == null ? 0 : s.avg_test_coverage) * 100);
     h += '<div class="col" title="' +
       `${esc(shortTs(s.ts))} · ${pct}% avg · ${s.verified_count} verified">` +
-      `<div class="bar" style="height:${Math.max(2, pct)}%"></div>` +
+      `<div class="bar ${ratioCls(pct)}" style="height:${Math.max(2, pct)}%"></div>` +
       `<div class="lbl">${esc(shortTs(s.ts))}</div></div>`;
   });
   h += '</div>';
@@ -2638,6 +2989,19 @@ function buildChanges() {
     `<span class="chip muted">${filesChanged.length} file${filesChanged.length === 1 ? '' : 's'} changed</span>` +
     `<span class="chip muted">${touched.length} spec${touched.length === 1 ? '' : 's'} touched</span></div>`;
 
+  if (filesChanged.length) {
+    // Always list the exact paths — the chip alone is not actionable.
+    const openAttr = filesChanged.length <= 24 ? ' open' : '';
+    h += `<details class="chg-files"${openAttr}>` +
+      `<summary>Changed files <span class="chip muted">${filesChanged.length}</span></summary>` +
+      '<ul class="chg-file-list">' +
+      filesChanged.map((f, i) =>
+        `<li><span class="idx">${i + 1}.</span><span class="path">${esc(f)}</span>` +
+        `<button type="button" class="copy-path" data-path="${esc(f)}">Copy</button></li>`
+      ).join('') +
+      '</ul></details>';
+  }
+
   if (!filesChanged.length) {
     h += '<div class="empty">No changes in this range — base and head point to the same code.</div>';
   } else if (!touched.length) {
@@ -2663,6 +3027,19 @@ function buildChanges() {
   }
   h += '</div>';
   el('chgmain').innerHTML = h;
+  el('chgmain').querySelectorAll('button.copy-path').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const path = btn.getAttribute('data-path') || '';
+      try {
+        await navigator.clipboard.writeText(path);
+        const prev = btn.textContent;
+        btn.textContent = 'Copied';
+        setTimeout(() => { btn.textContent = prev; }, 1200);
+      } catch (_) {
+        btn.textContent = 'Select path';
+      }
+    });
+  });
 }
 
 // ---- Navigation (routes under /explorer) ----
@@ -2670,7 +3047,7 @@ document.querySelectorAll('nav.tabs button').forEach(btn => {
   btn.addEventListener('click', () => navigateTo(btn.dataset.route));
 });
 
-buildEndpoints();
+initEndpoints();
 buildChanges();
 buildGaps();
 navigateTo(activeRoute, true);

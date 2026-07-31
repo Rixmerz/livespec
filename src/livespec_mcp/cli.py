@@ -72,7 +72,8 @@ def main(argv: list[str] | None = None) -> int:
     p_explorer = sub.add_parser("explorer", help="Spec Explorer local preview")
     p_explorer_sub = p_explorer.add_subparsers(dest="explorer_cmd", required=True)
     p_explorer_serve = p_explorer_sub.add_parser(
-        "serve", help="HTTP server at /explorer (default port 8765)"
+        "serve",
+        help="HTTP server at /explorer with MCP Try-it playground (default port 8765)",
     )
     p_explorer_serve.add_argument(
         "path",

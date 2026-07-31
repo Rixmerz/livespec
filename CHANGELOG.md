@@ -6,6 +6,46 @@ follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Added — Spec Explorer MCP playground (executable Try it)
+
+``livespec explorer serve`` exposes ``GET /explorer/api/playground`` and
+``POST /explorer/api/call_tool`` so the API tab can Execute read-only MCP
+tools in-process (Swagger-style form + JSON response). Default mode is
+``readonly`` (``readOnlyHint`` only); ``[explorer] playground_mode = "all"``
+or ``LIVESPEC_EXPLORER_PLAYGROUND=all`` unlocks mutations. FastAPI
+``mount_explorer`` keeps the bridge **off** unless
+``[explorer] playground = true``.
+
+### Fixed — Coverage gaps inflated by tests/scripts/bench
+
+``audit_coverage`` / Explorer orphan KPIs excluded package markers but still
+counted every unlinked ``tests/``, ``scripts/``, and ``bench/`` file as a
+Spec-map gap. Those paths (plus empty symbol-less files) now land in
+``modules_non_product``; ``modules_truly_orphan`` is product code only.
+
+### Fixed — Changes tab hid which files changed
+
+The chip ``N files changed`` was not expandable. Explorer now lists every
+path under a ``Changed files`` disclosure (open by default for ≤24 files)
+with a Copy button per path. ``files_changed`` includes **all** git paths
+in the range (not only indexed ones with symbols).
+
+### Fixed — Spec Explorer coverage bars looked gray (Changes + Spec detail)
+
+``.ratio-bar .fill`` / ``.cov .fill`` were inline ``<span>``s; browsers ignore
+``width``/``height`` on inline elements, so only the gray track showed even at
+100%. Fills are ``display: block``. Trend snapshot bars also use
+``high``/``mid``/``low`` color classes (green/amber/red).
+
+### Fixed — Spec Explorer Parameters table showed ``any`` / ``—`` for MCP tools
+
+AST signatures store names only (``who_calls(qname, max_depth, …)``), and the
+Explorer UI hardcoded Description to ``—``. Endpoints now carry a
+``parameters`` array from the live MCP tool schema (same flatten +
+``param_descriptions`` path as ``tools/list``), so Type is
+``string``/``integer``/… and Description is filled. Regenerate with
+``index_project(explorer=True)`` or ``export_explorer``.
+
 ### Docs — OpenSpec dogfood tree is strict-valid (self-repo)
 
 Rewrote ``openspec/specs/*/spec.md`` with normative SHALL + ≥1 Scenario per
@@ -13,6 +53,10 @@ requirement; added ``openspec/openspec.json``; removed temporary
 ``audit-audit-probe-only`` Spec from the local DB. ``sync_openspec`` +
 ``validate_openspec(strict=True)`` pass on this repo; SPEC-013 link seed
 applies (38 links). SPEC-006 titled FTS (not Hybrid/RAG).
+
+Expanded ``livespec-spec-links.json`` (+47) so MCP host plumbing, orphan
+tools/prompts/resources, legacy_flows, and explorer mounts are attributed —
+Coverage-gaps ``src/`` orphans drop; remaining gaps are mostly ``tests/``.
 
 ### Fixed — MCP Client / harness Specs stay ``implemented`` not ``verified``
 

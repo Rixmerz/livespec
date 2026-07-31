@@ -258,6 +258,8 @@ you disable autowire:
    livespec-mcp index /path/to/your/repo
    livespec-mcp explorer serve /path/to/your/repo
    # → http://127.0.0.1:8765/explorer/
+   # API tab: live MCP Try it (read-only tools by default)
+   # → http://127.0.0.1:8765/explorer/
    ```
 
 Set `[explorer] auto_mount = false` in `.livespec.toml` if you prefer runtime mount:
@@ -521,10 +523,12 @@ an individual scenario with `link_scenario_symbol` (Spec plugin).
 #### Spec Explorer (docs plugin — not always-visible)
 - `export_explorer(base?, head?, generated_at?)` — writes
   `.mcp-docs/explorer/` (`data.json` + `index.html`). Swagger-style view by
-  Spec; **v0.19** HTTP Try-it for routes with method/path; FastAPI
-  autowire on export/index. Preview: `livespec-mcp explorer serve` →
-  `http://127.0.0.1:8765/explorer/`. Unlock with `LIVESPEC_PLUGINS=docs`
-  or `index_project(explorer=True)`.
+  Spec; HTTP Try-it for routes; **MCP Try it** when served via
+  `livespec-mcp explorer serve` → `http://127.0.0.1:8765/explorer/`
+  (Execute read-only tools in-process; `[explorer] playground_mode = "all"`
+  for mutations). FastAPI `mount_explorer` keeps playground off unless
+  `[explorer] playground = true`. Unlock docs tools with
+  `LIVESPEC_PLUGINS=docs` or `index_project(explorer=True)`.
 
 ### `livespec-spec` plugin — Spec mutation (12)
 

@@ -251,8 +251,9 @@ async def test_export_explorer_data_schema(workspace: Path):
     for ep in data["endpoints"]:
         assert set(ep.keys()) == {
             "kind", "framework", "handler", "signature", "path", "method",
-            "spec_ids",
+            "spec_ids", "parameters",
         }
+        assert isinstance(ep["parameters"], list)
         # Every API-surface endpoint carries a kind in the valid vocabulary,
         # and is never a pytest fixture (those live in DATA.fixtures).
         assert ep["kind"] in {"tool", "resource", "prompt", "other"}
@@ -270,7 +271,7 @@ async def test_export_explorer_data_schema(workspace: Path):
         assert fx["kind"] == "fixture"
         assert set(fx.keys()) == {
             "kind", "framework", "handler", "signature", "path", "method",
-            "spec_ids",
+            "spec_ids", "parameters",
         }
     # No fixture leaks into the API-surface endpoint list or its count.
     assert all(e["kind"] != "fixture" for e in data["endpoints"])
@@ -278,8 +279,13 @@ async def test_export_explorer_data_schema(workspace: Path):
 
     # coverage section shape
     assert set(data["coverage"].keys()) == {
-        "orphan_modules", "orphan_endpoints", "totals",
+        "orphan_modules", "orphan_endpoints", "non_product_modules", "totals",
     }
+    assert "modules_non_product" in data["coverage"]["totals"]
+    # Test / fixture paths must not inflate product orphan modules.
+    assert not any(
+        p.startswith("tests/") for p in data["coverage"]["orphan_modules"]
+    )
 
     # v0.16 D: top-level coverage trend — a chronological list of rollup
     # snapshots. audit_coverage (run inside compute_coverage) records one each
@@ -509,3 +515,18 @@ async def test_write_explorer_bundle_no_args_backward_compat(workspace: Path):
     # Both files land on disk.
     for p in result["files_written"]:
         assert Path(p).exists()
+
+
+def test_mcp_tool_params_who_calls_typed_and_described() -> None:
+    """Explorer Parameters table sources MCP schema, not bare AST names."""
+    import livespec_mcp.tools.explorer as explorer_mod
+
+    explorer_mod._MCP_TOOL_PARAMS = None
+    by_name = explorer_mod._mcp_tool_params_by_name()
+    assert "who_calls" in by_name
+    by_param = {p["name"]: p for p in by_name["who_calls"]}
+    assert by_param["qname"]["type"] == "string"
+    assert "qualified" in by_param["qname"]["description"].lower()
+    assert by_param["max_depth"]["type"] == "integer"
+    assert by_param["workspace"]["type"] == "string"
+    assert "REQUIRED" in by_param["workspace"]["description"]

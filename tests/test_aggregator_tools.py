@@ -117,6 +117,9 @@ async def test_audit_coverage_signals(workspace):
     assert union == set(out["modules_without_spec"]), (
         f"split must partition modules_without_spec: {out}"
     )
+    assert "modules_non_product" in out["counts"]
+    assert isinstance(out.get("modules_non_product"), list)
+    assert not any(p.startswith("tests/") for p in out["modules_truly_orphan"])
 
 
 @pytest.mark.asyncio
