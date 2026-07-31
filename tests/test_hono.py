@@ -56,8 +56,13 @@ async def test_find_endpoints_hono(workspace):
             (e["hono_method"], e["hono_path"]): e for e in out["endpoints"]
         }
         assert by_route[("GET", "/users")]["qualified_name"].endswith("listUsers")
-        # Inline arrow handler falls back to file:line pseudo-qname
-        assert by_route[("GET", "/health")]["qualified_name"].startswith("server.ts:")
+        assert by_route[("GET", "/users")]["handler_resolution"] == "handler"
+        # An inline arrow has no symbol: the route resolves to the scope that
+        # owns its calls (the module here), not to a `server.ts:9` pseudo-id
+        # that no other tool accepts.
+        inline = by_route[("GET", "/health")]
+        assert inline["handler_resolution"] == "enclosing_scope"
+        assert inline["qualified_name"] == "server", inline
 
 
 @pytest.mark.asyncio

@@ -206,6 +206,70 @@ async def test_find_endpoints_prefer_import_over_name_collision(workspace):
         assert "suppliers" not in details_qn, details_qn
 
 
+EXPRESS_INLINE_ARROW = (
+    "const express = require('express');\n"
+    "const { searchHotels } = require('./service/hotels');\n"
+    "const router = express.Router();\n"
+    "\n"
+    "router.get('/inline/:id', async (req, res) => {\n"
+    "  res.json(await searchHotels(req.params.id));\n"
+    "});\n"
+    "\n"
+    "module.exports = router;\n"
+)
+
+
+@pytest.mark.asyncio
+async def test_inline_arrow_route_id_is_navigable(workspace):
+    """An inline handler must still hand back an id other tools accept.
+
+    The route used to be reported as `routes.js:5`, which every symbol-taking
+    tool answers with "Symbol not found" — the endpoint was a dead end. The
+    arrow has no symbol of its own, but its calls are attributed to the scope
+    that encloses it, so that scope is what the route resolves to.
+    """
+    (workspace / "routes.js").write_text(EXPRESS_INLINE_ARROW)
+    (workspace / "service").mkdir()
+    (workspace / "service" / "hotels.js").write_text(
+        "async function searchHotels(id) { return { id }; }\n"
+        "module.exports = { searchHotels };\n"
+    )
+    async with Client(mcp) as c:
+        await c.call_tool("index_project", {})
+        out = (await c.call_tool("find_endpoints", {"framework": "express"})).data
+        entry = next(e for e in out["endpoints"] if e["express_path"] == "/inline/:id")
+        qname = entry["qualified_name"]
+
+        assert entry["handler_resolution"] == "enclosing_scope", entry
+        assert ":" not in qname, qname
+        assert entry["start_line"] == 5, entry  # still points at the registration
+
+        # The id round-trips through the tools an agent chains next.
+        src = (await c.call_tool("get_symbol_source", {"qname": qname})).data
+        assert "isError" not in src, src
+        calls = (await c.call_tool("who_does_this_call", {"qname": qname})).data
+        assert "isError" not in calls, calls
+        callees = {c_["qualified_name"] for c_ in calls["callees"]}
+        assert any(name.endswith("searchHotels") for name in callees), calls
+
+
+@pytest.mark.asyncio
+async def test_resolved_handler_is_labelled_as_such(workspace):
+    """`handler_resolution` distinguishes a real handler from the fallback."""
+    (workspace / "routes.js").write_text(EXPRESS_ROUTES)
+    (workspace / "controller").mkdir()
+    (workspace / "controller" / "healthController.js").write_text(
+        "function check(req, res) { res.send('ok'); }\n"
+        "module.exports = { check };\n"
+    )
+    async with Client(mcp) as c:
+        await c.call_tool("index_project", {})
+        out = (await c.call_tool("find_endpoints", {"framework": "express"})).data
+        by_path = {e["express_path"]: e for e in out["endpoints"]}
+        assert by_path["/health"]["handler_resolution"] == "handler"
+        assert by_path["/list"]["handler_resolution"] == "handler"
+
+
 @pytest.mark.asyncio
 async def test_find_endpoints_express_ignores_axios_noise(workspace):
     (workspace / "routes.js").write_text(EXPRESS_WITH_NOISE)

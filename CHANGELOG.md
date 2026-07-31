@@ -6,6 +6,34 @@ follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed — call-style route ids are navigable
+
+An Express/Hono route registered with an inline arrow
+(`router.get('/ui', (req, res) => …)`) was reported as `swagger.js:459`, and
+every symbol-taking tool answered that id with `Symbol not found` — the
+endpoint was a dead end for the agent that had just discovered it (beta sweep:
+6 of 23 repos). The arrow has no symbol of its own, but `_ts_collect_calls`
+already attributes its call sites to the innermost enclosing scope, falling
+back to the file's `__module__` pseudo-symbol. `compute_endpoints` now resolves
+the route to that scope, whose outgoing edges *are* the handler's, so
+`who_calls` / `analyze_impact` / `get_symbol_source` all work. `start_line`
+keeps pointing at the registration line.
+
+Call-style endpoints also carry `handler_resolution`: `handler` (the registered
+handler resolved to its own symbol), `enclosing_scope` (the fallback above), or
+`unresolved` (the legacy `file:line` id — only when the file has no indexed
+symbol at all). No migration, no re-extract. Measured across 13 real repos:
+**93 call-style endpoints, dead-end ids 14 → 0**, endpoint count unchanged.
+
+### Fixed — grouped `find_symbol` says which DB and where the repo lives
+
+`find_symbol` answered `grouped: true` with no `group_db`, and a cross-repo
+match carried a `file_path` relative to the repo that owns it — not to the
+workspace the agent passed — with nothing to resolve it against. The payload
+now includes `group_db` and, per match, `project_root`. Ungrouped workspaces
+keep the leaner shape (neither field). On a real 13-repo group: 20 of 20
+matches across 5 projects are now openable.
+
 ### Fixed — Spring endpoints carry `http_method` / `http_path`
 
 `find_endpoints(framework="spring")` listed Java handlers with no route, so an

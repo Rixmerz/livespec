@@ -43,10 +43,24 @@ Todo el stack es local-first: 0 servicios externos, 0 API keys obligatorias, 0 D
 
 ## 3. Estado actual
 
-**HEAD: backlog del barrido, puntos 1-2 (post-`4b8ab2b`). Tests 643.**
+**HEAD: backlog del barrido cerrado (puntos 1, 2 y 3). Tests 646.**
 Sin tag nuevo — todo bajo `[Unreleased]`.
 
 Qué landeó, con evidencia sobre repos reales (antes → después):
+
+- **IDs de rutas call-style navegables.** Una ruta Express/Hono con arrow
+  inline se reportaba como `swagger.js:459` y toda tool que toma símbolo
+  respondía `Symbol not found`. El arrow no tiene símbolo propio, pero
+  `_ts_collect_calls` ya atribuye sus llamadas al scope que lo contiene
+  (`__module__` si está a nivel de archivo): ese scope es el target honesto,
+  sus edges *son* los del handler. Nuevo campo `handler_resolution`
+  (`handler` | `enclosing_scope` | `unresolved`). 13 repos reales:
+  **93 endpoints call-style, IDs muertos 14 → 0**, sin cambiar el conteo.
+- **`find_symbol` en grupo dice qué DB respondió y dónde vive el repo.**
+  Devolvía `grouped: true` sin `group_db`, y el `file_path` de un match
+  cross-repo es relativo al repo dueño, no al workspace pasado. Ahora emite
+  `group_db` y `project_root` por match; ungrouped mantiene el payload magro.
+  Grupo real de 13 repos: 20 de 20 matches en 5 proyectos, abribles.
 
 - **Spring con ruta.** `compute_endpoints` joinea `route_ref` (role `server`) y
   emite `http_method`/`http_path`/`http_framework` como express/hono/python.
@@ -75,10 +89,10 @@ arregló ningún caso medible. Las rutas reales cierran con error handler
 `(err, req, res, next)` o una flecha de logging; la aridad tampoco discrimina
 (el tail de logging es de 2). Detalle en `CHANGELOG.md` `[Unreleased]`.
 
-Backlog vivo del barrido: IDs `archivo.js:linea` no navegables en rutas
-call-style (punto 1, sigue abierto — el arreglo real exige emitir símbolo para
-la flecha inline, con re-extract), y `find_symbol` responde `grouped: true` con
-`group_db: null` (punto 3).
+Backlog del barrido: cerrado. Lo que queda es extractor puro y pide
+re-extract: prefijo `@RequestMapping` de clase en Spring, y emitir un símbolo
+propio para el arrow inline (hoy resuelve al scope contenedor, que es correcto
+para impacto pero no distingue dos rutas inline del mismo archivo).
 
 ### v0.30.0 / v0.30.1 resumen (referencia)
 

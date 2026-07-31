@@ -1319,6 +1319,24 @@ def _resolve_call_style_handler(
     ).fetchone()
 
 
+def _enclosing_symbol_for_line(conn, file_id: int, line: int) -> Any | None:
+    """Innermost indexed symbol whose body contains ``line``.
+
+    An inline arrow handler (``app.get('/x', async (req, res) => …)``) never
+    becomes a symbol of its own, but ``_ts_collect_calls`` attributes its call
+    sites to the innermost named scope that encloses it — the file's
+    ``__module__`` pseudo-symbol when the registration sits at top level. That
+    scope is therefore the honest navigable target for the route: its outgoing
+    edges *are* the handler's.
+    """
+    return conn.execute(
+        """SELECT qualified_name, kind, start_line, end_line FROM symbol
+           WHERE file_id=? AND start_line<=? AND end_line>=?
+           ORDER BY (end_line - start_line), start_line DESC LIMIT 1""",
+        (file_id, line, line),
+    ).fetchone()
+
+
 def compute_endpoints(
     st: AppState,
     framework: str | None = None,
@@ -1332,6 +1350,14 @@ def compute_endpoints(
     framework-specific keys: ``ts_framework`` / ``django_cbv_base`` /
     ``hono_method`` / ``hono_path`` / ``http_method`` / ``http_path``),
     sorted by ``(file_path, start_line)``.
+
+    Call-style routes (Hono/Express) also carry ``handler_resolution``:
+    ``handler`` when the registered handler resolved to its own symbol,
+    ``enclosing_scope`` when the handler is an inline arrow and
+    ``qualified_name`` is the scope that owns its call edges (``start_line``
+    keeps pointing at the registration), ``unresolved`` for the legacy
+    ``file:line`` pseudo-id — only reachable when the file has no indexed
+    symbol at all.
     """
     pid = st.project_id
 
@@ -1564,6 +1590,7 @@ def compute_endpoints(
             for rt in scan_hono_routes(src, fr["language"]):
                 qname = None
                 kind = "route"
+                resolution = "unresolved"
                 start_line = end_line = rt["line"]
                 if rt["handler_name"]:
                     sym = _resolve_call_style_handler(
@@ -1581,6 +1608,19 @@ def compute_endpoints(
                         kind = sym["kind"]
                         start_line = sym["start_line"]
                         end_line = sym["end_line"]
+                        resolution = "handler"
+                if qname is None:
+                    # Inline arrow (or a handler name we couldn't resolve): fall
+                    # back to the scope that owns its call edges instead of a
+                    # `file.js:12` pseudo-id, which every symbol-taking tool
+                    # rejects with "Symbol not found" (beta sweep, 6/23 repos).
+                    enclosing = _enclosing_symbol_for_line(
+                        st.conn, int(fr["id"]), rt["line"]
+                    )
+                    if enclosing is not None:
+                        qname = enclosing["qualified_name"]
+                        kind = enclosing["kind"]
+                        resolution = "enclosing_scope"
                 entry_qname = qname or f"{fr['path']}:{rt['line']}"
                 route_key = (rt["method"], rt["path"], entry_qname)
                 if route_key in seen_qnames:
@@ -1597,6 +1637,7 @@ def compute_endpoints(
                     "http_method": rt["method"],
                     "http_path": rt["path"],
                     "http_framework": call_fw,
+                    "handler_resolution": resolution,
                 })
                 seen_qnames.add(route_key)
 
@@ -2906,7 +2947,7 @@ def register(mcp: FastMCP) -> None:
         sql = [
             f"""SELECT s.id, s.name, s.qualified_name, s.kind, s.signature,
                       s.start_line, s.end_line, f.path as file_path,
-                      p.name AS project
+                      p.name AS project, p.root AS project_root
                FROM symbol s JOIN file f ON f.id=s.file_id
                JOIN project p ON p.id=f.project_id
                WHERE f.project_id IN ({placeholders}) AND (
@@ -2922,9 +2963,18 @@ def register(mcp: FastMCP) -> None:
         sql.append("ORDER BY length(s.qualified_name) LIMIT ?")
         args.append(safe_limit)
         rows = st.conn.execute(" ".join(sql), args).fetchall()
-        out: dict[str, Any] = {"matches": [dict(r) for r in rows]}
+        matches = [dict(r) for r in rows]
+        out: dict[str, Any] = {"matches": matches}
         if st.settings.grouped:
+            # `file_path` is relative to the project that owns the symbol, which
+            # in a group is often not the workspace the agent is standing in —
+            # without `project_root` a cross-repo match is unopenable. Same for
+            # `group_db`: `grouped: true` alone doesn't say which DB answered.
             out["grouped"] = True
+            out["group_db"] = str(st.settings.db_path)
+        else:
+            for m in matches:
+                m.pop("project_root", None)
         if not rows:
             # v0.14: zero matches on the project's own fuzzy-lookup tool is
             # a dead end for an agent — surface typo-distance suggestions

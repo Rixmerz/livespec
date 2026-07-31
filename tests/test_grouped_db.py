@@ -97,6 +97,40 @@ async def test_ungrouped_repo_cannot_link_foreign_symbol(tmp_path):
         assert res.get("isError") is True
 
 
+@pytest.mark.asyncio
+async def test_find_symbol_says_which_db_and_where_the_repo_lives(tmp_path):
+    """`grouped: true` on its own is unactionable.
+
+    A cross-repo hit's `file_path` is relative to the repo that owns it, not
+    to the workspace the agent passed, so without `project_root` the match
+    can't be opened; `group_db` names the database that answered.
+    """
+    shared = tmp_path / "grp" / "shared.db"
+    back = _make_repo(tmp_path / "back", "back", "handler", group_db=shared)
+    front = _make_repo(tmp_path / "front", "front", "caller", group_db=shared)
+    solo = _make_repo(tmp_path / "solo", "solo", "handler", group_db=None)
+
+    async with Client(mcp) as c:
+        for repo in (back, front, solo):
+            await c.call_tool("index_project", {"workspace": str(repo)})
+
+        out = (
+            await c.call_tool("find_symbol", {"workspace": str(back), "query": "caller"})
+        ).data
+        assert out["grouped"] is True
+        assert out["group_db"] == str(shared)
+        foreign = next(m for m in out["matches"] if m["qualified_name"].endswith(".caller"))
+        assert foreign["project_root"] == str(front)
+
+        # An ungrouped workspace keeps the leaner payload.
+        solo_out = (
+            await c.call_tool("find_symbol", {"workspace": str(solo), "query": "handler"})
+        ).data
+        assert "group_db" not in solo_out
+        assert "grouped" not in solo_out
+        assert all("project_root" not in m for m in solo_out["matches"])
+
+
 def test_group_project_ids_ungrouped_is_home_only(tmp_path):
     """Unit guard: an ungrouped AppState resolves to exactly [home]."""
     repo = _make_repo(tmp_path / "solo", "m", "f", group_db=None)
