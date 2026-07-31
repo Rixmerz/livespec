@@ -124,7 +124,8 @@ bulk_link_spec_symbols(mappings=[{spec_id, symbol_qname}, ...])  # core
 ```
 find_dead_code()         # symbols with zero callers and zero Spec links
 find_orphan_tests()      # tests whose call cone never reaches non-test code
-find_endpoints()         # framework-decorated handlers
+find_endpoints()         # framework handlers (Express+Hono in default sweep)
+find_legacy_flows()      # likely-unused HTTP flows (graph ≠ traffic; group_db)
 ```
 
 `find_dead_code` filters out entry-point paths (`tests/`, `bin/`,
@@ -153,7 +154,7 @@ v0.7 path; collapse to `find_symbol → quick_orient`.
 ## 10. Pagination on aggregator tools
 
 For repos > 30K symbols, pass `summary_only=True` on `audit_coverage`,
-`find_dead_code`, `find_orphan_tests`, `find_endpoints`, and
+`find_dead_code`, `find_orphan_tests`, `find_endpoints`, `find_legacy_flows`, and
 `git_diff_impact` to keep payloads under ~200 KB. `limit` (default
 200) + `cursor` paginate; counts stay exact regardless. Triggered by
 the Django and a large Rust monorepo stress profiles in `bench/run.py --large`.

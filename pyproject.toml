@@ -4,8 +4,15 @@ version = "0.29.0"
 description = "Code intelligence for AI agents: call graph, impact analysis, and bidirectional Spec <-> code traceability"
 readme = "README.md"
 requires-python = ">=3.10"
-license = { text = "MIT" }
+license = { text = "AGPL-3.0-only" }
 authors = [{ name = "Juan Pablo Diaz", email = "juanpablo516@gmail.com" }]
+classifiers = [
+    "License :: OSI Approved :: GNU Affero General Public License v3",
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Topic :: Software Development :: Libraries",
+]
 dependencies = [
     "fastmcp>=3,<4",
     "pydantic>=2.7",

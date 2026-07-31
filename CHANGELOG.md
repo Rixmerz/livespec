@@ -6,6 +6,25 @@ follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed — license MIT → GNU AGPL v3.0 (`AGPL-3.0-only`)
+
+Project is now licensed under the **GNU Affero General Public License v3.0**
+only. Adds `LICENSE` (official AGPLv3 text), updates `pyproject.toml`
+classifiers, and documents the network-copyleft obligation in the README.
+Prior PyPI artifacts tagged under MIT remain as published; **new builds**
+from this tree are AGPL-3.0-only.
+
+### Docs — public beta surface alignment (post-0.29.0)
+
+Honest product posture across README, CLAUDE, HANDOFF, ROADMAP, AGENT_* ,
+presentation deck, Skill framework list, and self-dogfood:
+`docs/BETA_CHECKLIST.md` + `docs/BETA_DOGFOOD.md`. Package story =
+`uvx livespec@0.29.0`; maturity = public beta (not 1.0); graph ≠ traffic;
+FTS-only; polyrepo/`find_legacy_flows` documented as shipped.
+AGPL first-contact templates: `docs/AGPL_COMPLIANCE_CONTACT.md`.
+Competitive deferral vs Graphify: `docs/COMPETITIVE_GRAPHIFY.md` (no Leiden /
+multimodal / provenance-column clone).
+
 ## [0.29.0] - 2026-07-31
 
 ### Improved — plugin Skill + subagent (polyrepo / legacy safety)

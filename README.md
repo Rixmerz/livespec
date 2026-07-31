@@ -1,5 +1,17 @@
 # livespec
 
+> **Public beta (v0.29).** Local-first code intelligence for AI agents.
+> Call graph, impact analysis, and Spec ↔ code traceability. Search is
+> **FTS5-only** (no embeddings). Dead/legacy findings are **graph evidence**,
+> not production traffic — confirm with APM/logs before deleting. Spec and
+> docs mutation tools are plugin-gated. Pin: `uvx livespec@0.29.0`.
+>
+> **License: [GNU AGPL v3](LICENSE)** (`AGPL-3.0-only`). If you modify
+> livespec and offer it over a network (MCP host, SaaS, internal API), you
+> must provide the corresponding source under the same license.
+> Corporate adoption notes and a first-contact compliance template:
+> [`docs/AGPL_COMPLIANCE_CONTACT.md`](docs/AGPL_COMPLIANCE_CONTACT.md).
+
 **Code intelligence for AI agents** — call graph, impact analysis, and
 bidirectional **Spec ↔ code** traceability (functional requirements, ADRs,
 NFRs, and other spec kinds). Local-first, zero external services.
@@ -7,9 +19,9 @@ NFRs, and other spec kinds). Local-first, zero external services.
 Ships as a **Claude Code plugin** bundling three things: the **MCP server**
 (the tools), a specialized **subagent**, and a preloaded **Skill** (the
 operating manual). Everything an agent sees — the plugin, subagent, Skill, and
-MCP tool namespace — is `livespec`. The MCP server is still distributed as the
-`livespec-mcp` package (`uvx livespec-mcp` / `pip install livespec-mcp`); that
-package/command name is unchanged.
+MCP tool namespace — is `livespec`. The PyPI distribution and console command
+are also **`livespec`** (`uvx livespec@0.29.0` / `pip install livespec`).
+The legacy command alias `livespec-mcp` still works on the same entry point.
 
 Battle-tested on real codebases. Four releases of compounding wins
 on the same Django 5.1.4 queries:
@@ -35,7 +47,8 @@ Spec flow, Django bugfix, TypeScript feature) — see
 ```bash
 # Wire as an MCP server next to your editor (claude.ai/code, Cursor, ...).
 # Every tool call carries workspace="/abs/path" — one server, N repos.
-livespec-mcp
+uvx livespec@0.29.0
+# alias still works: livespec-mcp
 ```
 
 ```jsonc
@@ -98,7 +111,7 @@ good at. If you wanted "writes my doc comments while I sleep" — not yet.
 
 ## Stack
 
-- **FastMCP 2.14** (stdio transport)
+- **FastMCP 3.x** (stdio transport; `fastmcp>=3,<4`)
 - **SQLite** (single `docs.db` file, ACID, WAL, explicit migration framework)
 - **tree-sitter + tree-sitter-language-pack** for multi-language parsing
 - **Python `ast`** for high-precision Python extraction
@@ -138,13 +151,14 @@ uv pip install -e ".[dev]"
 ## Run as MCP server
 
 ```bash
-livespec-mcp          # stdio MCP server (same as `livespec-mcp serve`)
-livespec              # same command — `livespec` is an alias of `livespec-mcp`
+uvx livespec@0.29.0   # preferred — PyPI distribution name is `livespec`
+livespec              # after `pip install livespec` / `uv tool install livespec`
+livespec-mcp          # console alias of the same entry point
 ```
 
-> The **product** is `livespec`; the **package/command** stays `livespec-mcp`
-> (`pip install livespec-mcp`, `uvx livespec-mcp`) for back-compat. After a
-> local install both `livespec` and `livespec-mcp` invoke the same entry point.
+> The **product, package, and primary command** are `livespec`
+> (`pip install livespec`, `uvx livespec@0.29.0`). The `livespec-mcp` command
+> remains as a back-compat alias only.
 
 Every tool call requires `workspace="/abs/path"` (no cwd or env fallback
 since v0.12). Persistent state lives in `<workspace>/.mcp-docs/docs.db`.
@@ -209,8 +223,8 @@ fresh index.
 Three steps to serve the Spec Explorer from your API — no manual wiring unless
 you disable autowire:
 
-1. **Install** livespec-mcp in the same environment as your app
-   (`pip install livespec-mcp` or `uv add livespec-mcp`).
+1. **Install** livespec in the same environment as your app
+   (`pip install livespec` or `uv add livespec`).
 
 2. **Index once** (MCP tool or CLI). If the repo has `app = FastAPI(...)` in
    `main.py` or `app.py`, `index_project` auto-builds `.mcp-docs/explorer/`
@@ -422,8 +436,9 @@ Always registered (including markdown Spec import + OpenSpec sync).
 - `find_endpoints(framework=None)` — framework entry points. Decorator
   markers (`framework` ∈ {flask, fastapi, click, pytest, fastmcp, celery,
   django, spring, angular}), filesystem routing ({nextjs, fresh, sveltekit,
-  remix}), Django CBV bases, and call-style routing (`hono`:
-  `app.get('/users', handler)` with method + path per route).
+  remix}), Django CBV bases, and call-style routing (**Express + Hono** —
+  both included in the **default** sweep when `framework=None`; pass
+  `framework='express'|'hono'` to filter).
   **(v0.19)** FastAPI/Flask decorators also yield `http_method` +
   `http_path` in Explorer and MCP payloads. Default sweep **excludes**
   `tests/**` and `@pytest.fixture` handlers (use `framework='pytest'` for
@@ -610,9 +625,9 @@ measured with the in-process middleware
 
 For repos > 30K symbols, pass `summary_only=True` on aggregator and
 traversal tools (`audit_coverage`, `find_dead_code`, `find_orphan_tests`,
-`find_endpoints`, `git_diff_impact`, `who_calls`, `who_does_this_call`,
-`analyze_impact`) to keep payloads under ~200 KB. Counts stay exact
-regardless of pagination — see `bench/run.py --large` for the Django
+`find_endpoints`, `find_legacy_flows`, `git_diff_impact`, `who_calls`,
+`who_does_this_call`, `analyze_impact`) to keep payloads under ~200 KB. Counts
+stay exact regardless of pagination — see `bench/run.py --large` for the Django
 stress profile.
 
 ### Django precision series (same queries, across releases)
@@ -636,20 +651,19 @@ In-memory FastMCP `Client(mcp)` so tests run without subprocess or network.
 
 livespec ships two user shapes deliberately:
 
-- **Agents** see the 24-tool default surface and the agentic-read Spec tools
-  (`list_specs`, `get_spec_implementation`,
-  `propose_specs_from_codebase`, `audit_coverage`). The composite
-  `quick_orient` is the canonical first-contact tool — it returns
+- **Agents** see the **27-tool** always-visible core (code intel + Spec agentic
+  reads + OpenSpec interop) plus plugin tools when Specs/docs unlock them.
+  The composite `quick_orient` is the canonical first-contact tool — it returns
   metadata, docstring lead, top callers/callees by PageRank, linked Specs,
   and entry-point flags in one call.
-- **Humans** (or operator scripts) reach for the plugin tools to mutate
+- **Humans** (or operator scripts) reach for the Spec/docs plugin tools to mutate
   Spec state and manage docs. Auto-load happens once the DB shows real Spec
   or doc rows; before that, set `LIVESPEC_PLUGINS=all` (or `=spec` /
   `=docs`) to bootstrap.
 
-This is why dropping `search`/`get_symbol_info` was safe: the battle-test
-harness logged zero agent calls to those tools across 3 codebases. The
-data trumped the prior intuition.
+Historical note: early curation dropped several tools that agents never called
+in battle-tests (`get_symbol_info`, watcher trio, …). **`search` stayed** and is
+FTS5-only in v0.29 — do not confuse that with the old “drop search” opinion.
 
 ## Roadmap
 

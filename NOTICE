@@ -1,0 +1,19 @@
+Copyright (C) 2025-2026 Juan Pablo Díaz
+
+livespec is free software: you can redistribute it and/or modify it under
+the terms of the GNU Affero General Public License as published by the Free
+Software Foundation, version 3 only (SPDX: AGPL-3.0-only). See the file
+LICENSE for the full text.
+
+This program is distributed in the hope that it will be useful, but WITHOUT
+ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+FITNESS FOR A PARTICULAR PURPOSE. See the GNU Affero General Public License
+for more details.
+
+You should have received a copy of the GNU Affero General Public License
+along with this program. If not, see <https://www.gnu.org/licenses/>.
+
+Network use: if you modify this program and run it so that users interact
+with it over a network (for example as an MCP server, SaaS, or internal
+API), AGPLv3 requires you to offer those users the corresponding source
+of your modified version under the same license.

@@ -36,32 +36,29 @@ compilar (`uv build` en CI), las migraciones son transaccionales, hay
 (coverage O(V+E), PageRank cacheado, chunking AST-aware) están
 resueltos. Suite: ~403 tests (hoy ~611).
 
-### Próximo pilar: **features cross-project (polyrepo / microservicios)**
+### Próximo pilar: **confianza operativa + adopción externa (post-0.29 beta)**
 
-Un "feature" real abarca varias piezas — front + back, o N microservicios —
-pero hoy livespec es **estrictamente mono-proyecto por repo**: una DB por
-workspace (`<repo>/.mcp-docs/docs.db`), y todo vínculo (`spec_symbol`,
-`symbol_edge`, `spec_dependency`) es una FK dentro de una sola DB. Un Spec del
-backend no puede enlazar un símbolo del frontend, y el call graph no cruza
-repos. Esto choca con la tesis del proyecto (traceability para orgs serias =
-justamente polyrepo/microservicios). Plan en dos fases separables:
+Ya shipped: group_db, route edges, OpenSpec, `find_legacy_flows`, FTS-only.
+El siguiente corte hacia 1.0 no es “más tools”: es **confianza** —
+disclaimers honestos (graph ≠ traffic), Skill/plugin pin = PyPI, y 2–3
+adopters externos sin el autor al lado. Microservicios / polyrepo dejan de
+ser “próximo pilar” y pasan a “superficie beta documentada”.
 
-- **(A) Membresía cross-project de un Spec.** Que un Spec enlace símbolos de
-  varios proyectos. Barato: el esquema ya soporta múltiples `project` por DB
-  (multi-tenant desde v0.12); apuntar varios roots a una DB compartida
-  (convención de dir padre o `[workspace] group_db` en `.livespec.toml`) hace
-  que `spec_symbol` cruce proyectos dentro del mismo archivo, sin tocar los FK.
-  **Prerrequisito:** el hardening de scoping de la auditoría ya está hecho
-  (H5 `UNIQUE(root)`, M18 `needs_reextract` per-project pendiente, M1
-  `vec_search` scopeado).
-- **(B) Aristas cross-repo "en rutas".** La ruta HTTP es la llave de join
-  entre el call-site del frontend y el handler del backend. Reusa el patrón
-  existente `symbol_ref → _resolve_refs → symbol_edge`: agregar `route_ref`
-  (fetch/axios/OpenAPI del front) → `_resolve_routes` (normalización de
-  plantilla de ruta por framework) → nuevo `edge_type='invokes_route'`
-  cross-project. Empezar solo con HTTP; generalizar "ruta" a "identidad de
-  contrato" (gRPC, colas, GraphQL) después. Confianza/peso ya modelan la
-  incertidumbre de URLs dinámicas.
+**Polyrepo / microservicios — shipped en beta (v0.23–v0.29), no “próximo”:**
+
+- **(A) Membresía cross-project** — `[workspace] group_db` en `.livespec.toml`
+  apunta N roots a una DB compartida; Specs y lookup de símbolos cruzan
+  proyectos (v0.29 group lookup). Default sigue siendo una DB por repo.
+- **(B) Aristas cross-repo en rutas** — `route_ref` → `invokes_route` /
+  `route_callers` / `invokes_endpoints` (v0.23+). HTTP first; otros contratos
+  siguen fuera de scope.
+
+Lo que **sigue** abierto hacia 1.0: disclaimers operativos, pin Skill=PyPI,
+adopción externa, no más superficie de tools.
+
+**vs Graphify (2026-07-31):** conviven; **no** portar Leiden / multimodal /
+provenance column al core. Ver `docs/COMPETITIVE_GRAPHIFY.md`. Weight +
+`edge_type` ya cubren EXTRACTED/AMBIGUOUS/INFERRED.
 
 ---
 
@@ -220,7 +217,7 @@ Estos tools son features de **humanos** que querían bulk doc gen, no de
 ### Speculative (esperar a que falte de verdad)
 
 7. ~~**`agent_scratch(qname, note)` / `agent_scratch_clear()`**~~ — shipped
-   then **dropped** (Unreleased curation): agents use host chat notes /
+   then **dropped** (v0.29 curation): agents use host chat notes /
    Spec links instead of a parallel scratch store.
 
 ---

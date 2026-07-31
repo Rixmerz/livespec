@@ -82,11 +82,11 @@ CRUD, link Specs to symbols, and maintain a Spec→Spec dependency graph.
 This is the differentiator: Functional Requirement (and other spec kinds)
 ↔ code traceability for serious software orgs.
 
-## SPEC-006: Hybrid search & RAG
+## SPEC-006: FTS search (AST chunks)
 **Prioridad:** media · **Módulo:** rag
 
 Provide AST-aware chunking of source and full-text search via SQLite
-FTS5 over symbols and specs. (Dense-vector / sqlite-vec lane removed.)
+FTS5 over symbols and specs. (Dense-vector / sqlite-vec lane removed in v0.29.)
 
 ## SPEC-007: Dead-code & coverage analysis
 **Prioridad:** media · **Módulo:** analysis
@@ -98,10 +98,10 @@ exercise no linked symbol (`find_orphan_tests`).
 ## SPEC-008: Endpoint discovery (framework-aware)
 **Prioridad:** media · **Módulo:** analysis
 
-Discover HTTP/route endpoints across 14 frameworks (Flask, FastAPI,
-Click, Django, Next.js, Deno Fresh, SvelteKit, Remix, Spring Boot,
-Angular, Hono, etc.) via `find_endpoints`, including decorator and alias
-detection.
+Discover HTTP/route endpoints across Flask, FastAPI, Click, Django, Next.js,
+Deno Fresh, SvelteKit, Remix, Spring Boot, Angular, Express, Hono, and related
+call-style routers via `find_endpoints` (Express+Hono included in the default
+sweep since v0.29).
 
 ## SPEC-009: Impact analysis
 **Prioridad:** alta · **Módulo:** analysis

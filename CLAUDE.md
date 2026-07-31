@@ -15,7 +15,10 @@ command; the product, plugin, subagent, Skill and MCP tool namespace are all
 9 languages with passing extractor tests (Python, Go, Java, JS, TS, Rust,
 Ruby, PHP) plus scoped resolution in 8 of them, and is framework-aware for
 Flask, FastAPI, Click, pytest, FastMCP, Celery, Django, Next.js, Deno Fresh,
-SvelteKit, Remix, Spring Boot, Angular and Hono (v0.13).
+SvelteKit, Remix, Spring Boot, Angular, Express and Hono.
+
+**Maturity:** public **beta** (v0.29) — battle-tested on real polyrepos;
+graph findings ≠ production traffic. See README banner.
 
 ## Stakeholder posture (not co-architect — owner-with-skin)
 
@@ -214,8 +217,8 @@ The v0.8 curation pass shipped: battle-test data (3 sessions, 40 calls,
   export_documentation, export_explorer, export_flow_explorer
   (Explorer demoted from always-visible core; unlock via docs plugin /
   explorer bundle / `LIVESPEC_PLUGINS`).
-- **Dropped (Unreleased):** agent_scratch / agent_scratch_get /
-  agent_scratch_clear.
+- **Dropped (v0.29):** agent_scratch / agent_scratch_get /
+  agent_scratch_clear; dense-vector search (`embed_chunks`, `[embeddings]`).
 - **Dropped (v0.8-v0.9)**: list_files, get_index_status (resource
   `project://index/status`), get_symbol_info, get_call_graph,
   rebuild_chunks (runs inside index_project), watcher trio

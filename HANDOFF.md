@@ -6,13 +6,19 @@
 
 ## 1. Identidad del proyecto
 
+- **License:** GNU AGPL v3.0 only (`LICENSE`, SPDX `AGPL-3.0-only`).
+  Relicensed from MIT in the post-0.29 docs/license pass. Network copyleft
+  applies when a modified livespec is offered over a network (MCP/SaaS/API).
 - **Repo remoto:** https://github.com/Rixmerz/livespec (branch `main`)
 - **Repo local:** `<repo>` (Arch box,
   desde 2026-06; el path histórico `<repo>`
   era la máquina macOS anterior — referencias viejas en este doc pueden
   mencionarlo)
 - **Demo project:** `<demo-app>` (4 archivos Python con `@rf:` annotations en docstrings, ya tiene RFs persistidas en su `.mcp-docs/docs.db`)
-- **MCP server:** instalado user-scope como `livespec` en `~/.claude.json`. Comando: `uv --directory <repo> run livespec-mcp`. Env actual: `LIVESPEC_WORKSPACE=<demo-app>` (pero las tools aceptan `workspace=` per-call vía P1.1 multi-tenant).
+- **MCP server:** Claude Code plugin `livespec@livespec` **0.29.0**
+  (`uvx livespec@0.29.0`) and/or Cursor `user-livespec` pointing at a local
+  checkout. **Every tool requires `workspace=/abs/repo`** — there is no
+  `LIVESPEC_WORKSPACE` env fallback (removed).
 - **Git user:** Juan Pablo Díaz S.
 - **GitHub user:** Rixmerz (auth via gh CLI con scopes `repo, gist, read:org, workflow`).
 
@@ -20,7 +26,7 @@
 
 ## 2. Stack técnico (no cambiar sin razón)
 
-- **FastMCP 2.14.x** — stdio transport, src-layout, `fastmcp.json`
+- **FastMCP 3.x** — stdio transport, src-layout, `fastmcp.json`
 - **SQLite** (un único `docs.db` en `.mcp-docs/`), WAL, ACID, foreign_keys=ON, single-file backup con `cp`
 - **tree-sitter + tree-sitter-language-pack** (1.6.2 — pinned `<1.6.3` por falta de wheel macOS arm64 en versiones más nuevas)
 - **Python `ast`** para extracción Python de alta precisión + scoped resolution por imports
@@ -29,7 +35,7 @@
 - FTS5 BM25 lane usa el bm25 nativo de SQLite (la dep `rank-bm25` se removió en v0.20 — nunca se importaba)
 - **watchdog>=4.0** para file watcher
 - **hypothesis + psutil** en `[dev]` extras
-- ~~fastembed + sqlite-vec~~ **eliminados** (Unreleased) — `search` es FTS5-only; mig v19 limpia `chunk_vec_*` / `embedded_at`
+- ~~fastembed + sqlite-vec~~ **eliminados** (**v0.29.0**) — `search` es FTS5-only; mig v19 limpia `chunk_vec_*` / `embedded_at`
 
 Todo el stack es local-first: 0 servicios externos, 0 API keys obligatorias, 0 Docker.
 
@@ -46,9 +52,14 @@ follow-ups (propose skip-any-link, orphan Jest hint, git_diff hint, JSDoc);
 plugin Skill/agent polyrepo + legacy-safety rules. Surface **27** core +
 **12** Spec + **5** docs = **44**.
 
+**Public beta docs pass (post-tag):** README banner + package story
+(`uvx livespec@0.29.0`); CLAUDE/PLAYBOOK/QUICKSTART/ROADMAP/presentation
+aligned; self-dogfood in `docs/BETA_DOGFOOD.md`; checklist
+`docs/BETA_CHECKLIST.md`. Maturity = public beta, not 1.0.
+
 ### v0.28.1 resumen (referencia)
 
-**HEAD was `e02c424` / `565718f` Unreleased.** Checklist flow-group PASS.
+**HEAD was `e02c424` / `565718f` pre-0.29.** Checklist flow-group PASS.
 P0 group lookup; legacy infra filter; dead_code auto non-python; Spring hint.
 
 ### v0.23+ / OpenSpec resumen (referencia)
@@ -57,43 +68,27 @@ P0 group lookup; legacy infra filter; dead_code auto non-python; Spring hint.
 `### Requirement:` + `#### Scenario:`) es la **SSoT de autoría**. Livespec es el
 motor de grafo/trazabilidad debajo. El catálogo nativo `## SPEC-NNN:` queda como
 **import-compat / legacy** — no mezclar dialectos en el mismo repo. Ver
-`CHANGELOG` Unreleased + Skill `livespec` + `docs/AGENT_PLAYBOOK.md` §5.5.
+`CHANGELOG` `[0.23.0]`/`[0.29.0]` + Skill `livespec` + `docs/AGENT_PLAYBOOK.md` §5.5.
 
-**Release actual: `v0.23.0` (2026-07-24)** — supersede del tag-only `v0.22.0`
-(nunca publicado a PyPI; PyPI va 0.20.0 → 0.23.0). Incluye además Tier 2/3/4 +
-battle-test + workflow de Trusted Publishing (`.github/workflows/publish.yml`). Cortada sobre `main`: incluye el
-trabajo post-0.20 (cross-repo routes P2, grouped DB P1, callback edges),
-**compatibilidad OpenSpec completa** (round-trip + change lifecycle +
-scenario-level traceability + discoverability para agentes), el fix py3.10
-(`datetime.UTC`), y el **rebrand de producto a `livespec`** (el paquete/comando
-siguen siendo `livespec-mcp`). Tools 36 → 44 (pre-vector-removal). Migraciones append-only hasta
-**v17**. CI verde py3.10/3.11/3.12. Pendiente: publicar a PyPI para que
-`uvx livespec-mcp` sirva 0.22 (hasta entonces el plugin corre 0.20). Detalle del
-batch OpenSpec abajo.
+**Shipped through `v0.23.0` then `v0.29.0`:** OpenSpec round-trip + change
+lifecycle + scenario traceability; product/`livespec` command (PyPI package
+`livespec`); cross-repo routes + `group_db`; FTS-only curation. Historical
+“still Unreleased / pending PyPI” notes are stale — pin is **0.29.0**.
 
-**Post-0.22.0 (en `[Unreleased]`): OpenSpec Tier 2.** Cerrados 3 gaps
-funcionales — `RENAMED` FROM/TO (parser + `apply_spec_change` migra links del
-spec viejo al nuevo y lo borra; mig **v18** `spec_change_delta.rename_from`),
-`## Purpose` round-trip (se guarda en `module.description` y `export_openspec` lo
-re-emite), y validación de `apply_spec_change` (`warnings` de aplicabilidad +
-`dry_run`). Descartado: generar `openspec/config.yaml` (config tool-managed, no
-derivable de specs). `test_openspec_interop.py` = 20 tests. Migraciones a v18.
+<details><summary>OpenSpec batch detail (v0.22→0.23 era)</summary>
 
-**Tier 3/4 (en `[Unreleased]`).** Tier 3 coherencia de nombre: agregado el
-comando **`livespec`** como alias aditivo de `livespec-mcp` (mismo entry point;
-dist/paquete siguen `livespec-mcp` — el rename total destructivo del módulo se
-descartó, rompería instalaciones/PyPI post-0.22). Tier 4 higiene: **SPEC-013
-(OpenSpec interoperability)** dogfoodeada sobre livespec mismo (agregada a
-`livespec-specs.md` + seed `livespec-spec-links.json`, 38 links, `apply_spec_links`
-→ linked=147 failed=0); nota de pin de versión en `plugin/.mcp.json` (pinear tras
-publicar a PyPI). Self-spec files rebrandeados a `livespec`.
+Tier 2: `RENAMED` FROM/TO, Purpose round-trip, apply warnings/`dry_run`, mig v18.
+Tier 3/4: `livespec` command alias; SPEC-013 dogfooded on self.
 
-### 3.0 En curso (post-0.20): cross-project + SDD interop
+</details>
 
-Stream de trabajo abierto tras un análisis estratégico (competencia con
-indexadores/memory MCP, y con OpenSpec de Fission-AI). Decisiones: livespec
-compite en el eje **code-graph + intent + cross-repo**, NO en RAG/memory (eje
-cedido a Grep nativo) ni LSP (cedido a vise). Batches:
+
+### 3.0 Histórico (post-0.20): cross-project + SDD interop — **landed**
+
+Stream que cerró en v0.23–v0.29 (OpenSpec + `group_db` + route edges +
+`find_legacy_flows`). El texto abajo es archivo de batches; el estado vivo
+está en §3 arriba y en `docs/BETA_DOGFOOD.md`.
+
 
 - **Interop OpenSpec** (LANDED `27257a7`): `import_specs_from_markdown`
   auto-detecta e ingiere el formato OpenSpec (`### Requirement:` +

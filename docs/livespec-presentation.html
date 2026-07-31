@@ -268,7 +268,7 @@
         <span class="pill">group_db cross-repo</span>
         <span class="pill">sin API keys</span>
       </div>
-      <p class="footnote">Presentación interna · Unreleased / marketplace pin 0.28.1 · ← → o click</p>
+      <p class="footnote">Presentación interna · public beta · v0.29.0 · PyPI + Claude Code plugin · ← → o click</p>
     </section>
 
     <!-- 2 -->
@@ -451,16 +451,16 @@
             <li>Traps documentados: stale grep, sync_openspec duplica, bulk_link shape</li>
             <li>Cold open + task loop claros</li>
             <li>OpenSpec como SSoT de autoría</li>
-            <li>Fuente en repo ya refleja Unreleased (<span class="mono">find_legacy_flows</span>, FTS-only)</li>
+            <li>Fuente alineada a <strong>v0.29.0</strong> public beta (<span class="mono">find_legacy_flows</span>, FTS-only, group_db)</li>
           </ul>
         </div>
         <div class="card">
           <h3><span class="pill warn">Gaps</span></h3>
           <ul class="clean" style="margin-top:0.6rem">
-            <li><strong>Marketplace 0.28.1 está stale:</strong> aún menciona <span class="mono">embed_chunks</span>, <span class="mono">agent_scratch</span>, Express opt-in</li>
+            <li><strong>Pin marketplace = 0.29.0 (actualizar con claude plugin update):</strong> Skill 0.29 documenta group_db + find_legacy_flows; sin embed_chunks/agent_scratch</li>
             <li>Largo (~215L): satura context del subagente en tareas triviales</li>
-            <li>Poco sobre <span class="mono">group_db</span> / polyrepo ops</li>
-            <li>No guía “legacy vs missing SA” ni confirmación APM</li>
+            <li>Skill 0.29 ya cubre group_db + legacy traps (re-validar en adopters)</li>
+            <li>Guía legacy/APM landed in Skill 0.29 — keep pin in sync</li>
             <li>Poco coverage de plugin docs / Flow Explorer</li>
           </ul>
         </div>
@@ -543,14 +543,14 @@
           <p class="muted" style="margin-top:0.5rem">Sin <span class="mono">index_project</span> fresco, grep y impacto mienten. Watcher no es el camino feliz.</p>
         </div>
         <div class="card">
-          <h3><span class="pill warn">Pin vs Unreleased</span></h3>
+          <h3><span class="pill warn">Pin = PyPI 0.29</span></h3>
           <p class="muted" style="margin-top:0.5rem">Marketplace puede ir atrás del checkout. Cursor debe apuntar al path local para dogfood.</p>
         </div>
       </div>
       <ul class="clean" style="margin-top:1rem">
         <li>No reemplaza tests ni review humano</li>
         <li>Spec mutation gated — no siempre visible en tools/list</li>
-        <li>Vectores eliminados (Unreleased): search es FTS5-only</li>
+        <li>Vectores eliminados (v0.29): search es FTS5-only</li>
       </ul>
     </section>
 
@@ -588,8 +588,8 @@
       <p class="eyebrow">12 · Acciones recomendadas</p>
       <h2>Cerrar el gap Skill ↔ producto</h2>
       <ol class="clean" style="list-style:decimal;padding-left:1.2rem">
-        <li style="padding-left:0.3rem">Publicar PyPI / bump plugin pin cuando Unreleased estabilice (matar Skill stale 0.28.1)</li>
-        <li style="padding-left:0.3rem">Añadir sección Skill: <span class="mono">group_db</span>, legacy vs missing-SA, “no delete without traffic”</li>
+        <li style="padding-left:0.3rem">PyPI + plugin ya en 0.29.0 — al subir minor, bump pin Skill en el mismo release</li>
+        <li style="padding-left:0.3rem">Done in 0.29 Skill — maintain on every release</li>
         <li style="padding-left:0.3rem">Commands: impact / legacy / spec-impl</li>
         <li style="padding-left:0.3rem">Agent body: 3 líneas sobre cross-repo + confidence=low</li>
         <li style="padding-left:0.3rem">Skill “lite” opcional (~40L) para tareas de un solo símbolo</li>

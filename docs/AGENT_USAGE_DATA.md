@@ -7,7 +7,8 @@ actually do across multiple unfamiliar codebases.
 ## How this gets filled
 
 1. Pick a target codebase (Django subset, Next.js boilerplate, a large Rust monorepo
-   subset, etc.). Clone it, set `LIVESPEC_WORKSPACE` to its path.
+   subset, etc.). Clone it and pass `workspace=/abs/path` on every tool call
+   (no `LIVESPEC_WORKSPACE` env).
 2. Run an agent session: a real bug-fix, feature, refactor, or
    exploration task — not a synthetic benchmark. Let the agent call
    tools naturally.

@@ -16,7 +16,7 @@ Livespec is a local-first MCP server that maintains a live call graph, Spec<->co
 links, and on-demand docs for a repo. It speaks 9 languages (Python, Go, Java, JS,
 TS, Rust, Ruby, PHP + scoped resolution) and is framework-aware (Flask, FastAPI,
 Click, pytest, FastMCP, Celery, Django, Next.js, Deno Fresh, SvelteKit, Remix,
-Spring Boot, Angular, Hono).
+Spring Boot, Angular, Express, Hono).
 
 ## The one non-negotiable rule: `workspace`
 

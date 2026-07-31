@@ -53,8 +53,8 @@ client cached the short tool list.
 | First contact on a symbol | `quick_orient(qname)` | Replaces 3–4 older calls; includes `is_entry_point` |
 | Name lookup | `find_symbol(query)` | Separator-agnostic (`::`, `.`, `#`) |
 | Read body only | `get_symbol_source(qname)` | Lighter than full orient |
-| Who calls this? | `who_calls(qname, max_depth=1)` | Use `summary_only=True` on huge repos |
-| What does this call? | `who_does_this_call(qname, max_depth=1)` | Forward cone |
+| Who calls this? | `who_calls(qname, max_depth=1)` | Use `summary_only=True` on huge repos; `route_callers` for HTTP |
+| What does this call? | `who_does_this_call(qname, max_depth=1)` | Forward cone + `invokes_endpoints` (cross-repo with `group_db`) |
 | Blast radius + Spec rollup | `analyze_impact(target_type, target, max_depth)` | `symbol` \| `file` \| `spec` |
 | PR / diff scope | `git_diff_impact(base_ref, head_ref)` | Inside a git repo only |
 | Semantic grep | `search(query, scope)` | FTS5 over AST chunks + Specs |
@@ -62,8 +62,10 @@ client cached the short tool list.
 | What implements SPEC-NNN? | `get_spec_implementation(spec_id)` | One round-trip |
 | Coverage gaps | `audit_coverage()` | Orphans, low-confidence links |
 | Brownfield Spec ideas | `propose_specs_from_codebase()` | Heuristic; user approves before create |
-| Dead code candidates | `find_dead_code()` | Respects entry points / `pub` / frameworks |
-| HTTP/CLI entry points | `find_endpoints(framework?)` | Prefer `summary_only=True` if full JSON breaks |
+| Dead-code candidates | `find_dead_code()` | Respects entry points / `pub` / frameworks; TS-only auto-enables non-Python |
+| Likely-unused HTTP flows | `find_legacy_flows()` | Best with `group_db`; graph ≠ traffic; orphan_client often = missing SA |
+| HTTP/CLI entry points | `find_endpoints(framework?)` | Default sweep includes Express+Hono call-style; prefer `summary_only=True` if huge |
+| Literal grep (indexed files) | `grep_in_indexed_files(pattern)` | Check `scope_fresh`; re-index if stale |
 | Batch link (escape hatch) | `bulk_link_spec_symbols(mappings)` | Configs, SQL, langs without `@spec:` extractor |
 | Import a whole OpenSpec repo | `sync_openspec(openspec_dir?)` | Specs **+** changes from `openspec/`; reads `openspec.json` |
 | Write Specs back to OpenSpec | `export_openspec(out_dir?)` | `specs/<capability>/spec.md` + `changes/` — closes the round-trip |
@@ -85,9 +87,11 @@ client cached the short tool list.
 
 Run `scan_spec_annotations()` after bulk doc edits; it also runs automatically at end of `index_project()`.
 
-### `livespec-docs` plugin — *generated Markdown docs*
+### `livespec-docs` plugin — *generated Markdown docs + Explorers*
 
-`generate_docs`, `list_docs`, `export_documentation` — optional; drift detection is live, generation needs LLM/sampling.
+`generate_docs`, `list_docs`, `export_documentation`, `export_explorer`,
+`export_flow_explorer` — optional; unlock via docs rows, explorer bundle, or
+`LIVESPEC_PLUGINS=docs|all`. Drift detection is live; generation needs LLM/sampling.
 
 ---
 
@@ -103,7 +107,13 @@ Avoid the v0.7 chain `find_symbol → get_symbol_info → who_calls → …`.
 | Delegate drill-down | `quick_orient` → `who_does_this_call` |
 | Before refactor | `analyze_impact` or `git_diff_impact` |
 
-**Large repos (>30k symbols):** `summary_only=True`, `limit` + `cursor` on aggregators; `min_weight=0.6` on traversals (default) drops resolver fan-out noise.
+**Large repos (>30k symbols):** `summary_only=True`, `limit` + `cursor` on
+aggregators (`audit_coverage`, `find_dead_code`, `find_orphan_tests`,
+`find_endpoints`, `find_legacy_flows`, `git_diff_impact`); `min_weight=0.6` on
+traversals (default) drops resolver fan-out noise.
+
+**Polyrepo:** sibling repos can share `[workspace] group_db` in `.livespec.toml`.
+Then `find_legacy_flows`, `route_callers`, and `invokes_endpoints` span the group.
 
 ---
 
