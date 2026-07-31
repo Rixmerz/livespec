@@ -6,6 +6,11 @@ follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.30.0] - 2026-07-31
+
+Explorer playground + Cursor schema honesty + dogfood Spec map cleanup.
+Maturity remains **public beta** (not 1.0); package pin `uvx livespec@0.30.0`.
+
 ### Fixed — Explorer false “declared status not updated” on ``active`` Specs
 
 ``statusLooksStale`` treated only ``approved``/``verified``/… as caught-up,
@@ -108,7 +113,7 @@ not for” table for human adopters.
 Honest product posture across README, CLAUDE, HANDOFF, ROADMAP, AGENT_* ,
 presentation deck, Skill framework list, and self-dogfood:
 `docs/BETA_CHECKLIST.md` + `docs/BETA_DOGFOOD.md`. Package story =
-`uvx livespec@0.29.0`; maturity = public beta (not 1.0); graph ≠ traffic;
+`uvx livespec@0.30.0`; maturity = public beta (not 1.0); graph ≠ traffic;
 FTS-only; polyrepo/`find_legacy_flows` documented as shipped.
 AGPL first-contact templates: `docs/AGPL_COMPLIANCE_CONTACT.md`.
 Competitive deferral vs Graphify: `docs/COMPETITIVE_GRAPHIFY.md` (no Leiden /

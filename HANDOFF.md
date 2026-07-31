@@ -15,8 +15,8 @@
   era la máquina macOS anterior — referencias viejas en este doc pueden
   mencionarlo)
 - **Demo project:** `<demo-app>` (4 archivos Python con `@rf:` annotations en docstrings, ya tiene RFs persistidas en su `.mcp-docs/docs.db`)
-- **MCP server:** Claude Code plugin `livespec@livespec` **0.29.0**
-  (`uvx livespec@0.29.0`) and/or Cursor `user-livespec` pointing at a local
+- **MCP server:** Claude Code plugin `livespec@livespec` **0.30.0**
+  (`uvx livespec@0.30.0`) and/or Cursor `user-livespec` pointing at a local
   checkout. **Every tool requires `workspace=/abs/repo`** — there is no
   `LIVESPEC_WORKSPACE` env fallback (removed).
 - **Git user:** Juan Pablo Díaz S.
@@ -43,24 +43,27 @@ Todo el stack es local-first: 0 servicios externos, 0 API keys obligatorias, 0 D
 
 ## 3. Estado actual
 
-**Release `v0.29.0` on `main`.** Tests **627**. PyPI `livespec==0.29.0`
-(Trusted Publishing via tag). Plugin pin `livespec@0.29.0`.
+**Release `v0.30.0` on `main`.** Tests **639**. PyPI `livespec==0.30.0`
+(Trusted Publishing via tag). Plugin pin `livespec@0.30.0`.
 
-Highlights: FTS-only (vectors out, mig v19); `find_legacy_flows`; group_db
-symbol lookup; Tier-B noise; Express/Hono default endpoints; audit IMPROVE
-follow-ups (propose skip-any-link, orphan Jest hint, git_diff hint, JSDoc);
-plugin Skill/agent polyrepo + legacy-safety rules. Surface **27** core +
-**12** Spec + **5** docs = **44**.
+Highlights: Spec Explorer MCP playground (Try it / `call_tool`); product-only
+orphan KPIs (`modules_non_product` vs `modules_truly_orphan`); typed Explorer
+`parameters` + Cursor schema honesty (`SchemaCompat` + `param_descriptions`);
+OpenSpec self-tree strict-valid; harness test-credit for verified Specs;
+AGPL-3.0-only. Surface **27** core + **12** Spec + **5** docs = **44**.
 
-**Public beta docs pass (post-tag):** README banner + package story
-(`uvx livespec@0.29.0`); CLAUDE/PLAYBOOK/QUICKSTART/ROADMAP/presentation
-aligned; self-dogfood in `docs/BETA_DOGFOOD.md`; checklist
-`docs/BETA_CHECKLIST.md`. Maturity = public beta, not 1.0.
+**Public beta** (not 1.0): README + `docs/BETA_DOGFOOD.md` /
+`docs/BETA_CHECKLIST.md`. Pin `uvx livespec@0.30.0`.
 
-**OpenSpec self-dogfood:** `openspec/specs/*/spec.md` now SHALL+Scenario;
-`validate_openspec(strict=True)` green on this repo; SPEC-013 linked (38);
-Explorer **13/13 verified**; audit-probe Spec discarded. Harness test-link
-credit fix so MCP Client suites count as verified.
+**OpenSpec self-dogfood:** `validate_openspec(strict=True)` green; SPEC-013
+linked; Explorer **13/13 verified**; product orphans **0**.
+
+### v0.29.0 resumen (referencia)
+
+**Release `v0.29.0`.** Tests **627**. FTS-only (vectors out, mig v19);
+`find_legacy_flows`; group_db symbol lookup; Tier-B noise; Express/Hono
+default endpoints; audit IMPROVE; Skill/agent polyrepo + legacy-safety.
+Docs/beta surface alignment + AGPL relicense landed in the 0.30 cut.
 
 ### v0.28.1 resumen (referencia)
 
@@ -73,12 +76,12 @@ P0 group lookup; legacy infra filter; dead_code auto non-python; Spring hint.
 `### Requirement:` + `#### Scenario:`) es la **SSoT de autoría**. Livespec es el
 motor de grafo/trazabilidad debajo. El catálogo nativo `## SPEC-NNN:` queda como
 **import-compat / legacy** — no mezclar dialectos en el mismo repo. Ver
-`CHANGELOG` `[0.23.0]`/`[0.29.0]` + Skill `livespec` + `docs/AGENT_PLAYBOOK.md` §5.5.
+`CHANGELOG` `[0.23.0]`/`[0.29.0]`/`[0.30.0]` + Skill `livespec` + `docs/AGENT_PLAYBOOK.md` §5.5.
 
-**Shipped through `v0.23.0` then `v0.29.0`:** OpenSpec round-trip + change
+**Shipped through `v0.23.0` then `v0.29.0`/`v0.30.0`:** OpenSpec round-trip + change
 lifecycle + scenario traceability; product/`livespec` command (PyPI package
-`livespec`); cross-repo routes + `group_db`; FTS-only curation. Historical
-“still Unreleased / pending PyPI” notes are stale — pin is **0.29.0**.
+`livespec`); cross-repo routes + `group_db`; FTS-only curation; Explorer
+playground. Pin is **0.30.0**.
 
 <details><summary>OpenSpec batch detail (v0.22→0.23 era)</summary>
 

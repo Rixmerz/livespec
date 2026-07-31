@@ -1,12 +1,12 @@
-# Public beta surface checklist — livespec 0.29
+# Public beta surface checklist — livespec 0.30
 
 Status: **complete** (2026-07-31 docs + dogfood pass).
 
 ## Positioning
 
 - [x] README: public **beta** banner (local-first, FTS-only, graph ≠ traffic)
-- [x] No “Unreleased” labels for features already in **0.29.0** (HANDOFF §3 / ROADMAP / deck)
-- [x] Package story = `livespec` / `uvx livespec@0.29.0` (livespec-mcp = alias)
+- [x] No “Unreleased” labels for features already in **0.30.0** (HANDOFF §3 / ROADMAP / deck)
+- [x] Package story = `livespec` / `uvx livespec@0.30.0` (livespec-mcp = alias)
 
 ## Tool surface truth
 
@@ -18,10 +18,10 @@ Status: **complete** (2026-07-31 docs + dogfood pass).
 
 ## Docs / agent UX
 
-- [x] CLAUDE.md architecture matches 0.29
+- [x] CLAUDE.md architecture matches 0.30
 - [x] HANDOFF §1–3 current
 - [x] ROADMAP “próximo pilar” / RAG-plugin superseded
-- [x] Presentation deck → 0.29 beta
+- [x] Presentation deck → 0.30 beta
 - [x] plugin Skill Express in framework list
 - [x] AGENT_PLAYBOOK + AGENT_QUICKSTART aligned
 
@@ -34,4 +34,4 @@ Status: **complete** (2026-07-31 docs + dogfood pass).
 ## Release hygiene
 
 - [x] CHANGELOG `[Unreleased]` notes for this docs/beta pass
-- [x] Tests still green *(627 passed, `-m "not embeddings"`)*
+- [x] Tests still green *(639 passed, `-m "not embeddings"`)*

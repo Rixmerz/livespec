@@ -19,6 +19,13 @@
 
 ## 0. Estado v0.20 (addendum, reemplaza al "Estado v0.7" del final)
 
+**Addendum v0.30.0 — Explorer playground + honest Spec gaps.** Spec Explorer
+can Execute read-only MCP tools via `livespec explorer serve` playground;
+orphan KPIs split product vs tests/scripts/bench; Cursor/`tools/list` schemas
+are typed end-to-end; self-repo OpenSpec tree is strict-valid. Still public
+beta — pin `uvx livespec@0.30.0`. Next toward 1.0 remains adopters + trust,
+not more tools.
+
 **Addendum v0.29.0 — dense vectors removed.** `search` stays on the
 **core** surface as **FTS5-only**. Dropped: `embed_chunks`, `[embeddings]`
 extra (fastembed + sqlite-vec), RRF hybrid lane, mig **v19**. Earlier

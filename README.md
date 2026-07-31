@@ -3,13 +3,13 @@
 [![PyPI](https://img.shields.io/pypi/v/livespec.svg)](https://pypi.org/project/livespec/)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/downloads/)
 [![License: AGPL v3](https://img.shields.io/badge/license-AGPL--3.0--only-blue.svg)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-627%20passed-brightgreen.svg)](https://github.com/Rixmerz/livespec/actions)
+[![Tests](https://img.shields.io/badge/tests-639%20passed-brightgreen.svg)](https://github.com/Rixmerz/livespec/actions)
 
-> **Public beta (v0.29).** Local-first code intelligence for AI agents.
+> **Public beta (v0.30).** Local-first code intelligence for AI agents.
 > Call graph, impact analysis, and Spec ↔ code traceability. Search is
 > **FTS5-only** (no embeddings). Dead/legacy findings are **graph evidence**,
 > not production traffic — confirm with APM/logs before deleting. Spec and
-> docs mutation tools are plugin-gated. Pin: `uvx livespec@0.29.0`.
+> docs mutation tools are plugin-gated. Pin: `uvx livespec@0.30.0`.
 >
 > **License: [GNU AGPL v3](LICENSE)** (`AGPL-3.0-only`). If you modify
 > livespec and offer it over a network (MCP host, SaaS, internal API), you
@@ -39,7 +39,7 @@ Ships as a **Claude Code plugin** bundling three things: the **MCP server**
 (the tools), a specialized **subagent**, and a preloaded **Skill** (the
 operating manual). Everything an agent sees — the plugin, subagent, Skill, and
 MCP tool namespace — is `livespec`. The PyPI distribution and console command
-are also **`livespec`** (`uvx livespec@0.29.0` / `pip install livespec`).
+are also **`livespec`** (`uvx livespec@0.30.0` / `pip install livespec`).
 The legacy command alias `livespec-mcp` still works on the same entry point.
 
 Battle-tested on real codebases. Four releases of compounding wins
@@ -66,7 +66,7 @@ Spec flow, Django bugfix, TypeScript feature) — see
 ```bash
 # Wire as an MCP server next to your editor (claude.ai/code, Cursor, ...).
 # Every tool call carries workspace="/abs/path" — one server, N repos.
-uvx livespec@0.29.0
+uvx livespec@0.30.0
 # alias still works: livespec-mcp
 ```
 
@@ -170,13 +170,13 @@ uv pip install -e ".[dev]"
 ## Run as MCP server
 
 ```bash
-uvx livespec@0.29.0   # preferred — PyPI distribution name is `livespec`
+uvx livespec@0.30.0   # preferred — PyPI distribution name is `livespec`
 livespec              # after `pip install livespec` / `uv tool install livespec`
 livespec-mcp          # console alias of the same entry point
 ```
 
 > The **product, package, and primary command** are `livespec`
-> (`pip install livespec`, `uvx livespec@0.29.0`). The `livespec-mcp` command
+> (`pip install livespec`, `uvx livespec@0.30.0`). The `livespec-mcp` command
 > remains as a back-compat alias only.
 
 Every tool call requires `workspace="/abs/path"` (no cwd or env fallback
@@ -718,3 +718,4 @@ FTS5-only in v0.29 — do not confuse that with the old “drop search” opinio
 | 23 — v0.20 | ✅ | **Breaking (hard cut):** RF → Spec nomenclature + taxonomy. `rf`/`rf_symbol`/`rf_dependency` tables renamed to `spec`/`spec_symbol`/`spec_dependency` with a new `kind` column (`functional_requirement`, `non_functional_requirement`, `adr`, `design`, `constraint`, `epic`, `other`); migration v11 preserves existing `RF-NNN` ids. `@rf:`/`@not_rf` annotations renamed to `@spec:`/`@not_spec`. All RF-prefixed tools renamed (`list_requirements`→`list_specs`, `create_requirement`→`create_spec`, etc.), `livespec-rf` plugin renamed to `livespec-spec`. No aliases — single breaking release. Followed by an 8-dimension audit whose ~50 fixes landed across six batches (packaging, storage/concurrency, domain correctness, tools, performance, docs). **403** default tests |
 | 24 — v0.23 | ✅ | Cross-repo route edges (`route_ref`, mig v14 — `who_calls.route_callers` / `who_does_this_call.invokes_endpoints`), grouped DB (`[workspace] group_db`), Python callback-arg edges. **Full OpenSpec (Fission-AI) compatibility:** scenarios first-class (migs v15/v17 `spec_scenario`/`scenario_symbol`), `export_openspec` round-trip, `validate_openspec`, change lifecycle (mig v16 `spec_change`/`spec_change_delta`; `sync_openspec`/`apply_spec_change`/`archive_spec_change` — RENAMED FROM/TO + `dry_run`/warnings, mig v18), scenario-level traceability (`link_scenario_symbol`), Purpose round-trip, and agent discoverability (`openspec_workflow` prompt). **Battle-tested** against the real Fission-AI/OpenSpec tree (2 layout bugs fixed). Tools 36 → 44. Rebrand: product name `livespec` + `livespec` command alias (dist/package stay `livespec-mcp`). Trusted-Publishing release workflow. (Supersedes the tag-only, unpublished v0.22.0.) |
 | 25 — v0.29 | ✅ | FTS-only search (drop vectors/`embed_chunks`, mig v19); `find_legacy_flows`; group_db symbol lookup; Tier-B noise; Express/Hono in default endpoints; demote Explorer to docs plugin + drop `agent_scratch*`; audit IMPROVE (propose/orphan/git_diff/JSDoc); plugin Skill+agent polyrepo/legacy-safety. **627** default tests |
+| 26 — v0.30 | ✅ | Explorer MCP playground (`call_tool` / Try it); product-only orphan KPIs; typed Explorer `parameters` + Cursor schema honesty (`SchemaCompat` + `param_descriptions`); OpenSpec self-tree strict-valid; harness test-credit for verified Specs; AGPL-3.0-only. **639** default tests |

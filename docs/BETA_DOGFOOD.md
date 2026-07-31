@@ -1,9 +1,9 @@
-# Self-dogfood — livespec on livespec-mcp (public beta 0.29)
+# Self-dogfood — livespec on livespec-mcp (public beta 0.30)
 
 **Date:** 2026-07-31  
 **Workspace:** `<repo>`  
 **MCP:** `user-livespec` (local checkout)  
-**Product pin:** `livespec==0.29.0`
+**Product pin:** `livespec==0.30.0`
 
 ## What we ran
 

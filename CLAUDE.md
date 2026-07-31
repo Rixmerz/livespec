@@ -17,7 +17,7 @@ Ruby, PHP) plus scoped resolution in 8 of them, and is framework-aware for
 Flask, FastAPI, Click, pytest, FastMCP, Celery, Django, Next.js, Deno Fresh,
 SvelteKit, Remix, Spring Boot, Angular, Express and Hono.
 
-**Maturity:** public **beta** (v0.29) — battle-tested on real polyrepos;
+**Maturity:** public **beta** (v0.30) — battle-tested on real polyrepos;
 graph findings ≠ production traffic. See README banner.
 
 ## Stakeholder posture (not co-architect — owner-with-skin)
