@@ -1769,9 +1769,18 @@ def compute_spec_test_coverage(
         report_hit = False
         tested_count = 0
         uncovered_sids: list[int] = []
+        # MCP / Client harness pattern: Specs often link real test *functions*
+        # with relation='tests', but those tests call tools by string name so
+        # there is no static edge to the `implements` symbols. If any explicit
+        # tests-link points at a symbol in a test file, credit every implement
+        # on this Spec (same intent as dual-linking the impl as `tests`).
+        harness_tests = any(
+            _is_test_file_path((view.sym_meta.get(sid) or {}).get("file_path") or "")
+            for sid in explicit
+        )
         for sid in impl:
             in_derived = sid in tested_symbols
-            in_explicit = sid in explicit
+            in_explicit = sid in explicit or harness_tests
             meta = view.sym_meta.get(sid, {})
             report_lines = report_coverage.get(meta.get("file_path") or "", set())
             in_report = any(

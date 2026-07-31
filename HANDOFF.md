@@ -57,6 +57,11 @@ plugin Skill/agent polyrepo + legacy-safety rules. Surface **27** core +
 aligned; self-dogfood in `docs/BETA_DOGFOOD.md`; checklist
 `docs/BETA_CHECKLIST.md`. Maturity = public beta, not 1.0.
 
+**OpenSpec self-dogfood:** `openspec/specs/*/spec.md` now SHALL+Scenario;
+`validate_openspec(strict=True)` green on this repo; SPEC-013 linked (38);
+Explorer **13/13 verified**; audit-probe Spec discarded. Harness test-link
+credit fix so MCP Client suites count as verified.
+
 ### v0.28.1 resumen (referencia)
 
 **HEAD was `e02c424` / `565718f` pre-0.29.** Checklist flow-group PASS.

@@ -6,6 +6,23 @@ follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Docs — OpenSpec dogfood tree is strict-valid (self-repo)
+
+Rewrote ``openspec/specs/*/spec.md`` with normative SHALL + ≥1 Scenario per
+requirement; added ``openspec/openspec.json``; removed temporary
+``audit-audit-probe-only`` Spec from the local DB. ``sync_openspec`` +
+``validate_openspec(strict=True)`` pass on this repo; SPEC-013 link seed
+applies (38 links). SPEC-006 titled FTS (not Hybrid/RAG).
+
+### Fixed — MCP Client / harness Specs stay ``implemented`` not ``verified``
+
+``compute_spec_test_coverage`` only credited an ``implements`` symbol when
+that *same* symbol id also had ``relation='tests'``. Specs that link real
+test functions (MCP ``Client.call_tool`` suites with no static call edges)
+therefore stayed at ``test_coverage_ratio=0`` / Explorer ``implemented``.
+If any ``tests`` link points at a symbol in a test file, every ``implements``
+symbol on that Spec is now credited (``coverage_source=explicit``).
+
 ### Fixed — MCP tool schemas show typed params (Cursor `any` / empty Description)
 
 ``Workspace`` was ``Annotated[str | None, …]`` plus ``Workspace | None = None``,

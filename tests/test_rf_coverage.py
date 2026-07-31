@@ -66,6 +66,56 @@ async def test_spec_coverage_derived_from_call_graph(workspace):
 
 
 @pytest.mark.asyncio
+async def test_spec_coverage_harness_tests_link_credits_all_implements(workspace):
+    """relation='tests' on a real test-file symbol credits every implements
+    symbol — MCP Client suites call tools by string name (no static edges)."""
+    pkg = workspace / "pkg"
+    pkg.mkdir()
+    (pkg / "__init__.py").write_text("")
+    (pkg / "feature.py").write_text(
+        "def implementer_a():\n"
+        "    return 1\n"
+        "\n"
+        "def implementer_b():\n"
+        "    return 2\n"
+    )
+    (workspace / "tests").mkdir()
+    (workspace / "tests" / "test_feature.py").write_text(
+        "def test_via_mcp_client():\n"
+        "    return True  # would call_tool('feature') by string — no edges\n"
+    )
+
+    async with Client(mcp) as c:
+        await c.call_tool("index_project", {})
+        await c.call_tool(
+            "create_spec", {"spec_id": "SPEC-HARNESS", "title": "Harness"}
+        )
+        await c.call_tool(
+            "link_spec_symbol",
+            {"spec_id": "SPEC-HARNESS", "symbol_qname": "pkg.feature.implementer_a"},
+        )
+        await c.call_tool(
+            "link_spec_symbol",
+            {"spec_id": "SPEC-HARNESS", "symbol_qname": "pkg.feature.implementer_b"},
+        )
+        await c.call_tool(
+            "link_spec_symbol",
+            {
+                "spec_id": "SPEC-HARNESS",
+                "symbol_qname": "tests.test_feature.test_via_mcp_client",
+                "relation": "tests",
+            },
+        )
+        out = (await c.call_tool("audit_coverage", {})).data
+
+    by_id = {r["spec_id"]: r for r in out["spec_coverage"]}
+    entry = by_id["SPEC-HARNESS"]
+    assert entry["test_coverage_ratio"] == 1.0, entry
+    assert entry["coverage_source"] == "explicit", entry
+    assert entry["tested_symbols"] == 2, entry
+
+
+@pytest.mark.asyncio
 async def test_spec_coverage_explicit_link_without_call_edge(workspace):
     """An impl symbol with ONLY an explicit `relation='tests'` link and NO
     call edge from any test is still credited via 'explicit' — the

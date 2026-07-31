@@ -1,8 +1,8 @@
-# Cli Specification
+# CLI Specification
 
 ## Purpose
 
-The `cli` capability of livespec (dogfood).
+The `cli` capability of livespec (dogfood OpenSpec SSoT).
 
 ## Requirements
 
@@ -10,6 +10,9 @@ The `cli` capability of livespec (dogfood).
 
 <!-- livespec:id=SPEC-012 -->
 
-Provide a headless `livespec-mcp index` / `livespec-mcp status` entry
-point that shares the same indexing pipeline as the MCP server, for use
-in CI or scripted environments without an MCP host.
+The livespec MCP server SHALL ensure that the system SHALL provide headless `livespec index` / `livespec status` (and `livespec-mcp` aliases) sharing the MCP indexing pipeline.
+
+#### Scenario: Index then status
+
+- **WHEN** an agent runs `livespec index <path>` then `livespec status <path>`
+- **THEN** status JSON reports symbol/file counts for that workspace

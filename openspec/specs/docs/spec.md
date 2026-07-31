@@ -2,7 +2,7 @@
 
 ## Purpose
 
-The `docs` capability of livespec (dogfood).
+The `docs` capability of livespec (dogfood OpenSpec SSoT).
 
 ## Requirements
 
@@ -10,7 +10,9 @@ The `docs` capability of livespec (dogfood).
 
 <!-- livespec:id=SPEC-010 -->
 
-Generate on-demand documentation (`generate_docs`), list generated docs
-(`list_docs`), and export documentation to markdown
-(`export_documentation`). Plugin-tier surface, not part of the default
-agent toolkit.
+The livespec MCP server SHALL ensure that the system SHALL generate, list, and export on-demand documentation via the docs plugin tools.
+
+#### Scenario: List docs
+
+- **WHEN** docs rows exist in the project DB
+- **THEN** `list_docs` returns those rows with stale flags when body hashes drift

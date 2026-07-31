@@ -1,0 +1,5 @@
+{
+  "schema": "https://openspec.dev/schema",
+  "name": "livespec",
+  "description": "Dogfood OpenSpec tree for the livespec MCP itself"
+}

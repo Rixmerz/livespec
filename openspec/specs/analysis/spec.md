@@ -2,7 +2,7 @@
 
 ## Purpose
 
-The `analysis` capability of livespec (dogfood).
+The `analysis` capability of livespec (dogfood OpenSpec SSoT).
 
 ## Requirements
 
@@ -10,23 +10,31 @@ The `analysis` capability of livespec (dogfood).
 
 <!-- livespec:id=SPEC-007 -->
 
-Detect unreachable / unused symbols (`find_dead_code`), audit Spec
-coverage of the codebase (`audit_coverage`), and surface tests that
-exercise no linked symbol (`find_orphan_tests`).
+The livespec MCP server SHALL ensure that the system SHALL detect unreachable symbols (`find_dead_code`), audit Spec coverage (`audit_coverage`), and surface orphan tests (`find_orphan_tests`).
+
+#### Scenario: Dead-code sweep
+
+- **WHEN** an indexed project has unused private helpers
+- **THEN** `find_dead_code` returns those helpers as candidates without claiming production traffic proof
 
 ### Requirement: Endpoint discovery (framework-aware)
 
 <!-- livespec:id=SPEC-008 -->
 
-Discover HTTP/route endpoints across 14 frameworks (Flask, FastAPI,
-Click, Django, Next.js, Deno Fresh, SvelteKit, Remix, Spring Boot,
-Angular, Hono, etc.) via `find_endpoints`, including decorator and alias
-detection.
+The livespec MCP server SHALL ensure that the system SHALL discover HTTP/CLI entry points across supported frameworks via `find_endpoints`, including Express/Hono in the default sweep.
+
+#### Scenario: Default sweep
+
+- **WHEN** a repo defines Express or Hono `router.get` routes
+- **THEN** `find_endpoints()` without framework filter includes those routes
 
 ### Requirement: Impact analysis
 
 <!-- livespec:id=SPEC-009 -->
 
-Answer "what breaks if I change this?" via `analyze_impact`,
-`git_diff_impact`, and the `who_calls` / `who_does_this_call` traversals
-over the call graph.
+The livespec MCP server SHALL ensure that the system SHALL answer blast-radius questions via `analyze_impact`, `git_diff_impact`, `who_calls`, and `who_does_this_call`.
+
+#### Scenario: Who calls
+
+- **WHEN** symbol A calls symbol B in the index
+- **THEN** `who_calls(B)` includes A in the caller set
