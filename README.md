@@ -640,11 +640,11 @@ measured with the in-process middleware
 
 | Repo | Files / Symbols | `index_project` cold | `quick_orient` p95 | `get_project_overview` p95 |
 |---|---:|---:|---:|---:|
-| demo-app (Python) | 4 / 23 | ~50 ms | <5 ms | ~10 ms |
+| tiny demo app (Python) | 4 / 23 | ~50 ms | <5 ms | ~10 ms |
 | livespec itself (Python+8 langs) | 84 / 495 | ~400 ms | ~60 ms | ~75 ms |
-| the workflow runner (Python) | 130 / 1173 | ~600 ms | ~50 ms | ~80 ms |
+| mid-size Python CLI | 130 / 1173 | ~600 ms | ~50 ms | ~80 ms |
 | Django (Python, stress) | 2898 / 39789 | ~25 s | <100 ms | ~250 ms |
-| a large Rust monorepo subset (Rust, stress) | 5K / 50K | ~30 s | <100 ms | ~300 ms |
+| large Rust monorepo (stress) | 5K / 50K | ~30 s | <100 ms | ~300 ms |
 
 For repos > 30K symbols, pass `summary_only=True` on aggregator and
 traversal tools (`audit_coverage`, `find_dead_code`, `find_orphan_tests`,

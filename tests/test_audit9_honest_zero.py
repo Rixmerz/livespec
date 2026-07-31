@@ -26,7 +26,7 @@ from livespec_mcp.server import mcp
 @pytest.mark.asyncio
 async def test_find_dead_code_ts_only_repo_auto_includes_non_python(workspace):
     """TS-only repos auto-enable include_non_python (silent Python-only zero
-    was an audit false negative on a client Express hubs)."""
+    was an audit false negative on Express hubs)."""
     (workspace / "src").mkdir()
     (workspace / "src" / "code.ts").write_text(
         "function deadFn() {\n  return 1;\n}\n"

@@ -42,7 +42,7 @@ def test_normalize_route_path(raw, expected):
             "${url}/list/${a}/${b}/${c}",
             "/list/{}/{}/{}",
         ),
-        # a client HotelSvc: ternaries contain `?` — must NOT truncate as query string
+        # Real repo: ternaries contain `?` — must NOT truncate as query string
         (
             "${url}/list/${params.checkIn ? `${params.checkIn}/` : \"\"}"
             "${params.checkOut ? `${params.checkOut}/` : \"\"}"
@@ -61,7 +61,7 @@ def test_path_from_template_raw(raw, expected):
 
 @pytest.mark.asyncio
 async def test_thin_http_wrapper_makeRequest_emits_client_route(sample_repo):
-    """a client third-party client pattern: ``makeRequest(`${base}/search`, body)`` where
+    """Third-party client pattern: ``makeRequest(`${base}/search`, body)`` where
     ``makeRequest`` forwards its first param to ``fetch`` — the CALLER must
     get the client route_ref (not the wrapper itself)."""
     (sample_repo / "back.py").write_text(
@@ -128,7 +128,7 @@ async def test_hotelsvc_multi_segment_template_links_java_handler(sample_repo):
         "  }${params.checkOut ? `${params.checkOut}/` : \"\"}${\n"
         "    params.hotelIds ? `${params.hotelIds}` : \"\"\n"
         "  }`;\n"
-        # Real a client shape: await + TS generics — tree-sitter puts await in
+        # Real-world shape: await + TS generics — tree-sitter puts await in
         # the call's function field; must still emit a client route_ref.
         "  return await axios.get<Hotel[]>(requestUrl);\n"
         "}\n"
@@ -407,7 +407,7 @@ async def test_express_route_links_axios_identifier_template_client(sample_repo)
 
 @pytest.mark.asyncio
 async def test_axios_post_url_var_and_body_ident_is_client(sample_repo):
-    """a client Composer pattern: ``const url = `${base}/flights/v2`; axios.post(url, body)``.
+    """Composer pattern: ``const url = `${base}/flights/v2`; axios.post(url, body)``.
 
     Second-arg identifiers are request payloads, not Express handlers — must
     still emit a client route_ref and join to the backend.

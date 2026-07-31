@@ -175,7 +175,7 @@ custom `warning` fields, no extra keys. Tested in `tests/test_error_shape.py`.
 unbounded collections (find_dead_code, audit_coverage, find_orphan_tests,
 find_endpoints, git_diff_impact) must accept `limit` (default 200) +
 `cursor` + `summary_only=False`. Counts are always exact regardless of
-pagination. Triggered by 4M-7M-char payloads on the a large Rust monorepo Rust monorepo.
+pagination. Triggered by 4M-7M-char payloads on a large Rust monorepo.
 
 **Ref resolver is INSERT OR IGNORE only.** Never DELETE from `symbol_edge`
 in `_resolve_refs`. Refs from unchanged files must survive when files
@@ -190,7 +190,7 @@ must drift; reformat must not. Tested in
 `tests/test_body_hash_stability.py`.
 
 **Symbol dedup before insert**: `_replace_symbols` deduplicates by
-`(qname, start_line)` because Django/a large Rust monorepo ship `if/else def x:` shims that
+`(qname, start_line)` because Django and large Rust monorepos ship `if/else def x:` shims that
 produce duplicate symbols at the same line. Keep the first occurrence
 (source order).
 

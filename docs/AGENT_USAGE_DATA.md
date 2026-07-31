@@ -780,7 +780,7 @@ last is a mutation tool that lands in plugin, not drop. **8 tools**
 to drop / move to resource.
 
 **Coverage gap remaining**: refactor profile against a non-Python
-codebase (TS/JS feature work) and a scale check (Django/a large Rust monorepo). But
+codebase (TS/JS feature work) and a scale check (Django and large Rust monorepos). But
 the v0.8 curation **can be drafted now from this data**, with
 known-unknowns flagged for v0.9 follow-up.
 

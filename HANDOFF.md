@@ -14,7 +14,7 @@
   desde 2026-06; el path histórico `<repo>`
   era la máquina macOS anterior — referencias viejas en este doc pueden
   mencionarlo)
-- **Demo project:** `<demo-app>` (4 archivos Python con `@rf:` annotations en docstrings, ya tiene RFs persistidas en su `.mcp-docs/docs.db`)
+- **Demo project:** `<demo-repo>` (4 archivos Python con `@rf:` annotations en docstrings, ya tiene RFs persistidas en su `.mcp-docs/docs.db`)
 - **MCP server:** Claude Code plugin `livespec@livespec` **0.30.0**
   (`uvx livespec@0.30.0`) and/or Cursor `user-livespec` pointing at a local
   checkout. **Every tool requires `workspace=/abs/repo`** — there is no
@@ -57,6 +57,19 @@ AGPL-3.0-only. Surface **27** core + **12** Spec + **5** docs = **44**.
 
 **OpenSpec self-dogfood:** `validate_openspec(strict=True)` green; SPEC-013
 linked; Explorer **13/13 verified**; product orphans **0**.
+
+**Barrido beta 23 repos (31-jul, post-0.30):** re-index con `force` + las 23
+tools read-only sobre 13 repos de un grupo `group_db` y 10 repos sueltos.
+17 027 símbolos / 30 103 edges / **31,5 s**; 500 llamadas, 21 fallos (4,2 %).
+El script y los datos viven **fuera de este repo** (workspaces privados; nunca
+commitear paths ni nombres de repos de terceros).
+
+Backlog que salió del barrido (no bloquea):
+1. `find_endpoints` devuelve IDs `archivo.js:linea` en rutas call-style; pasarlos
+   a `who_calls`/`analyze_impact` da `Symbol not found` (6/23 repos).
+2. `find_endpoints(framework="spring")` no puebla `http_method`/`http_path`
+   (solo `decorators`), aunque `route_ref` sí resuelve esas rutas.
+3. `find_symbol` responde `grouped: true` con `group_db: null`.
 
 ### v0.29.0 resumen (referencia)
 
@@ -1212,7 +1225,7 @@ Cuando el log dice qué se usó y qué no:
    analyze_impact(target_type="symbol", target="...")
    git_diff_impact()
    ```
-3. **Performance section** del README con números Django/a large Rust monorepo/the workflow runner +
+3. **Performance section** del README con números Django and large Rust monorepos/the workflow runner +
    guidance "para repos > 30K símbolos, summary_only=True default".
 4. **Sección "agent vs human user"** explícita.
 
@@ -1431,9 +1444,9 @@ P0 + P1 + P2 (3 sessions + 11 fixes + wire validation) + P3a + P3b-prep
   - `feedback_workflow_main_direct.md` (push directo a main, no PRs)
   - `project_stakeholder_posture.md` (RFs first-class, agent UX es el producto)
 - Logs JSONL acumulados (P2 data):
-  - `<workflow-runner>/.mcp-docs/agent_log.jsonl` (sesión 01)
+  - `<third-party-repo>/.mcp-docs/agent_log.jsonl` (sesión 01)
   - `<repo>/.mcp-docs/agent_log.jsonl` (sesión 02 + validaciones)
-  - `<demo-app>/.mcp-docs/agent_log.jsonl` (sesión 03)
+  - `<demo-repo>/.mcp-docs/agent_log.jsonl` (sesión 03)
   - Re-correr aggregate: `uv run python bench/agent_log_analyze.py <ws1> <ws2> <ws3>`
 
 ---

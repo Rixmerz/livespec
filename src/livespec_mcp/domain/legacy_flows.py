@@ -24,7 +24,7 @@ INFRA_ROUTE_PATHS = frozenset({
     "/metrics",
     "/actuator/health",
     "/actuator/info",
-    # Docs / operator UI (audit: dominated legacy_server noise on a client results)
+    # Docs / operator UI (audit: dominated legacy_server noise on a real polyrepo)
     "/api-docs",
     "/v3/api-docs",
     "/openapi.yaml",

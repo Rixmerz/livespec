@@ -347,7 +347,7 @@ def _path_from_template_raw(raw: str) -> str | None:
     """Turn a template/string URL into a path matchable by ``normalize_route_path``.
 
     Handles ``${base}/flights/v2``, multi-segment
-    ``${base}/list/${a}/${b}/${c}``, and nested-ternary a client HotelSvc builders
+    ``${base}/list/${a}/${b}/${c}``, and nested-ternary URL builders
     that collapse to ``/list/{}/{}/{}``.
 
     Do **not** strip on bare ``?`` before collapsing: JS ternaries inside
@@ -463,7 +463,7 @@ def _ts_fn_first_param(fn_node, text) -> str | None:
 def _ts_find_http_wrappers(root, src_bytes: bytes) -> frozenset[str]:
     """Same-file helpers whose first param is forwarded to fetch/axios/got.
 
-    Covers a client ``makeRequest(url, body)`` wrappers: callers pass a URL
+    Covers ``makeRequest(url, body)`` wrappers: callers pass a URL
     template and the helper performs the HTTP call. Names only — method stays
     agnostic at the call site (matches ``fetch`` weight).
     """
@@ -1430,7 +1430,7 @@ def _is_http_route_receiver(name: str | None) -> bool:
 def _route_handler_name(node, text) -> str | None:
     """Resolve a route-handler AST node to a linkable symbol name.
 
-    Patterns (a client Express / Hono):
+    Patterns (Express / Hono):
     - ``listHotels`` → ``listHotels``
     - ``healthController.check`` → ``check`` (member property)
     - ``wrap(liveness)`` / ``asyncHandler(fn)`` → first identifiable arg

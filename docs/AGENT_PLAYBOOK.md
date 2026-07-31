@@ -202,7 +202,7 @@ not compete on authoring. See §5.8 for the full OpenSpec loop.
 
 ### 5.5b Legacy catalog (`## SPEC-NNN`) — import compat only
 
-Older a client / livespec-native catalogs still work. Prefer migrating them to
+Older livespec-native catalogs still work. Prefer migrating them to
 OpenSpec rather than keeping both dialects in one repo.
 
 ```markdown

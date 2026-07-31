@@ -4,12 +4,21 @@
 Produces a JSON report with latency, error shape, and coarse signal metrics
 so we can score keep / improve / fix / drop. Read-mostly; mutations use
 dry_run or create+delete a disposable Spec.
+
+Workspaces are read from the environment so private repo paths never land in
+this tree::
+
+    LIVESPEC_AUDIT_CROSS_WS=/abs/repo/in/a/group_db  \\
+    LIVESPEC_AUDIT_SOLO_WS=/abs/repo                 \\
+    LIVESPEC_AUDIT_OUT=/abs/out.json                 \\
+    uv run python scripts/dogfood_tool_value_audit.py
 """
 
 from __future__ import annotations
 
 import asyncio
 import json
+import os
 import time
 import traceback
 from pathlib import Path
@@ -19,9 +28,10 @@ from fastmcp import Client
 
 from livespec_mcp.server import mcp
 
-CROSS_WS = "<private-workspace>"
-SOLO_WS = "<repo>"
-OUT = Path("<private-workspace>")
+REPO_ROOT = Path(__file__).resolve().parent.parent
+SOLO_WS = os.environ.get("LIVESPEC_AUDIT_SOLO_WS", str(REPO_ROOT))
+CROSS_WS = os.environ.get("LIVESPEC_AUDIT_CROSS_WS", SOLO_WS)
+OUT = Path(os.environ.get("LIVESPEC_AUDIT_OUT", "/tmp/livespec-tool-value-audit.json"))
 
 # Caps — keep payloads small for the audit.
 LIMIT = 20

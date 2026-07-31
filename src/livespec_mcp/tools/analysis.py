@@ -1503,7 +1503,7 @@ def compute_endpoints(
     # Same AST scanner — both frameworks use `app|router.get('/path', handler)`.
     # Included in ``framework=None`` (default) as well as explicit opt-in —
     # agents calling find_endpoints() without a framework must see Express
-    # routes on real-world-style repos (audit 2026-07-30). Pre-filter by marker
+    # routes on real polyrepos (audit 2026-07-30). Pre-filter by marker
     # in source so we don't scan every TS/JS file.
     call_style_frameworks = (
         (framework,)

@@ -84,7 +84,7 @@ provenance column al core. Ver `docs/COMPETITIVE_GRAPHIFY.md`. Weight +
 - **Aggregator tools paginados** (v0.7 B3) — `find_dead_code`, `audit_coverage`,
   etc. respetan limit/cursor/summary_only. Necesario a partir de ~50K símbolos.
 - **`propose_requirements_from_codebase` (v0.7 B2)** — el mecanismo brownfield
-  que faltaba. Demostrado funcional en `the workflow runner` (130 archivos): 7 RF candidatos
+  que faltaba. Demostrado funcional en un CLI Python mediano (130 archivos): 7 RF candidatos
   que mapean la arquitectura real en <5 segundos.
 - **Tests 118/118**, CI verde, golden dataset para el matcher.
 
@@ -330,7 +330,7 @@ Una vez con data:
    ```
 
 3. **Performance section** del README con números reales (Django 40K,
-   a large Rust monorepo 60K, the workflow runner 1K) y guidance: "para repos > 30K símbolos, usar
+   large Rust monorepo 60K, mid-size Python CLI 1K) y guidance: "para repos > 30K símbolos, usar
    `summary_only=True` por default en aggregator tools".
 
 4. **Sección "agent vs human user"**: README explícito sobre quién es

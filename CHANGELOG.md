@@ -244,7 +244,7 @@ Plugin ``.mcp.json`` launches bare ``livespec@…`` (no extras).
 ### Added — thin HTTP wrapper client routes (`makeRequest(url)`)
 
 Same-file helpers whose first param is forwarded to `fetch`/`axios`/`got`
-are treated as HTTP wrappers. Callers like a client's
+are treated as HTTP wrappers. Callers like
 `makeRequest(\`${baseUrl}/search\`, body)` emit a client `route_ref` on the
 caller (not the wrapper). Non-forwarding helpers are ignored.
 
@@ -252,7 +252,7 @@ caller (not the wrapper). Non-forwarding helpers are ignored.
 
 tree-sitter-typescript puts an `await_expression` in the call's function
 field when generics combine with `await`. Client route detection now unwraps
-that so a client's `await axios.get<Hotel[]>(requestUrl)` emits `route_ref`.
+that so `await axios.get<Item[]>(requestUrl)` emits `route_ref`.
 
 ### Fixed — JS ternary `?` truncated multi-segment template URLs
 
@@ -264,7 +264,7 @@ literals). Nested-ternary paths collapse to match Spring
 
 ### Fixed — axios client routes discarded when 2nd arg is an identifier
 
-`_TS_HANDLER_ARG_TYPES` included `identifier`, so a client's
+`_TS_HANDLER_ARG_TYPES` included `identifier`, so
 `axios.post(url, body)` was treated as an Express server registration and
 emitted no client `route_ref`. Client detection now only treats function/
 arrow args as handlers; `router.post('/x', ctrl.fn)` stays on `_server_route`.
@@ -363,7 +363,7 @@ markers; `docs/requirements/livespec-specs.md` is legacy import-compat.
 ### Added — `find_endpoints(framework="express")`
 
 Call-style Express routes (`router.get/post/...`) were invisible: the Hono
-scanner required the string `hono` in source. Express a client APIs
+scanner required the string `hono` in source. Express APIs
 (`composer-flight-service`, `composer-service`) therefore reported
 `count: 0`. `framework="express"` reuses the same AST scanner for files that
 mention `express`, and the default-sweep zero-hint now suggests
@@ -1224,7 +1224,7 @@ tools returned a plausible result instead of admitting they had not looked.
 ### Added — `find_symbol` typo suggestions
 - `find_symbol` with zero matches now includes a `did_you_mean` list
   (same suggester as the not-found errors) instead of a bare empty
-  result — found dogfooding v0.14.0 through the the workflow runner proxy: a typoed
+  result — found dogfooding v0.14.0 through the workflow runner proxy: a typoed
   query left the agent at a dead end. Key absent when there are
   matches or no close candidates.
 

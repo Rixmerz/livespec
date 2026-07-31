@@ -210,7 +210,7 @@ def test_same_name_fanout_prefers_same_file(tmp_path: Path):
     across the project AND no scope_module is captured, the resolver should
     prefer the same-file candidate over fanning out to all of them.
 
-    Fixture mirrors the the workflow runner pattern that surfaced the bug:
+    Fixture mirrors the workflow runner pattern that surfaced the bug:
       - embed_cache.py defines list_tools, _cosine, AND a search() that
         calls both in-module.
       - internal_proxy.py also defines list_tools.

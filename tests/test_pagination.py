@@ -1,6 +1,6 @@
 """v0.7 B3: aggregator tools have limit/cursor/summary_only.
 
-The 286K/4.4M/7.3M payloads on the a large Rust monorepo Rust monorepo were the trigger.
+The 286K/4.4M/7.3M payloads on a large Rust monorepo were the trigger.
 Tests verify pagination contract holds even on small fixtures.
 """
 

@@ -9,7 +9,7 @@ livespec configured, run this sequence top-down.
 
 ## 1. Cold open
 
-Pass the absolute project path on every call (`PROJECT` = e.g. `/Users/me/sample-api`):
+Pass the absolute project path on every call (`PROJECT` = e.g. `/Users/me/projects/my-app`):
 
 ```
 index_project(workspace="PROJECT")

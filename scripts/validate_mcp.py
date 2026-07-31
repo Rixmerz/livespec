@@ -5,14 +5,16 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 from pathlib import Path
 
 from fastmcp import Client
 
 from livespec_mcp.server import mcp
 
-OVER = Path("<sample-api>")
-LIVESPEC = Path("<repo>")
+LIVESPEC = Path(__file__).resolve().parent.parent
+# Optional second workspace to prove multi-tenant state; defaults to this repo.
+OVER = Path(os.environ.get("LIVESPEC_VALIDATE_WS2", str(LIVESPEC)))
 
 
 async def main() -> int:
