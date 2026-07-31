@@ -164,7 +164,7 @@ async def test_overview_filters_structural_pattern_names(workspace):
     """v0.8 P2 session-01 fix: short names appearing in ≥3 distinct files
     are demoted from `top_symbols`. PageRank correctly ranks them as
     high-centrality but they're structural patterns (`.get`, `add_parser`,
-    `run` in the workflow runner), not semantically distinctive.
+    `run` in a CLI runner), not semantically distinctive.
 
     Builds a fixture where `add_parser` is defined in 4 separate CLI
     sub-command files. With the filter (default), `add_parser` should

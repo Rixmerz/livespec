@@ -76,7 +76,7 @@ async def test_thin_http_wrapper_makeRequest_emits_client_route(sample_repo):
     )
     (sample_repo / "facade.js").write_text(
         "const baseUrl = 'https://third-party-spa.example';\n"
-        "async function callthird-party client(body, params) {\n"
+        "async function callSupplierApi(body, params) {\n"
         "  return await makeRequest(`${baseUrl}/search`, body, params);\n"
         "}\n"
         "async function callCoverage(body, params) {\n"
@@ -101,7 +101,7 @@ async def test_thin_http_wrapper_makeRequest_emits_client_route(sample_repo):
             await c.call_tool("who_calls", {"qname": "back.coverage"})
         ).data.get("route_callers", [])
     search_files = {x["qualified_name"] for x in search_callers}
-    assert any("callthird-party client" in q for q in search_files), search_callers
+    assert any("callSupplierApi" in q for q in search_files), search_callers
     assert not any("decoy" in q for q in search_files), search_callers
     assert not any("makeRequest" == q.split(".")[-1] for q in search_files), search_callers
     assert any("callCoverage" in x["qualified_name"] for x in coverage_callers), coverage_callers
@@ -122,7 +122,7 @@ async def test_hotelsvc_multi_segment_template_links_java_handler(sample_repo):
         "}\n"
     )
     (sample_repo / "suppliers.ts").write_text(
-        "export async function listByChunka supplier(url, params) {\n"
+        "export async function listByChunkSupplier(url, params) {\n"
         "  const requestUrl = `${url}/list/${\n"
         "    params.checkIn ? `${params.checkIn}/` : \"\"\n"
         "  }${params.checkOut ? `${params.checkOut}/` : \"\"}${\n"
@@ -138,7 +138,7 @@ async def test_hotelsvc_multi_segment_template_links_java_handler(sample_repo):
         callees = (
             await c.call_tool(
                 "who_does_this_call",
-                {"qname": "suppliers.listByChunka supplier"},
+                {"qname": "suppliers.listByChunkSupplier"},
             )
         ).data
     ep = callees.get("invokes_endpoints", [])

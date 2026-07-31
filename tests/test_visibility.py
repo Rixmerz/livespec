@@ -1,6 +1,6 @@
 """v0.7 B4: visibility extraction + find_dead_code skips public items.
 
-The a large Rust monorepo flagged 23K symbols as dead — most were `pub`
+A large Rust monorepo flagged 23K symbols as dead — most were `pub`
 items called across crate boundaries. With visibility-aware filtering,
 the dead list shrinks to truly-orphan symbols.
 """

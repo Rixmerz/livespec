@@ -668,7 +668,7 @@ def _resolve_refs(
         # multiple candidates, prefer same-file candidates. An in-module
         # call to a short name almost always resolves locally; without this
         # the resolver fans out to every same-named symbol across the repo
-        # (the workflow runner session 01: list_tools x3, _cosine x2).
+        # (battle-test session 01: list_tools x3, _cosine x2).
         same_file: list[tuple[int, str, int]] = []
         if not scoped and len(candidates) > 1:
             src_file_id = int(u["src_file_id"])
