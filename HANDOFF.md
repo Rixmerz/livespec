@@ -43,7 +43,7 @@ Todo el stack es local-first: 0 servicios externos, 0 API keys obligatorias, 0 D
 
 ## 3. Estado actual
 
-**HEAD: backlog del barrido cerrado (puntos 1, 2 y 3) + anotaciones huérfanas visibles + specs fantasma + vocabulario unificado. Tests 654.**
+**HEAD: backlog del barrido cerrado (puntos 1, 2 y 3) + anotaciones huérfanas visibles + specs fantasma + vocabulario unificado + ids OpenSpec como único dialecto. Tests 660.**
 Sin tag nuevo — todo bajo `[Unreleased]`.
 
 Qué landeó, con evidencia sobre repos reales (antes → después):
@@ -56,6 +56,23 @@ Qué landeó, con evidencia sobre repos reales (antes → después):
   sus edges *son* los del handler. Nuevo campo `handler_resolution`
   (`handler` | `enclosing_scope` | `unresolved`). 13 repos reales:
   **93 endpoints call-style, IDs muertos 14 → 0**, sin cambiar el conteo.
+- **Los ids OpenSpec ya son el único dialecto, y migrar sale gratis.** El
+  dogfooding sobre el propio repo mostró que nuestro árbol seguía clavando
+  `SPEC-001…013` con marcadores `<!-- livespec:id=… -->`, porque soltarlos
+  costaba todos los links. Ahora, misma capability + mismo heading con id
+  distinto = la misma requirement: la fila conserva su PK (links, escenarios,
+  historia) y pasa a responder al slug; `sync_openspec` los lista en
+  `adopted`. Migramos nuestro árbol: 13 specs a slugs conservando los **191**
+  links (antes forkeaba las 13 y retiraba las originales). Un heading
+  cambiado sigue siendo requirement nueva. Además: una colisión de slug se
+  resuelve numerando el slug (`ui-theme-selection-2`) en vez de saltar a
+  `SPEC-NNN`, y `validate_openspec` avisa (warning, no gate) cuando una spec
+  venida del árbol sigue con id legacy — 13 en nuestro árbol pre-migración,
+  0 en los 14 repos reales de hoy.
+- **Dos callejones sin salida que encontró la propia auditoría.** Borrado
+  `_route_handler_name` (wrapper sin llamadores que detectó `find_dead_code`
+  sobre nosotros mismos) y `find_orphan_tests` ya no reporta
+  `tests/__init__.py` como archivo ciego.
 - **Un solo vocabulario en los payloads.** `count` es el total exacto en todas
   las tools (`list_specs` decía `total`; ahora devuelve ambos). `find_symbol`
   cumple el contrato de paginación: aceptaba `limit` sin devolver conteo ni

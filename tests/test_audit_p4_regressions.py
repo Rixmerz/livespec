@@ -147,3 +147,18 @@ async def test_workspace_error_returns_shaped_mcp_error():
         )
         assert r.data.get("isError") is True
         assert "hint" in r.data
+
+
+@pytest.mark.asyncio
+async def test_a_colliding_slug_stays_a_slug(workspace):
+    """A clash used to switch dialects mid-project: SPEC-001 among slugs."""
+    (workspace / "a.py").write_text("def f():\n    return 1\n")
+    async with Client(mcp) as c:
+        await c.call_tool("index_project", {})
+        ids = []
+        for _ in range(3):
+            made = (await c.call_tool(
+                "create_spec", {"title": "Theme selection", "module": "ui"}
+            )).data
+            ids.append(made["spec_id"])
+        assert ids == ["ui-theme-selection", "ui-theme-selection-2", "ui-theme-selection-3"]

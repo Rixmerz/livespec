@@ -4295,6 +4295,9 @@ def register(mcp: FastMCP) -> None:
             for p in test_file_paths
             if p not in files_with_test_syms
             and (include_fixtures or not _is_fixture_only_path(p))
+            # A package marker holds no tests by design, so reporting it as a
+            # file the extractor couldn't read sends the reader after nothing.
+            and Path(p).name != "__init__.py"
         ]
 
         harness_cache: dict[str, bool] = {}

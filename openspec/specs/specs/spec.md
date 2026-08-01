@@ -8,8 +8,6 @@ The `specs` capability of livespec (dogfood OpenSpec SSoT).
 
 ### Requirement: Spec↔code traceability
 
-<!-- livespec:id=SPEC-005 -->
-
 The livespec MCP server SHALL ensure that the system SHALL parse `@spec:` annotations, support Spec CRUD and Spec↔symbol links, and maintain a Spec→Spec dependency graph.
 
 #### Scenario: Annotation scan
@@ -18,8 +16,6 @@ The livespec MCP server SHALL ensure that the system SHALL parse `@spec:` annota
 - **THEN** `scan_spec_annotations` creates or refreshes Spec↔symbol links
 
 ### Requirement: OpenSpec (Fission-AI) interoperability
-
-<!-- livespec:id=SPEC-013 -->
 
 The livespec MCP server SHALL ensure that the system SHALL import/export OpenSpec trees (`sync_openspec` / `export_openspec`), model scenarios and change deltas, validate with `validate_openspec`, and support apply/archive change lifecycle.
 

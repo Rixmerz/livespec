@@ -135,6 +135,38 @@ def _parse_openspec_tree(root: Path) -> list:
     return parsed
 
 
+def _adopt_spec_under_its_old_id(
+    conn: Any,
+    project_id: int,
+    pspec: Any,
+    module_id: int | None,
+    source: str,
+    incoming_ids: set[str],
+) -> Any:
+    """Re-id a spec in place when only its identifier changed.
+
+    Dropping a ``<!-- livespec:id=SPEC-007 -->`` marker so the requirement
+    takes its OpenSpec slug used to fork: the slug came in as a brand-new spec
+    and ``SPEC-007`` was retired with every link it had. Same capability, same
+    requirement heading, different id means the same requirement, so the row
+    keeps its primary key — and therefore its links, scenarios and history —
+    and just answers to the new id.
+
+    A changed heading is a different requirement and still creates one; that
+    path is what the retirement sweep is for.
+    """
+    row = conn.execute(
+        """SELECT id, spec_id FROM spec
+           WHERE project_id=? AND title=? AND module_id IS ? AND source IS ?
+           ORDER BY id LIMIT 1""",
+        (project_id, pspec.title, module_id, source),
+    ).fetchone()
+    if row is None or row["spec_id"] in incoming_ids:
+        return None
+    conn.execute("UPDATE spec SET spec_id=? WHERE id=?", (pspec.spec_id, int(row["id"])))
+    return row
+
+
 def import_specs_from_markdown_file(
     st: Any,
     path: str | Path,
@@ -174,6 +206,8 @@ def import_specs_from_markdown_file(
         )
     created = 0
     updated = 0
+    adopted: list[str] = []
+    incoming_ids = {ps.spec_id for ps in parsed}
     for pspec in parsed:
         module_id = None
         if pspec.module:
@@ -197,6 +231,12 @@ def import_specs_from_markdown_file(
         existing = st.conn.execute(
             "SELECT id FROM spec WHERE project_id=? AND spec_id=?", (pid, pspec.spec_id)
         ).fetchone()
+        if existing is None:
+            existing = _adopt_spec_under_its_old_id(
+                st.conn, pid, pspec, module_id, source, incoming_ids
+            )
+            if existing is not None:
+                adopted.append(pspec.spec_id)
         if existing:
             spec_pk = int(existing["id"])
             st.conn.execute(
@@ -243,6 +283,8 @@ def import_specs_from_markdown_file(
         "updated": updated,
         "spec_ids": [ps.spec_id for ps in parsed],
     }
+    if adopted:
+        out["adopted"] = adopted
     if check_duplicates:
         dupes = scan_duplicate_spec_markdown_specs(st.settings.workspace, exclude=p)
         if dupes:

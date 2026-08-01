@@ -8,8 +8,6 @@ The `docs` capability of livespec (dogfood OpenSpec SSoT).
 
 ### Requirement: Documentation generation
 
-<!-- livespec:id=SPEC-010 -->
-
 The livespec MCP server SHALL ensure that the system SHALL generate, list, and export on-demand documentation via the docs plugin tools.
 
 #### Scenario: List docs

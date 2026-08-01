@@ -53,6 +53,18 @@ DEFAULT_SAMPLE_SIZE = 10
 MAX_FINDINGS = 50
 
 
+_LEGACY_ID_RE = re.compile(r"^[A-Za-z]+-\d+$")
+
+LEGACY_ID_ISSUE = "spec id is a legacy numeric id, not an OpenSpec slug"
+_ISSUE_HINTS = {
+    LEGACY_ID_ISSUE: (
+        "delete the `<!-- livespec:id=... -->` marker above the requirement and "
+        "re-run sync_openspec — the spec keeps its links and starts answering to "
+        "the slug derived from its heading"
+    )
+}
+
+
 def _spec_prefix(spec_id: str) -> str:
     m = _PREFIX_RE.match(spec_id)
     return m.group(1) if m else spec_id
@@ -105,7 +117,7 @@ def validate_openspec(
     the true total even when the sample is capped.
     """
     rows = conn.execute(
-        """SELECT sp.id, sp.spec_id, sp.title, sp.description,
+        """SELECT sp.id, sp.spec_id, sp.title, sp.description, sp.source,
                   (SELECT COUNT(*) FROM spec_scenario ss WHERE ss.spec_id=sp.id)
                       AS scenario_count
            FROM spec sp
@@ -135,6 +147,12 @@ def validate_openspec(
             # Always an error, unconditionally (missing title is never OK).
             _record("error", "requirement has no title", sid, title)
 
+        # OpenSpec identifies a requirement by its heading. A spec that came
+        # from the tree yet answers to `SPEC-007` is pinned by a leftover id
+        # marker, so the id says nothing about what the requirement is.
+        if r["source"] == "openspec" and _LEGACY_ID_RE.match(sid or ""):
+            _record("warning", LEGACY_ID_ISSUE, sid, title)
+
         if r["scenario_count"] == 0:
             without_scenarios.append(sid)
             # OpenSpec's defining rule. Always a finding; an error under --strict.
@@ -163,16 +181,17 @@ def validate_openspec(
         project_level = (
             checked >= _PROJECT_LEVEL_MIN_CHECKED and n >= checked * _PROJECT_LEVEL_RATIO
         )
-        findings.append(
-            {
-                "issue": issue,
-                "severity": severity,
-                "count": n,
-                "project_level": project_level,
-                "sample": samples[(issue, severity)],
-                "sample_truncated": n > len(samples[(issue, severity)]),
-            }
-        )
+        finding = {
+            "issue": issue,
+            "severity": severity,
+            "count": n,
+            "project_level": project_level,
+            "sample": samples[(issue, severity)],
+            "sample_truncated": n > len(samples[(issue, severity)]),
+        }
+        if issue in _ISSUE_HINTS:
+            finding["hint"] = _ISSUE_HINTS[issue]
+        findings.append(finding)
     findings.sort(key=lambda f: (-f["count"], f["issue"]))
     findings_truncated = len(findings) > MAX_FINDINGS
     findings = findings[:MAX_FINDINGS]

@@ -8,8 +8,6 @@ The `storage` capability of livespec (dogfood OpenSpec SSoT).
 
 ### Requirement: Persistence & schema migrations
 
-<!-- livespec:id=SPEC-011 -->
-
 The livespec MCP server SHALL ensure that the system SHALL bootstrap SQLite from a single-file schema and apply an append-only ordered migration framework with monotonic versions.
 
 #### Scenario: Idempotent migrate

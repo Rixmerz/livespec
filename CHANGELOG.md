@@ -6,6 +6,36 @@ follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed — OpenSpec ids are the dialect, and migrating to them is free
+
+Dogfooding livespec on itself surfaced that its own OpenSpec tree still pinned
+`SPEC-001…013` through `<!-- livespec:id=… -->` markers, because dropping a
+marker cost every link the spec had.
+
+- **Dropping a legacy id marker re-ids the spec in place.** Same capability
+  and same requirement heading with a different id is the same requirement, so
+  the row keeps its primary key — and its links, scenarios and history — and
+  answers to the slug. `sync_openspec` reports them under `adopted`. Migrating
+  livespec's own tree moved 13 specs from `SPEC-NNN` to slugs and kept all
+  **191** links; before, the same edit forked every spec and retired the
+  originals. A changed heading is still a new requirement, retiring the old.
+- **A colliding slug stays a slug.** `create_spec` and
+  `propose_specs_from_codebase` fell back to `SPEC-NNN` when two titles
+  produced the same slug, so a single clash switched dialects mid-project.
+  They now number the slug: `ui-theme-selection-2`.
+- **`validate_openspec` names specs still pinned to a legacy id.** A warning
+  (not a gate) with the migration hint, only for specs that came from the tree
+  — a hand-written `SPEC-900` in the native catalog is nobody's business. Fires
+  13 times on livespec's pre-migration tree, 0 across 14 real repos today.
+
+### Fixed — two dead ends the self-audit walked into
+
+- Deleted `_route_handler_name`, a wrapper with no callers that `find_dead_code`
+  caught on livespec itself.
+- `find_orphan_tests` no longer reports `tests/__init__.py` as a test file the
+  extractor couldn't read. A package marker holds no tests by design, so the
+  diagnostic sent the reader after nothing.
+
 ### Changed — one vocabulary across payloads (`count`, `grouped`/`group_db`)
 
 Four surfaces answered the same question in different words, which costs an

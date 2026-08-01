@@ -8,8 +8,6 @@ The `extractors` capability of livespec (dogfood OpenSpec SSoT).
 
 ### Requirement: Symbol extraction (9 languages)
 
-<!-- livespec:id=SPEC-002 -->
-
 The livespec MCP server SHALL ensure that the system SHALL extract functions, classes and methods (with decorators/annotations/signatures) via tree-sitter for JS/TS/Go/Ruby/PHP/Rust/Java and Python `ast` for Python.
 
 #### Scenario: Multi-language extract

@@ -291,3 +291,21 @@ def test_find_endpoints_drops_routes_declared_in_a_test_file():
     ]
     kept = [e["file_path"] for e in filter_api_endpoints(endpoints, "hono")]
     assert kept == ["src/routes/v1/auth.ts"]
+
+
+@pytest.mark.asyncio
+async def test_package_marker_is_not_a_blind_test_file(workspace):
+    """`tests/__init__.py` held no tests by design, yet was reported as a
+    file the extractor couldn't read — a lead that goes nowhere."""
+    (workspace / "app.py").write_text("def run():\n    return 1\n")
+    tests_dir = workspace / "tests"
+    tests_dir.mkdir()
+    (tests_dir / "__init__.py").write_text("")
+    (tests_dir / "test_app.py").write_text(
+        "from app import run\n\n\ndef test_run():\n    assert run() == 1\n"
+    )
+    async with Client(mcp) as c:
+        await c.call_tool("index_project", {})
+        payload = (await c.call_tool("find_orphan_tests", {})).data
+    assert payload["test_files_without_symbols"] == 0, payload
+    assert "hint" not in payload

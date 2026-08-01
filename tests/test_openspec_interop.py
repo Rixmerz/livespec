@@ -603,3 +603,96 @@ async def test_sweep_leaves_hand_made_specs_alone(sample_repo):
 
         specs = {s["spec_id"]: s for s in (await c.call_tool("list_specs", {})).data["specs"]}
         assert specs["SPEC-900"]["status"] != "deprecated"
+
+
+CANONICAL_PINNED = CANONICAL.replace(
+    "### Requirement: Theme selection\n",
+    "### Requirement: Theme selection\n\n<!-- livespec:id=SPEC-042 -->\n",
+)
+
+
+@pytest.mark.asyncio
+async def test_dropping_a_legacy_id_marker_keeps_the_spec_and_its_links(sample_repo):
+    """Migrating a pinned legacy id to its OpenSpec slug used to fork the spec.
+
+    The slug arrived as a brand-new requirement and `SPEC-042` was retired
+    with every link it had, so the price of adopting OpenSpec ids was the
+    traceability the ids exist for.
+    """
+    tree = sample_repo / "openspec" / "specs" / "theming"
+    tree.mkdir(parents=True)
+    (tree / "spec.md").write_text(CANONICAL_PINNED)
+    async with Client(mcp) as c:
+        await c.call_tool("index_project", {})
+        await c.call_tool("sync_openspec", {})
+        await c.call_tool(
+            "bulk_link_spec_symbols",
+            {"mappings": [{"spec_id": "SPEC-042", "symbol_qname": "pkg.auth.login"}]},
+        )
+        before = {s["spec_id"]: s for s in (await c.call_tool("list_specs", {})).data["specs"]}
+        assert before["SPEC-042"]["link_count"] == 1
+
+        (tree / "spec.md").write_text(CANONICAL)  # marker gone, heading identical
+        synced = (await c.call_tool("sync_openspec", {})).data
+        assert synced["specs"]["adopted"] == ["theming-theme-selection"], synced
+        assert "retired" not in synced["specs"], synced
+
+        after = {s["spec_id"]: s for s in (await c.call_tool("list_specs", {})).data["specs"]}
+        assert "SPEC-042" not in after
+        assert after["theming-theme-selection"]["link_count"] == 1
+
+        impl = (await c.call_tool(
+            "get_spec_implementation", {"spec_id": "theming-theme-selection"}
+        )).data
+        assert [s["qualified_name"] for s in impl["symbols"]] == ["pkg.auth.login"]
+
+
+@pytest.mark.asyncio
+async def test_a_renamed_heading_is_still_a_new_requirement(sample_repo):
+    """Adoption keys on the heading, so a real rename keeps creating a spec."""
+    tree = sample_repo / "openspec" / "specs" / "theming"
+    tree.mkdir(parents=True)
+    (tree / "spec.md").write_text(CANONICAL)
+    async with Client(mcp) as c:
+        await c.call_tool("index_project", {})
+        await c.call_tool("sync_openspec", {})
+
+        (tree / "spec.md").write_text(CANONICAL_RENAMED)
+        synced = (await c.call_tool("sync_openspec", {})).data
+        assert synced["specs"]["retired"] == ["theming-theme-selection"], synced
+        assert "adopted" not in synced["specs"], synced
+
+
+@pytest.mark.asyncio
+async def test_validate_names_the_specs_still_pinned_to_a_legacy_id(sample_repo):
+    """A tree can be structurally valid and still speak the old dialect."""
+    tree = sample_repo / "openspec" / "specs" / "theming"
+    tree.mkdir(parents=True)
+    (tree / "spec.md").write_text(CANONICAL_PINNED)
+    async with Client(mcp) as c:
+        await c.call_tool("index_project", {})
+        await c.call_tool("sync_openspec", {})
+
+        report = (await c.call_tool("validate_openspec", {})).data
+        legacy = [f for f in report["findings"] if "legacy numeric id" in f["issue"]]
+        assert len(legacy) == 1, report["findings"]
+        assert legacy[0]["severity"] == "warning"
+        assert [s["spec_id"] for s in legacy[0]["sample"]] == ["SPEC-042"]
+        assert "sync_openspec" in legacy[0]["hint"]
+        assert report["valid"] is True  # advisory, not a gate
+
+        # Migrating silences it without any other change.
+        (tree / "spec.md").write_text(CANONICAL)
+        await c.call_tool("sync_openspec", {})
+        after = (await c.call_tool("validate_openspec", {})).data
+        assert not [f for f in after["findings"] if "legacy numeric id" in f["issue"]]
+
+
+@pytest.mark.asyncio
+async def test_a_hand_made_numeric_id_is_not_the_trees_business(sample_repo):
+    """Only tree-sourced specs are held to OpenSpec ids."""
+    async with Client(mcp) as c:
+        await c.call_tool("index_project", {})
+        await c.call_tool("create_spec", {"title": "Hand made", "spec_id": "SPEC-900"})
+        report = (await c.call_tool("validate_openspec", {})).data
+        assert not [f for f in report["findings"] if "legacy numeric id" in f["issue"]]

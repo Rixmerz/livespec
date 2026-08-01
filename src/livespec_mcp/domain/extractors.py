@@ -1427,8 +1427,8 @@ def _is_http_route_receiver(name: str | None) -> bool:
     return n.endswith(("router", "app", "server", "routes"))
 
 
-def _route_handler_name(node, text) -> str | None:
-    """Resolve a route-handler AST node to a linkable symbol name.
+def _route_handler_binding(node, text) -> tuple[str | None, str | None]:
+    """Return ``(symbol_name, import_local)`` for a route-handler AST node.
 
     Patterns (Express / Hono):
     - ``listHotels`` → ``listHotels``
@@ -1436,13 +1436,6 @@ def _route_handler_name(node, text) -> str | None:
     - ``wrap(liveness)`` / ``asyncHandler(fn)`` → first identifiable arg
     - ``wrap(ctrl.check)`` → ``check``
     Anonymous arrows / bare objects → ``None``.
-    """
-    binding, _ = _route_handler_binding(node, text)
-    return binding
-
-
-def _route_handler_binding(node, text) -> tuple[str | None, str | None]:
-    """Return ``(symbol_name, import_local)`` for a route-handler AST node.
 
     ``import_local`` is the binding to look up in the file's import map
     (``healthController`` for ``healthController.check``, ``liveness`` for

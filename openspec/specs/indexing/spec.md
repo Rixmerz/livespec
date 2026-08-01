@@ -8,8 +8,6 @@ The `indexing` capability of livespec (dogfood OpenSpec SSoT).
 
 ### Requirement: Indexing & workspace walk
 
-<!-- livespec:id=SPEC-001 -->
-
 The livespec MCP server SHALL ensure that the system SHALL walk the workspace (honouring `.gitignore` and `.livespec.toml`), detect languages per file, and persist extracted symbol references into the SQLite store.
 
 #### Scenario: Fresh index

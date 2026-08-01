@@ -8,8 +8,6 @@ The `graph` capability of livespec (dogfood OpenSpec SSoT).
 
 ### Requirement: Call graph & PageRank
 
-<!-- livespec:id=SPEC-004 -->
-
 The livespec MCP server SHALL ensure that the system SHALL build a NetworkX call graph from resolved edges, cache it by `(db_path, project_id, last_run_id)`, and expose PageRank centrality.
 
 #### Scenario: Cache hit

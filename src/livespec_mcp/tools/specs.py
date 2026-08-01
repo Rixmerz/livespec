@@ -15,7 +15,9 @@ from __future__ import annotations
 import re
 import sqlite3
 from collections import deque
+from collections.abc import Container
 from typing import Any, Literal
+from uuid import uuid4
 
 from fastmcp import FastMCP
 
@@ -127,18 +129,45 @@ def _next_spec_id(conn, project_id: int) -> str:
     return f"SPEC-{best + 1:03d}"
 
 
+def disambiguated_slug_id(candidate: str, taken: Container[str]) -> str:
+    """``auth-login`` → ``auth-login-2`` → ``auth-login-3`` … on collision.
+
+    A colliding slug used to fall back to ``SPEC-NNN``, which answered a
+    uniqueness problem by switching dialects: one project ended up with slug
+    ids everywhere except the two specs whose titles happened to clash.
+    """
+    if candidate not in taken:
+        return candidate
+    for n in range(2, 1000):
+        alt = f"{candidate}-{n}"
+        if alt not in taken:
+            return alt
+    return f"{candidate}-{uuid4().hex[:8]}"
+
+
+class _SpecIdsInProject:
+    """`in` against the project's spec ids without loading them all."""
+
+    def __init__(self, conn, project_id: int) -> None:
+        self._conn, self._pid = conn, project_id
+
+    def __contains__(self, spec_id: object) -> bool:
+        return (
+            self._conn.execute(
+                "SELECT 1 FROM spec WHERE project_id=? AND spec_id=?",
+                (self._pid, str(spec_id)),
+            ).fetchone()
+            is not None
+        )
+
+
 def _default_spec_id(conn, project_id: int, title: str, module: str | None) -> str:
-    """Prefer an OpenSpec-shaped slug; fall back to SPEC-NNN on collision."""
+    """OpenSpec-shaped slug, numbered rather than renamed when it collides."""
     from livespec_mcp.domain.md_specs import _ospec_spec_id
 
-    candidate = _ospec_spec_id(title, module)
-    exists = conn.execute(
-        "SELECT 1 FROM spec WHERE project_id=? AND spec_id=?",
-        (project_id, candidate),
-    ).fetchone()
-    if exists is None:
-        return candidate
-    return _next_spec_id(conn, project_id)
+    return disambiguated_slug_id(
+        _ospec_spec_id(title, module), _SpecIdsInProject(conn, project_id)
+    )
 
 
 def _noop_decorator(**_kwargs: Any):
@@ -838,32 +867,14 @@ def register(
         proposals.sort(key=lambda p: p["score"], reverse=True)
         proposals = proposals[:max_proposals]
 
-        # Assign OpenSpec-shaped ids in score order; SPEC-NNN (MAX+1) on collision.
+        # OpenSpec-shaped ids in score order, numbered when two titles collide.
         for p in proposals:
             module_hint = (p["module_key"] or "").split(".")[-1] or None
-            candidate = _ospec_spec_id(p["title"], module_hint)
-            if candidate in existing_ids or candidate in used_ids:
-                # Temporary placeholder; resolve numeric after collecting collisions
-                p["proposed_spec_id"] = ""
-                p["_needs_numeric"] = True
-            else:
-                p["proposed_spec_id"] = candidate
-                p["_needs_numeric"] = False
-                used_ids.add(candidate)
-
-        for p in proposals:
-            if p.pop("_needs_numeric", False):
-                # Simulate MAX over existing + already-assigned SPEC-* proposals
-                best = 0
-                for sid in existing_ids | used_ids:
-                    if not (sid or "").upper().startswith("SPEC"):
-                        continue
-                    digits = "".join(c for c in sid if c.isdigit())
-                    if digits:
-                        best = max(best, int(digits))
-                sid = f"SPEC-{best + 1:03d}"
-                p["proposed_spec_id"] = sid
-                used_ids.add(sid)
+            sid = disambiguated_slug_id(
+                _ospec_spec_id(p["title"], module_hint), existing_ids | used_ids
+            )
+            p["proposed_spec_id"] = sid
+            used_ids.add(sid)
 
         return {
             "proposals": proposals,
