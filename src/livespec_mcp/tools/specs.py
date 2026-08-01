@@ -220,9 +220,10 @@ def register(
     ) -> dict[str, Any]:
         """Create a Spec (functional requirement, NFR, ADR, design note, ...).
 
-        Auto-assigns ``spec_id`` from the title (+ module) as an OpenSpec-shaped
-        slug (e.g. ``auth-user-login``). Falls back to ``SPEC-NNN`` if that slug
-        already exists. Pass ``spec_id`` explicitly to force either scheme.
+        Auto-assigns ``spec_id`` from the title (+ module) as an OpenSpec
+        slug (e.g. ``auth-user-login``); a title that collides gets
+        ``auth-user-login-2``, never a different id scheme. Pass ``spec_id``
+        explicitly to override.
         `kind` classifies the spec — see SpecKind for the documented values
         (free-text column, not DB-enforced, so custom kinds also work). Not
         idempotent — use `update_spec` for changes.""" + WORKSPACE_DOCSTRING_NOTE
@@ -518,7 +519,7 @@ def register(
 
         Each `mappings` entry accepts:
             {
-              "spec_id": "SPEC-001",                       # required
+              "spec_id": "auth-user-login",                 # required
               "symbol_qname": "pkg.auth.login",            # required
               "relation": "implements" | "tests" | "references",  # default implements
               "confidence": 0.0..1.0,                      # default 1.0
@@ -530,7 +531,7 @@ def register(
             {
               "linked": int, "skipped": int, "failed": int,
               "results": [
-                {"spec_id": "SPEC-001", "symbol_qname": "...",
+                {"spec_id": "auth-user-login", "symbol_qname": "...",
                  "ok": bool, "linked": bool, "error": str | None},
                 ...
               ]
@@ -994,10 +995,12 @@ def register(
     def scan_spec_annotations(workspace: Workspace | None = None) -> dict[str, Any]:
         """Re-scan all symbol docstrings for Spec annotations and (re)link them.
 
-        Two-level matcher (P1.4):
-        - Explicit prefix `@spec:SPEC-001` / `@implements:SPEC-001` -> confidence 1.0
-        - Verb-anchored `implements SPEC-001` (with negation guard) -> 0.7
-        - OpenSpec slugs (`@spec:auth-user-login`) when that id is in the store
+        Two-level matcher, both levels speaking OpenSpec ids:
+        - Explicit prefix `@spec:auth-user-login` / `@implements:auth-user-login`
+          -> confidence 1.0
+        - Verb-anchored `implements auth-user-login` (negation guard) -> 0.7
+        A slug is recognized when it is a spec id in the store; legacy
+        `SPEC-001`-shaped ids are matched by shape, store or not.
         Idempotent: skips existing links.
 
         Ids annotated in code that match no spec come back as

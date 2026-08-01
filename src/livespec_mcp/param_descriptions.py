@@ -102,7 +102,10 @@ PARAM_DESCRIPTIONS: dict[str, str] = {
     "mappings": (
         "List of ``{spec_id, symbol_qname, relation?, confidence?}`` objects to link in bulk."
     ),
-    "spec_id": "Spec identifier (e.g. ``SPEC-042`` or an OpenSpec requirement id).",
+    "spec_id": (
+        "OpenSpec requirement id — the slug derived from its heading, e.g. "
+        "``auth-user-login``. Legacy ``SPEC-042`` ids still resolve."
+    ),
     "parent_spec_id": "Parent Spec id for a Spec→Spec dependency edge.",
     "child_spec_id": "Child Spec id for a Spec→Spec dependency edge.",
     "scenario_name": "OpenSpec scenario name (``#### Scenario: …``) within the Spec.",

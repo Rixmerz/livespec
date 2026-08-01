@@ -22,7 +22,10 @@ class GraphView:
 
 
 def graph_pagerank(view: GraphView) -> dict[int, float]:
-    """Cached unpersonalized PageRank for a GraphView."""
+    """@spec:graph-call-graph-pagerank
+
+    Cached unpersonalized PageRank for a GraphView.
+    """
     if view._pagerank is None:
         view._pagerank = page_rank(view.g)
     return view._pagerank

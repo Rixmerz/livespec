@@ -6,6 +6,24 @@ follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed — the docs teach OpenSpec ids, and this repo annotates with them
+
+The store migration was only half the job: every example an agent reads still
+said `@spec:SPEC-003`, and agents copy what they read.
+
+- Annotation examples across the agent playbook, quickstart, README, tool
+  docstrings and `spec_id` parameter description now use OpenSpec slugs
+  (`@spec:auth-user-login`). The legacy sections that describe `## SPEC-NNN`
+  import compat stay, marked as such. A prompt test now fails if a
+  `@spec:SPEC-` example creeps back into the playbook.
+- livespec's own source is annotated with its own slugs — six anchor symbols
+  (`index_project`, `extract`, `graph_pagerank`, `sync_openspec_tree`,
+  `scan_annotations`, `connect`), which the indexer links automatically.
+- Documented what makes a slug matchable: it is recognized because it is a
+  spec id in the store, so the spec exists before the annotation. Both
+  confidence levels accept slugs — verified end to end, level 1 at 1.0 and
+  verb-anchored level 2 at 0.7.
+
 ### Changed — OpenSpec ids are the dialect, and migrating to them is free
 
 Dogfooding livespec on itself surfaced that its own OpenSpec tree still pinned

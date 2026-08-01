@@ -86,14 +86,14 @@ Use this to decide test scope before opening a PR or as a check in CI.
 
 ```
 list_specs(has_implementation=True)
-get_spec_implementation(spec_id="SPEC-042")
+get_spec_implementation(spec_id="auth-user-login")
 audit_coverage()
 ```
 
 `list_specs` is the orientation surface — Specs with kind, title,
 status, priority, and link count. `get_spec_implementation`
 answers the README's headline question
-*"¿qué código implementa el SPEC-042?"* in one round-trip.
+*"¿qué código implementa esta requirement?"* in one round-trip.
 
 `audit_coverage` is the macro view: which modules have Specs, which are
 truly orphan, which Specs lack implementation, and which have low avg

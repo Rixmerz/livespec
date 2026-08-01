@@ -2422,7 +2422,10 @@ def _rs_split_top_level(s: str, sep: str) -> list[str]:
 
 
 def extract(path: Path, source: str, project_root: Path) -> tuple[str, ExtractResult]:
-    """Return (language, ExtractResult). Falls back to empty result for unknown langs."""
+    """@spec:extractors-symbol-extraction-9-languages
+
+    Return (language, ExtractResult). Falls back to empty result for unknown langs.
+    """
     lang = detect_language(path)
     if lang is None:
         return "unknown", ExtractResult()

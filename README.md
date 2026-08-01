@@ -88,24 +88,25 @@ uvx livespec@0.30.1
   "specs": [] }
 
 // Wider blast radius on a Spec-active codebase
-> analyze_impact(target_type="spec", target="SPEC-042")
-{ "spec_id": "SPEC-042", "implementing_symbols": [...],
-  "dependent_specs": ["SPEC-088", "SPEC-091"],
+> analyze_impact(target_type="spec", target="auth-user-login")
+{ "spec_id": "auth-user-login", "implementing_symbols": [...],
+  "dependent_specs": ["auth-session-rotation", "auth-audit-trail"],
   "impacted_callers": [...] }
 ```
 
 Built for the questions an agent asks on an unfamiliar codebase:
 
-- ¿Qué código implementa el SPEC-042?
+- ¿Qué código implementa la requirement `auth-user-login`?
 - Si modifico `auth.verify`, ¿qué Specs y qué llamadores se ven afectados?
 - ¿Qué módulos no tienen ningún Spec asociado?
-- ¿Qué Specs dependen de SPEC-042 transitivamente?
+- ¿Qué Specs dependen de `auth-user-login` transitivamente?
 
 Spec traceability is the differentiator. Most code-intel tools stop at "what
 calls this function?". livespec layers Spec ↔ code links (functional
 requirements, ADRs, NFRs, and other kinds) on top so an agent on a
 serious-software-shop codebase can answer *"changing this function affects
-SPEC-042, SPEC-088 and 3 dependent Specs"* in one round-trip. Spec agentic
+`auth-user-login`, `auth-session-rotation` and 3 dependent Specs"* in one
+round-trip. Spec agentic
 tools ship in the default surface; Spec mutation/management tools live in
 the `livespec-spec` plugin. Plugins register at boot (multi-tenant: every
 `workspace=` has its own DB), but **`PluginVisibilityMiddleware`** hides
@@ -494,7 +495,7 @@ Always registered (including markdown Spec import + OpenSpec sync).
 - `list_specs(status, module, priority, kind, has_implementation)` —
   Spec discovery surface.
 - `get_spec_implementation(spec_id)` — answers
-  *"¿qué código implementa el SPEC-042?"*.
+  *"¿qué código implementa `auth-user-login`?"*.
 - `propose_specs_from_codebase(module_depth=2, min_symbols_per_group=3,
   max_proposals=30, skip_already_covered=True)` — heuristic Spec discovery
   on a Spec-empty repo. Groups symbols by module + PageRank, proposes
@@ -550,8 +551,10 @@ setting `LIVESPEC_PLUGINS`.
 - `link_spec_dependency(parent_spec_id, child_spec_id, kind='requires')` /
   `unlink_spec_dependency` / `get_spec_dependency_graph` — Spec→Spec graph.
   `kind` ∈ {requires, extends, conflicts}; cycles rejected at insert time.
-- `scan_spec_annotations()` — two-level matcher (`@spec:SPEC-NNN` vs.
-  verb-anchored); auto-runs after every `index_project`.
+- `scan_spec_annotations()` — two-level matcher (`@spec:auth-user-login` vs.
+  verb-anchored `implements auth-user-login`); auto-runs after every
+  `index_project`. Ids nothing answers to come back as
+  `unknown_annotation_ids` instead of being dropped.
 - `scan_docstrings_for_spec_hints()` — surfaces Spec candidates from existing
   docstrings (first sentence, leading verb). Returns
   `verb_histogram_top` for noticing dominant action verbs.

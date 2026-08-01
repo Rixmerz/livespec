@@ -26,7 +26,9 @@ def _schema_sql() -> str:
 
 
 def connect(db_path: Path, *, create: bool = True) -> sqlite3.Connection:
-    """Open ``db_path``.
+    """@spec:storage-persistence-schema-migrations
+
+    Open ``db_path``.
 
     ``create=True`` (default): today's behaviour — makes the parent dir,
     opens read-write, bootstraps schema + migrations. Used only where a

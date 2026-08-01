@@ -165,6 +165,7 @@ def index_project(
     project_name: str | None = None,
     force: bool = False,
 ) -> IndexStats:
+    """@spec:indexing-indexing-workspace-walk"""
     settings.ensure_dirs()
     name = project_name or settings.workspace.name
     project_id = get_or_create_project(conn, name=name, root=str(settings.workspace))

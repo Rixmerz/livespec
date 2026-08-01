@@ -56,6 +56,16 @@ Qué landeó, con evidencia sobre repos reales (antes → después):
   sus edges *son* los del handler. Nuevo campo `handler_resolution`
   (`handler` | `enclosing_scope` | `unresolved`). 13 repos reales:
   **93 endpoints call-style, IDs muertos 14 → 0**, sin cambiar el conteo.
+- **La superficie que enseña también habla OpenSpec.** Los ejemplos de
+  anotación en playbook, quickstart, README, docstrings de tools y la
+  descripción de `spec_id` usan slugs (`@spec:auth-user-login`); las secciones
+  de compat legacy (`## SPEC-NNN`) siguen, marcadas como tales, y un test de
+  prompt falla si vuelve a colarse un ejemplo `@spec:SPEC-`. Además el propio
+  código de livespec está anotado con sus propios slugs en seis símbolos ancla
+  (`index_project`, `extract`, `graph_pagerank`, `sync_openspec_tree`,
+  `scan_annotations`, `connect`) y el indexer los enlaza solo. Un slug se
+  reconoce porque **es** un id en el store, así que la spec existe antes que la
+  anotación; ambos niveles de confianza aceptan slugs (1.0 y 0.7 verificados).
 - **Los ids OpenSpec ya son el único dialecto, y migrar sale gratis.** El
   dogfooding sobre el propio repo mostró que nuestro árbol seguía clavando
   `SPEC-001…013` con marcadores `<!-- livespec:id=… -->`, porque soltarlos

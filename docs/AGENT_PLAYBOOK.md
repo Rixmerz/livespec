@@ -59,7 +59,7 @@ client cached the short tool list.
 | PR / diff scope | `git_diff_impact(base_ref, head_ref)` | Inside a git repo only |
 | Semantic grep | `search(query, scope)` | FTS5 over AST chunks + Specs |
 | Spec list | `list_specs(...)` | Filters: status, module, `kind`, `has_implementation` |
-| What implements SPEC-NNN? | `get_spec_implementation(spec_id)` | One round-trip |
+| What implements a spec? | `get_spec_implementation(spec_id)` | One round-trip |
 | Coverage gaps | `audit_coverage()` | Orphans, low-confidence links |
 | Brownfield Spec ideas | `propose_specs_from_codebase()` | Heuristic; user approves before create |
 | Dead-code candidates | `find_dead_code()` | Respects entry points / `pub` / frameworks; TS-only auto-enables non-Python |
@@ -125,9 +125,14 @@ The index **auto-links** symbols when their **docstring or leading comment block
 
 Put on its **own line** at the top of the docstring/comment:
 
+Ids are **OpenSpec slugs** — the id `list_specs` shows, derived from the
+requirement heading (`### Requirement: PNR structural validation` →
+`booking-pnr-structural-validation`). Legacy `SPEC-003` ids still resolve, so a
+half-migrated repo keeps working, but write new annotations with the slug.
+
 ```python
 def parse_sabre_xml(xml: str) -> PNRNormalized:
-    """@spec:SPEC-003
+    """@spec:booking-pnr-structural-validation
     Validate PNR vs structural conditions from Sabre XML.
     """
 ```
@@ -136,25 +141,30 @@ Grammar (case-insensitive verb):
 
 | Prefix | Relation |
 |--------|----------|
-| `@spec:SPEC-003` | implements |
-| `@implements:SPEC-003` | implements |
-| `@tests:SPEC-003` | tests |
-| `@see:SPEC-003` / `@references:SPEC-003` | references |
+| `@spec:booking-pnr-structural-validation` | implements |
+| `@implements:booking-pnr-structural-validation` | implements |
+| `@tests:booking-pnr-structural-validation` | tests |
+| `@see:…` / `@references:…` | references |
 
-**Multi-Spec:** `@spec:SPEC-001, SPEC-002`  
-**Confidence override:** `@spec:SPEC-001:0.85` (applies to all Specs on that line)  
-**Negation (cancels hits in this block):** `@not_spec:SPEC-007` or `@!spec:SPEC-007`
+**Multi-Spec:** `@spec:booking-pnr-validation, booking-fare-rules`  
+**Confidence override:** `@spec:booking-fare-rules:0.85` (applies to all Specs on that line)  
+**Negation (cancels hits in this block):** `@not_spec:booking-tour-codes` or `@!spec:booking-tour-codes`
+
+A slug is recognized because it **is** a spec id in the store, so annotate
+after the spec exists. An id nothing answers to is not silently dropped:
+`scan_spec_annotations` returns it under `unknown_annotation_ids`.
 
 ### 5.2 Level 2 — verb-anchored (confidence 0.7)
 
 Use when a full `@spec:` line is too heavy; must be a real verb phrase:
 
 ```python
-"""Implements SPEC-003 for PNR structural validation."""
+"""Implements booking-pnr-structural-validation for Sabre payloads."""
 ```
 
 Recognized verbs: `implements`, `tests`, `references`, `covers`.  
-**Ignored:** bare mentions (`see SPEC-003 in ticket`), negated context (`does not implement SPEC-003`), TODO lines.
+**Ignored:** bare mentions (`see booking-pnr-structural-validation in the ticket`),
+negated context (`does not implement …`), TODO lines.
 
 ### 5.3 Docstring style that helps discovery
 
@@ -162,7 +172,7 @@ Recognized verbs: `implements`, `tests`, `references`, `covers`.
 
 ```python
 def match_overs_with_insights(...):
-    """Match candidate OVER policies; emit SPEC-2 market insights when no ticket applies."""
+    """Match candidate OVER policies; emit market insights when no ticket applies."""
 ```
 
 - **Good:** verb-first, one clear behavior per function/class.
@@ -229,7 +239,8 @@ files in the same tree.
 
 ```json
 bulk_link_spec_symbols(mappings=[
-  {"spec_id": "SPEC-003", "symbol_qname": "src.over_validator.services.pnr_parser.parse_sabre_xml",
+  {"spec_id": "booking-pnr-structural-validation",
+   "symbol_qname": "src.booking.services.pnr_parser.parse_sabre_xml",
    "relation": "implements", "confidence": 1.0, "source": "manual"}
 ])
 ```
@@ -239,7 +250,9 @@ Use `find_symbol` to get exact `qualified_name` from the index.
 ### 5.7 Spec dependency graph (plugin)
 
 ```text
-link_spec_dependency(parent_spec_id="SPEC-004", child_spec_id="SPEC-003", kind="requires")
+link_spec_dependency(parent_spec_id="booking-fare-rules",
+                     child_spec_id="booking-pnr-structural-validation",
+                     kind="requires")
 ```
 
 Kinds: `requires` | `extends` | `conflicts`. Cycles are rejected.
@@ -310,7 +323,8 @@ When explaining code to the user, cite **Spec ids** from `list_specs` / annotati
 |-------|------------|
 | Index `/parent` with 10 repos | Pass `workspace="/abs/path/to/one-repo"` per call |
 | Fix project in `mcp.json` and restart MCP | Pass `workspace=` on each tool call |
-| Mention `SPEC-003` in comments without `@spec:` or verb anchor | Use `@spec:SPEC-003` on its own line |
+| Mention a spec id in comments without `@spec:` or verb anchor | Use `@spec:<id>` on its own line |
+| Invent a spec id in an annotation | Annotate an id `list_specs` shows; check `unknown_annotation_ids` after scanning |
 | Assume zero callers = dead code | Check `quick_orient.is_entry_point` |
 | Call removed tools (`get_symbol_info`, `find_references`) | `quick_orient`, `analyze_impact(max_depth=1)` |
 | Rely on filesystem watcher during active edits | `index_project()` when done |
@@ -336,21 +350,21 @@ When explaining code to the user, cite **Spec ids** from `list_specs` / annotati
 
 ```python
 # implements, full confidence
-"""@spec:SPEC-008
+"""@spec:pricing-rank-candidates
 Rank candidates by commission; apply cabin/family flags at apply time.
 """
 
 # tests
-"""@tests:SPEC-004"""
+"""@tests:booking-fare-rules"""
 
 # negation in same docstring
-"""@spec:SPEC-001
-@not_spec:SPEC-007
-Tour codes are out of scope for matcher (SPEC-7).
+"""@spec:pricing-rank-candidates
+@not_spec:booking-tour-codes
+Tour codes are out of scope for the matcher.
 """
 
 # multi-Spec
-"""@implements:SPEC-002, SPEC-005"""
+"""@implements:booking-fare-rules, pricing-commission-model"""
 ```
 
 ---

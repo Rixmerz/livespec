@@ -17,7 +17,10 @@ def test_agent_playbook_file_exists():
 
 def test_agent_playbook_loads_key_sections():
     text = _load_agent_playbook()
-    assert "@spec:SPEC-" in text
+    # The annotation examples teach OpenSpec slugs: an agent copies what it
+    # reads here, and a SPEC-NNN example seeds the dialect we migrated off.
+    assert "@spec:auth-user-login" in text or "@spec:booking-" in text
+    assert "@spec:SPEC-" not in text
     assert "index_project" in text
     assert "quick_orient" in text
     assert "bulk_link_spec_symbols" in text

@@ -1,17 +1,22 @@
 """Spec<->code matcher with two-level confidence.
 
+Ids are OpenSpec slugs (`auth-user-login`); legacy `SPEC-001`-shaped ids stay
+supported so a half-migrated repo keeps linking. A slug is recognized because
+it is a spec id in the store — there is no open kebab regex, or every hyphen in
+every docstring would be a candidate.
+
 Level 1 — explicit prefix on its own line (or at start of a comment block):
-  `@spec:SPEC-001`, `@implements:SPEC-001`, `@see:SPEC-001`
+  `@spec:auth-user-login`, `@implements:auth-user-login`, `@see:auth-user-login`
   -> confidence 1.0, source='annotation'
 
 Level 2 — verb-anchored inline mention:
-  `... implements SPEC-001`, `tests SPEC-001`, `references SPEC-001`
+  `... implements auth-user-login`, `tests auth-user-login`
   -> confidence 0.7, source='annotation', requires `relation` derived from verb
 
-Bare mentions like `we should do this for SPEC-001` or `not SPEC-001` are
-ignored. This is intentionally conservative: previously a regex captured
-every SPEC-NNN substring (including negations) which produced false
-positives at scale.
+Bare mentions like `we should do this for auth-user-login` or `not
+auth-user-login` are ignored. This is intentionally conservative: previously a
+regex captured every SPEC-NNN substring (including negations) which produced
+false positives at scale.
 """
 
 from __future__ import annotations
@@ -365,7 +370,9 @@ class ScanResult:
 
 
 def scan_annotations(conn: sqlite3.Connection, project_id: int) -> ScanResult:
-    """Walk every symbol's docstring; create spec_symbol links from Spec annotations.
+    """@spec:spec-code-traceability
+
+    Walk every symbol's docstring; create spec_symbol links from Spec annotations.
 
     Returns the number of links created (duplicates skipped) plus the ids that
     were annotated in code but match no spec in the store — see

@@ -350,7 +350,7 @@ user wants to override.
   for the serious-software-org segment.
 - **Don't demote `get_spec_implementation` or `list_specs`
   out of tier-1.** They answer the README's lead questions
-  ("¿Qué código implementa el SPEC-042?", "qué Specs existen"). Demoting them
+  ("¿Qué código implementa `auth-user-login`?", "qué Specs existen"). Demoting them
   recreates the discrepancy that v0.8 alignment fixed.
 - **Don't curate before battle-test.** ROADMAP §6 self-admits the tier
   list is opinion-based. v0.8 lands instrumentation + 5-codebase logged

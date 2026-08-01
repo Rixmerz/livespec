@@ -79,7 +79,9 @@ def _retire_specs_absent_from_tree(st: Any, seen_ids: list[str]) -> list[str]:
 
 
 def sync_openspec_tree(st: Any, root: Path) -> dict[str, Any]:
-    """Import specs + changes from an OpenSpec ``root`` in one pass.
+    """@spec:openspec-fission-ai-interoperability
+
+    Import specs + changes from an OpenSpec ``root`` in one pass.
 
     Canonical requirements come from ``root/specs`` only (so change deltas are
     never mistaken for source-of-truth specs); ``root/changes`` and
