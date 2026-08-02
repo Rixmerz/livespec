@@ -173,29 +173,31 @@
     table.cmp th:not(:first-child),
     table.cmp td:not(:first-child) { width: 41%; }
 
-    table.dense {
-      width: 100%;
+    ul.findings {
+      list-style: none;
+      display: flex;
+      flex-direction: column;
+      gap: 0.55rem;
       max-width: none;
-      font-size: 0.58rem;
-      font-family: var(--mono);
+      font-size: 0.82rem;
+      line-height: 1.4;
     }
-    table.dense th, table.dense td {
-      padding: 0.18rem 0.28rem;
-      white-space: nowrap;
+    ul.findings li {
+      padding-left: 0.85rem;
+      border-left: 2px solid var(--line);
     }
-    table.dense th { font-size: 0.55rem; }
-    table.dense td:first-child { font-weight: 600; color: var(--ink); }
-    table.dense .num { text-align: right; font-variant-numeric: tabular-nums; }
-    .method-row {
+    ul.findings li strong { color: var(--accent); font-weight: 600; }
+    ul.findings .repo { color: var(--ink); font-family: var(--mono); font-size: 0.78em; }
+    .legend {
       display: grid;
       grid-template-columns: 1fr 1fr;
-      gap: 0.75rem 1.25rem;
-      margin-bottom: 0.55rem;
+      gap: 0.35rem 1.2rem;
       font-size: 0.78rem;
       color: var(--muted);
+      margin: 0.35rem 0 0.7rem;
       max-width: none;
     }
-    .method-row strong { color: var(--accent); font-weight: 600; }
+    .legend strong { color: var(--ink); font-weight: 600; }
 
     .pill {
       display: inline-block;
@@ -693,68 +695,71 @@ get_spec_implementation(
       </div>
     </section>
 
-    <!-- 16 — full hard-cut matrix (per-repo + cross-repo) -->
+    <!-- 16 — narrative findings -->
     <section class="slide" data-title="Barrido">
-      <p class="eyebrow">16 · Resultados hard-cut · 2026-08-02</p>
-      <h2 style="max-width:none;font-size:clamp(1.35rem,2.8vw,1.9rem)">Cómo se trabajó · resultados por repo y cross-repo</h2>
-      <div class="method-row">
-        <div>
-          <strong>Método por repo:</strong> <span class="mono">index_project(force)</span> →
-          seed (top symbol / endpoint / spec) → 23 tools read-only
-          (overview, orient, symbol, callers, impact, search, dead, endpoints,
-          legacy, orphans, coverage, specs, validate, …). Mutation skipped.
-        </div>
-        <div>
-          <strong>Cross-repo</strong> (home <span class="mono">sm-composer-m</span> +
-          <span class="mono">group_db</span>):
-          <span class="mono">find_symbol(getHotelList)</span> → HotelSvc ·
-          <span class="mono">who_calls</span> route_callers=<strong>2</strong> ·
-          <span class="mono">who_does_this_call(listByChunk)</span> invokes=<strong>1</strong> ·
-          legacy live <strong>24</strong>/<strong>19</strong> · srv <strong>2</strong> · orphan cli <strong>36</strong>.
-        </div>
+      <p class="eyebrow">16 · Qué encontró livespec · 2026-08-02</p>
+      <h2 style="max-width:28ch">Cómo se leyó el barrido</h2>
+      <p class="lede" style="max-width:52ch;font-size:1.05rem">
+        En cada repo: re-index forzado + tools read-only. Los números son
+        <em>evidencia de grafo</em>, no tráfico de producción.
+      </p>
+      <div class="legend">
+        <div><strong>Dead code</strong> — símbolos sin callers en el índice. Candidatos a revisar; no borrar a ciegas.</div>
+        <div><strong>Specs ligadas</strong> — tienen ≥1 símbolo vía <span class="mono">@spec:</span> / link. El resto existe en el store pero nadie las ancla.</div>
+        <div><strong>Endpoints</strong> — handlers HTTP/CLI que el extractor vio (framework-aware).</div>
+        <div><strong>Orphan modules</strong> — módulos sin ninguna Spec. Suele correlacionar con dead / superficie sin trazabilidad.</div>
       </div>
-      <table class="dense">
-        <thead>
-          <tr>
-            <th>repo</th><th>bucket</th>
-            <th class="num">files</th><th class="num">syms</th><th class="num">edges</th><th class="num">idx s</th>
-            <th class="num">dead</th><th class="num">eps</th><th class="num">orph t</th>
-            <th class="num">specs</th><th class="num">linked*</th><th class="num">orph mod</th>
-            <th class="num">leg srv</th><th class="num">orph cli</th>
-            <th>tools</th><th>validate</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr><td>api-composer-a</td><td>group</td><td class="num">51</td><td class="num">114</td><td class="num">48</td><td class="num">0.5</td><td class="num">32</td><td class="num">5</td><td class="num">0</td><td class="num">9</td><td class="num">2</td><td class="num">35</td><td class="num">2</td><td class="num">36</td><td>21/0</td><td>ok</td></tr>
-          <tr><td>api-composer-b</td><td>group</td><td class="num">105</td><td class="num">314</td><td class="num">250</td><td class="num">0.8</td><td class="num">70</td><td class="num">9</td><td class="num">1</td><td class="num">10</td><td class="num">3</td><td class="num">56</td><td class="num">2</td><td class="num">36</td><td>21/0</td><td>ok</td></tr>
-          <tr><td>api-composer-c</td><td>group</td><td class="num">23</td><td class="num">66</td><td class="num">40</td><td class="num">0.2</td><td class="num">17</td><td class="num">5</td><td class="num">0</td><td class="num">9</td><td class="num">2</td><td class="num">14</td><td class="num">2</td><td class="num">36</td><td>21/0</td><td>ok</td></tr>
-          <tr><td>api-composer-d</td><td>group</td><td class="num">32</td><td class="num">62</td><td class="num">23</td><td class="num">0.2</td><td class="num">15</td><td class="num">3</td><td class="num">0</td><td class="num">9</td><td class="num">2</td><td class="num">22</td><td class="num">2</td><td class="num">36</td><td>21/0</td><td>ok</td></tr>
-          <tr><td>api-sa-availability-e</td><td>group</td><td class="num">38</td><td class="num">213</td><td class="num">198</td><td class="num">0.3</td><td class="num">1</td><td class="num">28</td><td class="num">2</td><td class="num">9</td><td class="num">3</td><td class="num">6</td><td class="num">2</td><td class="num">36</td><td>21/0</td><td>ok</td></tr>
-          <tr><td>api-sa-bags-f</td><td>group</td><td class="num">87</td><td class="num">707</td><td class="num">1135</td><td class="num">0.6</td><td class="num">0</td><td class="num">31</td><td class="num">0</td><td class="num">9</td><td class="num">2</td><td class="num">16</td><td class="num">2</td><td class="num">36</td><td>21/0</td><td>ok</td></tr>
-          <tr><td>api-sa-flight-search-g</td><td>group</td><td class="num">68</td><td class="num">611</td><td class="num">766</td><td class="num">0.9</td><td class="num">52</td><td class="num">31</td><td class="num">7</td><td class="num">9</td><td class="num">2</td><td class="num">15</td><td class="num">2</td><td class="num">36</td><td>21/0</td><td>ok</td></tr>
-          <tr><td>api-search-hotel-h</td><td>group</td><td class="num">125</td><td class="num">989</td><td class="num">784</td><td class="num">0.9</td><td class="num">24</td><td class="num">41</td><td class="num">4</td><td class="num">9</td><td class="num">3</td><td class="num">27</td><td class="num">2</td><td class="num">36</td><td>20/1†</td><td>ok</td></tr>
-          <tr><td>api-search-manager-i</td><td>group</td><td class="num">49</td><td class="num">104</td><td class="num">50</td><td class="num">0.3</td><td class="num">16</td><td class="num">4</td><td class="num">0</td><td class="num">10</td><td class="num">8</td><td class="num">32</td><td class="num">2</td><td class="num">36</td><td>21/0</td><td>ok</td></tr>
-          <tr><td>api-legacy-j</td><td>group</td><td class="num">46</td><td class="num">339</td><td class="num">519</td><td class="num">0.8</td><td class="num">61</td><td class="num">60</td><td class="num">0</td><td class="num">9</td><td class="num">2</td><td class="num">23</td><td class="num">2</td><td class="num">36</td><td>21/0</td><td>ok</td></tr>
-          <tr><td>results</td><td>group</td><td class="num">340</td><td class="num">2330</td><td class="num">6047</td><td class="num">7.1</td><td class="num">52</td><td class="num">167</td><td class="num">222</td><td class="num">10</td><td class="num">9</td><td class="num">160</td><td class="num">2</td><td class="num">36</td><td>21/0</td><td>ok</td></tr>
-          <tr><td>sa-transport-l</td><td>group</td><td class="num">124</td><td class="num">1233</td><td class="num">2865</td><td class="num">1.3</td><td class="num">77</td><td class="num">32</td><td class="num">17</td><td class="num">9</td><td class="num">2</td><td class="num">18</td><td class="num">2</td><td class="num">36</td><td>21/0</td><td>ok</td></tr>
-          <tr><td>sm-composer-m</td><td>group</td><td class="num">45</td><td class="num">234</td><td class="num">267</td><td class="num">0.5</td><td class="num">46</td><td class="num">7</td><td class="num">0</td><td class="num">11</td><td class="num">4</td><td class="num">25</td><td class="num">2</td><td class="num">36</td><td>22/0</td><td>ok</td></tr>
-          <tr><td>wapp-hsd-admin-hotel</td><td>solo</td><td class="num">550</td><td class="num">3265</td><td class="num">5249</td><td class="num">4.5</td><td class="num">16</td><td class="num">215</td><td class="num">14</td><td class="num">0</td><td class="num">0</td><td class="num">473</td><td class="num">6</td><td class="num">12</td><td>20/0</td><td>ok</td></tr>
-          <tr><td>api-hotel-hsd-utils</td><td>solo</td><td class="num">76</td><td class="num">475</td><td class="num">776</td><td class="num">0.8</td><td class="num">64</td><td class="num">75</td><td class="num">0</td><td class="num">0</td><td class="num">0</td><td class="num">75</td><td class="num">0</td><td class="num">13</td><td>20/0</td><td>ok</td></tr>
-          <tr><td>api-search-hotel-detail-hotelsvc</td><td>solo</td><td class="num">130</td><td class="num">1084</td><td class="num">1463</td><td class="num">0.9</td><td class="num">27</td><td class="num">40</td><td class="num">4</td><td class="num">0</td><td class="num">0</td><td class="num">126</td><td class="num">1</td><td class="num">0</td><td>20/0</td><td>ok</td></tr>
-          <tr><td>api-businessrules-operation-validator</td><td>solo</td><td class="num">29</td><td class="num">63</td><td class="num">37</td><td class="num">0.3</td><td class="num">2</td><td class="num">4</td><td class="num">0</td><td class="num">0</td><td class="num">0</td><td class="num">15</td><td class="num">2</td><td class="num">8</td><td>19/1†</td><td>ok</td></tr>
-          <tr><td>api-br-quote-ideasfractal</td><td>solo</td><td class="num">35</td><td class="num">168</td><td class="num">200</td><td class="num">0.4</td><td class="num">21</td><td class="num">18</td><td class="num">0</td><td class="num">0</td><td class="num">0</td><td class="num">34</td><td class="num">1</td><td class="num">14</td><td>20/0</td><td>ok</td></tr>
-          <tr><td>agent-wiser-copilot</td><td>solo</td><td class="num">79</td><td class="num">517</td><td class="num">719</td><td class="num">1.5</td><td class="num">12</td><td class="num">13</td><td class="num">58</td><td class="num">0</td><td class="num">0</td><td class="num">41</td><td class="num">11</td><td class="num">11</td><td>20/0</td><td>ok</td></tr>
-          <tr><td>livespec-mcp</td><td>own</td><td class="num">171</td><td class="num">1331</td><td class="num">2365</td><td class="num">2.6</td><td class="num">1</td><td class="num">62</td><td class="num">26</td><td class="num">13</td><td class="num">13</td><td class="num">0</td><td class="num">0</td><td class="num">37</td><td>22/0</td><td>ok</td></tr>
-          <tr><td>vise</td><td>own</td><td class="num">98</td><td class="num">1065</td><td class="num">2408</td><td class="num">1.1</td><td class="num">10</td><td class="num">48</td><td class="num">78</td><td class="num">0</td><td class="num">0</td><td class="num">64</td><td class="num">0</td><td class="num">0</td><td>20/0</td><td>ok</td></tr>
-          <tr><td>Mensis</td><td>own</td><td class="num">16</td><td class="num">198</td><td class="num">351</td><td class="num">1.0</td><td class="num">21</td><td class="num">0</td><td class="num">0</td><td class="num">15</td><td class="num">15</td><td class="num">1</td><td class="num">0</td><td class="num">0</td><td>20/1†</td><td>ok</td></tr>
-          <tr><td>flowtrace-debugger</td><td>own</td><td class="num">283</td><td class="num">1832</td><td class="num">4935</td><td class="num">3.3</td><td class="num">5</td><td class="num">34</td><td class="num">67</td><td class="num">0</td><td class="num">0</td><td class="num">147</td><td class="num">22</td><td class="num">12</td><td>20/0</td><td>ok</td></tr>
-        </tbody>
-      </table>
-      <p class="muted small" style="margin-top:0.45rem;max-width:none">
-        <strong>23</strong> workspaces · tools = ok/fail · † = solo <span class="mono">git_diff_impact</span> (sin <span class="mono">HEAD~5</span>) ·
-        *linked = specs con implementación · leg/orph del group son agregados del <span class="mono">group_db</span> ·
-        self: symbols 1314→1331 · edges 2351→2365 · flowtrace: +270 sym / +1378 edges vs matrix previa ·
-        mutation tools no corridas · grafo ≠ tráfico.
+      <div class="card" style="max-width:none">
+        <h3>Cross-repo (<span class="mono">group_db</span> · home sm-composer-m)</h3>
+        <ul class="findings" style="margin-top:0.55rem">
+          <li><strong>Join real Composer → HotelSvc:</strong> <span class="mono">find_symbol(getHotelList)</span> resolvió el método en <span class="repo">api-search-hotel-h</span> desde otro repo del grupo.</li>
+          <li><strong>Quién llama al endpoint:</strong> <span class="mono">who_calls</span> reportó <strong>2 route_callers</strong> (<span class="mono">listByChunk</span>, <span class="mono">listByChunkSupplierA</span>) — clientes indexados que pegan al servidor HotelSvc.</li>
+          <li><strong>Qué invoca el cliente:</strong> <span class="mono">who_does_this_call(listByChunk)</span> → <strong>1</strong> <span class="mono">invokes_endpoints</span> de vuelta a <span class="mono">getHotelList</span>. El hop HTTP cross-repo está cableado.</li>
+          <li><strong>Flujos “vivos” vs huérfanos:</strong> <strong>24</strong> servers y <strong>19</strong> clients con hop indexado; <strong>2</strong> servers y <strong>36</strong> clients sin pareja en el grafo (falta SA / extract incompleto / ruta muerta — confirmar con APM).</li>
+        </ul>
+      </div>
+    </section>
+
+    <section class="slide" data-title="Group">
+      <p class="eyebrow">16b · Polyrepo (13 repos en group_db)</p>
+      <h2 style="max-width:none;font-size:clamp(1.4rem,2.6vw,1.85rem)">Qué se encontró en cada repo del grupo</h2>
+      <ul class="findings">
+        <li><span class="repo">api-composer-a</span> — 114 símbolos, <strong>5</strong> endpoints. <strong>32</strong> candidatos a dead. <strong>9</strong> Specs; solo <strong>2</strong> ligadas → <strong>7</strong> Specs sin código. 35 módulos huérfanos: mucha superficie sin trazabilidad Spec.</li>
+        <li><span class="repo">api-composer-b</span> — 314 símbolos, <strong>9</strong> endpoints. Dead alto: <strong>70</strong>. Specs 10 / ligadas 3 (7 sin impl). El grafo ve más “código suelto” que Specs ancladas.</li>
+        <li><span class="repo">api-composer-c</span> — chico (66 sym). <strong>17</strong> dead, <strong>5</strong> endpoints. Specs 9→2 ligadas (7 sin impl). Mismo patrón composers: Specs existen, casi no tocan el código.</li>
+        <li><span class="repo">api-composer-d</span> — 62 sym, <strong>15</strong> dead, <strong>3</strong> endpoints. Specs 9→2 ligadas. Poco grafo (23 edges): poco que conectar aún.</li>
+        <li><span class="repo">api-sa-availability-e</span> — Java SA. Dead casi limpio (<strong>1</strong>), <strong>28</strong> endpoints. Specs 9→3 ligadas. Mejor ratio “código vivo / Spec” que los composers Node.</li>
+        <li><span class="repo">api-sa-bags-f</span> — <strong>0</strong> dead, <strong>31</strong> endpoints, grafo denso (1135 edges). Specs 9→2 ligadas: el código está cableado entre sí, pero las Specs casi no.</li>
+        <li><span class="repo">api-sa-flight-search-g</span> — <strong>52</strong> dead + <strong>31</strong> endpoints + 7 orphan tests. Specs 9→2. Mucha superficie HTTP con Specs flotando.</li>
+        <li><span class="repo">api-search-hotel-h</span> — <strong>41</strong> endpoints, <strong>24</strong> dead. Specs 9→3. Es el server del join cross-repo (<span class="mono">getHotelList</span>).</li>
+        <li><span class="repo">api-search-manager-i</span> — mejor del grupo en Specs: <strong>8/10 ligadas</strong> (solo 2 sin impl). Dead 16, endpoints 4. Orquestador con trazabilidad real.</li>
+        <li><span class="repo">api-legacy-j</span> — <strong>60</strong> endpoints vs <strong>61</strong> dead (casi 1:1). Specs 9→2. Mucha API expuesta y mucha señal de no-usada en grafo.</li>
+        <li><span class="repo">results</span> (SPA) — 2330 sym, <strong>167</strong> endpoints, <strong>52</strong> dead, <strong>222</strong> orphan tests. Specs <strong>9/10 ligadas</strong>. Tests huérfanos dominan el ruido.</li>
+        <li><span class="repo">sa-transport-l</span> — dead más alto del grupo (<strong>77</strong>), <strong>32</strong> endpoints, 17 orphan tests. Specs 9→2. SA Java con mucho candidato a limpieza.</li>
+        <li><span class="repo">sm-composer-m</span> — home del smoke cross-repo. <strong>46</strong> dead, <strong>7</strong> endpoints. Specs 11→4 (7 sin impl, una es probe de audit). Desde acá se ve el hop a HotelSvc.</li>
+      </ul>
+      <p class="muted small" style="margin-top:0.5rem">Patrón del grupo: Specs cargadas (~9–11) pero <strong>ligadas 2–4</strong> salvo search-manager y la SPA. Dead y Specs sin impl conviven — el hueco es trazabilidad, no solo “código basura”.</p>
+    </section>
+
+    <section class="slide" data-title="Solo">
+      <p class="eyebrow">16c · Solo + propios (10 repos)</p>
+      <h2 style="max-width:none;font-size:clamp(1.4rem,2.6vw,1.85rem)">Fuera del group_db · y el self-dogfood</h2>
+      <ul class="findings">
+        <li><span class="repo">wapp-hsd-admin-hotel</span> — front grande (3265 sym, <strong>215</strong> endpoints). <strong>0 Specs</strong>. Dead bajo (16) pero <strong>473</strong> módulos huérfanos: sin catálogo Spec no hay ancla, solo grafo.</li>
+        <li><span class="repo">api-hotel-hsd-utils</span> — <strong>64</strong> dead, <strong>75</strong> endpoints, 0 Specs. Utils con mucha superficie HTTP y candidatos a no-usada.</li>
+        <li><span class="repo">api-search-hotel-detail-hotelsvc</span> — <strong>27</strong> dead, <strong>40</strong> endpoints, 0 Specs. 126 módulos huérfanos. Detalle HotelSvc sin trazabilidad Spec.</li>
+        <li><span class="repo">api-businessrules-operation-validator</span> — chico: <strong>2</strong> dead, <strong>4</strong> endpoints, 0 Specs. Casi limpio en dead; falta adoptar Specs.</li>
+        <li><span class="repo">api-br-quote-ideasfractal</span> — <strong>21</strong> dead, <strong>18</strong> endpoints, 0 Specs. Dead ≈ endpoints: revisar antes de podar.</li>
+        <li><span class="repo">agent-wiser-copilot</span> — <strong>12</strong> dead, <strong>13</strong> endpoints, <strong>58</strong> orphan tests, 0 Specs. El ruido es tests, no Specs.</li>
+        <li><span class="repo">livespec-mcp</span> (self) — <strong>13/13 Specs ligadas</strong>, <strong>0</strong> Specs sin impl, <strong>1</strong> dead, <strong>62</strong> endpoints (explorer). Hard-cut OK: validate strict green. Referencia de “cómo se ve bien”.</li>
+        <li><span class="repo">vise</span> — <strong>10</strong> dead, <strong>48</strong> endpoints, 0 Specs, 78 orphan tests. Producto propio sin catálogo Spec aún.</li>
+        <li><span class="repo">Mensis</span> — <strong>15/15 Specs ligadas</strong> pero <strong>21</strong> dead y 0 endpoints HTTP. Specs anclan código; el dead son helpers/UI sin callers en grafo.</li>
+        <li><span class="repo">flowtrace-debugger</span> — <strong>5</strong> dead, <strong>34</strong> endpoints, 0 Specs, 22 legacy servers. Grafo creció (+270 sym / +1378 edges vs barrido previo).</li>
+      </ul>
+      <p class="muted small" style="margin-top:0.5rem">
+        <strong>Lectura general:</strong> donde hay Specs + links (livespec, Mensis, search-manager, SPA) se puede preguntar “qué implementa X”.
+        Donde hay 0 Specs, livespec igual da dead/endpoints/impact — pero no cierra el loop Spec↔código.
+        Cross-repo solo aporta donde <span class="mono">group_db</span> une cliente y server indexados.
       </p>
     </section>
 
