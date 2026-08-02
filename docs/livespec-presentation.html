@@ -173,6 +173,30 @@
     table.cmp th:not(:first-child),
     table.cmp td:not(:first-child) { width: 41%; }
 
+    table.dense {
+      width: 100%;
+      max-width: none;
+      font-size: 0.58rem;
+      font-family: var(--mono);
+    }
+    table.dense th, table.dense td {
+      padding: 0.18rem 0.28rem;
+      white-space: nowrap;
+    }
+    table.dense th { font-size: 0.55rem; }
+    table.dense td:first-child { font-weight: 600; color: var(--ink); }
+    table.dense .num { text-align: right; font-variant-numeric: tabular-nums; }
+    .method-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 0.75rem 1.25rem;
+      margin-bottom: 0.55rem;
+      font-size: 0.78rem;
+      color: var(--muted);
+      max-width: none;
+    }
+    .method-row strong { color: var(--accent); font-weight: 600; }
+
     .pill {
       display: inline-block;
       font-family: var(--mono);
@@ -572,68 +596,27 @@
       <h2>Dogfood sobre superficie real</h2>
       <div class="grid-3">
         <div class="card">
-          <h3>Barrido hard-cut</h3>
-          <p class="muted" style="margin-top:0.45rem"><strong>23</strong> workspaces (13 polyrepo + 10 solo). Force re-index + <strong>23</strong> tools read-only. Cero fallos de producto (solo <span class="mono">git_diff</span> en clones sin historia).</p>
+          <h3>Barrido multi-repo</h3>
+          <p class="muted" style="margin-top:0.45rem">Re-index + tools read-only sobre decenas de repos. Endpoints, dead code, coverage, legacy flows ejercitados de punta a punta.</p>
         </div>
         <div class="card">
           <h3>OpenSpec en nosotros</h3>
-          <p class="muted" style="margin-top:0.45rem"><strong>13/13</strong> specs linked · <span class="mono">validate_openspec(strict)</span> green. Migración <span class="mono">SPEC-NNN</span>→slugs conservó <strong>191</strong> links.</p>
+          <p class="muted" style="margin-top:0.45rem">13 requirements migradas de <span class="mono">SPEC-NNN</span> a slugs conservando 191 links. El propio código se anota con <span class="mono">@spec:&lt;slug&gt;</span>.</p>
         </div>
         <div class="card">
-          <h3>Cross-repo <span class="mono">group_db</span></h3>
-          <p class="muted" style="margin-top:0.45rem"><span class="mono">find_symbol</span> cruza proyectos · <span class="mono">route_callers=2</span> · <span class="mono">invokes_endpoints=1</span> · live HTTP <strong>24</strong>/<strong>19</strong> (srv/cli).</p>
+          <h3>Contrato de payload</h3>
+          <p class="muted" style="margin-top:0.45rem"><span class="mono">count</span>, <span class="mono">grouped</span>/<span class="mono">group_db</span>, paginación de <span class="mono">find_symbol</span> — un vocabulario, no tres.</p>
         </div>
       </div>
       <ul class="clean" style="margin-top:0.85rem">
-        <li>Legacy flows: 2 srv / 36 orphan client — grafo ≠ tráfico; confirmar con APM</li>
-        <li>Suite verde ≠ suficiente: el dogfood es la prueba (<span class="mono">CONTRIBUTING.md</span>)</li>
+        <li>Toda mejora se prueba contra repos reales antes de merge (ver <span class="mono">CONTRIBUTING.md</span>)</li>
+        <li>Suite verde ≠ suficiente: el dogfood es la prueba</li>
       </ul>
-    </section>
-
-    <!-- 10b -->
-    <section class="slide" data-title="Números">
-      <p class="eyebrow">09b · Números del barrido</p>
-      <h2>Qué contestó en cada perfil</h2>
-      <table>
-        <thead>
-          <tr>
-            <th>Perfil</th>
-            <th>Workspaces</th>
-            <th>Señal</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr>
-            <td>Polyrepo (<span class="mono">group_db</span>)</td>
-            <td>13</td>
-            <td>Join cliente→servidor HTTP; endpoints + legacy flows agregados</td>
-          </tr>
-          <tr>
-            <td>Solo (apps / APIs)</td>
-            <td>10</td>
-            <td>Dead code, endpoints, orphan tests, overview — tools verdes</td>
-          </tr>
-          <tr>
-            <td>livespec (self)</td>
-            <td>1</td>
-            <td>1331 symbols · 2365 edges · 13 Specs · 62 endpoints · 1 dead</td>
-          </tr>
-          <tr>
-            <td>OpenSpec strict</td>
-            <td>23/23</td>
-            <td><span class="mono">validate_openspec(strict=True)</span> green tras hard-cut</td>
-          </tr>
-        </tbody>
-      </table>
-      <p class="muted small" style="margin-top:0.85rem;max-width:70ch">
-        Sin scripts ni paths de cliente en el repo público. La matriz vive fuera del
-        árbol; acá solo los números que un agente / stakeholder necesita.
-      </p>
     </section>
 
     <!-- 11 -->
     <section class="slide" data-title="Limitaciones">
-      <p class="eyebrow">11 · Limitaciones</p>
+      <p class="eyebrow">10 · Limitaciones</p>
       <h2>Lo que livespec <em>no</em> es</h2>
       <div class="grid-2">
         <div class="card">
@@ -658,7 +641,7 @@
 
     <!-- 12 -->
     <section class="slide" data-title="Cuándo">
-      <p class="eyebrow">12 · Cuándo usarlo</p>
+      <p class="eyebrow">11 · Cuándo usarlo</p>
       <h2>Fit / no-fit</h2>
       <div class="grid-2">
         <div class="card">
@@ -688,7 +671,7 @@
 
     <!-- 13 -->
     <section class="slide" data-title="Provecho">
-      <p class="eyebrow">13 · Playbook</p>
+      <p class="eyebrow">12 · Playbook</p>
       <h2>Cómo sacarle el máximo provecho</h2>
       <div class="grid-2">
         <ol class="steps">
@@ -710,7 +693,72 @@ get_spec_implementation(
       </div>
     </section>
 
-    <!-- 14 -->
+    <!-- 16 — full hard-cut matrix (per-repo + cross-repo) -->
+    <section class="slide" data-title="Barrido">
+      <p class="eyebrow">16 · Resultados hard-cut · 2026-08-02</p>
+      <h2 style="max-width:none;font-size:clamp(1.35rem,2.8vw,1.9rem)">Cómo se trabajó · resultados por repo y cross-repo</h2>
+      <div class="method-row">
+        <div>
+          <strong>Método por repo:</strong> <span class="mono">index_project(force)</span> →
+          seed (top symbol / endpoint / spec) → 23 tools read-only
+          (overview, orient, symbol, callers, impact, search, dead, endpoints,
+          legacy, orphans, coverage, specs, validate, …). Mutation skipped.
+        </div>
+        <div>
+          <strong>Cross-repo</strong> (home <span class="mono">sm-composer-m</span> +
+          <span class="mono">group_db</span>):
+          <span class="mono">find_symbol(getHotelList)</span> → HotelSvc ·
+          <span class="mono">who_calls</span> route_callers=<strong>2</strong> ·
+          <span class="mono">who_does_this_call(listByChunk)</span> invokes=<strong>1</strong> ·
+          legacy live <strong>24</strong>/<strong>19</strong> · srv <strong>2</strong> · orphan cli <strong>36</strong>.
+        </div>
+      </div>
+      <table class="dense">
+        <thead>
+          <tr>
+            <th>repo</th><th>bucket</th>
+            <th class="num">files</th><th class="num">syms</th><th class="num">edges</th><th class="num">idx s</th>
+            <th class="num">dead</th><th class="num">eps</th><th class="num">orph t</th>
+            <th class="num">specs</th><th class="num">linked*</th><th class="num">orph mod</th>
+            <th class="num">leg srv</th><th class="num">orph cli</th>
+            <th>tools</th><th>validate</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr><td>api-composer-a</td><td>group</td><td class="num">51</td><td class="num">114</td><td class="num">48</td><td class="num">0.5</td><td class="num">32</td><td class="num">5</td><td class="num">0</td><td class="num">9</td><td class="num">2</td><td class="num">35</td><td class="num">2</td><td class="num">36</td><td>21/0</td><td>ok</td></tr>
+          <tr><td>api-composer-b</td><td>group</td><td class="num">105</td><td class="num">314</td><td class="num">250</td><td class="num">0.8</td><td class="num">70</td><td class="num">9</td><td class="num">1</td><td class="num">10</td><td class="num">3</td><td class="num">56</td><td class="num">2</td><td class="num">36</td><td>21/0</td><td>ok</td></tr>
+          <tr><td>api-composer-c</td><td>group</td><td class="num">23</td><td class="num">66</td><td class="num">40</td><td class="num">0.2</td><td class="num">17</td><td class="num">5</td><td class="num">0</td><td class="num">9</td><td class="num">2</td><td class="num">14</td><td class="num">2</td><td class="num">36</td><td>21/0</td><td>ok</td></tr>
+          <tr><td>api-composer-d</td><td>group</td><td class="num">32</td><td class="num">62</td><td class="num">23</td><td class="num">0.2</td><td class="num">15</td><td class="num">3</td><td class="num">0</td><td class="num">9</td><td class="num">2</td><td class="num">22</td><td class="num">2</td><td class="num">36</td><td>21/0</td><td>ok</td></tr>
+          <tr><td>api-sa-availability-e</td><td>group</td><td class="num">38</td><td class="num">213</td><td class="num">198</td><td class="num">0.3</td><td class="num">1</td><td class="num">28</td><td class="num">2</td><td class="num">9</td><td class="num">3</td><td class="num">6</td><td class="num">2</td><td class="num">36</td><td>21/0</td><td>ok</td></tr>
+          <tr><td>api-sa-bags-f</td><td>group</td><td class="num">87</td><td class="num">707</td><td class="num">1135</td><td class="num">0.6</td><td class="num">0</td><td class="num">31</td><td class="num">0</td><td class="num">9</td><td class="num">2</td><td class="num">16</td><td class="num">2</td><td class="num">36</td><td>21/0</td><td>ok</td></tr>
+          <tr><td>api-sa-flight-search-g</td><td>group</td><td class="num">68</td><td class="num">611</td><td class="num">766</td><td class="num">0.9</td><td class="num">52</td><td class="num">31</td><td class="num">7</td><td class="num">9</td><td class="num">2</td><td class="num">15</td><td class="num">2</td><td class="num">36</td><td>21/0</td><td>ok</td></tr>
+          <tr><td>api-search-hotel-h</td><td>group</td><td class="num">125</td><td class="num">989</td><td class="num">784</td><td class="num">0.9</td><td class="num">24</td><td class="num">41</td><td class="num">4</td><td class="num">9</td><td class="num">3</td><td class="num">27</td><td class="num">2</td><td class="num">36</td><td>20/1†</td><td>ok</td></tr>
+          <tr><td>api-search-manager-i</td><td>group</td><td class="num">49</td><td class="num">104</td><td class="num">50</td><td class="num">0.3</td><td class="num">16</td><td class="num">4</td><td class="num">0</td><td class="num">10</td><td class="num">8</td><td class="num">32</td><td class="num">2</td><td class="num">36</td><td>21/0</td><td>ok</td></tr>
+          <tr><td>api-legacy-j</td><td>group</td><td class="num">46</td><td class="num">339</td><td class="num">519</td><td class="num">0.8</td><td class="num">61</td><td class="num">60</td><td class="num">0</td><td class="num">9</td><td class="num">2</td><td class="num">23</td><td class="num">2</td><td class="num">36</td><td>21/0</td><td>ok</td></tr>
+          <tr><td>results</td><td>group</td><td class="num">340</td><td class="num">2330</td><td class="num">6047</td><td class="num">7.1</td><td class="num">52</td><td class="num">167</td><td class="num">222</td><td class="num">10</td><td class="num">9</td><td class="num">160</td><td class="num">2</td><td class="num">36</td><td>21/0</td><td>ok</td></tr>
+          <tr><td>sa-transport-l</td><td>group</td><td class="num">124</td><td class="num">1233</td><td class="num">2865</td><td class="num">1.3</td><td class="num">77</td><td class="num">32</td><td class="num">17</td><td class="num">9</td><td class="num">2</td><td class="num">18</td><td class="num">2</td><td class="num">36</td><td>21/0</td><td>ok</td></tr>
+          <tr><td>sm-composer-m</td><td>group</td><td class="num">45</td><td class="num">234</td><td class="num">267</td><td class="num">0.5</td><td class="num">46</td><td class="num">7</td><td class="num">0</td><td class="num">11</td><td class="num">4</td><td class="num">25</td><td class="num">2</td><td class="num">36</td><td>22/0</td><td>ok</td></tr>
+          <tr><td>wapp-hsd-admin-hotel</td><td>solo</td><td class="num">550</td><td class="num">3265</td><td class="num">5249</td><td class="num">4.5</td><td class="num">16</td><td class="num">215</td><td class="num">14</td><td class="num">0</td><td class="num">0</td><td class="num">473</td><td class="num">6</td><td class="num">12</td><td>20/0</td><td>ok</td></tr>
+          <tr><td>api-hotel-hsd-utils</td><td>solo</td><td class="num">76</td><td class="num">475</td><td class="num">776</td><td class="num">0.8</td><td class="num">64</td><td class="num">75</td><td class="num">0</td><td class="num">0</td><td class="num">0</td><td class="num">75</td><td class="num">0</td><td class="num">13</td><td>20/0</td><td>ok</td></tr>
+          <tr><td>api-search-hotel-detail-hotelsvc</td><td>solo</td><td class="num">130</td><td class="num">1084</td><td class="num">1463</td><td class="num">0.9</td><td class="num">27</td><td class="num">40</td><td class="num">4</td><td class="num">0</td><td class="num">0</td><td class="num">126</td><td class="num">1</td><td class="num">0</td><td>20/0</td><td>ok</td></tr>
+          <tr><td>api-businessrules-operation-validator</td><td>solo</td><td class="num">29</td><td class="num">63</td><td class="num">37</td><td class="num">0.3</td><td class="num">2</td><td class="num">4</td><td class="num">0</td><td class="num">0</td><td class="num">0</td><td class="num">15</td><td class="num">2</td><td class="num">8</td><td>19/1†</td><td>ok</td></tr>
+          <tr><td>api-br-quote-ideasfractal</td><td>solo</td><td class="num">35</td><td class="num">168</td><td class="num">200</td><td class="num">0.4</td><td class="num">21</td><td class="num">18</td><td class="num">0</td><td class="num">0</td><td class="num">0</td><td class="num">34</td><td class="num">1</td><td class="num">14</td><td>20/0</td><td>ok</td></tr>
+          <tr><td>agent-wiser-copilot</td><td>solo</td><td class="num">79</td><td class="num">517</td><td class="num">719</td><td class="num">1.5</td><td class="num">12</td><td class="num">13</td><td class="num">58</td><td class="num">0</td><td class="num">0</td><td class="num">41</td><td class="num">11</td><td class="num">11</td><td>20/0</td><td>ok</td></tr>
+          <tr><td>livespec-mcp</td><td>own</td><td class="num">171</td><td class="num">1331</td><td class="num">2365</td><td class="num">2.6</td><td class="num">1</td><td class="num">62</td><td class="num">26</td><td class="num">13</td><td class="num">13</td><td class="num">0</td><td class="num">0</td><td class="num">37</td><td>22/0</td><td>ok</td></tr>
+          <tr><td>vise</td><td>own</td><td class="num">98</td><td class="num">1065</td><td class="num">2408</td><td class="num">1.1</td><td class="num">10</td><td class="num">48</td><td class="num">78</td><td class="num">0</td><td class="num">0</td><td class="num">64</td><td class="num">0</td><td class="num">0</td><td>20/0</td><td>ok</td></tr>
+          <tr><td>Mensis</td><td>own</td><td class="num">16</td><td class="num">198</td><td class="num">351</td><td class="num">1.0</td><td class="num">21</td><td class="num">0</td><td class="num">0</td><td class="num">15</td><td class="num">15</td><td class="num">1</td><td class="num">0</td><td class="num">0</td><td>20/1†</td><td>ok</td></tr>
+          <tr><td>flowtrace-debugger</td><td>own</td><td class="num">283</td><td class="num">1832</td><td class="num">4935</td><td class="num">3.3</td><td class="num">5</td><td class="num">34</td><td class="num">67</td><td class="num">0</td><td class="num">0</td><td class="num">147</td><td class="num">22</td><td class="num">12</td><td>20/0</td><td>ok</td></tr>
+        </tbody>
+      </table>
+      <p class="muted small" style="margin-top:0.45rem;max-width:none">
+        <strong>23</strong> workspaces · tools = ok/fail · † = solo <span class="mono">git_diff_impact</span> (sin <span class="mono">HEAD~5</span>) ·
+        *linked = specs con implementación · leg/orph del group son agregados del <span class="mono">group_db</span> ·
+        self: symbols 1314→1331 · edges 2351→2365 · flowtrace: +270 sym / +1378 edges vs matrix previa ·
+        mutation tools no corridas · grafo ≠ tráfico.
+      </p>
+    </section>
+
+    <!-- cierre -->
     <section class="slide" data-title="Cierre">
       <p class="eyebrow">Cierre</p>
       <h2>Una frase</h2>
