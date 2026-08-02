@@ -1,956 +1,956 @@
 [
   {
-    "spec_id": "SPEC-001",
+    "spec_id": "indexing-indexing-workspace-walk",
     "qname": "src.livespec_mcp.domain.indexer._gitignored",
     "relation": "implements"
   },
   {
-    "spec_id": "SPEC-001",
+    "spec_id": "indexing-indexing-workspace-walk",
     "qname": "src.livespec_mcp.domain.indexer._iter_files",
     "relation": "implements"
   },
   {
-    "spec_id": "SPEC-001",
+    "spec_id": "indexing-indexing-workspace-walk",
     "qname": "src.livespec_mcp.domain.indexer._load_gitignore",
     "relation": "implements"
   },
   {
-    "spec_id": "SPEC-001",
+    "spec_id": "indexing-indexing-workspace-walk",
     "qname": "src.livespec_mcp.domain.indexer._upsert_file",
     "relation": "implements"
   },
   {
-    "spec_id": "SPEC-001",
+    "spec_id": "indexing-indexing-workspace-walk",
     "qname": "src.livespec_mcp.domain.indexer.index_project",
     "relation": "implements"
   },
   {
-    "spec_id": "SPEC-001",
+    "spec_id": "indexing-indexing-workspace-walk",
     "qname": "src.livespec_mcp.domain.matcher.parse_annotations",
     "relation": "implements"
   },
   {
-    "spec_id": "SPEC-001",
+    "spec_id": "indexing-indexing-workspace-walk",
     "qname": "src.livespec_mcp.tools.indexing.register.index_project",
     "relation": "implements"
   },
   {
-    "spec_id": "SPEC-001",
+    "spec_id": "indexing-indexing-workspace-walk",
     "qname": "src.livespec_mcp.tools.indexing.run_index_pipeline",
     "relation": "implements"
   },
   {
-    "spec_id": "SPEC-001",
+    "spec_id": "indexing-indexing-workspace-walk",
     "qname": "src.livespec_mcp.tools.specs.register.scan_spec_annotations",
     "relation": "implements"
   },
   {
-    "spec_id": "SPEC-001",
+    "spec_id": "indexing-indexing-workspace-walk",
     "qname": "tests.test_gitignore.test_index_project_respects_gitignore",
     "relation": "tests"
   },
   {
-    "spec_id": "SPEC-001",
+    "spec_id": "indexing-indexing-workspace-walk",
     "qname": "tests.test_indexing.test_index_and_overview",
     "relation": "tests"
   },
   {
-    "spec_id": "SPEC-001",
+    "spec_id": "indexing-indexing-workspace-walk",
     "qname": "tests.test_indexing.test_overview_filters_structural_pattern_names",
     "relation": "tests"
   },
   {
-    "spec_id": "SPEC-001",
+    "spec_id": "indexing-indexing-workspace-walk",
     "qname": "tests.test_targeted_resolver.test_targeted_walk_refreshes_cross_file_edges_to_changed_target",
     "relation": "tests"
   },
   {
-    "spec_id": "SPEC-002",
+    "spec_id": "extractors-symbol-extraction-9-languages",
     "qname": "src.livespec_mcp.domain.extractors._py_decorator_names",
     "relation": "implements"
   },
   {
-    "spec_id": "SPEC-002",
+    "spec_id": "extractors-symbol-extraction-9-languages",
     "qname": "src.livespec_mcp.domain.extractors._py_extract",
     "relation": "implements"
   },
   {
-    "spec_id": "SPEC-002",
+    "spec_id": "extractors-symbol-extraction-9-languages",
     "qname": "src.livespec_mcp.domain.extractors._py_signature",
     "relation": "implements"
   },
   {
-    "spec_id": "SPEC-002",
+    "spec_id": "extractors-symbol-extraction-9-languages",
     "qname": "src.livespec_mcp.domain.extractors._ts_extract",
     "relation": "implements"
   },
   {
-    "spec_id": "SPEC-002",
+    "spec_id": "extractors-symbol-extraction-9-languages",
     "qname": "src.livespec_mcp.domain.extractors._ts_node_decorators",
     "relation": "implements"
   },
   {
-    "spec_id": "SPEC-002",
+    "spec_id": "extractors-symbol-extraction-9-languages",
     "qname": "src.livespec_mcp.domain.extractors.extract",
     "relation": "implements"
   },
   {
-    "spec_id": "SPEC-002",
+    "spec_id": "extractors-symbol-extraction-9-languages",
     "qname": "src.livespec_mcp.domain.languages.get_parser",
     "relation": "implements"
   },
   {
-    "spec_id": "SPEC-002",
+    "spec_id": "extractors-symbol-extraction-9-languages",
     "qname": "tests.test_body_hash_stability.test_python_body_hash_stable_against_whitespace",
     "relation": "tests"
   },
   {
-    "spec_id": "SPEC-002",
+    "spec_id": "extractors-symbol-extraction-9-languages",
     "qname": "tests.test_body_hash_stability.test_typescript_body_hash_stable_against_reformat",
     "relation": "tests"
   },
   {
-    "spec_id": "SPEC-002",
+    "spec_id": "extractors-symbol-extraction-9-languages",
     "qname": "tests.test_extractors.test_extractor_basic",
     "relation": "tests"
   },
   {
-    "spec_id": "SPEC-002",
+    "spec_id": "extractors-symbol-extraction-9-languages",
     "qname": "tests.test_extractors.test_rust_impl_block_methods",
     "relation": "tests"
   },
   {
-    "spec_id": "SPEC-003",
+    "spec_id": "indexer-scoped-reference-resolution",
     "qname": "src.livespec_mcp.domain.extractors._go_collect_imports",
     "relation": "implements"
   },
   {
-    "spec_id": "SPEC-003",
+    "spec_id": "indexer-scoped-reference-resolution",
     "qname": "src.livespec_mcp.domain.extractors._rb_collect_imports",
     "relation": "implements"
   },
   {
-    "spec_id": "SPEC-003",
+    "spec_id": "indexer-scoped-reference-resolution",
     "qname": "src.livespec_mcp.domain.extractors._rs_collect_imports",
     "relation": "implements"
   },
   {
-    "spec_id": "SPEC-003",
+    "spec_id": "indexer-scoped-reference-resolution",
     "qname": "src.livespec_mcp.domain.extractors._ts_collect_calls",
     "relation": "implements"
   },
   {
-    "spec_id": "SPEC-003",
+    "spec_id": "indexer-scoped-reference-resolution",
     "qname": "src.livespec_mcp.domain.extractors._ts_collect_imports",
     "relation": "implements"
   },
   {
-    "spec_id": "SPEC-003",
+    "spec_id": "indexer-scoped-reference-resolution",
     "qname": "src.livespec_mcp.domain.indexer._replace_symbols",
     "relation": "implements"
   },
   {
-    "spec_id": "SPEC-003",
+    "spec_id": "indexer-scoped-reference-resolution",
     "qname": "src.livespec_mcp.domain.indexer._resolve_refs",
     "relation": "implements"
   },
   {
-    "spec_id": "SPEC-003",
+    "spec_id": "indexer-scoped-reference-resolution",
     "qname": "tests.test_properties.test_partial_reindex_does_not_lose_edges",
     "relation": "tests"
   },
   {
-    "spec_id": "SPEC-003",
+    "spec_id": "indexer-scoped-reference-resolution",
     "qname": "tests.test_scoped_resolution.test_go_cross_package_edges_weight_1",
     "relation": "tests"
   },
   {
-    "spec_id": "SPEC-003",
+    "spec_id": "indexer-scoped-reference-resolution",
     "qname": "tests.test_scoped_resolution.test_python_cross_module_edges_weight_1",
     "relation": "tests"
   },
   {
-    "spec_id": "SPEC-003",
+    "spec_id": "indexer-scoped-reference-resolution",
     "qname": "tests.test_scoped_resolution.test_ts_js_cross_module_edges_weight_1",
     "relation": "tests"
   },
   {
-    "spec_id": "SPEC-004",
+    "spec_id": "graph-call-graph-pagerank",
     "qname": "src.livespec_mcp.domain.graph._pagerank_pure",
     "relation": "implements"
   },
   {
-    "spec_id": "SPEC-004",
+    "spec_id": "graph-call-graph-pagerank",
     "qname": "src.livespec_mcp.domain.graph.ancestors_within",
     "relation": "implements"
   },
   {
-    "spec_id": "SPEC-004",
+    "spec_id": "graph-call-graph-pagerank",
     "qname": "src.livespec_mcp.domain.graph.descendants_within",
     "relation": "implements"
   },
   {
-    "spec_id": "SPEC-004",
+    "spec_id": "graph-call-graph-pagerank",
     "qname": "src.livespec_mcp.domain.graph.load_graph",
     "relation": "implements"
   },
   {
-    "spec_id": "SPEC-004",
+    "spec_id": "graph-call-graph-pagerank",
     "qname": "src.livespec_mcp.domain.graph.page_rank",
     "relation": "implements"
   },
   {
-    "spec_id": "SPEC-004",
+    "spec_id": "graph-call-graph-pagerank",
     "qname": "tests.test_graph_cache.test_graph_cache_hits_on_repeated_call",
     "relation": "tests"
   },
   {
-    "spec_id": "SPEC-004",
+    "spec_id": "graph-call-graph-pagerank",
     "qname": "tests.test_graph_cache.test_graph_cache_invalidates_after_new_index_run",
     "relation": "tests"
   },
   {
-    "spec_id": "SPEC-004",
+    "spec_id": "graph-call-graph-pagerank",
     "qname": "tests.test_quick_wins.test_who_calls_returns_caller_set",
     "relation": "tests"
   },
   {
-    "spec_id": "SPEC-005",
+    "spec_id": "spec-code-traceability",
     "qname": "src.livespec_mcp.domain.matcher.parse_annotations",
     "relation": "implements"
   },
   {
-    "spec_id": "SPEC-005",
+    "spec_id": "spec-code-traceability",
     "qname": "src.livespec_mcp.prompts.register.extract_specs_from_module",
     "relation": "implements"
   },
   {
-    "spec_id": "SPEC-005",
+    "spec_id": "spec-code-traceability",
     "qname": "src.livespec_mcp.resources.register.list_specs",
     "relation": "implements"
   },
   {
-    "spec_id": "SPEC-005",
+    "spec_id": "spec-code-traceability",
     "qname": "src.livespec_mcp.resources.register.spec",
     "relation": "implements"
   },
   {
-    "spec_id": "SPEC-005",
+    "spec_id": "spec-code-traceability",
     "qname": "src.livespec_mcp.tools.plugins.spec.register",
     "relation": "implements"
   },
   {
-    "spec_id": "SPEC-005",
+    "spec_id": "spec-code-traceability",
     "qname": "src.livespec_mcp.tools.specs.register.bulk_link_spec_symbols",
     "relation": "implements"
   },
   {
-    "spec_id": "SPEC-005",
+    "spec_id": "spec-code-traceability",
     "qname": "src.livespec_mcp.tools.specs.register.create_spec",
     "relation": "implements"
   },
   {
-    "spec_id": "SPEC-005",
+    "spec_id": "spec-code-traceability",
     "qname": "src.livespec_mcp.tools.specs.register.delete_spec",
     "relation": "implements"
   },
   {
-    "spec_id": "SPEC-005",
+    "spec_id": "spec-code-traceability",
     "qname": "src.livespec_mcp.tools.specs.register.get_spec_dependency_graph",
     "relation": "implements"
   },
   {
-    "spec_id": "SPEC-005",
+    "spec_id": "spec-code-traceability",
     "qname": "src.livespec_mcp.tools.specs.register.get_spec_implementation",
     "relation": "implements"
   },
   {
-    "spec_id": "SPEC-005",
+    "spec_id": "spec-code-traceability",
     "qname": "src.livespec_mcp.tools.specs.register.import_specs_from_markdown",
     "relation": "implements"
   },
   {
-    "spec_id": "SPEC-005",
+    "spec_id": "spec-code-traceability",
     "qname": "src.livespec_mcp.tools.specs.register.link_spec_dependency",
     "relation": "implements"
   },
   {
-    "spec_id": "SPEC-005",
+    "spec_id": "spec-code-traceability",
     "qname": "src.livespec_mcp.tools.specs.register.link_spec_symbol",
     "relation": "implements"
   },
   {
-    "spec_id": "SPEC-005",
+    "spec_id": "spec-code-traceability",
     "qname": "src.livespec_mcp.tools.specs.register.list_specs",
     "relation": "implements"
   },
   {
-    "spec_id": "SPEC-005",
+    "spec_id": "spec-code-traceability",
     "qname": "src.livespec_mcp.tools.specs.register.propose_specs_from_codebase",
     "relation": "implements"
   },
   {
-    "spec_id": "SPEC-005",
+    "spec_id": "spec-code-traceability",
     "qname": "src.livespec_mcp.tools.specs.register.scan_annotation_verbs",
     "relation": "implements"
   },
   {
-    "spec_id": "SPEC-005",
+    "spec_id": "spec-code-traceability",
     "qname": "src.livespec_mcp.tools.specs.register.scan_docstrings_for_spec_hints",
     "relation": "implements"
   },
   {
-    "spec_id": "SPEC-005",
+    "spec_id": "spec-code-traceability",
     "qname": "src.livespec_mcp.tools.specs.register.unlink_spec_dependency",
     "relation": "implements"
   },
   {
-    "spec_id": "SPEC-005",
+    "spec_id": "spec-code-traceability",
     "qname": "src.livespec_mcp.tools.specs.register.update_spec",
     "relation": "implements"
   },
   {
-    "spec_id": "SPEC-005",
+    "spec_id": "spec-code-traceability",
     "qname": "tests.test_bulk_link.test_bulk_link_happy_path",
     "relation": "tests"
   },
   {
-    "spec_id": "SPEC-005",
+    "spec_id": "spec-code-traceability",
     "qname": "tests.test_bulk_link.test_manual_links_survive_force_reindex",
     "relation": "tests"
   },
   {
-    "spec_id": "SPEC-005",
+    "spec_id": "spec-code-traceability",
     "qname": "tests.test_matcher.test_level1_prefix_high_confidence",
     "relation": "tests"
   },
   {
-    "spec_id": "SPEC-005",
+    "spec_id": "spec-code-traceability",
     "qname": "tests.test_propose_requirements.test_propose_requirements_basic",
     "relation": "tests"
   },
   {
-    "spec_id": "SPEC-005",
+    "spec_id": "spec-code-traceability",
     "qname": "tests.test_rf_deps.test_cycle_is_rejected",
     "relation": "tests"
   },
   {
-    "spec_id": "SPEC-005",
+    "spec_id": "spec-code-traceability",
     "qname": "tests.test_rf_deps.test_link_and_walk_dependencies",
     "relation": "tests"
   },
   {
-    "spec_id": "SPEC-006",
+    "spec_id": "rag-fts-search-ast-chunks",
     "qname": "src.livespec_mcp.domain.rag.chunk_symbol",
     "relation": "implements"
   },
   {
-    "spec_id": "SPEC-006",
+    "spec_id": "rag-fts-search-ast-chunks",
     "qname": "src.livespec_mcp.domain.rag.fts_search",
     "relation": "implements"
   },
   {
-    "spec_id": "SPEC-006",
+    "spec_id": "rag-fts-search-ast-chunks",
     "qname": "src.livespec_mcp.domain.rag.hybrid_search",
     "relation": "implements"
   },
   {
-    "spec_id": "SPEC-006",
+    "spec_id": "rag-fts-search-ast-chunks",
     "qname": "src.livespec_mcp.domain.rag.rebuild_chunks",
     "relation": "implements"
   },
   {
-    "spec_id": "SPEC-006",
+    "spec_id": "rag-fts-search-ast-chunks",
     "qname": "src.livespec_mcp.tools.search.register.search",
     "relation": "implements"
   },
   {
-    "spec_id": "SPEC-006",
+    "spec_id": "rag-fts-search-ast-chunks",
     "qname": "tests.test_search.test_index_populates_chunks",
     "relation": "tests"
   },
   {
-    "spec_id": "SPEC-006",
+    "spec_id": "rag-fts-search-ast-chunks",
     "qname": "tests.test_search.test_search_fts_finds_symbol_by_keyword",
     "relation": "tests"
   },
   {
-    "spec_id": "SPEC-007",
+    "spec_id": "analysis-dead-code-coverage-analysis",
     "qname": "src.livespec_mcp.domain.legacy_flows.compute_legacy_flows",
     "relation": "implements"
   },
   {
-    "spec_id": "SPEC-007",
+    "spec_id": "analysis-dead-code-coverage-analysis",
     "qname": "src.livespec_mcp.prompts.register.audit_spec_coverage",
     "relation": "implements"
   },
   {
-    "spec_id": "SPEC-007",
+    "spec_id": "analysis-dead-code-coverage-analysis",
     "qname": "src.livespec_mcp.tools.analysis.register.audit_coverage",
     "relation": "implements"
   },
   {
-    "spec_id": "SPEC-007",
+    "spec_id": "analysis-dead-code-coverage-analysis",
     "qname": "src.livespec_mcp.tools.analysis.register.find_dead_code",
     "relation": "implements"
   },
   {
-    "spec_id": "SPEC-007",
+    "spec_id": "analysis-dead-code-coverage-analysis",
     "qname": "src.livespec_mcp.tools.analysis.register.find_legacy_flows",
     "relation": "implements"
   },
   {
-    "spec_id": "SPEC-007",
+    "spec_id": "analysis-dead-code-coverage-analysis",
     "qname": "src.livespec_mcp.tools.analysis.register.find_orphan_tests",
     "relation": "implements"
   },
   {
-    "spec_id": "SPEC-007",
+    "spec_id": "analysis-dead-code-coverage-analysis",
     "qname": "tests.test_aggregator_tools.test_audit_coverage_credits_test_coverage",
     "relation": "tests"
   },
   {
-    "spec_id": "SPEC-007",
+    "spec_id": "analysis-dead-code-coverage-analysis",
     "qname": "tests.test_aggregator_tools.test_audit_coverage_signals",
     "relation": "tests"
   },
   {
-    "spec_id": "SPEC-007",
+    "spec_id": "analysis-dead-code-coverage-analysis",
     "qname": "tests.test_aggregator_tools.test_find_dead_code_basic",
     "relation": "tests"
   },
   {
-    "spec_id": "SPEC-007",
+    "spec_id": "analysis-dead-code-coverage-analysis",
     "qname": "tests.test_aggregator_tools.test_find_orphan_tests",
     "relation": "tests"
   },
   {
-    "spec_id": "SPEC-008",
+    "spec_id": "analysis-endpoint-discovery-framework-aware",
     "qname": "src.livespec_mcp.domain.extractors.scan_hono_routes",
     "relation": "implements"
   },
   {
-    "spec_id": "SPEC-008",
+    "spec_id": "analysis-endpoint-discovery-framework-aware",
     "qname": "src.livespec_mcp.tools.analysis._has_entry_point_decorator",
     "relation": "implements"
   },
   {
-    "spec_id": "SPEC-008",
+    "spec_id": "analysis-endpoint-discovery-framework-aware",
     "qname": "src.livespec_mcp.tools.analysis._ts_framework_entry_point_kind",
     "relation": "implements"
   },
   {
-    "spec_id": "SPEC-008",
+    "spec_id": "analysis-endpoint-discovery-framework-aware",
     "qname": "src.livespec_mcp.tools.analysis.register.find_endpoints",
     "relation": "implements"
   },
   {
-    "spec_id": "SPEC-008",
+    "spec_id": "analysis-endpoint-discovery-framework-aware",
     "qname": "tests.test_aggregator_tools.test_find_endpoints_all_and_per_framework",
     "relation": "tests"
   },
   {
-    "spec_id": "SPEC-008",
+    "spec_id": "analysis-endpoint-discovery-framework-aware",
     "qname": "tests.test_aggregator_tools.test_find_endpoints_detects_plugin_decorator_alias",
     "relation": "tests"
   },
   {
-    "spec_id": "SPEC-009",
+    "spec_id": "analysis-impact-analysis",
     "qname": "src.livespec_mcp.domain.graph.ancestors_within",
     "relation": "implements"
   },
   {
-    "spec_id": "SPEC-009",
+    "spec_id": "analysis-impact-analysis",
     "qname": "src.livespec_mcp.domain.graph.descendants_within",
     "relation": "implements"
   },
   {
-    "spec_id": "SPEC-009",
+    "spec_id": "analysis-impact-analysis",
     "qname": "src.livespec_mcp.prompts.register.analyze_change_impact",
     "relation": "implements"
   },
   {
-    "spec_id": "SPEC-009",
+    "spec_id": "analysis-impact-analysis",
     "qname": "src.livespec_mcp.prompts.register.explain_symbol",
     "relation": "implements"
   },
   {
-    "spec_id": "SPEC-009",
+    "spec_id": "analysis-impact-analysis",
     "qname": "src.livespec_mcp.tools.analysis.register.analyze_impact",
     "relation": "implements"
   },
   {
-    "spec_id": "SPEC-009",
+    "spec_id": "analysis-impact-analysis",
     "qname": "src.livespec_mcp.tools.analysis.register.find_symbol",
     "relation": "implements"
   },
   {
-    "spec_id": "SPEC-009",
+    "spec_id": "analysis-impact-analysis",
     "qname": "src.livespec_mcp.tools.analysis.register.get_project_overview",
     "relation": "implements"
   },
   {
-    "spec_id": "SPEC-009",
+    "spec_id": "analysis-impact-analysis",
     "qname": "src.livespec_mcp.tools.analysis.register.get_symbol_source",
     "relation": "implements"
   },
   {
-    "spec_id": "SPEC-009",
+    "spec_id": "analysis-impact-analysis",
     "qname": "src.livespec_mcp.tools.analysis.register.git_diff_impact",
     "relation": "implements"
   },
   {
-    "spec_id": "SPEC-009",
+    "spec_id": "analysis-impact-analysis",
     "qname": "src.livespec_mcp.tools.analysis.register.grep_in_indexed_files",
     "relation": "implements"
   },
   {
-    "spec_id": "SPEC-009",
+    "spec_id": "analysis-impact-analysis",
     "qname": "src.livespec_mcp.tools.analysis.register.quick_orient",
     "relation": "implements"
   },
   {
-    "spec_id": "SPEC-009",
+    "spec_id": "analysis-impact-analysis",
     "qname": "src.livespec_mcp.tools.analysis.register.who_calls",
     "relation": "implements"
   },
   {
-    "spec_id": "SPEC-009",
+    "spec_id": "analysis-impact-analysis",
     "qname": "src.livespec_mcp.tools.analysis.register.who_does_this_call",
     "relation": "implements"
   },
   {
-    "spec_id": "SPEC-009",
+    "spec_id": "analysis-impact-analysis",
     "qname": "tests.test_git_diff.test_git_diff_impact_basic",
     "relation": "tests"
   },
   {
-    "spec_id": "SPEC-009",
+    "spec_id": "analysis-impact-analysis",
     "qname": "tests.test_git_diff.test_git_diff_impact_excludes_test_fixtures",
     "relation": "tests"
   },
   {
-    "spec_id": "SPEC-009",
+    "spec_id": "analysis-impact-analysis",
     "qname": "tests.test_quick_wins.test_quick_orient_composite",
     "relation": "tests"
   },
   {
-    "spec_id": "SPEC-010",
+    "spec_id": "docs-documentation-generation",
     "qname": "src.livespec_mcp.explorer.fastapi.enable_explorer",
     "relation": "implements"
   },
   {
-    "spec_id": "SPEC-010",
+    "spec_id": "docs-documentation-generation",
     "qname": "src.livespec_mcp.prompts.register.document_undocumented_symbols",
     "relation": "implements"
   },
   {
-    "spec_id": "SPEC-010",
+    "spec_id": "docs-documentation-generation",
     "qname": "src.livespec_mcp.prompts.register.refresh_stale_docs",
     "relation": "implements"
   },
   {
-    "spec_id": "SPEC-010",
+    "spec_id": "docs-documentation-generation",
     "qname": "src.livespec_mcp.resources.register.doc_spec",
     "relation": "implements"
   },
   {
-    "spec_id": "SPEC-010",
+    "spec_id": "docs-documentation-generation",
     "qname": "src.livespec_mcp.resources.register.doc_symbol",
     "relation": "implements"
   },
   {
-    "spec_id": "SPEC-010",
+    "spec_id": "docs-documentation-generation",
     "qname": "src.livespec_mcp.tools.docs.register.export_documentation",
     "relation": "implements"
   },
   {
-    "spec_id": "SPEC-010",
+    "spec_id": "docs-documentation-generation",
     "qname": "src.livespec_mcp.tools.docs.register.export_explorer",
     "relation": "implements"
   },
   {
-    "spec_id": "SPEC-010",
+    "spec_id": "docs-documentation-generation",
     "qname": "src.livespec_mcp.tools.docs.register.export_flow_explorer",
     "relation": "implements"
   },
   {
-    "spec_id": "SPEC-010",
+    "spec_id": "docs-documentation-generation",
     "qname": "src.livespec_mcp.tools.docs.register.generate_docs",
     "relation": "implements"
   },
   {
-    "spec_id": "SPEC-010",
+    "spec_id": "docs-documentation-generation",
     "qname": "src.livespec_mcp.tools.docs.register.list_docs",
     "relation": "implements"
   },
   {
-    "spec_id": "SPEC-010",
+    "spec_id": "docs-documentation-generation",
     "qname": "src.livespec_mcp.tools.flow_explorer._iter_project_endpoints",
     "relation": "implements"
   },
   {
-    "spec_id": "SPEC-010",
+    "spec_id": "docs-documentation-generation",
     "qname": "src.livespec_mcp.tools.plugins.docs.register",
     "relation": "implements"
   },
   {
-    "spec_id": "SPEC-010",
+    "spec_id": "docs-documentation-generation",
     "qname": "tests.test_explorer.test_export_explorer_data_schema",
     "relation": "tests"
   },
   {
-    "spec_id": "SPEC-010",
+    "spec_id": "docs-documentation-generation",
     "qname": "tests.test_explorer.test_export_explorer_idempotent",
     "relation": "tests"
   },
   {
-    "spec_id": "SPEC-010",
+    "spec_id": "docs-documentation-generation",
     "qname": "tests.test_explorer.test_export_explorer_writes_both_files",
     "relation": "tests"
   },
   {
-    "spec_id": "SPEC-011",
+    "spec_id": "storage-persistence-schema-migrations",
     "qname": "src.livespec_mcp.storage.db._ensure_migrations_table",
     "relation": "implements"
   },
   {
-    "spec_id": "SPEC-011",
+    "spec_id": "storage-persistence-schema-migrations",
     "qname": "src.livespec_mcp.storage.db._flag_reextract",
     "relation": "implements"
   },
   {
-    "spec_id": "SPEC-011",
+    "spec_id": "storage-persistence-schema-migrations",
     "qname": "src.livespec_mcp.storage.db._run_migrations",
     "relation": "implements"
   },
   {
-    "spec_id": "SPEC-011",
+    "spec_id": "storage-persistence-schema-migrations",
     "qname": "src.livespec_mcp.storage.db.connect",
     "relation": "implements"
   },
   {
-    "spec_id": "SPEC-011",
+    "spec_id": "storage-persistence-schema-migrations",
     "qname": "src.livespec_mcp.storage.db.consume_reextract_flag",
     "relation": "implements"
   },
   {
-    "spec_id": "SPEC-011",
+    "spec_id": "storage-persistence-schema-migrations",
     "qname": "tests.test_migrations.test_legacy_db_picks_up_missing_migrations",
     "relation": "tests"
   },
   {
-    "spec_id": "SPEC-011",
+    "spec_id": "storage-persistence-schema-migrations",
     "qname": "tests.test_migrations.test_migration_order_is_monotonic",
     "relation": "tests"
   },
   {
-    "spec_id": "SPEC-011",
+    "spec_id": "storage-persistence-schema-migrations",
     "qname": "tests.test_migrations.test_migrations_are_idempotent",
     "relation": "tests"
   },
   {
-    "spec_id": "SPEC-011",
+    "spec_id": "storage-persistence-schema-migrations",
     "qname": "tests.test_migrations.test_migrations_recorded_on_first_connect",
     "relation": "tests"
   },
   {
-    "spec_id": "SPEC-012",
+    "spec_id": "cli-headless-cli",
     "qname": "src.livespec_mcp.cli.main",
     "relation": "implements"
   },
   {
-    "spec_id": "SPEC-012",
+    "spec_id": "cli-headless-cli",
     "qname": "src.livespec_mcp.error_middleware.WorkspaceErrorMiddleware",
     "relation": "implements"
   },
   {
-    "spec_id": "SPEC-012",
+    "spec_id": "cli-headless-cli",
     "qname": "src.livespec_mcp.instrumentation.AgentLogMiddleware",
     "relation": "implements"
   },
   {
-    "spec_id": "SPEC-012",
+    "spec_id": "cli-headless-cli",
     "qname": "src.livespec_mcp.param_descriptions.description_for",
     "relation": "implements"
   },
   {
-    "spec_id": "SPEC-012",
+    "spec_id": "cli-headless-cli",
     "qname": "src.livespec_mcp.plugin_visibility.PluginVisibilityMiddleware",
     "relation": "implements"
   },
   {
-    "spec_id": "SPEC-012",
+    "spec_id": "cli-headless-cli",
     "qname": "src.livespec_mcp.prompts.register",
     "relation": "implements"
   },
   {
-    "spec_id": "SPEC-012",
+    "spec_id": "cli-headless-cli",
     "qname": "src.livespec_mcp.prompts.register.agent_playbook",
     "relation": "implements"
   },
   {
-    "spec_id": "SPEC-012",
+    "spec_id": "cli-headless-cli",
     "qname": "src.livespec_mcp.prompts.register.onboard_project",
     "relation": "implements"
   },
   {
-    "spec_id": "SPEC-012",
+    "spec_id": "cli-headless-cli",
     "qname": "src.livespec_mcp.resources.register",
     "relation": "implements"
   },
   {
-    "spec_id": "SPEC-012",
+    "spec_id": "cli-headless-cli",
     "qname": "src.livespec_mcp.resources.register.code_symbol",
     "relation": "implements"
   },
   {
-    "spec_id": "SPEC-012",
+    "spec_id": "cli-headless-cli",
     "qname": "src.livespec_mcp.resources.register.file_view",
     "relation": "implements"
   },
   {
-    "spec_id": "SPEC-012",
+    "spec_id": "cli-headless-cli",
     "qname": "src.livespec_mcp.resources.register.index_status",
     "relation": "implements"
   },
   {
-    "spec_id": "SPEC-012",
+    "spec_id": "cli-headless-cli",
     "qname": "src.livespec_mcp.resources.register.project_overview",
     "relation": "implements"
   },
   {
-    "spec_id": "SPEC-012",
+    "spec_id": "cli-headless-cli",
     "qname": "src.livespec_mcp.resources.register.symbol_view",
     "relation": "implements"
   },
   {
-    "spec_id": "SPEC-012",
+    "spec_id": "cli-headless-cli",
     "qname": "src.livespec_mcp.schema_compat.SchemaCompatMiddleware",
     "relation": "implements"
   },
   {
-    "spec_id": "SPEC-012",
+    "spec_id": "cli-headless-cli",
     "qname": "src.livespec_mcp.schema_compat.flatten_tool_parameters",
     "relation": "implements"
   },
   {
-    "spec_id": "SPEC-012",
+    "spec_id": "cli-headless-cli",
     "qname": "src.livespec_mcp.server.main",
     "relation": "implements"
   },
   {
-    "spec_id": "SPEC-012",
+    "spec_id": "cli-headless-cli",
     "qname": "src.livespec_mcp.tools.indexing.run_index_pipeline",
     "relation": "implements"
   },
   {
-    "spec_id": "SPEC-012",
+    "spec_id": "cli-headless-cli",
     "qname": "tests.test_cli.test_index_force_flag",
     "relation": "tests"
   },
   {
-    "spec_id": "SPEC-012",
+    "spec_id": "cli-headless-cli",
     "qname": "tests.test_cli.test_index_then_status",
     "relation": "tests"
   },
   {
-    "spec_id": "SPEC-012",
+    "spec_id": "cli-headless-cli",
     "qname": "tests.test_cli.test_missing_workspace_is_clean_error",
     "relation": "tests"
   },
   {
-    "spec_id": "SPEC-013",
+    "spec_id": "openspec-fission-ai-interoperability",
     "qname": "src.livespec_mcp.domain.md_specs.extract_purpose",
     "relation": "implements"
   },
   {
-    "spec_id": "SPEC-013",
+    "spec_id": "openspec-fission-ai-interoperability",
     "qname": "src.livespec_mcp.domain.md_specs.extract_scenarios",
     "relation": "implements"
   },
   {
-    "spec_id": "SPEC-013",
+    "spec_id": "openspec-fission-ai-interoperability",
     "qname": "src.livespec_mcp.domain.md_specs.parse_openspec_markdown",
     "relation": "implements"
   },
   {
-    "spec_id": "SPEC-013",
+    "spec_id": "openspec-fission-ai-interoperability",
     "qname": "src.livespec_mcp.domain.openspec_changes.apply_change",
     "relation": "implements"
   },
   {
-    "spec_id": "SPEC-013",
+    "spec_id": "openspec-fission-ai-interoperability",
     "qname": "src.livespec_mcp.domain.openspec_changes.archive_change",
     "relation": "implements"
   },
   {
-    "spec_id": "SPEC-013",
+    "spec_id": "openspec-fission-ai-interoperability",
     "qname": "src.livespec_mcp.domain.openspec_changes.import_changes_tree",
     "relation": "implements"
   },
   {
-    "spec_id": "SPEC-013",
+    "spec_id": "openspec-fission-ai-interoperability",
     "qname": "src.livespec_mcp.domain.openspec_changes.ingest_change",
     "relation": "implements"
   },
   {
-    "spec_id": "SPEC-013",
+    "spec_id": "openspec-fission-ai-interoperability",
     "qname": "src.livespec_mcp.domain.openspec_changes.parse_change_dir",
     "relation": "implements"
   },
   {
-    "spec_id": "SPEC-013",
+    "spec_id": "openspec-fission-ai-interoperability",
     "qname": "src.livespec_mcp.domain.openspec_discover.discover_openspec_root",
     "relation": "implements"
   },
   {
-    "spec_id": "SPEC-013",
+    "spec_id": "openspec-fission-ai-interoperability",
     "qname": "src.livespec_mcp.domain.openspec_discover.read_openspec_config",
     "relation": "implements"
   },
   {
-    "spec_id": "SPEC-013",
+    "spec_id": "openspec-fission-ai-interoperability",
     "qname": "src.livespec_mcp.domain.openspec_discover.sync_openspec_tree",
     "relation": "implements"
   },
   {
-    "spec_id": "SPEC-013",
+    "spec_id": "openspec-fission-ai-interoperability",
     "qname": "src.livespec_mcp.domain.openspec_export.export_openspec",
     "relation": "implements"
   },
   {
-    "spec_id": "SPEC-013",
+    "spec_id": "openspec-fission-ai-interoperability",
     "qname": "src.livespec_mcp.domain.openspec_validate.validate_openspec",
     "relation": "implements"
   },
   {
-    "spec_id": "SPEC-013",
+    "spec_id": "openspec-fission-ai-interoperability",
     "qname": "src.livespec_mcp.prompts.register.openspec_workflow",
     "relation": "implements"
   },
   {
-    "spec_id": "SPEC-013",
+    "spec_id": "openspec-fission-ai-interoperability",
     "qname": "src.livespec_mcp.tools.specs.register.apply_spec_change",
     "relation": "implements"
   },
   {
-    "spec_id": "SPEC-013",
+    "spec_id": "openspec-fission-ai-interoperability",
     "qname": "src.livespec_mcp.tools.specs.register.archive_spec_change",
     "relation": "implements"
   },
   {
-    "spec_id": "SPEC-013",
+    "spec_id": "openspec-fission-ai-interoperability",
     "qname": "src.livespec_mcp.tools.specs.register.export_openspec",
     "relation": "implements"
   },
   {
-    "spec_id": "SPEC-013",
+    "spec_id": "openspec-fission-ai-interoperability",
     "qname": "src.livespec_mcp.tools.specs.register.get_spec_change",
     "relation": "implements"
   },
   {
-    "spec_id": "SPEC-013",
+    "spec_id": "openspec-fission-ai-interoperability",
     "qname": "src.livespec_mcp.tools.specs.register.link_scenario_symbol",
     "relation": "implements"
   },
   {
-    "spec_id": "SPEC-013",
+    "spec_id": "openspec-fission-ai-interoperability",
     "qname": "src.livespec_mcp.tools.specs.register.list_spec_changes",
     "relation": "implements"
   },
   {
-    "spec_id": "SPEC-013",
+    "spec_id": "openspec-fission-ai-interoperability",
     "qname": "src.livespec_mcp.tools.specs.register.sync_openspec",
     "relation": "implements"
   },
   {
-    "spec_id": "SPEC-013",
+    "spec_id": "openspec-fission-ai-interoperability",
     "qname": "src.livespec_mcp.tools.specs.register.validate_openspec",
     "relation": "implements"
   },
   {
-    "spec_id": "SPEC-013",
+    "spec_id": "openspec-fission-ai-interoperability",
     "qname": "tests.test_openspec_interop.test_apply_dry_run_and_warnings",
     "relation": "tests"
   },
   {
-    "spec_id": "SPEC-013",
+    "spec_id": "openspec-fission-ai-interoperability",
     "qname": "tests.test_openspec_interop.test_apply_unknown_change_errors",
     "relation": "tests"
   },
   {
-    "spec_id": "SPEC-013",
+    "spec_id": "openspec-fission-ai-interoperability",
     "qname": "tests.test_openspec_interop.test_change_lifecycle",
     "relation": "tests"
   },
   {
-    "spec_id": "SPEC-013",
+    "spec_id": "openspec-fission-ai-interoperability",
     "qname": "tests.test_openspec_interop.test_export_includes_archived_change",
     "relation": "tests"
   },
   {
-    "spec_id": "SPEC-013",
+    "spec_id": "openspec-fission-ai-interoperability",
     "qname": "tests.test_openspec_interop.test_export_roundtrip",
     "relation": "tests"
   },
   {
-    "spec_id": "SPEC-013",
+    "spec_id": "openspec-fission-ai-interoperability",
     "qname": "tests.test_openspec_interop.test_extract_scenarios",
     "relation": "tests"
   },
   {
-    "spec_id": "SPEC-013",
+    "spec_id": "openspec-fission-ai-interoperability",
     "qname": "tests.test_openspec_interop.test_fresh_db_has_openspec_tables",
     "relation": "tests"
   },
   {
-    "spec_id": "SPEC-013",
+    "spec_id": "openspec-fission-ai-interoperability",
     "qname": "tests.test_openspec_interop.test_import_persists_scenarios",
     "relation": "tests"
   },
   {
-    "spec_id": "SPEC-013",
+    "spec_id": "openspec-fission-ai-interoperability",
     "qname": "tests.test_openspec_interop.test_link_scenario_bad_name_errors",
     "relation": "tests"
   },
   {
-    "spec_id": "SPEC-013",
+    "spec_id": "openspec-fission-ai-interoperability",
     "qname": "tests.test_openspec_interop.test_native_reimport_keeps_scenarios",
     "relation": "tests"
   },
   {
-    "spec_id": "SPEC-013",
+    "spec_id": "openspec-fission-ai-interoperability",
     "qname": "tests.test_openspec_interop.test_parse_openspec_populates_scenarios_and_operation",
     "relation": "tests"
   },
   {
-    "spec_id": "SPEC-013",
+    "spec_id": "openspec-fission-ai-interoperability",
     "qname": "tests.test_openspec_interop.test_parse_renamed_delta",
     "relation": "tests"
   },
   {
-    "spec_id": "SPEC-013",
+    "spec_id": "openspec-fission-ai-interoperability",
     "qname": "tests.test_openspec_interop.test_purpose_roundtrip",
     "relation": "tests"
   },
   {
-    "spec_id": "SPEC-013",
+    "spec_id": "openspec-fission-ai-interoperability",
     "qname": "tests.test_openspec_interop.test_rename_migrates_links",
     "relation": "tests"
   },
   {
-    "spec_id": "SPEC-013",
+    "spec_id": "openspec-fission-ai-interoperability",
     "qname": "tests.test_openspec_interop.test_scenario_level_traceability",
     "relation": "tests"
   },
   {
-    "spec_id": "SPEC-013",
+    "spec_id": "openspec-fission-ai-interoperability",
     "qname": "tests.test_openspec_interop.test_sync_openspec_missing_dir_errors",
     "relation": "tests"
   },
   {
-    "spec_id": "SPEC-013",
+    "spec_id": "openspec-fission-ai-interoperability",
     "qname": "tests.test_openspec_interop.test_validate_openspec_flags_missing_scenario",
     "relation": "tests"
   }

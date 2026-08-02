@@ -15,16 +15,15 @@ from livespec_mcp.server import mcp
 @pytest.mark.asyncio
 async def test_update_spec_round_trip(workspace):
     async with Client(mcp) as c:
-        # v0.24: mutation tools require an indexed workspace.
         await c.call_tool("index_project", {})
         await c.call_tool(
-            "create_spec", {"title": "Orig", "spec_id": "SPEC-500", "priority": "low"}
+            "create_spec", {"title": "Orig", "spec_id": "spec-update-roundtrip", "priority": "low"}
         )
         upd = (
             await c.call_tool(
                 "update_spec",
                 {
-                    "spec_id": "SPEC-500",
+                    "spec_id": "spec-update-roundtrip",
                     "title": "Renamed",
                     "status": "active",
                     "priority": "high",
@@ -34,7 +33,7 @@ async def test_update_spec_round_trip(workspace):
         ).data
         assert upd.get("updated") is True
         specs = (await c.call_tool("list_specs", {})).data["specs"]
-        row = next(s for s in specs if s["spec_id"] == "SPEC-500")
+        row = next(s for s in specs if s["spec_id"] == "spec-update-roundtrip")
         assert row["title"] == "Renamed"
         assert row["status"] == "active"
         assert row["priority"] == "high"
@@ -45,21 +44,18 @@ async def test_update_spec_round_trip(workspace):
 async def test_delete_spec_cascades_links(sample_repo):
     async with Client(mcp) as c:
         await c.call_tool("index_project", {})
-        await c.call_tool("create_spec", {"title": "X", "spec_id": "SPEC-600"})
+        await c.call_tool("create_spec", {"title": "X", "spec_id": "spec-delete-cascade"})
         await c.call_tool(
             "bulk_link_spec_symbols",
-            {"mappings": [{"spec_id": "SPEC-600", "symbol_qname": "pkg.auth.login"}]},
+            {"mappings": [{"spec_id": "spec-delete-cascade", "symbol_qname": "pkg.auth.login"}]},
         )
-        # linked before delete
-        impl = (await c.call_tool("get_spec_implementation", {"spec_id": "SPEC-600"})).data
+        impl = (await c.call_tool("get_spec_implementation", {"spec_id": "spec-delete-cascade"})).data
         assert impl.get("symbols") or impl.get("implementation") or impl.get("count", 0) >= 0
-        deleted = (await c.call_tool("delete_spec", {"spec_id": "SPEC-600"})).data
+        deleted = (await c.call_tool("delete_spec", {"spec_id": "spec-delete-cascade"})).data
         assert deleted["deleted"] is True
-        # gone from list
         specs = (await c.call_tool("list_specs", {})).data["specs"]
-        assert all(s["spec_id"] != "SPEC-600" for s in specs)
-        # idempotent second delete
-        again = (await c.call_tool("delete_spec", {"spec_id": "SPEC-600"})).data
+        assert all(s["spec_id"] != "spec-delete-cascade" for s in specs)
+        again = (await c.call_tool("delete_spec", {"spec_id": "spec-delete-cascade"})).data
         assert again["deleted"] is False
 
 
@@ -68,7 +64,7 @@ async def test_index_survives_syntax_error_file(workspace: Path):
     """A file with a syntax error must not crash the index — it's skipped and
     the rest of the repo indexes fine (C4 / extractor resilience)."""
     (workspace / "good.py").write_text("def alive():\n    return 1\n")
-    (workspace / "broken.py").write_text("def broken(:\n    pass\n")  # syntax error
+    (workspace / "broken.py").write_text("def broken(:\n    pass\n")
     async with Client(mcp) as c:
         result = (await c.call_tool("index_project", {})).data
         assert result["files_total"] >= 2
@@ -84,17 +80,15 @@ async def test_transient_syntax_error_preserves_spec_links(workspace: Path):
     f.write_text("def handler():\n    return 1\n")
     async with Client(mcp) as c:
         await c.call_tool("index_project", {})
-        await c.call_tool("create_spec", {"title": "S", "spec_id": "SPEC-700"})
+        await c.call_tool("create_spec", {"title": "S", "spec_id": "spec-syntax-preserve"})
         await c.call_tool(
             "bulk_link_spec_symbols",
-            {"mappings": [{"spec_id": "SPEC-700", "symbol_qname": "svc.handler"}]},
+            {"mappings": [{"spec_id": "spec-syntax-preserve", "symbol_qname": "svc.handler"}]},
         )
-        # break the file, re-index (simulates a mid-edit save)
         f.write_text("def handler(:\n    return 1\n")
         await c.call_tool("index_project", {})
-        # fix it, re-index
         f.write_text("def handler():\n    return 1\n")
         await c.call_tool("index_project", {})
-        impl = (await c.call_tool("get_spec_implementation", {"spec_id": "SPEC-700"})).data
+        impl = (await c.call_tool("get_spec_implementation", {"spec_id": "spec-syntax-preserve"})).data
         blob = str(impl)
         assert "svc.handler" in blob, f"manual link lost across transient syntax error: {impl}"

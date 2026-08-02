@@ -140,17 +140,17 @@ async def test_java_javadoc_spec_annotation_links_method(workspace):
     """Leading Javadoc is persisted as a Java method docstring for @spec links."""
     async with Client(mcp) as c:
         await c.call_tool("index_project", {})
-        await c.call_tool("create_spec", {"spec_id": "SPEC-001", "title": "Lookup"})
+        await c.call_tool("create_spec", {"spec_id": "auth-user-login", "title": "Lookup"})
         (workspace / "UserService.java").write_text(
             "public class UserService {\n"
-            "    /** @spec:SPEC-001 */\n"
+            "    /** @spec:auth-user-login */\n"
             "    public String lookup() {\n"
             "        return \"user\";\n"
             "    }\n"
             "}\n"
         )
         await c.call_tool("index_project", {})
-        out = (await c.call_tool("get_spec_implementation", {"spec_id": "SPEC-001"})).data
+        out = (await c.call_tool("get_spec_implementation", {"spec_id": "auth-user-login"})).data
 
     assert any(symbol["qualified_name"].endswith("UserService.lookup") for symbol in out["symbols"])
 

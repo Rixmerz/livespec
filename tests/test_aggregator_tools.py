@@ -76,9 +76,9 @@ async def test_audit_coverage_signals(workspace):
     pkg.mkdir()
     (pkg / "__init__.py").write_text("")
     (pkg / "linked.py").write_text(
-        '"""@spec:SPEC-001"""\n'
+        '"""@spec:auth-user-login"""\n'
         "def implementer():\n"
-        '    """@spec:SPEC-001"""\n'
+        '    """@spec:auth-user-login"""\n'
         "    return 1\n"
     )
     (pkg / "unlinked.py").write_text(
@@ -91,13 +91,13 @@ async def test_audit_coverage_signals(workspace):
         # Two Specs: one with implementer, one without
         await c.call_tool(
             "create_spec",
-            {"spec_id": "SPEC-001", "title": "Linked"},
+            {"spec_id": "auth-user-login", "title": "Linked"},
         )
         await c.call_tool(
             "create_spec",
-            {"spec_id": "SPEC-002", "title": "Orphan"},
+            {"spec_id": "spec-orphan", "title": "Orphan"},
         )
-        # Re-scan so SPEC-001 picks up the @spec: annotation
+        # Re-scan so auth-user-login picks up the @spec: annotation
         await c.call_tool("scan_spec_annotations", {})
 
         out = (await c.call_tool("audit_coverage", {})).data
@@ -106,8 +106,8 @@ async def test_audit_coverage_signals(workspace):
         f"pkg/unlinked.py should appear in modules_without_spec: {out}"
     )
     specs_no_impl_ids = {r["spec_id"] for r in out["specs_without_implementation"]}
-    assert "SPEC-002" in specs_no_impl_ids, (
-        f"SPEC-002 should be reported as without implementation: {out}"
+    assert "spec-orphan" in specs_no_impl_ids, (
+        f"spec-orphan should be reported as without implementation: {out}"
     )
     # P0.A1: new fields exist and partition `modules_without_spec`
     assert isinstance(out.get("modules_implicitly_covered"), list)
@@ -140,7 +140,7 @@ async def test_audit_coverage_transitive_split(workspace):
         "from pkg.store import query\n"
         "\n"
         "def handle():\n"
-        '    """@spec:SPEC-100"""\n'
+        '    """@spec:api-surface"""\n'
         "    return query()\n"
     )
     # Truly orphan — no @spec:, nobody calls it either
@@ -152,7 +152,7 @@ async def test_audit_coverage_transitive_split(workspace):
     async with Client(mcp) as c:
         await c.call_tool("index_project", {})
         await c.call_tool(
-            "create_spec", {"spec_id": "SPEC-100", "title": "API surface"}
+            "create_spec", {"spec_id": "api-surface", "title": "API surface"}
         )
         await c.call_tool("scan_spec_annotations", {})
         out = (await c.call_tool("audit_coverage", {})).data
@@ -180,9 +180,9 @@ async def test_audit_coverage_excludes_package_markers(workspace):
     pkg.mkdir()
     (pkg / "__init__.py").write_text("")  # empty package marker
     (pkg / "feature.py").write_text(
-        '"""@spec:SPEC-100"""\n'
+        '"""@spec:api-surface"""\n'
         "def implementer():\n"
-        '    """@spec:SPEC-100"""\n'
+        '    """@spec:api-surface"""\n'
         "    return 1\n"
     )
     sub = pkg / "subpkg"
@@ -192,7 +192,7 @@ async def test_audit_coverage_excludes_package_markers(workspace):
     async with Client(mcp) as c:
         await c.call_tool("index_project", {})
         await c.call_tool(
-            "create_spec", {"spec_id": "SPEC-100", "title": "Feature"}
+            "create_spec", {"spec_id": "api-surface", "title": "Feature"}
         )
         await c.call_tool("scan_spec_annotations", {})
         out = (await c.call_tool("audit_coverage", {})).data
@@ -226,18 +226,18 @@ async def test_audit_coverage_credits_test_coverage(workspace):
     async with Client(mcp) as c:
         await c.call_tool("index_project", {})
         await c.call_tool(
-            "create_spec", {"spec_id": "SPEC-200", "title": "Tested"}
+            "create_spec", {"spec_id": "tested-feature", "title": "Tested"}
         )
         # Link the implementer (relation=implements, default)
         await c.call_tool(
             "link_spec_symbol",
-            {"spec_id": "SPEC-200", "symbol_qname": "pkg.feature.implementer"},
+            {"spec_id": "tested-feature", "symbol_qname": "pkg.feature.implementer"},
         )
         # Link the test (relation=tests)
         await c.call_tool(
             "link_spec_symbol",
             {
-                "spec_id": "SPEC-200",
+                "spec_id": "tested-feature",
                 "symbol_qname": "pkg.feature.test_runner",
                 "relation": "tests",
             },
@@ -245,12 +245,12 @@ async def test_audit_coverage_credits_test_coverage(workspace):
         out = (await c.call_tool("audit_coverage", {})).data
 
     assert out["counts"]["specs_with_linked_tests"] == 1, (
-        f"expected SPEC-200 with 1 test, got counts: {out['counts']}"
+        f"expected tested-feature with 1 test, got counts: {out['counts']}"
     )
     assert any(
-        r["spec_id"] == "SPEC-200" and r["test_count"] == 1
+        r["spec_id"] == "tested-feature" and r["test_count"] == 1
         for r in out["spec_test_coverage"]
-    ), f"SPEC-200 should appear in spec_test_coverage: {out['spec_test_coverage']}"
+    ), f"tested-feature should appear in spec_test_coverage: {out['spec_test_coverage']}"
 
 
 @pytest.mark.asyncio

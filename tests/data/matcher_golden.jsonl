@@ -1,37 +1,37 @@
-{"text": "@spec:SPEC-001", "expected": [{"spec_id": "SPEC-001", "relation": "implements", "confidence": 1.0}]}
-{"text": "@implements:SPEC-042", "expected": [{"spec_id": "SPEC-042", "relation": "implements", "confidence": 1.0}]}
-{"text": "@tests:SPEC-007", "expected": [{"spec_id": "SPEC-007", "relation": "tests", "confidence": 1.0}]}
-{"text": "@references:SPEC-013", "expected": [{"spec_id": "SPEC-013", "relation": "references", "confidence": 1.0}]}
-{"text": "implements SPEC-005", "expected": [{"spec_id": "SPEC-005", "relation": "implements", "confidence": 0.7}]}
-{"text": "tests SPEC-008", "expected": [{"spec_id": "SPEC-008", "relation": "tests", "confidence": 0.7}]}
-{"text": "references SPEC-009", "expected": [{"spec_id": "SPEC-009", "relation": "references", "confidence": 0.7}]}
-{"text": "covers SPEC-010", "expected": [{"spec_id": "SPEC-010", "relation": "implements", "confidence": 0.7}]}
-{"text": "this does not implement SPEC-011", "expected": []}
-{"text": "we never implement SPEC-012", "expected": []}
-{"text": "TODO implement SPEC-013", "expected": []}
-{"text": "FIXME tests SPEC-014", "expected": []}
-{"text": "doesn't implement SPEC-015", "expected": []}
-{"text": "without implementing SPEC-016", "expected": []}
-{"text": "We should think about SPEC-017 someday", "expected": []}
-{"text": "see also SPEC-018 in the design doc", "expected": []}
-{"text": "@spec:SPEC-001, SPEC-002", "expected": [{"spec_id": "SPEC-001", "relation": "implements", "confidence": 1.0}, {"spec_id": "SPEC-002", "relation": "implements", "confidence": 1.0}]}
-{"text": "@spec:SPEC-001,SPEC-002,SPEC-003", "expected": [{"spec_id": "SPEC-001", "relation": "implements", "confidence": 1.0}, {"spec_id": "SPEC-002", "relation": "implements", "confidence": 1.0}, {"spec_id": "SPEC-003", "relation": "implements", "confidence": 1.0}]}
-{"text": "@spec:SPEC-001:0.85", "expected": [{"spec_id": "SPEC-001", "relation": "implements", "confidence": 0.85}]}
-{"text": "@spec:SPEC-001, SPEC-002:0.5", "expected": [{"spec_id": "SPEC-001", "relation": "implements", "confidence": 0.5}, {"spec_id": "SPEC-002", "relation": "implements", "confidence": 0.5}]}
-{"text": "@implements:SPEC-042:0.95", "expected": [{"spec_id": "SPEC-042", "relation": "implements", "confidence": 0.95}]}
-{"text": "@not_spec:SPEC-100\nimplements SPEC-100", "expected": []}
-{"text": "@!spec:SPEC-200\n@spec:SPEC-200", "expected": []}
-{"text": "@spec:SPEC-001\n@not_spec:SPEC-002\nimplements SPEC-002", "expected": [{"spec_id": "SPEC-001", "relation": "implements", "confidence": 1.0}]}
-{"text": "@spec:SPEC-1", "expected": [{"spec_id": "SPEC-001", "relation": "implements", "confidence": 1.0}]}
-{"text": "@spec:spec-042", "expected": [{"spec_id": "SPEC-042", "relation": "implements", "confidence": 1.0}]}
-{"text": "@spec:SPEC_007", "expected": [{"spec_id": "SPEC-007", "relation": "implements", "confidence": 1.0}]}
-{"text": "# @spec:SPEC-001\n# Some comment", "expected": [{"spec_id": "SPEC-001", "relation": "implements", "confidence": 1.0}]}
-{"text": "* @implements:SPEC-099", "expected": [{"spec_id": "SPEC-099", "relation": "implements", "confidence": 1.0}]}
-{"text": "@spec:SPEC-001\n@spec:SPEC-001", "expected": [{"spec_id": "SPEC-001", "relation": "implements", "confidence": 1.0}]}
-{"text": "@spec:SPEC-050\nimplements SPEC-050", "expected": [{"spec_id": "SPEC-050", "relation": "implements", "confidence": 1.0}]}
-{"text": "", "expected": []}
-{"text": "no SPEC mentions here at all, just plain text about Login flow", "expected": []}
-{"text": "SPEC-001", "expected": []}
-{"text": "skip SPEC-099", "expected": []}
-{"text": "implements SPEC-001 and tests SPEC-002", "expected": [{"spec_id": "SPEC-001", "relation": "implements", "confidence": 0.7}, {"spec_id": "SPEC-002", "relation": "tests", "confidence": 0.7}]}
-{"text": "Login flow that implements SPEC-001 and references SPEC-002", "expected": [{"spec_id": "SPEC-001", "relation": "implements", "confidence": 0.7}, {"spec_id": "SPEC-002", "relation": "references", "confidence": 0.7}]}
+{"text": "@spec:auth-user-login", "known_ids": ["auth-user-login"], "expected": [{"spec_id": "auth-user-login", "relation": "implements", "confidence": 1.0}]}
+{"text": "@implements:theme-selection", "known_ids": ["theme-selection"], "expected": [{"spec_id": "theme-selection", "relation": "implements", "confidence": 1.0}]}
+{"text": "@tests:test-target-seven", "known_ids": ["test-target-seven"], "expected": [{"spec_id": "test-target-seven", "relation": "tests", "confidence": 1.0}]}
+{"text": "@references:ref-thirteen", "known_ids": ["ref-thirteen"], "expected": [{"spec_id": "ref-thirteen", "relation": "references", "confidence": 1.0}]}
+{"text": "implements password-hash", "known_ids": ["password-hash"], "expected": [{"spec_id": "password-hash", "relation": "implements", "confidence": 0.7}]}
+{"text": "tests test-eight", "known_ids": ["test-eight"], "expected": [{"spec_id": "test-eight", "relation": "tests", "confidence": 0.7}]}
+{"text": "references ref-nine", "known_ids": ["ref-nine"], "expected": [{"spec_id": "ref-nine", "relation": "references", "confidence": 0.7}]}
+{"text": "covers report-covered", "known_ids": ["report-covered"], "expected": [{"spec_id": "report-covered", "relation": "implements", "confidence": 0.7}]}
+{"text": "this does not implement neg-eleven", "known_ids": ["neg-eleven"], "expected": []}
+{"text": "we never implement neg-twelve", "known_ids": ["neg-twelve"], "expected": []}
+{"text": "TODO implement todo-thirteen", "known_ids": ["todo-thirteen"], "expected": []}
+{"text": "FIXME tests fixme-fourteen", "known_ids": ["fixme-fourteen"], "expected": []}
+{"text": "doesn't implement neg-fifteen", "known_ids": ["neg-fifteen"], "expected": []}
+{"text": "without implementing neg-sixteen", "known_ids": ["neg-sixteen"], "expected": []}
+{"text": "We should think about someday-seventeen someday", "known_ids": ["someday-seventeen"], "expected": []}
+{"text": "see also design-doc-eighteen in the design doc", "known_ids": ["design-doc-eighteen"], "expected": []}
+{"text": "@spec:auth-user-login, auth-session", "known_ids": ["auth-user-login", "auth-session"], "expected": [{"spec_id": "auth-user-login", "relation": "implements", "confidence": 1.0}, {"spec_id": "auth-session", "relation": "implements", "confidence": 1.0}]}
+{"text": "@spec:auth-user-login,auth-session,untested-feature", "known_ids": ["auth-user-login", "auth-session", "untested-feature"], "expected": [{"spec_id": "auth-user-login", "relation": "implements", "confidence": 1.0}, {"spec_id": "auth-session", "relation": "implements", "confidence": 1.0}, {"spec_id": "untested-feature", "relation": "implements", "confidence": 1.0}]}
+{"text": "@spec:auth-user-login:0.85", "known_ids": ["auth-user-login"], "expected": [{"spec_id": "auth-user-login", "relation": "implements", "confidence": 0.85}]}
+{"text": "@spec:auth-user-login, auth-session:0.5", "known_ids": ["auth-user-login", "auth-session"], "expected": [{"spec_id": "auth-user-login", "relation": "implements", "confidence": 0.5}, {"spec_id": "auth-session", "relation": "implements", "confidence": 0.5}]}
+{"text": "@implements:theme-selection:0.95", "known_ids": ["theme-selection"], "expected": [{"spec_id": "theme-selection", "relation": "implements", "confidence": 0.95}]}
+{"text": "@not_spec:api-surface\nimplements api-surface", "known_ids": ["api-surface"], "expected": []}
+{"text": "@!spec:tested-feature\n@spec:tested-feature", "known_ids": ["tested-feature"], "expected": []}
+{"text": "@spec:auth-user-login\n@not_spec:auth-session\nimplements auth-session", "known_ids": ["auth-user-login", "auth-session"], "expected": [{"spec_id": "auth-user-login", "relation": "implements", "confidence": 1.0}]}
+{"text": "@spec:auth-user-login", "known_ids": ["auth-user-login"], "expected": [{"spec_id": "auth-user-login", "relation": "implements", "confidence": 1.0}]}
+{"text": "@spec:theme-selection", "known_ids": ["theme-selection"], "expected": [{"spec_id": "theme-selection", "relation": "implements", "confidence": 1.0}]}
+{"text": "@spec:test-target-seven", "known_ids": ["test-target-seven"], "expected": [{"spec_id": "test-target-seven", "relation": "implements", "confidence": 1.0}]}
+{"text": "# @spec:auth-user-login\n# Some comment", "known_ids": ["auth-user-login"], "expected": [{"spec_id": "auth-user-login", "relation": "implements", "confidence": 1.0}]}
+{"text": "* @implements skip-ninety-nine", "known_ids": ["skip-ninety-nine"], "expected": [{"spec_id": "skip-ninety-nine", "relation": "implements", "confidence": 1.0}]}
+{"text": "@spec:auth-user-login\n@spec:auth-user-login", "known_ids": ["auth-user-login"], "expected": [{"spec_id": "auth-user-login", "relation": "implements", "confidence": 1.0}]}
+{"text": "@spec:comment-fifty\nimplements comment-fifty", "known_ids": ["comment-fifty"], "expected": [{"spec_id": "comment-fifty", "relation": "implements", "confidence": 1.0}]}
+{"text": "", "known_ids": [], "expected": []}
+{"text": "no spec mentions here at all, just plain text about Login flow", "known_ids": ["auth-user-login"], "expected": []}
+{"text": "auth-user-login", "known_ids": ["auth-user-login"], "expected": []}
+{"text": "skip skip-ninety-nine", "known_ids": ["skip-ninety-nine"], "expected": []}
+{"text": "implements auth-user-login and tests auth-session", "known_ids": ["auth-user-login", "auth-session"], "expected": [{"spec_id": "auth-user-login", "relation": "implements", "confidence": 0.7}, {"spec_id": "auth-session", "relation": "tests", "confidence": 0.7}]}
+{"text": "Login flow that implements auth-user-login and references auth-session", "known_ids": ["auth-user-login", "auth-session"], "expected": [{"spec_id": "auth-user-login", "relation": "implements", "confidence": 0.7}, {"spec_id": "auth-session", "relation": "references", "confidence": 0.7}]}

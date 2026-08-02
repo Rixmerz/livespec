@@ -14,11 +14,11 @@ from livespec_mcp.server import mcp
 
 def test_rf_verb_is_invisible_to_the_real_matcher():
     """Ground truth: confirms the bug this tool exists to catch actually
-    exists in the matcher — @rf: produces zero hits, @spec: produces one."""
+    exists in the matcher — @rf: produces zero hits, @spec: with store prefix one."""
     assert parse_annotations("@rf:BE-RF-080") == []
-    hits = parse_annotations("@spec:SPEC-080")
+    hits = parse_annotations("@spec:BE-RF-080", prefixes=("BE-RF",))
     assert len(hits) == 1
-    assert hits[0].spec_id == "SPEC-080"
+    assert hits[0].spec_id == "BE-RF-080"
 
 
 @pytest.mark.asyncio
@@ -45,8 +45,7 @@ async def test_scan_annotation_verbs_flags_unrecognized_verb(workspace):
 
 @pytest.mark.asyncio
 async def test_scan_annotation_verbs_flags_token_shape_mismatch(workspace):
-    """Verb IS recognized (@spec) but the payload isn't SPEC-NNN shaped —
-    a second, independent way an annotation goes unconsumed."""
+    """Verb IS recognized (@spec) but the payload isn't in the store prefix set."""
     (workspace / "pkg").mkdir()
     (workspace / "pkg" / "__init__.py").write_text("")
     (workspace / "pkg" / "code.py").write_text(
@@ -65,16 +64,16 @@ async def test_scan_annotation_verbs_flags_token_shape_mismatch(workspace):
 
 @pytest.mark.asyncio
 async def test_scan_annotation_verbs_skips_consumable_annotations(workspace):
-    """A correct @spec:SPEC-NNN annotation must NOT be flagged — it's
-    consumed by the real matcher, so this tool has nothing to report."""
+    """A correct @spec:BE-RF-102 annotation must NOT be flagged when BE-RF is in store."""
     (workspace / "pkg").mkdir()
     (workspace / "pkg" / "__init__.py").write_text("")
     (workspace / "pkg" / "code.py").write_text(
-        '"""\n@spec:SPEC-001\n"""\n'
+        '"""\n@spec:BE-RF-102\n"""\n'
         "def handler():\n    return 1\n"
     )
     async with Client(mcp) as c:
         await c.call_tool("index_project", {})
+        await c.call_tool("create_spec", {"title": "Tenant suspend", "spec_id": "BE-RF-102"})
         out = (await c.call_tool("scan_annotation_verbs", {})).data
         assert out["total_findings"] == 0
         assert out["verb_groups"] == []
@@ -83,12 +82,7 @@ async def test_scan_annotation_verbs_skips_consumable_annotations(workspace):
 @pytest.mark.asyncio
 async def test_scan_annotation_verbs_finds_annotations_the_extractor_drops(workspace):
     """`@rf:` above a bare Hono route-registration expression must still be
-    found even though NO function/handler symbol exists on that line — this
-    tool reads FILES, not just extracted symbol docstrings, so a gap in
-    what tree-sitter extracts as a linkable node can't hide a finding.
-    (`get_spec_implementation`-style docstring scans would see nothing here
-    since there's no symbol whose docstring this comment could attach to.)
-    """
+    found even though NO function/handler symbol exists on that line."""
     (workspace / "src").mkdir()
     (workspace / "src" / "routes.ts").write_text(
         "import { Hono } from 'hono';\n"

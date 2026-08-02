@@ -36,7 +36,7 @@ def register(mcp: FastMCP) -> None:
 
         Invoke at the start of a session on any livespec-indexed repo. Covers cold-open
         tool patterns, OpenSpec as preferred Spec authoring SSoT (livespec is the engine
-        beneath), legacy ## SPEC-NNN import-compat, Markdown import, anti-patterns, and
+        beneath), OpenSpec Markdown import, anti-patterns, and
         brownfield onboarding.
         """
         return _load_agent_playbook()
@@ -50,7 +50,7 @@ def register(mcp: FastMCP) -> None:
             "2) Call `get_project_overview()` and summarize languages and top symbols.\n"
             "3) Call `list_specs()` — if empty, prefer drafting OpenSpec under\n"
             "   `openspec/specs/<capability>/spec.md` then `sync_openspec()` (not\n"
-            "   create_spec-first). Legacy ## SPEC-NNN catalogs are import-compat only.\n"
+            "   create_spec-first). Spec ids are OpenSpec slugs only.\n"
             "4) If `openspec/` already exists, run `sync_openspec()` + `validate_openspec`.\n"
             "5) Report Spec totals and suggest `@spec:` / bulk links for top symbols."
         )

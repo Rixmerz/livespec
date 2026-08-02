@@ -120,16 +120,16 @@ async def test_quick_orient_includes_linked_rfs(sample_repo):
         await c.call_tool("index_project", {})
         await c.call_tool(
             "create_spec",
-            {"title": "Login flow", "spec_id": "SPEC-001"},
+            {"title": "Login flow", "spec_id": "auth-user-login"},
         )
-        # Pick up the @spec:SPEC-001 in login's docstring
+        # Pick up the @spec:auth-user-login in login's docstring
         await c.call_tool("scan_spec_annotations", {})
 
         out = (
             await c.call_tool("quick_orient", {"qname": "pkg.auth.login"})
         ).data
         spec_ids = {r["spec_id"] for r in out["specs"]}
-        assert "SPEC-001" in spec_ids
+        assert "auth-user-login" in spec_ids
 
 
 @pytest.mark.asyncio

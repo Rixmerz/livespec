@@ -29,7 +29,7 @@ async def test_bulk_link_happy_path(workspace):
 
     async with Client(mcp) as c:
         await c.call_tool("index_project", {})
-        for spec in ("SPEC-001", "SPEC-002"):
+        for spec in ("auth-user-login", "auth-session"):
             await c.call_tool("create_spec", {"spec_id": spec, "title": spec})
 
         out = (
@@ -37,9 +37,9 @@ async def test_bulk_link_happy_path(workspace):
                 "bulk_link_spec_symbols",
                 {
                     "mappings": [
-                        {"spec_id": "SPEC-001", "symbol_qname": "pkg.auth.login"},
-                        {"spec_id": "SPEC-001", "symbol_qname": "pkg.auth.verify"},
-                        {"spec_id": "SPEC-002", "symbol_qname": "pkg.api.handle",
+                        {"spec_id": "auth-user-login", "symbol_qname": "pkg.auth.login"},
+                        {"spec_id": "auth-user-login", "symbol_qname": "pkg.auth.verify"},
+                        {"spec_id": "auth-session", "symbol_qname": "pkg.api.handle",
                          "confidence": 0.85, "source": "embedding"},
                     ]
                 },
@@ -124,13 +124,13 @@ async def test_manual_links_survive_force_reindex(workspace):
 
     async with Client(mcp) as c:
         await c.call_tool("index_project", {})
-        await c.call_tool("create_spec", {"spec_id": "SPEC-001", "title": "auth"})
-        await c.call_tool("create_spec", {"spec_id": "SPEC-002", "title": "api"})
+        await c.call_tool("create_spec", {"spec_id": "auth-user-login", "title": "auth"})
+        await c.call_tool("create_spec", {"spec_id": "auth-session", "title": "api"})
         bl = (await c.call_tool(
             "bulk_link_spec_symbols",
             {"mappings": [
-                {"spec_id": "SPEC-001", "symbol_qname": "pkg.auth.login"},
-                {"spec_id": "SPEC-002", "symbol_qname": "pkg.api.handle",
+                {"spec_id": "auth-user-login", "symbol_qname": "pkg.auth.login"},
+                {"spec_id": "auth-session", "symbol_qname": "pkg.api.handle",
                  "confidence": 0.85, "source": "embedding"},
             ]},
         )).data
@@ -141,10 +141,10 @@ async def test_manual_links_survive_force_reindex(workspace):
         assert idx["manual_links_restored"] == 2
 
         impl_001 = (await c.call_tool(
-            "get_spec_implementation", {"spec_id": "SPEC-001"}
+            "get_spec_implementation", {"spec_id": "auth-user-login"}
         )).data
         impl_002 = (await c.call_tool(
-            "get_spec_implementation", {"spec_id": "SPEC-002"}
+            "get_spec_implementation", {"spec_id": "auth-session"}
         )).data
 
     qnames_001 = {s["qualified_name"] for s in impl_001["symbols"]}

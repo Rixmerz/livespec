@@ -21,7 +21,7 @@ from livespec_mcp.tools.plugins import (
 def _seed_rf(state) -> None:
     state.conn.execute(
         "INSERT INTO spec (project_id, spec_id, title) VALUES (?, ?, ?)",
-        (state.project_id, "SPEC-001", "seed"),
+        (state.project_id, "auth-user-login", "seed"),
     )
     state.conn.commit()
 

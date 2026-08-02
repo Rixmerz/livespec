@@ -1,9 +1,10 @@
 """Spec<->code matcher with two-level confidence.
 
-Ids are OpenSpec slugs (`auth-user-login`); legacy `SPEC-001`-shaped ids stay
-supported so a half-migrated repo keeps linking. A slug is recognized because
-it is a spec id in the store — there is no open kebab regex, or every hyphen in
-every docstring would be a candidate.
+Ids are OpenSpec slugs (`auth-user-login`). A slug is recognized because it is
+a spec id in the store — there is no open kebab regex, or every hyphen in every
+docstring would be a candidate. PREFIX-NNN shape-match only fires when the
+store still has rows of that shape (unmigrated data); an empty store matches
+nothing by form.
 
 Level 1 — explicit prefix on its own line (or at start of a comment block):
   `@spec:auth-user-login`, `@implements:auth-user-login`, `@see:auth-user-login`
@@ -14,9 +15,7 @@ Level 2 — verb-anchored inline mention:
   -> confidence 0.7, source='annotation', requires `relation` derived from verb
 
 Bare mentions like `we should do this for auth-user-login` or `not
-auth-user-login` are ignored. This is intentionally conservative: previously a
-regex captured every SPEC-NNN substring (including negations) which produced
-false positives at scale.
+auth-user-login` are ignored.
 """
 
 from __future__ import annotations
@@ -35,8 +34,8 @@ _UNKNOWN_SAMPLE_MAX = 20
 # Level 1: line starts with @spec | @implements | @tests | @see  -OR-
 #          @not_spec | @!spec  (negation: cancels any hit on the listed specs)
 # Captures the rest of the line so we can parse:
-#   - multiple comma-separated specs:  @spec:SPEC-001, SPEC-002
-#   - confidence override at the end:  @spec:SPEC-001:0.85   (or  @spec:SPEC-001,SPEC-002:0.85)
+#   - multiple comma-separated specs:  @spec:auth-login, auth-logout
+#   - confidence override at the end:  @spec:auth-login:0.85
 #
 # `_PREFIX_HEAD_RE`'s verb alternation is BUILT from this tuple (not
 # duplicated) so the regex and the "recognized verb" vocabulary can never
@@ -62,11 +61,12 @@ _PREFIX_HEAD_RE = re.compile(
     re.IGNORECASE | re.MULTILINE | re.VERBOSE,
 )
 
-# Spec-ID prefix is NOT hardcoded to "SPEC" — projects with their own scheme
-# (`BE-RF-102`, `FE-RF-119`, `DEVMCP-RF-007`) derive their accepted prefixes
-# from the spec IDs actually present in the store (see `derive_spec_prefixes`
-# / `scan_annotations`). "SPEC" is always included so a store with no specs
-# yet (or none using a custom scheme) behaves exactly as before.
+# PREFIX-NNN shape-match is derived only from ids already in the store
+# (unmigrated rows). An OpenSpec-slug store yields an empty prefix set — then
+# annotations resolve exclusively via ``known_ids``.
+_NEVER_RE = re.compile(r"(?!)")  # matches nothing; used when prefixes is empty
+
+
 def _spec_alt(prefixes: Iterable[str]) -> str:
     """Build a `|`-alternation of escaped prefixes, longest first so e.g.
     `BE-RF` wins over a hypothetical bare `RF`."""
@@ -75,18 +75,21 @@ def _spec_alt(prefixes: Iterable[str]) -> str:
 
 
 @lru_cache(maxsize=64)
-def make_spec_token_re(prefixes: tuple[str, ...] = ("SPEC",)) -> re.Pattern[str]:
-    """Compile the SPEC-token regex for a given set of accepted prefixes.
+def make_spec_token_re(prefixes: tuple[str, ...] = ()) -> re.Pattern[str]:
+    """Compile the PREFIX-NNN token regex for prefixes present in the store.
 
-    Named groups `prefix` and `num` so normalization can preserve the
-    matched prefix instead of blindly collapsing everything to `SPEC-NNN`.
+    Empty ``prefixes`` → a never-matching pattern (OpenSpec-slug stores).
+    Named groups `prefix` and `num` so normalization preserves the matched
+    prefix.
     """
-    alt = _spec_alt(prefixes)
+    prefs = tuple(sorted({p.upper() for p in prefixes}, key=len, reverse=True))
+    if not prefs:
+        return _NEVER_RE
+    alt = "|".join(re.escape(p) for p in prefs)
     return re.compile(rf"(?P<prefix>{alt})[-_]?(?P<num>\d{{1,6}})", re.IGNORECASE)
 
 
-# Each SPEC-NNN (or custom-prefix) token inside the `rest` payload of a
-# prefix annotation. Default: SPEC-only, identical to the old hardcoded regex.
+# Default: no PREFIX-NNN scheme until the store says otherwise.
 _SPEC_TOKEN_RE = make_spec_token_re()
 # Public alias — cross-module callers (specs.scan_annotation_verbs) import
 # this instead of the "private" name so the token shape can never drift.
@@ -94,12 +97,12 @@ SPEC_TOKEN_RE = _SPEC_TOKEN_RE
 
 
 def derive_spec_prefixes(spec_ids: Iterable[str]) -> tuple[str, ...]:
-    """Derive the set of valid ID prefixes from spec IDs in the store.
+    """PREFIX-NNN prefixes actually present in the store (may be empty).
 
-    `BE-RF-102` -> `BE-RF`, `SPEC-241` -> `SPEC`. Always unions in `SPEC` so
-    a spec-less (or SPEC-only) repo behaves exactly as before.
+    `BE-RF-102` -> `BE-RF`, `SPEC-241` -> `SPEC`. Slug-only stores return ``()``
+    so shape-match stays off — annotations resolve via ``known_ids`` only.
     """
-    prefixes = {"SPEC"}
+    prefixes: set[str] = set()
     for sid in spec_ids:
         prefix, sep, num = sid.rpartition("-")
         if sep and prefix and num.isdigit():
@@ -111,14 +114,15 @@ def derive_spec_prefixes(spec_ids: Iterable[str]) -> tuple[str, ...]:
 # from SPEC tokens.
 _CONF_SUFFIX_RE = re.compile(r"\s*:\s*(0?\.\d+|1\.0+|1)\s*$")
 
-# Level 2: `<verb> SPEC-NNN`. Negation guard: must NOT be preceded by "not",
-# "no", "never", "doesn't", "do not", "without", "skip", "TODO" within last
-# 12 chars.
+# Level 2: `<verb> PREFIX-NNN` when the store still has that shape.
+# Negation guard: must NOT be preceded by "not"/"no"/… within last 12 chars.
 @lru_cache(maxsize=64)
-def _make_verb_re(prefixes: tuple[str, ...] = ("SPEC",)) -> re.Pattern[str]:
-    """Same shape as the old hardcoded `_VERB_RE`, parameterized by prefix
-    set so level-2 verb-anchored mentions work for custom schemes too."""
-    alt = _spec_alt(prefixes)
+def _make_verb_re(prefixes: tuple[str, ...] = ()) -> re.Pattern[str]:
+    """Verb-anchored PREFIX-NNN mentions; never-matches when prefixes empty."""
+    prefs = tuple(sorted({p.upper() for p in prefixes}, key=len, reverse=True))
+    if not prefs:
+        return _NEVER_RE
+    alt = "|".join(re.escape(p) for p in prefs)
     return re.compile(
         rf"""(?P<verb>implements?|tests?|references?|covers?)
             \s+(?P<spec>(?:{alt})[-_]?\d{{1,6}})\b""",
@@ -149,7 +153,7 @@ VERB_TO_RELATION = {
 
 @dataclass
 class AnnotationHit:
-    spec_id: str         # normalized like "SPEC-001"
+    spec_id: str         # store id (OpenSpec slug, or unmigrated PREFIX-NNN)
     relation: str        # implements | tests | references
     confidence: float    # 1.0 (level 1) | 0.7 (level 2) | override (level 1 + suffix)
 
@@ -215,30 +219,25 @@ def _parse_prefix_payload(
 
 def parse_annotations(
     text: str,
-    prefixes: Iterable[str] = ("SPEC",),
+    prefixes: Iterable[str] = (),
     *,
     known_ids: Iterable[str] | None = None,
 ) -> list[AnnotationHit]:
     """Extract all Spec annotations from a docstring/comment block.
 
     Levels:
-    - L1 prefix `@spec:SPEC-001` / `@implements:SPEC-001` / `@tests:SPEC-001` -> 1.0
-      Multi-spec: `@spec:SPEC-001, SPEC-002` (each gets its own hit)
-      Confidence override: `@spec:SPEC-001:0.85` (applies to all specs in the line)
-      OpenSpec slugs: `@spec:auth-user-login` when ``known_ids`` includes that id
-    - L1 negation `@not_spec:SPEC-001` (or `@!spec:SPEC-001`) cancels every
-      hit (L1 OR L2) for the listed specs in this docstring.
-    - L2 verb-anchored `... implements SPEC-001` -> 0.7, with negation-window
-      guard ("not", "no", "never", "doesn't", "without", "skip", "TODO").
-      Also matches ``implements auth-user-login`` when that id is in known_ids.
+    - L1 prefix `@spec:auth-user-login` / `@implements:…` / `@tests:…` -> 1.0
+      when the id is in ``known_ids``. Multi-spec and `:0.85` overrides work.
+    - L1 negation `@not_spec:…` / `@!spec:…` cancels hits for listed ids.
+    - L2 verb-anchored `implements auth-user-login` -> 0.7 (known_ids), with
+      negation-window guard.
 
-    `prefixes`: accepted spec-ID prefixes beyond `SPEC` (e.g. `("SPEC", "BE-RF")`).
-    Defaults to `("SPEC",)`, byte-identical to the old hardcoded behavior —
-    callers that don't derive prefixes from a store see no change.
+    ``prefixes``: PREFIX-NNN schemes still present in the store (may be empty).
+    Without ``known_ids`` and without store prefixes, nothing matches.
     """
     if not text:
         return []
-    prefixes_key = tuple(sorted({p.upper() for p in prefixes})) or ("SPEC",)
+    prefixes_key = tuple(sorted({p.upper() for p in prefixes}))
     token_re = make_spec_token_re(prefixes_key)
     verb_re = _make_verb_re(prefixes_key)
     known = frozenset(known_ids) if known_ids is not None else frozenset()
@@ -321,7 +320,7 @@ _ID_SHAPED_RE = re.compile(r"^[A-Za-z][A-Za-z0-9._-]{1,79}$")
 
 def find_unknown_annotation_ids(
     text: str,
-    prefixes: Iterable[str] = ("SPEC",),
+    prefixes: Iterable[str] = (),
     *,
     known_ids: Iterable[str] | None = None,
 ) -> list[str]:
@@ -329,12 +328,12 @@ def find_unknown_annotation_ids(
 
     A renamed OpenSpec requirement changes the slug its id derives from, and
     the stale `@spec:` in the code then matches nothing at all — no hit, no
-    link, no complaint. Same for a typo'd or deleted `SPEC-NNN`. This reports
-    those so the silence is visible; it never links anything.
+    link, no complaint. This reports those so the silence is visible; it
+    never links anything.
     """
     if not text:
         return []
-    prefixes_key = tuple(sorted({p.upper() for p in prefixes})) or ("SPEC",)
+    prefixes_key = tuple(sorted({p.upper() for p in prefixes}))
     token_re = make_spec_token_re(prefixes_key)
     known = frozenset(known_ids or ())
     known_fold = {k.casefold() for k in known}

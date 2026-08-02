@@ -44,14 +44,14 @@ async def test_spec_links_symbol_across_repos_in_a_group(tmp_path):
         # A backend Spec links a *frontend* symbol — the cross-repo link.
         await c.call_tool(
             "create_spec",
-            {"workspace": str(back), "spec_id": "SPEC-001", "title": "Login feature"},
+            {"workspace": str(back), "spec_id": "auth-user-login", "title": "Login feature"},
         )
         linked = (
             await c.call_tool(
                 "link_spec_symbol",
                 {
                     "workspace": str(back),
-                    "spec_id": "SPEC-001",
+                    "spec_id": "auth-user-login",
                     "symbol_qname": "pkg.front.caller",
                 },
             )
@@ -61,7 +61,7 @@ async def test_spec_links_symbol_across_repos_in_a_group(tmp_path):
         impl = (
             await c.call_tool(
                 "get_spec_implementation",
-                {"workspace": str(back), "spec_id": "SPEC-001"},
+                {"workspace": str(back), "spec_id": "auth-user-login"},
             )
         ).data
         qnames = {s["qualified_name"] for s in impl["symbols"]}
@@ -82,14 +82,14 @@ async def test_ungrouped_repo_cannot_link_foreign_symbol(tmp_path):
         await c.call_tool("index_project", {"workspace": str(b)})
         await c.call_tool(
             "create_spec",
-            {"workspace": str(a), "spec_id": "SPEC-001", "title": "X"},
+            {"workspace": str(a), "spec_id": "auth-user-login", "title": "X"},
         )
         res = (
             await c.call_tool(
                 "link_spec_symbol",
                 {
                     "workspace": str(a),
-                    "spec_id": "SPEC-001",
+                    "spec_id": "auth-user-login",
                     "symbol_qname": "pkg.bmod.bfunc",  # lives in repo b, separate DB
                 },
             )

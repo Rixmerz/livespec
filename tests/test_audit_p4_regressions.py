@@ -9,8 +9,7 @@ import pytest
 from fastmcp import Client
 
 from livespec_mcp.server import mcp
-from livespec_mcp.state import get_state
-from livespec_mcp.tools.specs import _next_spec_id
+from livespec_mcp.tools.specs import is_legacy_numeric_spec_id
 
 
 def _git(ws: Path, *args: str) -> None:
@@ -39,18 +38,24 @@ async def test_git_diff_impact_detects_rename(sample_repo: Path):
         assert "pkg/auth.py" in changed and "pkg/authn.py" in changed, changed
 
 
-def test_next_spec_id_uses_max_not_last_inserted(workspace):
-    """M9: next id is MAX+1, robust to out-of-order inserts."""
-    st = get_state(create=True)
-    pid = st.project_id
-    st.conn.execute(
-        "INSERT INTO spec(project_id, spec_id, title) VALUES (?, 'SPEC-005', 't')", (pid,)
-    )
-    st.conn.execute(
-        "INSERT INTO spec(project_id, spec_id, title) VALUES (?, 'SPEC-002', 't')", (pid,)
-    )
-    st.conn.commit()
-    assert _next_spec_id(st.conn, pid) == "SPEC-006"
+def test_legacy_numeric_spec_id_detector():
+    assert is_legacy_numeric_spec_id("SPEC-001")
+    assert is_legacy_numeric_spec_id("AUTH-12")
+    # Multi-segment store ids (BE-RF-102) are not the removed single PREFIX-NNN shape.
+    assert not is_legacy_numeric_spec_id("BE-RF-102")
+    assert not is_legacy_numeric_spec_id("auth-user-login")
+    assert not is_legacy_numeric_spec_id("auth-user-login-2")
+
+
+@pytest.mark.asyncio
+async def test_create_spec_rejects_legacy_numeric_id(workspace):
+    async with Client(mcp) as c:
+        await c.call_tool("index_project", {})
+        res = (
+            await c.call_tool("create_spec", {"title": "A", "spec_id": "SPEC-100"})
+        ).data
+        assert res.get("isError") is True
+        assert "PREFIX-NNN" in res["error"]
 
 
 @pytest.mark.asyncio
@@ -59,9 +64,9 @@ async def test_create_spec_duplicate_returns_mcp_error(workspace):
         # v0.24: mutation tools require an indexed workspace (WorkspaceErrorMiddleware
         # rejects them clean rather than let get_state() silently create a DB).
         await c.call_tool("index_project", {})
-        await c.call_tool("create_spec", {"title": "A", "spec_id": "SPEC-100"})
+        await c.call_tool("create_spec", {"title": "A", "spec_id": "auth-a"})
         res = (
-            await c.call_tool("create_spec", {"title": "B", "spec_id": "SPEC-100"})
+            await c.call_tool("create_spec", {"title": "B", "spec_id": "auth-a"})
         ).data
         assert res.get("isError") is True
         assert "already exists" in res["error"]
@@ -83,29 +88,29 @@ async def test_find_symbol_limit_clamped_and_like_escaped(sample_repo):
 async def test_list_specs_has_implementation_filtered_in_sql(sample_repo):
     async with Client(mcp) as c:
         await c.call_tool("index_project", {})
-        await c.call_tool("create_spec", {"title": "Linked", "spec_id": "SPEC-201"})
+        await c.call_tool("create_spec", {"title": "Linked", "spec_id": "spec-linked"})
         await c.call_tool(
             "bulk_link_spec_symbols",
-            {"mappings": [{"spec_id": "SPEC-201", "symbol_qname": "pkg.auth.login"}]},
+            {"mappings": [{"spec_id": "spec-linked", "symbol_qname": "pkg.auth.login"}]},
         )
-        await c.call_tool("create_spec", {"title": "Orphan", "spec_id": "SPEC-202"})
+        await c.call_tool("create_spec", {"title": "Orphan", "spec_id": "spec-orphan"})
         linked = (await c.call_tool("list_specs", {"has_implementation": True})).data
         ids = {s["spec_id"] for s in linked["specs"]}
-        assert "SPEC-201" in ids and "SPEC-202" not in ids
+        assert "spec-linked" in ids and "spec-orphan" not in ids
 
 
 @pytest.mark.asyncio
 async def test_bulk_link_rejects_invalid_relation(sample_repo):
     async with Client(mcp) as c:
         await c.call_tool("index_project", {})
-        await c.call_tool("create_spec", {"title": "X", "spec_id": "SPEC-301"})
+        await c.call_tool("create_spec", {"title": "X", "spec_id": "spec-bulk"})
         res = (
             await c.call_tool(
                 "bulk_link_spec_symbols",
                 {
                     "mappings": [
                         {
-                            "spec_id": "SPEC-301",
+                            "spec_id": "spec-bulk",
                             "symbol_qname": "pkg.auth.login",
                             "relation": "implement",  # typo
                         }
@@ -121,15 +126,15 @@ async def test_bulk_link_rejects_invalid_relation(sample_repo):
 async def test_analyze_impact_spec_branch_paginates(sample_repo):
     async with Client(mcp) as c:
         await c.call_tool("index_project", {})
-        await c.call_tool("create_spec", {"title": "S", "spec_id": "SPEC-401"})
+        await c.call_tool("create_spec", {"title": "S", "spec_id": "spec-impact"})
         await c.call_tool(
             "bulk_link_spec_symbols",
-            {"mappings": [{"spec_id": "SPEC-401", "symbol_qname": "pkg.auth.login"}]},
+            {"mappings": [{"spec_id": "spec-impact", "symbol_qname": "pkg.auth.login"}]},
         )
         res = (
             await c.call_tool(
                 "analyze_impact",
-                {"target_type": "spec", "target": "SPEC-401", "summary_only": True},
+                {"target_type": "spec", "target": "spec-impact", "summary_only": True},
             )
         ).data
         assert "counts" in res

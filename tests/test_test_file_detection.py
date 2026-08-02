@@ -177,17 +177,17 @@ async def test_derived_spec_coverage_credits_typescript_test(workspace):
 
     async with Client(mcp) as c:
         await c.call_tool("index_project", {})
-        await c.call_tool("create_spec", {"spec_id": "SPEC-900", "title": "Charging"})
+        await c.call_tool("create_spec", {"spec_id": "handmade-rule", "title": "Charging"})
         await c.call_tool(
             "link_spec_symbol",
-            {"spec_id": "SPEC-900", "symbol_qname": "src.core.chargeCard"},
+            {"spec_id": "handmade-rule", "symbol_qname": "src.core.chargeCard"},
         )
         out = (await c.call_tool("audit_coverage", {})).data
 
     by_id = {r["spec_id"]: r for r in out["spec_coverage"]}
-    assert "SPEC-900" in by_id, out["spec_coverage"]
-    assert by_id["SPEC-900"]["test_coverage_ratio"] > 0, by_id["SPEC-900"]
-    assert by_id["SPEC-900"]["coverage_source"] == "derived", by_id["SPEC-900"]
+    assert "handmade-rule" in by_id, out["spec_coverage"]
+    assert by_id["handmade-rule"]["test_coverage_ratio"] > 0, by_id["handmade-rule"]
+    assert by_id["handmade-rule"]["coverage_source"] == "derived", by_id["handmade-rule"]
     assert out["counts"]["specs_with_derived_test_coverage"] >= 1, out["counts"]
     # No explicit relation='tests' row was created, so the explicit-link
     # count stays 0 — the two counts measure different mechanisms.

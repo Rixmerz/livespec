@@ -4,96 +4,98 @@ from __future__ import annotations
 
 from livespec_mcp.domain.matcher import parse_annotations
 
+_KNOWN = ["auth-user-login", "auth-session", "untested-feature", "report-covered", "api-surface"]
+
 
 def test_level1_prefix_high_confidence():
-    text = "Login a user.\n\n@spec:SPEC-001"
-    hits = parse_annotations(text)
+    text = "Login a user.\n\n@spec:auth-user-login"
+    hits = parse_annotations(text, known_ids=_KNOWN)
     assert len(hits) == 1
-    assert hits[0].spec_id == "SPEC-001"
+    assert hits[0].spec_id == "auth-user-login"
     assert hits[0].confidence == 1.0
     assert hits[0].relation == "implements"
 
 
 def test_level1_alternate_prefixes():
     text = (
-        "@implements:SPEC-002\n"
-        "@tests SPEC-003\n"
-        "@see:SPEC-004\n"
+        "@implements:auth-session\n"
+        "@tests untested-feature\n"
+        "@see:report-covered\n"
     )
-    hits = parse_annotations(text)
+    hits = parse_annotations(text, known_ids=_KNOWN)
     spec_to_relation = {h.spec_id: h.relation for h in hits}
     assert spec_to_relation == {
-        "SPEC-002": "implements",
-        "SPEC-003": "tests",
-        "SPEC-004": "references",
+        "auth-session": "implements",
+        "untested-feature": "tests",
+        "report-covered": "references",
     }
     assert all(h.confidence == 1.0 for h in hits)
 
 
 def test_level2_verb_inline():
-    text = "This function implements SPEC-005 by hashing the password."
-    hits = parse_annotations(text)
+    text = "This function implements auth-user-login by hashing the password."
+    hits = parse_annotations(text, known_ids=_KNOWN)
     assert len(hits) == 1
-    assert hits[0].spec_id == "SPEC-005"
+    assert hits[0].spec_id == "auth-user-login"
     assert hits[0].confidence == 0.7
     assert hits[0].relation == "implements"
 
 
 def test_level2_negation_dropped():
     """Negated mentions must not link."""
+    known = ["neg-six", "neg-seven", "neg-eight", "neg-nine"]
     samples = [
-        "This does NOT implement SPEC-006.",
-        "We never implement SPEC-007 here.",
-        "This module doesn't implement SPEC-008 yet.",
-        "TODO: implement SPEC-009",
+        "This does NOT implement neg-six.",
+        "We never implement neg-seven here.",
+        "This module doesn't implement neg-eight yet.",
+        "TODO: implement neg-nine",
     ]
     for s in samples:
-        hits = parse_annotations(s)
+        hits = parse_annotations(s, known_ids=known)
         assert hits == [], f"Negated text leaked through: {s!r} -> {hits}"
 
 
 def test_bare_mention_dropped():
     """Mentions without a verb must not produce links."""
-    text = "We discussed SPEC-010 at the standup. The doc for SPEC-011 is in Notion."
-    hits = parse_annotations(text)
+    known = ["bare-ten", "bare-eleven"]
+    text = "We discussed bare-ten at the standup. The doc for bare-eleven is in Notion."
+    hits = parse_annotations(text, known_ids=known)
     assert hits == []
 
 
-def test_normalization():
-    """SPEC-1 and SPEC-001 should normalize to the same id."""
-    h1 = parse_annotations("@spec:SPEC-1")[0]
-    h2 = parse_annotations("@spec:SPEC-001")[0]
-    h3 = parse_annotations("@spec:SPEC_42")[0]
-    assert h1.spec_id == "SPEC-001"
-    assert h2.spec_id == "SPEC-001"
-    assert h3.spec_id == "SPEC-042"
+def test_slug_ids_are_case_insensitive():
+    h1 = parse_annotations("@spec:Auth-User-Login", known_ids=["auth-user-login"])
+    h2 = parse_annotations("@spec:auth-user-login", known_ids=["auth-user-login"])
+    assert h1[0].spec_id == "auth-user-login"
+    assert h2[0].spec_id == "auth-user-login"
 
 
 def test_level1_takes_priority_over_level2():
     """When both a prefix and a verb-mention exist for the same Spec, prefer level 1."""
-    text = "@spec:SPEC-100\n\nThis function implements SPEC-100 by hashing."
-    hits = parse_annotations(text)
+    text = "@spec:api-surface\n\nThis function implements api-surface by hashing."
+    hits = parse_annotations(text, known_ids=["api-surface"])
     assert len(hits) == 1
     assert hits[0].confidence == 1.0
 
 
 def test_multiple_distinct_rfs():
     text = (
-        "@spec:SPEC-001\n"
-        "Also implements SPEC-002 partially.\n"
-        "Tests SPEC-003 indirectly."
+        "@spec:auth-user-login\n"
+        "Also implements auth-session partially.\n"
+        "Tests untested-feature indirectly."
     )
-    hits = parse_annotations(text)
+    hits = parse_annotations(text, known_ids=_KNOWN)
     spec_ids = {h.spec_id for h in hits}
-    assert spec_ids == {"SPEC-001", "SPEC-002", "SPEC-003"}
+    assert spec_ids == {"auth-user-login", "auth-session", "untested-feature"}
 
 
 def test_comment_leader_stripped():
     """Prefix matcher works through `#` and `*` comment leaders."""
-    text = "# @spec:SPEC-050\n * @implements SPEC-051"
-    hits = parse_annotations(text)
+    known = ["comment-fifty", "comment-fifty-one"]
+    text = "# @spec:comment-fifty\n * @implements comment-fifty-one"
+    hits = parse_annotations(text, known_ids=known)
     spec_ids = {h.spec_id for h in hits}
-    assert spec_ids == {"SPEC-050", "SPEC-051"}
+    assert spec_ids == {"comment-fifty", "comment-fifty-one"}
 
 
 def test_openspec_slug_via_known_ids():

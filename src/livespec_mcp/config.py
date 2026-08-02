@@ -254,10 +254,10 @@ def load_repo_config(workspace: Path) -> RepoConfig:
         playground_mode = "readonly"  # or "all" (mutations); env LIVESPEC_EXPLORER_PLAYGROUND=all
 
         [specs]
-        # Preferred: OpenSpec tree re-synced after every index_project
+        # OpenSpec tree re-synced after every index_project
         openspec_dir = "openspec"
-        # Legacy: native ## SPEC-NNN catalogs (import-compat only)
-        # sync_from = ["docs/REQUISITOS_FUNCIONALES.md"]
+        # Optional extra OpenSpec markdown paths (### Requirement: only)
+        # sync_from = ["docs/extra-requirements.md"]
         links_seed = "docs/requirements/spec-links.json"  # optional bulk_link replay
 
         [agent]

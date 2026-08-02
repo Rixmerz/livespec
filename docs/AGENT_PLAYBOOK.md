@@ -127,8 +127,8 @@ Put on its **own line** at the top of the docstring/comment:
 
 Ids are **OpenSpec slugs** — the id `list_specs` shows, derived from the
 requirement heading (`### Requirement: PNR structural validation` →
-`booking-pnr-structural-validation`). Legacy `SPEC-003` ids still resolve, so a
-half-migrated repo keeps working, but write new annotations with the slug.
+`booking-pnr-structural-validation`). The native `## SPEC-NNN:` dialect is
+removed; annotate only ids that exist in the store.
 
 ```python
 def parse_sabre_xml(xml: str) -> PNRNormalized:
@@ -210,31 +210,6 @@ The system SHALL authenticate users with email + password.
 livespec is the code-graph / Spec↔code engine **beneath** that markdown — it does
 not compete on authoring. See §5.8 for the full OpenSpec loop.
 
-### 5.5b Legacy catalog (`## SPEC-NNN`) — import compat only
-
-Older livespec-native catalogs still work. Prefer migrating them to
-OpenSpec rather than keeping both dialects in one repo.
-
-```markdown
-## SPEC-001: Detect OVER in XML
-
-**Prioridad:** alta
-**Módulo:** overs
-
-Expose OVER codes and presence flags from incoming XML.
-
-## SPEC-002: Cross-airline insights
-
-**Prioridad:** media
-**Módulo:** matcher
-
-Market policies that are insight-only when plate filters exclude them.
-```
-
-Then: `import_specs_from_markdown(path="docs/REQUISITOS_FUNCIONALES.md", fmt="livespec")`
-(or `fmt="auto"`). Idempotent. Do **not** mix these headers with `### Requirement:`
-files in the same tree.
-
 ### 5.6 Linking without editing source
 
 ```json
@@ -301,8 +276,8 @@ freely. Invoke the `openspec_workflow` MCP prompt for this as a slash command.
    `bulk_link_spec_symbols` / `link_scenario_symbol` (OpenSpec slug ids often need bulk link)
 4. `index_project()` → `scan_spec_annotations()` → `audit_coverage()`
 5. Iterate: `get_spec_implementation`, `analyze_impact(target_type="spec", ...)`
-6. Legacy-only path: `import_specs_from_markdown` on a `## SPEC-NNN` catalog or
-   `create_spec` — treat as temporary until exported/migrated to OpenSpec
+6. Or create via `create_spec` (slug id) / `import_specs_from_markdown` on an
+   OpenSpec file — prefer authoring under `openspec/` as SSoT
 
 ---
 

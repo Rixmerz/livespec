@@ -349,8 +349,8 @@ livespec reverse-engineers the structure; you curate specs as **OpenSpec**
    `/extract_specs_from_module <module>`.
 4. **Curate + persist as OpenSpec** (human in the loop) — write
    `openspec/specs/<capability>/spec.md` (`### Requirement:` + `#### Scenario:`)
-   then `sync_openspec()` / `import_specs_from_markdown(..., fmt="auto")`.
-   Legacy path only: `create_spec(...)` or a `## SPEC-NNN` catalog import.
+   then `sync_openspec()` / `import_specs_from_markdown(..., fmt="openspec")`.
+   Or `create_spec(...)` with an OpenSpec slug id.
 5. **Link code↔spec** — `bulk_link_spec_symbols` / `link_scenario_symbol`, or
    `@spec:` annotations when ids are annotation-friendly; re-`index_project`.
 6. **Audit + iterate** — `/audit_spec_coverage` (orphan specs, uncovered modules).
@@ -402,10 +402,10 @@ Always registered (including markdown Spec import + OpenSpec sync).
   max_file_bytes = 2000000              # skip files larger than this
 
   [specs]
-  # Preferred: OpenSpec tree re-synced after every index_project
+  # OpenSpec tree re-synced after every index_project
   openspec_dir = "openspec"
-  # Legacy native ## SPEC-NNN catalogs (import-compat only):
-  # sync_from = ["docs/REQUISITOS_FUNCIONALES.md"]
+  # Optional extra OpenSpec markdown (### Requirement: only):
+  # sync_from = ["docs/extra-requirements.md"]
   links_seed = "docs/requirements/livespec-spec-links.json"  # optional bulk_link seed
 
   [workspace]
@@ -485,13 +485,11 @@ Always registered (including markdown Spec import + OpenSpec sync).
   in-source annotation extractor doesn't reach (configs, SQL, YAML).
   Idempotent: re-linking an existing pair is a no-op. Test symbols must be
   **functions** (`tests.pkg.test_mod.test_fn`), not modules (`tests.pkg.test_mod`).
-- `import_specs_from_markdown(path, fmt="auto")` — bulk-create/update Specs
-  from Markdown. Auto-detects two dialects: the native `## SPEC-NNN: Title`
-  format and **OpenSpec** (Fission-AI) `### Requirement:` / `#### Scenario:`
-  specs — point `path` at a single file or at an `openspec/` directory to walk
-  its whole tree. Positions livespec as the traceability/graph layer beneath
-  spec-driven-development authoring tools. Always visible; warns on duplicate
-  Spec headings; idempotent.
+- `import_specs_from_markdown(path, fmt="openspec")` — bulk-create/update Specs
+  from **OpenSpec** (Fission-AI) `### Requirement:` / `#### Scenario:` markdown —
+  point `path` at a single file or at an `openspec/` directory to walk its
+  tree. The former native `## SPEC-NNN:` catalog is removed. Always visible;
+  warns on duplicate Spec headings; idempotent.
 - `list_specs(status, module, priority, kind, has_implementation)` —
   Spec discovery surface.
 - `get_spec_implementation(spec_id)` — answers

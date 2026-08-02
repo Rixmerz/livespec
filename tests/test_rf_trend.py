@@ -62,20 +62,20 @@ async def test_uncovered_symbols_lists_untested_impl(workspace):
     async with Client(mcp) as c:
         await c.call_tool("index_project", {})
         await c.call_tool(
-            "create_spec", {"spec_id": "SPEC-001", "title": "Feature"}
+            "create_spec", {"spec_id": "auth-user-login", "title": "Feature"}
         )
         await c.call_tool(
             "link_spec_symbol",
-            {"spec_id": "SPEC-001", "symbol_qname": "pkg.feature.covered_impl"},
+            {"spec_id": "auth-user-login", "symbol_qname": "pkg.feature.covered_impl"},
         )
         await c.call_tool(
             "link_spec_symbol",
-            {"spec_id": "SPEC-001", "symbol_qname": "pkg.feature.uncovered_impl"},
+            {"spec_id": "auth-user-login", "symbol_qname": "pkg.feature.uncovered_impl"},
         )
         out = (await c.call_tool("audit_coverage", {})).data
 
     by_id = {r["spec_id"]: r for r in out["spec_coverage"]}
-    entry = by_id["SPEC-001"]
+    entry = by_id["auth-user-login"]
     assert "uncovered_symbols" in entry, f"field missing: {entry}"
     assert entry["uncovered_symbols"] == ["pkg.feature.uncovered_impl"], (
         f"only the untested impl should be listed: {entry['uncovered_symbols']}"
@@ -107,15 +107,15 @@ async def test_uncovered_symbols_empty_when_fully_tested(workspace):
     async with Client(mcp) as c:
         await c.call_tool("index_project", {})
         await c.call_tool(
-            "create_spec", {"spec_id": "SPEC-010", "title": "Done"}
+            "create_spec", {"spec_id": "feature-done", "title": "Done"}
         )
         await c.call_tool(
             "link_spec_symbol",
-            {"spec_id": "SPEC-010", "symbol_qname": "pkg.feature.implementer"},
+            {"spec_id": "feature-done", "symbol_qname": "pkg.feature.implementer"},
         )
         out = (await c.call_tool("audit_coverage", {})).data
 
-    entry = {r["spec_id"]: r for r in out["spec_coverage"]}["SPEC-010"]
+    entry = {r["spec_id"]: r for r in out["spec_coverage"]}["feature-done"]
     assert entry["uncovered_symbols"] == []
     assert entry["uncovered_symbols_count"] == 0
 
@@ -143,13 +143,13 @@ def git_repo_with_rf(sample_repo: Path) -> Path:
 async def test_compute_diff_spec_impact_returns_touched_rfs(git_repo_with_rf):
     async with Client(mcp) as c:
         await c.call_tool("index_project", {})
-        # Link SPEC-100 to the changed file's symbol so the diff touches it.
+        # Link api-surface to the changed file's symbol so the diff touches it.
         await c.call_tool(
-            "create_spec", {"spec_id": "SPEC-100", "title": "Auth login"}
+            "create_spec", {"spec_id": "api-surface", "title": "Auth login"}
         )
         await c.call_tool(
             "link_spec_symbol",
-            {"spec_id": "SPEC-100", "symbol_qname": "pkg.auth.login"},
+            {"spec_id": "api-surface", "symbol_qname": "pkg.auth.login"},
         )
 
         st = get_state()
@@ -159,10 +159,10 @@ async def test_compute_diff_spec_impact_returns_touched_rfs(git_repo_with_rf):
     assert result["head"] == "HEAD"
     assert "pkg/auth.py" in result["files_changed"]
     touched_ids = {r["spec_id"] for r in result["specs_touched"]}
-    assert "SPEC-100" in touched_ids, (
-        f"SPEC-100 should be touched by the auth.py diff: {result['specs_touched']}"
+    assert "api-surface" in touched_ids, (
+        f"api-surface should be touched by the auth.py diff: {result['specs_touched']}"
     )
-    entry = next(r for r in result["specs_touched"] if r["spec_id"] == "SPEC-100")
+    entry = next(r for r in result["specs_touched"] if r["spec_id"] == "api-surface")
     assert "pkg/auth.py" in entry["files"]
     assert entry["title"] == "Auth login"
     assert isinstance(entry["test_coverage_ratio"], (int, float))
@@ -197,7 +197,7 @@ def test_trend_record_and_read_two_snapshots(tmp_path):
     record_snapshot(
         conn,
         pid,
-        per_spec={"SPEC-001": 0.5, "SPEC-002": 1.0},
+        per_spec={"auth-user-login": 0.5, "auth-session": 1.0},
         avg=0.75,
         verified_count=1,
         ts="2026-06-25T10:00:00+00:00",
@@ -205,7 +205,7 @@ def test_trend_record_and_read_two_snapshots(tmp_path):
     record_snapshot(
         conn,
         pid,
-        per_spec={"SPEC-001": 1.0, "SPEC-002": 1.0},
+        per_spec={"auth-user-login": 1.0, "auth-session": 1.0},
         avg=1.0,
         verified_count=2,
         ts="2026-06-25T11:00:00+00:00",
@@ -249,10 +249,10 @@ def test_trend_dedups_unchanged_consecutive(tmp_path):
     pid = get_or_create_project(conn, "p", str(tmp_path))
     for ts in ("2026-06-25T10:00:00+00:00", "2026-06-25T10:05:00+00:00"):
         record_snapshot(
-            conn, pid, per_spec={"SPEC-001": 0.5}, avg=0.5, verified_count=1, ts=ts
+            conn, pid, per_spec={"auth-user-login": 0.5}, avg=0.5, verified_count=1, ts=ts
         )
     record_snapshot(
-        conn, pid, per_spec={"SPEC-001": 1.0}, avg=1.0, verified_count=1,
+        conn, pid, per_spec={"auth-user-login": 1.0}, avg=1.0, verified_count=1,
         ts="2026-06-25T10:10:00+00:00",
     )
     trend = read_trend(conn, pid)
@@ -272,11 +272,11 @@ async def test_audit_coverage_records_a_snapshot(workspace):
     async with Client(mcp) as c:
         await c.call_tool("index_project", {})
         await c.call_tool(
-            "create_spec", {"spec_id": "SPEC-500", "title": "F"}
+            "create_spec", {"spec_id": "trend-audit-spec", "title": "F"}
         )
         await c.call_tool(
             "link_spec_symbol",
-            {"spec_id": "SPEC-500", "symbol_qname": "pkg.feature.implementer"},
+            {"spec_id": "trend-audit-spec", "symbol_qname": "pkg.feature.implementer"},
         )
         await c.call_tool("audit_coverage", {})
         await c.call_tool("audit_coverage", {})  # unchanged -> deduped
@@ -285,5 +285,5 @@ async def test_audit_coverage_records_a_snapshot(workspace):
         trend = read_trend(st.conn, st.project_id)
 
     assert len(trend) == 1, f"unchanged re-audits should dedup to one snapshot: {trend}"
-    # avg is a float (SPEC-500 exists) and verified_count is an int.
+    # avg is a float (trend-audit-spec exists) and verified_count is an int.
     assert all(isinstance(t["verified_count"], int) for t in trend)

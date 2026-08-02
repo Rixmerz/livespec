@@ -47,7 +47,7 @@ def sample_repo(workspace: Path) -> Path:
     (workspace / "pkg" / "auth.py").write_text(
         '"""Auth module."""\n'
         "def login(user, password):\n"
-        '    """Login a user.\n\n    @spec:SPEC-001\n    """\n'
+        '    """Login a user.\n\n    @spec:auth-user-login\n    """\n'
         "    return verify(user, password)\n"
         "\n"
         "def verify(user, password):\n"
@@ -59,7 +59,7 @@ def sample_repo(workspace: Path) -> Path:
         "\n"
         "class API:\n"
         "    def handle(self, req):\n"
-        '        """Implements SPEC-002."""\n'
+        '        """Implements auth-session."""\n'
         "        return login(req['user'], req['pw'])\n"
     )
     return workspace

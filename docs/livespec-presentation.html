@@ -29,11 +29,7 @@
     html, body { height: 100%; background: var(--bg); color: var(--ink); font-family: var(--sans); }
     body { overflow: hidden; }
 
-    .deck {
-      height: 100%;
-      width: 100%;
-      position: relative;
-    }
+    .deck { height: 100%; width: 100%; position: relative; }
 
     .slide {
       position: absolute;
@@ -42,7 +38,7 @@
       display: none;
       flex-direction: column;
       justify-content: center;
-      gap: 1.25rem;
+      gap: 1.1rem;
       background:
         radial-gradient(ellipse 80% 50% at 100% 0%, rgba(196, 245, 66, 0.06), transparent 55%),
         radial-gradient(ellipse 60% 40% at 0% 100%, rgba(94, 224, 160, 0.05), transparent 50%),
@@ -68,23 +64,19 @@
       font-size: clamp(2.4rem, 6vw, 4.2rem);
       line-height: 1.05;
       letter-spacing: -0.02em;
-      max-width: 16ch;
+      max-width: 14ch;
     }
     h2 {
       font-family: var(--display);
       font-weight: 600;
-      font-size: clamp(1.8rem, 4vw, 2.8rem);
+      font-size: clamp(1.7rem, 3.8vw, 2.7rem);
       line-height: 1.15;
       letter-spacing: -0.02em;
-      max-width: 22ch;
+      max-width: 24ch;
     }
-    h3 {
-      font-size: 1.05rem;
-      font-weight: 600;
-      margin-bottom: 0.4rem;
-    }
+    h3 { font-size: 1.05rem; font-weight: 600; margin-bottom: 0.35rem; }
     .lede {
-      font-size: clamp(1.05rem, 2vw, 1.3rem);
+      font-size: clamp(1.05rem, 2vw, 1.28rem);
       color: var(--muted);
       max-width: 48ch;
       line-height: 1.45;
@@ -92,6 +84,7 @@
     p, li { line-height: 1.5; color: var(--ink); }
     .muted { color: var(--muted); }
     .mono { font-family: var(--mono); font-size: 0.88em; }
+    .small { font-size: 0.88rem; }
 
     .grid-2 {
       display: grid;
@@ -113,15 +106,12 @@
       background: var(--card);
       border: 1px solid var(--line);
       border-radius: 10px;
-      padding: 1.1rem 1.2rem;
+      padding: 1.05rem 1.15rem;
     }
     .card strong { color: var(--accent); font-weight: 600; }
 
-    ul.clean { list-style: none; display: flex; flex-direction: column; gap: 0.55rem; max-width: 70ch; }
-    ul.clean li {
-      padding-left: 1.1rem;
-      position: relative;
-    }
+    ul.clean { list-style: none; display: flex; flex-direction: column; gap: 0.5rem; max-width: 70ch; }
+    ul.clean li { padding-left: 1.1rem; position: relative; }
     ul.clean li::before {
       content: "";
       position: absolute;
@@ -131,10 +121,33 @@
       border-radius: 1px;
     }
 
+    ol.steps {
+      list-style: none;
+      display: flex;
+      flex-direction: column;
+      gap: 0.7rem;
+      max-width: 70ch;
+      counter-reset: step;
+    }
+    ol.steps li {
+      display: grid;
+      grid-template-columns: 2rem 1fr;
+      gap: 0.7rem;
+      align-items: start;
+    }
+    ol.steps li::before {
+      counter-increment: step;
+      content: counter(step, decimal-leading-zero);
+      font-family: var(--mono);
+      font-size: 0.8rem;
+      color: var(--accent);
+      padding-top: 0.15rem;
+    }
+
     table {
       width: min(100%, 1100px);
       border-collapse: collapse;
-      font-size: 0.92rem;
+      font-size: 0.9rem;
     }
     th, td {
       text-align: left;
@@ -145,11 +158,20 @@
     th {
       color: var(--muted);
       font-weight: 500;
-      font-size: 0.75rem;
+      font-size: 0.72rem;
       text-transform: uppercase;
       letter-spacing: 0.06em;
     }
     td .mono { color: var(--accent-dim); }
+
+    table.cmp td:first-child {
+      font-weight: 600;
+      width: 18%;
+      color: var(--muted);
+      font-size: 0.85rem;
+    }
+    table.cmp th:not(:first-child),
+    table.cmp td:not(:first-child) { width: 41%; }
 
     .pill {
       display: inline-block;
@@ -159,24 +181,11 @@
       border-radius: 999px;
       border: 1px solid var(--line);
       color: var(--muted);
+      margin: 0.1rem 0.15rem 0.1rem 0;
     }
     .pill.ok { color: var(--ok); border-color: rgba(94,224,160,0.35); }
     .pill.warn { color: var(--warn); border-color: rgba(240,180,41,0.4); }
     .pill.bad { color: var(--danger); border-color: rgba(255,107,90,0.4); }
-
-    .score {
-      display: flex;
-      align-items: baseline;
-      gap: 0.6rem;
-      margin: 0.3rem 0 0.8rem;
-    }
-    .score .n {
-      font-family: var(--display);
-      font-size: 3rem;
-      color: var(--accent);
-      line-height: 1;
-    }
-    .score .lbl { color: var(--muted); font-size: 0.95rem; }
 
     .flow {
       display: flex;
@@ -193,6 +202,19 @@
       border-radius: 6px;
     }
     .flow .arrow { border: 0; background: transparent; color: var(--accent); padding: 0 0.1rem; }
+
+    .codeblock {
+      font-family: var(--mono);
+      font-size: 0.82rem;
+      background: var(--bg-elev);
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 1rem 1.1rem;
+      line-height: 1.55;
+      white-space: pre-wrap;
+      color: var(--ink);
+    }
+    .codeblock .c { color: var(--muted); }
 
     .nav {
       position: fixed;
@@ -225,15 +247,15 @@
     .nav button:hover { border-color: var(--accent); color: var(--accent); }
 
     .title-meta {
-      margin-top: 1.5rem;
+      margin-top: 0.6rem;
       display: flex;
       flex-wrap: wrap;
-      gap: 0.6rem;
+      gap: 0.5rem;
     }
     .footnote {
       margin-top: auto;
-      padding-top: 1.5rem;
-      font-size: 0.8rem;
+      padding-top: 1.2rem;
+      font-size: 0.78rem;
       color: var(--muted);
       font-family: var(--mono);
     }
@@ -249,6 +271,10 @@
         animation: none;
       }
     }
+
+    @media (prefers-reduced-motion: reduce) {
+      .slide.active { animation: none; }
+    }
   </style>
 </head>
 <body>
@@ -259,27 +285,28 @@
       <p class="eyebrow">Claude Code plugin · MCP · agent toolkit</p>
       <h1>livespec</h1>
       <p class="lede">
-        Inteligencia de código local-first para agentes: grafo de llamadas,
-        impacto, y trazabilidad Spec ↔ código — pensado para repos desconocidos.
+        Inteligencia de código local-first para agentes: call graph, impacto,
+        y trazabilidad Spec ↔ código — con OpenSpec como único dialecto.
       </p>
       <div class="title-meta">
+        <span class="pill">public beta · v0.30.1</span>
         <span class="pill">9 lenguajes</span>
-        <span class="pill">OpenSpec-aware</span>
+        <span class="pill">OpenSpec slugs</span>
         <span class="pill">group_db cross-repo</span>
         <span class="pill">sin API keys</span>
       </div>
-      <p class="footnote">Presentación interna · public beta · v0.30.0 · PyPI + Claude Code plugin · ← → o click</p>
+      <p class="footnote">← → / espacio · P para imprimir · docs/livespec-presentation.html</p>
     </section>
 
     <!-- 2 -->
     <section class="slide" data-title="Qué es">
       <p class="eyebrow">01 · Qué es</p>
       <h2>Un producto agent-shaped</h2>
-      <div class="grid-2" style="margin-top:0.5rem">
+      <div class="grid-2" style="margin-top:0.3rem">
         <div class="card">
           <h3>Capa universal</h3>
           <p class="muted">Code intelligence</p>
-          <ul class="clean" style="margin-top:0.7rem">
+          <ul class="clean" style="margin-top:0.65rem">
             <li>Índice SQLite local (<span class="mono">.mcp-docs/docs.db</span>)</li>
             <li>Call graph + PageRank</li>
             <li>Impact / dead code / endpoints</li>
@@ -288,16 +315,16 @@
         </div>
         <div class="card">
           <h3>Diferenciador</h3>
-          <p class="muted">Spec traceability</p>
-          <ul class="clean" style="margin-top:0.7rem">
+          <p class="muted">Spec ↔ código</p>
+          <ul class="clean" style="margin-top:0.65rem">
             <li>FR / ADR / NFR bajo una taxonomía</li>
-            <li>Links Spec ↔ símbolo / scenario</li>
-            <li>OpenSpec sync / validate / changes</li>
+            <li>IDs = slugs OpenSpec (<span class="mono">auth-user-login</span>)</li>
+            <li>sync / validate / export OpenSpec</li>
             <li>Auditoría de cobertura</li>
           </ul>
         </div>
       </div>
-      <p class="lede" style="margin-top:0.5rem">
+      <p class="lede" style="margin-top:0.4rem">
         No es un IDE para humanos. Es señal que <em>otros agentes</em> consumen
         para orientarse más rápido en código ajeno.
       </p>
@@ -315,7 +342,7 @@
           <tr><td>¿Qué es este repo?</td><td class="mono">index_project → get_project_overview</td></tr>
           <tr><td>¿Quién llama a X?</td><td class="mono">who_calls / quick_orient</td></tr>
           <tr><td>¿Qué se rompe si cambio X?</td><td class="mono">analyze_impact / git_diff_impact</td></tr>
-          <tr><td>¿Qué código implementa SPEC-042?</td><td class="mono">get_spec_implementation</td></tr>
+          <tr><td>¿Qué código implementa <span class="mono">auth-user-login</span>?</td><td class="mono">get_spec_implementation</td></tr>
           <tr><td>¿Qué Specs tocan este archivo?</td><td class="mono">analyze_impact(target_type=file)</td></tr>
           <tr><td>¿Qué flujos HTTP parecen muertos?</td><td class="mono">find_legacy_flows</td></tr>
           <tr><td>¿Hay dead code / tests huérfanos?</td><td class="mono">find_dead_code / find_orphan_tests</td></tr>
@@ -327,7 +354,7 @@
     <section class="slide" data-title="Cómo">
       <p class="eyebrow">03 · Cómo funciona</p>
       <h2>Pipeline local, sin nube</h2>
-      <div class="flow" style="margin:0.4rem 0 1rem">
+      <div class="flow" style="margin:0.2rem 0 0.9rem">
         <span>walk repo</span><span class="arrow">→</span>
         <span>extract (ast / tree-sitter)</span><span class="arrow">→</span>
         <span>resolve edges</span><span class="arrow">→</span>
@@ -341,27 +368,58 @@
         </div>
         <div class="card">
           <h3>2. Graph</h3>
-          <p class="muted">Grafo cacheado por <span class="mono">(db, project, run)</span>. Callers / callees / blast radius en µs tras el primer hit.</p>
+          <p class="muted">Grafo cacheado. Callers / callees / blast radius en µs tras el primer hit.</p>
         </div>
         <div class="card">
           <h3>3. Specs</h3>
-          <p class="muted">Anotaciones <span class="mono">@spec:</span>, OpenSpec markdown, links manuales/bulk. Explorer opcional (plugin docs).</p>
+          <p class="muted">Árbol <span class="mono">openspec/</span>, anotaciones <span class="mono">@spec:</span>, links bulk. Explorer opcional (plugin docs).</p>
         </div>
       </div>
-      <p class="lede" style="margin-top:0.8rem">
-        Contrato clave: cada tool exige <span class="mono">workspace=/abs/path/al/repo</span>.
-        Sin env fallback. Un repo por vez (o <span class="mono">group_db</span> compartido).
+      <p class="lede" style="margin-top:0.6rem">
+        Contrato: cada tool exige <span class="mono">workspace=/abs/path/al/repo</span>.
+        Sin env fallback. Un repo por vez — o <span class="mono">group_db</span> compartido.
       </p>
     </section>
 
     <!-- 5 -->
+    <section class="slide" data-title="OpenSpec">
+      <p class="eyebrow">04 · Nomenclatura</p>
+      <h2>Un solo dialecto: OpenSpec</h2>
+      <div class="grid-2">
+        <div class="card">
+          <h3>Authoring</h3>
+          <ul class="clean" style="margin-top:0.65rem">
+            <li>Escribir bajo <span class="mono">openspec/specs/</span></li>
+            <li><span class="mono">### Requirement:</span> + <span class="mono">#### Scenario:</span></li>
+            <li>IDs = slugs del heading (<span class="mono">auth-user-login</span>)</li>
+            <li>Colisión → <span class="mono">auth-login-2</span></li>
+          </ul>
+        </div>
+        <div class="card">
+          <h3>Código ↔ Spec</h3>
+          <ul class="clean" style="margin-top:0.65rem">
+            <li>Anotar <span class="mono">@spec:auth-user-login</span></li>
+            <li>La spec existe en el store antes de anotar</li>
+            <li><span class="mono">sync_openspec</span> / <span class="mono">validate_openspec</span></li>
+            <li>Marker <span class="mono">&lt;!-- livespec:id=slug --&gt;</span> fija el id ante renames</li>
+          </ul>
+        </div>
+      </div>
+      <p class="muted small" style="margin-top:0.3rem;max-width:70ch">
+        OpenSpec escribe el itinerario. livespec enciende el radar: qué código
+        implementa cada requirement y qué se rompe si lo tocás. Sin catálogo
+        nativo <span class="mono">## SPEC-NNN</span> — hard cut en beta.
+      </p>
+    </section>
+
+    <!-- 6 -->
     <section class="slide" data-title="Superficie">
-      <p class="eyebrow">04 · Superficie</p>
+      <p class="eyebrow">05 · Superficie</p>
       <h2>44 tools en tres tiers</h2>
       <div class="grid-3">
         <div class="card">
           <h3>~27 core</h3>
-          <p class="muted">Siempre visibles: code intel, Spec agentic, OpenSpec read, search, legacy flows…</p>
+          <p class="muted">Siempre visibles: code intel, Spec agentic, OpenSpec read, search, legacy flows.</p>
         </div>
         <div class="card">
           <h3>12 Spec plugin</h3>
@@ -369,249 +427,268 @@
         </div>
         <div class="card">
           <h3>5 Docs plugin</h3>
-          <p class="muted">generate/list/export docs + Explorer / Flow Explorer.</p>
+          <p class="muted">generate/list/export docs + Spec Explorer / Flow Explorer.</p>
         </div>
       </div>
-      <ul class="clean" style="margin-top:1rem">
+      <ul class="clean" style="margin-top:0.9rem">
         <li>Lenguajes: Python, Go, Java, JS/TS, Rust, Ruby, PHP</li>
         <li>Frameworks: Flask, FastAPI, Django, Spring, Express/Hono, Angular, Next…</li>
-        <li>Cross-repo: <span class="mono">[workspace] group_db</span> — hops HTTP entre 13 proyectos (dogfood flow-group)</li>
+        <li>Cross-repo: <span class="mono">[workspace] group_db</span> — hops HTTP entre servicios</li>
       </ul>
     </section>
 
-    <!-- 6 -->
+    <!-- 7 -->
     <section class="slide" data-title="Cross-repo">
-      <p class="eyebrow">05 · Cross-repo</p>
+      <p class="eyebrow">06 · Cross-repo</p>
       <h2>group_db: el flujo entre servicios</h2>
       <div class="grid-2">
         <div class="card">
           <h3>Qué une</h3>
-          <ul class="clean" style="margin-top:0.6rem">
+          <ul class="clean" style="margin-top:0.55rem">
             <li><span class="mono">who_does_this_call</span> → invokes_endpoints</li>
             <li><span class="mono">who_calls</span> → route_callers</li>
-            <li><span class="mono">find_symbol</span> group-wide</li>
+            <li><span class="mono">find_symbol</span> group-wide + <span class="mono">project_root</span></li>
             <li><span class="mono">find_legacy_flows</span></li>
             <li><span class="mono">export_flow_explorer</span></li>
           </ul>
         </div>
         <div class="card">
-          <h3>Dogfood flow-group</h3>
-          <p class="muted" style="margin:0.5rem 0 0.7rem">13 repos · Composer hub</p>
-          <p><span class="pill ok">20 live servers</span>
-             <span class="pill ok">17 live clients</span></p>
-          <p style="margin-top:0.5rem">
-             <span class="pill warn">2 legacy servers</span>
-             <span class="pill warn">20 orphan clients</span>
+          <h3>Qué significa en la práctica</h3>
+          <p class="muted" style="margin-top:0.55rem">
+            Un agente en el BFF puede preguntar qué SA atiende un path, o qué
+            clientes llaman un endpoint del SA, sin abrir 10 repos a mano.
           </p>
-          <p class="muted" style="margin-top:0.8rem;font-size:0.9rem">
-            Orphans ≠ basura: casi siempre SA faltante en el group (third-party client, Details…).
+          <p class="muted" style="margin-top:0.7rem">
+            Orphans ≠ basura: casi siempre un SA que falta en el group o un
+            cliente third-party fuera del índice.
           </p>
         </div>
       </div>
     </section>
 
-    <!-- 7 -->
-    <section class="slide" data-title="Plugin pack">
-      <p class="eyebrow">06 · Claude Code plugin</p>
-      <h2>MCP + Skill + Subagente + Command</h2>
-      <div class="grid-2">
-        <div class="card">
-          <h3 class="mono">.mcp.json</h3>
-          <p class="muted">Arranca <span class="mono">uvx livespec@pinned</span> (marketplace) o checkout local vía Cursor mcp.json.</p>
-        </div>
-        <div class="card">
-          <h3 class="mono">skills/livespec/</h3>
-          <p class="muted">Manual operativo: tool map, workspace, traps, OpenSpec, cold open. ~215 líneas.</p>
-        </div>
-        <div class="card">
-          <h3 class="mono">agents/livespec.md</h3>
-          <p class="muted">Subagente especializado. Preload del Skill. Reglas duras (no inventar con grep si MCP cae).</p>
-        </div>
-        <div class="card">
-          <h3 class="mono">/livespec-onboard</h3>
-          <p class="muted">Command: delega cold open al subagente y pide briefing de orientación.</p>
-        </div>
+    <!-- 8 — comparative table WITH Graphify -->
+    <section class="slide" data-title="Comparativa">
+      <p class="eyebrow">07 · Comparativa</p>
+      <h2>OpenSpec · livespec · Graphify</h2>
+      <p class="muted small" style="margin-bottom:0.2rem;max-width:70ch">
+        OpenSpec no compite: autoría. Graphify sí se solapa (grafo local + MCP).
+        Se diferencian en la pregunta que responden.
+      </p>
+      <table class="cmp">
+        <thead>
+          <tr>
+            <th></th>
+            <th>OpenSpec</th>
+            <th>livespec</th>
+            <th>Graphify</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Qué es</td>
+            <td>SDD / authoring de requirements</td>
+            <td>Code intel + Spec↔código</td>
+            <td>Knowledge graph del repo</td>
+          </tr>
+          <tr>
+            <td>Pregunta</td>
+            <td>¿Qué debemos construir?</td>
+            <td>¿Qué código implementa / qué rompe?</td>
+            <td>¿Cómo está organizado y qué lo atraviesa?</td>
+          </tr>
+          <tr>
+            <td>Artefacto</td>
+            <td><span class="mono">openspec/</span> markdown</td>
+            <td>SQLite + call graph + Specs</td>
+            <td><span class="mono">graph.json</span> + HTML / Obsidian / Neo4j</td>
+          </tr>
+          <tr>
+            <td>Fuerte en</td>
+            <td>Gates, proposals, changes</td>
+            <td>Spec↔código, <span class="mono">group_db</span>, endpoints, PR impact</td>
+            <td>Comunidades Leiden, god nodes, multimodal</td>
+          </tr>
+          <tr>
+            <td>LLM</td>
+            <td>No (markdown humano)</td>
+            <td><strong>Nunca</strong> — 100% determinista</td>
+            <td>No para código; sí para docs/medios</td>
+          </tr>
+          <tr>
+            <td>Lenguajes</td>
+            <td>—</td>
+            <td>9 con tests de extractor</td>
+            <td>36 declarados</td>
+          </tr>
+          <tr>
+            <td>Cuándo</td>
+            <td>Escribir y gobernar Specs</td>
+            <td>Orientar, impact, coverage, polyrepo HTTP</td>
+            <td>Repo sin Specs, mucha doc, mapa rápido</td>
+          </tr>
+        </tbody>
+      </table>
+      <div style="margin-top:0.55rem">
+        <span class="pill ok">OpenSpec ⊂ proceso</span>
+        <span class="pill ok">livespec ⊂ grafo + Specs</span>
+        <span class="pill warn">Graphify ⊂ mapa / multimodal</span>
+        <span class="pill">Conviven: dos MCP en el mismo agente</span>
       </div>
     </section>
 
-    <!-- 8 Skill eval -->
-    <section class="slide" data-title="Skill eval">
-      <p class="eyebrow">07 · Evaluación · Skill</p>
-      <h2>Skill <span class="mono">livespec</span></h2>
-      <div class="score">
-        <div class="n">8.2</div>
-        <div class="lbl">/ 10 · fuerte como playbook; riesgo de drift vs PyPI pin</div>
-      </div>
+    <!-- 9 — livespec vs Graphify deep dive -->
+    <section class="slide" data-title="vs Graphify">
+      <p class="eyebrow">08 · Competencia directa</p>
+      <h2>livespec frente a Graphify</h2>
       <div class="grid-2">
         <div class="card">
-          <h3><span class="pill ok">Fortalezas</span></h3>
-          <ul class="clean" style="margin-top:0.6rem">
-            <li>Regla <span class="mono">workspace</span> imposible de ignorar</li>
-            <li>Tool map por intención (no por catálogo)</li>
-            <li>Traps documentados: stale grep, sync_openspec duplica, bulk_link shape</li>
-            <li>Cold open + task loop claros</li>
-            <li>OpenSpec como SSoT de autoría</li>
-            <li>Fuente alineada a <strong>v0.30.0</strong> public beta (<span class="mono">find_legacy_flows</span>, FTS-only, group_db)</li>
+          <h3>Overlap real</h3>
+          <ul class="clean" style="margin-top:0.55rem">
+            <li>tree-sitter → call / import graph</li>
+            <li>Persistencia local (sin nube)</li>
+            <li>Postura anti-vector (“grafo &gt; embeddings”)</li>
+            <li>Skill + MCP para agentes</li>
           </ul>
         </div>
         <div class="card">
-          <h3><span class="pill warn">Gaps</span></h3>
-          <ul class="clean" style="margin-top:0.6rem">
-            <li><strong>Pin marketplace = 0.30.0 (actualizar con claude plugin update):</strong> Skill 0.30 documenta group_db + find_legacy_flows; sin embed_chunks/agent_scratch</li>
-            <li>Largo (~215L): satura context del subagente en tareas triviales</li>
-            <li>Skill 0.30 ya cubre group_db + legacy traps (re-validar en adopters)</li>
-            <li>Guía legacy/APM landed in Skill 0.30 — keep pin in sync</li>
-            <li>Poco coverage de plugin docs / Flow Explorer</li>
+          <h3>Wedge de livespec</h3>
+          <ul class="clean" style="margin-top:0.55rem">
+            <li>Spec ↔ código + OpenSpec interop</li>
+            <li>Polyrepo HTTP vía <span class="mono">group_db</span></li>
+            <li>Endpoints framework-aware</li>
+            <li>Ops de agente: dead code, legacy flows, orphan tests</li>
           </ul>
         </div>
       </div>
+      <p class="lede" style="margin-top:0.4rem">
+        No clonamos Leiden ni multimodal: diluyen el diferenciador y pelean
+        con el core FTS-only / zero-LLM. Ver <span class="mono">docs/COMPETITIVE_GRAPHIFY.md</span>.
+      </p>
     </section>
 
-    <!-- 9 Agent eval -->
-    <section class="slide" data-title="Agent eval">
-      <p class="eyebrow">08 · Evaluación · Subagente</p>
-      <h2>Agent <span class="mono">livespec</span></h2>
-      <div class="score">
-        <div class="n">8.5</div>
-        <div class="lbl">/ 10 · contratos duros bien elegidos; allowlist consciente</div>
-      </div>
-      <div class="grid-2">
+    <!-- 10 -->
+    <section class="slide" data-title="Evidencia">
+      <p class="eyebrow">09 · Evidencia</p>
+      <h2>Dogfood sobre superficie real</h2>
+      <div class="grid-3">
         <div class="card">
-          <h3><span class="pill ok">Fortalezas</span></h3>
-          <ul class="clean" style="margin-top:0.6rem">
-            <li>Preload del Skill (<span class="mono">skills: [livespec]</span>)</li>
-            <li><strong>Sin allowlist MCP hardcodeada</strong> — evita el bug de namespace (<span class="mono">mcp__livespec__*</span> vs plugin)</li>
-            <li>STOP si MCP cae: no mentir con Grep</li>
-            <li>No mutar Specs sin aprobación</li>
-            <li>Respeta paginación / <span class="mono">summary_only</span></li>
-            <li>Output: respuesta + evidencia + caveats</li>
-            <li>Trigger proactivo bien escrito en description</li>
-          </ul>
+          <h3>Barrido multi-repo</h3>
+          <p class="muted" style="margin-top:0.45rem">Re-index + tools read-only sobre decenas de repos. Endpoints, dead code, coverage, legacy flows ejercitados de punta a punta.</p>
         </div>
         <div class="card">
-          <h3><span class="pill warn">Gaps</span></h3>
-          <ul class="clean" style="margin-top:0.6rem">
-            <li>Depende 100% del Skill preload → si el pin es viejo, el agente opera mal</li>
-            <li>No menciona <span class="mono">find_legacy_flows</span> / cross-repo en el body del agent</li>
-            <li>No instruye “confirm traffic before delete”</li>
-            <li>Command onboard es delgado (bien) pero no hay commands para impact / legacy</li>
-            <li>En Cursor el subagente vive como Task type; UX distinta a Claude Code</li>
-          </ul>
+          <h3>OpenSpec en nosotros</h3>
+          <p class="muted" style="margin-top:0.45rem">13 requirements migradas de <span class="mono">SPEC-NNN</span> a slugs conservando 191 links. El propio código se anota con <span class="mono">@spec:&lt;slug&gt;</span>.</p>
+        </div>
+        <div class="card">
+          <h3>Contrato de payload</h3>
+          <p class="muted" style="margin-top:0.45rem"><span class="mono">count</span>, <span class="mono">grouped</span>/<span class="mono">group_db</span>, paginación de <span class="mono">find_symbol</span> — un vocabulario, no tres.</p>
         </div>
       </div>
+      <ul class="clean" style="margin-top:0.85rem">
+        <li>Toda mejora se prueba contra repos reales antes de merge (ver <span class="mono">CONTRIBUTING.md</span>)</li>
+        <li>Suite verde ≠ suficiente: el dogfood es la prueba</li>
+      </ul>
     </section>
 
-    <!-- 10 Command -->
-    <section class="slide" data-title="Command">
-      <p class="eyebrow">09 · Evaluación · Command</p>
-      <h2><span class="mono">/livespec-onboard</span></h2>
-      <div class="score">
-        <div class="n">7.5</div>
-        <div class="lbl">/ 10 · hace una cosa bien; falta suite de commands</div>
-      </div>
-      <div class="grid-2">
-        <div class="card">
-          <h3>Qué hace bien</h3>
-          <p class="muted" style="margin-top:0.5rem">Delega al subagente el cold open canónico y pide un briefing accionable. Bajo mantenimiento.</p>
-        </div>
-        <div class="card">
-          <h3>Qué faltaría</h3>
-          <ul class="clean" style="margin-top:0.5rem">
-            <li><span class="mono">/livespec-impact &lt;qname&gt;</span></li>
-            <li><span class="mono">/livespec-legacy</span> (group_db)</li>
-            <li><span class="mono">/livespec-spec SPEC-…</span></li>
-          </ul>
-        </div>
-      </div>
-    </section>
-
-    <!-- 11 Limitations -->
+    <!-- 11 -->
     <section class="slide" data-title="Limitaciones">
       <p class="eyebrow">10 · Limitaciones</p>
       <h2>Lo que livespec <em>no</em> es</h2>
       <div class="grid-2">
         <div class="card">
           <h3><span class="pill bad">No es tráfico real</span></h3>
-          <p class="muted" style="margin-top:0.5rem">Dead code / legacy flows = evidencia de grafo. Confirmá con APM/logs antes de borrar.</p>
+          <p class="muted" style="margin-top:0.45rem">Dead code / legacy flows = evidencia de grafo. Confirmá con APM/logs antes de borrar.</p>
         </div>
         <div class="card">
           <h3><span class="pill bad">No es omnisciente</span></h3>
-          <p class="muted" style="margin-top:0.5rem">DI / reflection / string dispatch / Jest anónimo / SAs fuera del group → falsos positivos y ceros “honestos”.</p>
+          <p class="muted" style="margin-top:0.45rem">DI / reflection / string dispatch / SAs fuera del group → falsos positivos y ceros “honestos”.</p>
         </div>
         <div class="card">
           <h3><span class="pill warn">Índice = verdad</span></h3>
-          <p class="muted" style="margin-top:0.5rem">Sin <span class="mono">index_project</span> fresco, grep y impacto mienten. Watcher no es el camino feliz.</p>
+          <p class="muted" style="margin-top:0.45rem">Sin <span class="mono">index_project</span> fresco, grep e impacto mienten. Watcher no es el camino feliz.</p>
         </div>
         <div class="card">
-          <h3><span class="pill warn">Pin = PyPI 0.30</span></h3>
-          <p class="muted" style="margin-top:0.5rem">Marketplace puede ir atrás del checkout. Cursor debe apuntar al path local para dogfood.</p>
+          <h3><span class="pill warn">Pin = PyPI</span></h3>
+          <p class="muted" style="margin-top:0.45rem">Marketplace puede ir atrás del checkout. Para dogfood, apuntá al path local.</p>
         </div>
       </div>
-      <ul class="clean" style="margin-top:1rem">
-        <li>No reemplaza tests ni review humano</li>
-        <li>Spec mutation gated — no siempre visible en tools/list</li>
-        <li>Vectores eliminados (v0.29): search es FTS5-only</li>
+      <ul class="clean" style="margin-top:0.85rem">
+        <li>Jest/Vitest anónimo: el diagnostic avisa archivos ciegos; no inventa tests</li>
+        <li>Search es FTS5-only (vectores eliminados en v0.29)</li>
+        <li>Spec mutation gated — no siempre visible en <span class="mono">tools/list</span></li>
       </ul>
     </section>
 
-    <!-- 12 Cuándo -->
+    <!-- 12 -->
     <section class="slide" data-title="Cuándo">
       <p class="eyebrow">11 · Cuándo usarlo</p>
       <h2>Fit / no-fit</h2>
       <div class="grid-2">
         <div class="card">
           <h3><span class="pill ok">Usar</span></h3>
-          <ul class="clean" style="margin-top:0.6rem">
+          <ul class="clean" style="margin-top:0.55rem">
             <li>Cold-open de repo desconocido</li>
             <li>Impact antes de un refactor</li>
             <li>PR review (diff → Specs / callers)</li>
-            <li>Polyrepo HTTP (group_db)</li>
-            <li>Adopción Spec / OpenSpec en brownfield</li>
-            <li>Candidatos a legacy (con confirmación)</li>
+            <li>Polyrepo HTTP (<span class="mono">group_db</span>)</li>
+            <li>Adopción OpenSpec en brownfield</li>
+            <li>Candidatos a legacy (con confirmación APM)</li>
           </ul>
         </div>
         <div class="card">
           <h3><span class="pill bad">No usar solo</span></h3>
-          <ul class="clean" style="margin-top:0.6rem">
+          <ul class="clean" style="margin-top:0.55rem">
             <li>“Borrá todo lo no usado” sin APM</li>
             <li>Búsqueda semántica profunda (sin vectors)</li>
             <li>Runtime debugging / logs / K8s</li>
             <li>Indexar carpeta padre multi-repo</li>
             <li>Autoría Spec solo en el motor (preferí OpenSpec md)</li>
+            <li>Mapa multimodal de docs/PDF → Graphify</li>
           </ul>
         </div>
       </div>
     </section>
 
-    <!-- 13 Roadmap eval actions -->
-    <section class="slide" data-title="Acciones">
-      <p class="eyebrow">12 · Acciones recomendadas</p>
-      <h2>Cerrar el gap Skill ↔ producto</h2>
-      <ol class="clean" style="list-style:decimal;padding-left:1.2rem">
-        <li style="padding-left:0.3rem">PyPI + plugin ya en 0.30.0 — al subir minor, bump pin Skill en el mismo release</li>
-        <li style="padding-left:0.3rem">Done in 0.30 Skill — maintain on every release</li>
-        <li style="padding-left:0.3rem">Commands: impact / legacy / spec-impl</li>
-        <li style="padding-left:0.3rem">Agent body: 3 líneas sobre cross-repo + confidence=low</li>
-        <li style="padding-left:0.3rem">Skill “lite” opcional (~40L) para tareas de un solo símbolo</li>
-      </ol>
+    <!-- 13 -->
+    <section class="slide" data-title="Provecho">
+      <p class="eyebrow">12 · Playbook</p>
+      <h2>Cómo sacarle el máximo provecho</h2>
+      <div class="grid-2">
+        <ol class="steps">
+          <li><div><strong>Un solo dialecto OpenSpec</strong><br /><span class="muted small">Fuente única en <span class="mono">openspec/</span>; slugs, no <span class="mono">SPEC-NNN</span>.</span></div></li>
+          <li><div><strong>Anclar Spec → código</strong><br /><span class="muted small"><span class="mono">@spec:auth-user-login</span> en implementaciones (la spec existe antes).</span></div></li>
+          <li><div><strong>Impact antes de merge</strong><br /><span class="muted small"><span class="mono">analyze_impact</span> / <span class="mono">git_diff_impact</span> en PRs sensibles.</span></div></li>
+          <li><div><strong>Coverage en gate</strong><br /><span class="muted small"><span class="mono">audit_coverage</span> para Specs sin código y viceversa.</span></div></li>
+        </ol>
+        <div class="codeblock"><span class="c"># cold open</span>
+index_project(workspace=REPO)
+get_project_overview(workspace=REPO)
+
+<span class="c"># si hay openspec/</span>
+sync_openspec(workspace=REPO)
+list_specs(workspace=REPO)
+get_spec_implementation(
+  workspace=REPO,
+  spec_id="auth-user-login")</div>
+      </div>
     </section>
 
-    <!-- 14 Close -->
+    <!-- 14 -->
     <section class="slide" data-title="Cierre">
       <p class="eyebrow">Cierre</p>
       <h2>Una frase</h2>
-      <p class="lede" style="font-size:clamp(1.2rem,2.4vw,1.6rem);color:var(--ink);max-width:36ch">
-        livespec indexa el grafo y los Specs para que el agente pregunte menos a ciegas —
-        y se equivoque menos al tocar código ajeno.
+      <p class="lede" style="font-size:clamp(1.15rem,2.3vw,1.55rem);color:var(--ink);max-width:38ch">
+        OpenSpec define el viaje. livespec muestra el radar: conexiones,
+        impacto y cobertura Spec ↔ código — sin inventar tráfico.
       </p>
-      <div class="grid-3" style="margin-top:1rem">
-        <div class="card"><h3>Qué</h3><p class="muted">Call graph + Spec↔code local</p></div>
-        <div class="card"><h3>Cómo</h3><p class="muted">Extract → SQLite → MCP tools</p></div>
+      <div class="grid-3" style="margin-top:0.7rem">
+        <div class="card"><h3>Qué</h3><p class="muted">Call graph + Spec↔código local</p></div>
+        <div class="card"><h3>Vs Graphify</h3><p class="muted">Ellos mapean; nosotros anclamos Specs y polyrepo</p></div>
         <div class="card"><h3>Límite</h3><p class="muted">Grafo ≠ prod · pin ≠ HEAD</p></div>
       </div>
       <p class="footnote">
-        Abrí este archivo en el browser · flechas / espacio · P para imprimir PDF<br />
-        Repo: github.com/Rixmerz/livespec · docs/livespec-presentation.html
+        github.com/Rixmerz/livespec · PyPI <span class="mono">livespec</span> · v0.30.1<br />
+        Comparativa Graphify: docs/COMPETITIVE_GRAPHIFY.md
       </p>
     </section>
 

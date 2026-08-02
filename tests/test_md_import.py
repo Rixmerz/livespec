@@ -1,4 +1,4 @@
-"""Tests for the markdown Spec importer (P2.1)."""
+"""Tests for the OpenSpec markdown Spec importer."""
 
 from __future__ import annotations
 
@@ -6,129 +6,19 @@ import pytest
 from fastmcp import Client
 
 from livespec_mcp.domain.md_specs import (
-    detect_spec_format,
+    UnsupportedSpecCatalogError,
     parse_openspec_markdown,
-    parse_specs_markdown,
+    reject_legacy_spec_catalog,
 )
 from livespec_mcp.server import mcp
 
-SAMPLE = """\
+LEGACY_SAMPLE = """\
 # Specs
 
 ## SPEC-001: Login flow
 **Prioridad:** alta · **Módulo:** auth
 El usuario se autentica con email + password.
-
-Criterios:
-- Token expira en 24h
-- Refresh token via /refresh
-
-## SPEC-002: Bulk export
-**Priority:** medium
-**Module:** export
-**Status:** draft
-
-Exportar todos los registros a CSV en background.
-
-## SPEC-3: Cleanup job
-**Prioridad:** baja
-Job nocturno que purga registros viejos.
-
-## SPEC-004: Use event sourcing for orders
-**Kind:** adr
-Decisión arquitectónica: usar event sourcing en el módulo de órdenes.
 """
-
-
-def test_parse_basic():
-    specs = parse_specs_markdown(SAMPLE)
-    assert len(specs) == 4
-
-    rf1 = specs[0]
-    assert rf1.spec_id == "SPEC-001"
-    assert rf1.title == "Login flow"
-    assert rf1.priority == "high"
-    assert rf1.module == "auth"
-    assert rf1.status == "active"
-    assert rf1.kind == "functional_requirement"  # default when unspecified
-    assert "Token expira" in rf1.description
-
-    rf2 = specs[1]
-    assert rf2.spec_id == "SPEC-002"
-    assert rf2.priority == "medium"
-    assert rf2.module == "export"
-    assert rf2.status == "draft"
-
-    # SPEC-3 normalises to SPEC-003
-    rf3 = specs[2]
-    assert rf3.spec_id == "SPEC-003"
-    assert rf3.priority == "low"
-
-    # SPEC-004 declares a non-default kind
-    rf4 = specs[3]
-    assert rf4.spec_id == "SPEC-004"
-    assert rf4.kind == "adr"
-
-
-def test_parse_kind_synonyms():
-    text = (
-        "## SPEC-001: A\n**Tipo:** nfr\ndesc\n\n"
-        "## SPEC-002: B\n**Kind:** design\ndesc\n"
-    )
-    specs = parse_specs_markdown(text)
-    assert specs[0].kind == "non_functional_requirement"
-    assert specs[1].kind == "design"
-
-
-@pytest.mark.asyncio
-async def test_import_creates_rfs(sample_repo, tmp_path):
-    md = sample_repo / "specs.md"
-    md.write_text(SAMPLE)
-    async with Client(mcp) as c:
-        # v0.24: mutation tools (including the markdown-import bootstrap
-        # helper) require an indexed workspace — WorkspaceErrorMiddleware
-        # rejects them clean rather than let get_state() silently create a DB.
-        await c.call_tool("index_project", {})
-        result = (
-            await c.call_tool(
-                "import_specs_from_markdown",
-                {"path": "specs.md"},
-            )
-        ).data
-        assert result["parsed"] == 4
-        assert result["created"] == 4
-        assert result["updated"] == 0
-
-        listed = (await c.call_tool("list_specs", {})).data
-        by_id = {r["spec_id"]: r for r in listed["specs"]}
-        assert {"SPEC-001", "SPEC-002", "SPEC-003", "SPEC-004"}.issubset(by_id)
-        assert by_id["SPEC-004"]["kind"] == "adr"
-
-
-@pytest.mark.asyncio
-async def test_import_is_idempotent(sample_repo):
-    md = sample_repo / "specs.md"
-    md.write_text(SAMPLE)
-    async with Client(mcp) as c:
-        await c.call_tool("index_project", {})
-        first = (
-            await c.call_tool(
-                "import_specs_from_markdown",
-                {"path": "specs.md"},
-            )
-        ).data
-        second = (
-            await c.call_tool(
-                "import_specs_from_markdown",
-                {"path": "specs.md"},
-            )
-        ).data
-        assert first["created"] == 4
-        assert second["created"] == 0
-        assert second["updated"] == 4
-
-
-# ---------- OpenSpec (Fission-AI) interop ----------
 
 OPENSPEC_SAMPLE = """\
 # Theming Specification
@@ -156,11 +46,30 @@ The app used a legacy cookie that is no longer supported.
 """
 
 
-def test_detect_format():
-    assert detect_spec_format(OPENSPEC_SAMPLE) == "openspec"
-    assert detect_spec_format(SAMPLE) == "livespec"
-    # Mixed → OpenSpec wins (authoring SSoT); native headers are leftover noise.
-    assert detect_spec_format(SAMPLE + "\n### Requirement: X\ndesc\n") == "openspec"
+def test_reject_legacy_catalog():
+    with pytest.raises(UnsupportedSpecCatalogError, match="SPEC-NNN"):
+        reject_legacy_spec_catalog(LEGACY_SAMPLE)
+    with pytest.raises(UnsupportedSpecCatalogError):
+        parse_openspec_markdown(LEGACY_SAMPLE)
+
+
+def test_legacy_header_inside_fence_is_not_rejected():
+    """Examples in ``` blocks must not trip the hard-cut detector."""
+    text = (
+        "### Requirement: Real\n"
+        "The system SHALL work.\n\n"
+        "```\n"
+        "## SPEC-099: Example in a code block\n"
+        "```\n"
+        "\n"
+        "#### Scenario: Ok\n"
+        "- **WHEN** x\n"
+        "- **THEN** y\n"
+    )
+    reject_legacy_spec_catalog(text)  # no raise
+    specs = parse_openspec_markdown(text)
+    assert len(specs) == 1
+    assert specs[0].spec_id == "real"
 
 
 def test_parse_openspec_basic():
@@ -174,13 +83,25 @@ def test_parse_openspec_basic():
     assert theme.kind == "functional_requirement"
     assert theme.module == "theming"
     assert "SHALL let users switch" in theme.description
-    # Scenario block is preserved verbatim in the description.
     assert "WHEN" in theme.description and "THEN" in theme.description
-    # The ## Purpose section must not leak into any requirement.
     assert "control the app" not in theme.description
 
-    # A requirement under `## REMOVED Requirements` imports as deprecated.
     assert by_id["theming-legacy-theme-cookie"].status == "deprecated"
+
+
+@pytest.mark.asyncio
+async def test_import_rejects_legacy_catalog(sample_repo):
+    (sample_repo / "specs.md").write_text(LEGACY_SAMPLE)
+    async with Client(mcp) as c:
+        await c.call_tool("index_project", {})
+        result = (
+            await c.call_tool(
+                "import_specs_from_markdown",
+                {"path": "specs.md"},
+            )
+        ).data
+        assert result.get("isError") is True
+        assert "SPEC-NNN" in result["error"]
 
 
 @pytest.mark.asyncio
@@ -216,8 +137,30 @@ async def test_import_openspec_tree(sample_repo):
         assert result["created"] == 3
         listed = (await c.call_tool("list_specs", {})).data
         by_id = {r["spec_id"]: r for r in listed["specs"]}
-        # Capability prefix comes from the `theming/` folder name.
         assert "theming-theme-selection" in by_id
+
+
+@pytest.mark.asyncio
+async def test_import_is_idempotent(sample_repo):
+    md = sample_repo / "spec.md"
+    md.write_text(OPENSPEC_SAMPLE)
+    async with Client(mcp) as c:
+        await c.call_tool("index_project", {})
+        first = (
+            await c.call_tool(
+                "import_specs_from_markdown",
+                {"path": "spec.md"},
+            )
+        ).data
+        second = (
+            await c.call_tool(
+                "import_specs_from_markdown",
+                {"path": "spec.md"},
+            )
+        ).data
+        assert first["created"] == 3
+        assert second["created"] == 0
+        assert second["updated"] == 3
 
 
 @pytest.mark.asyncio
@@ -226,17 +169,17 @@ async def test_import_rejects_bad_fmt(sample_repo):
     async with Client(mcp) as c:
         result = (
             await c.call_tool(
-                "import_specs_from_markdown", {"path": "spec.md", "fmt": "nope"}
+                "import_specs_from_markdown", {"path": "spec.md", "fmt": "livespec"}
             )
         ).data
         assert result.get("isError") is True
 
 
 def test_openspec_livespec_id_comment_overrides_slug():
-    """export_openspec markers keep SPEC-NNN (or any) id on re-import."""
+    """export_openspec markers keep the store id on re-import (slug preferred)."""
     text = (
         "### Requirement: Indexing & workspace walk\n"
-        "<!-- livespec:id=SPEC-001 -->\n"
+        "<!-- livespec:id=indexing-indexing-workspace-walk -->\n"
         "\n"
         "Walk the workspace and persist symbols.\n"
         "\n"
@@ -246,6 +189,6 @@ def test_openspec_livespec_id_comment_overrides_slug():
     )
     specs = parse_openspec_markdown(text, capability="indexing")
     assert len(specs) == 1
-    assert specs[0].spec_id == "SPEC-001"
+    assert specs[0].spec_id == "indexing-indexing-workspace-walk"
     assert specs[0].title == "Indexing & workspace walk"
     assert len(specs[0].scenarios) == 1

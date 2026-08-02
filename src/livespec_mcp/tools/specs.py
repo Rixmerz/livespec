@@ -109,24 +109,15 @@ _GENERIC_MODULE_NAMES = {
 }
 
 
-def _next_spec_id(conn, project_id: int) -> str:
-    # Next id = MAX numeric suffix across the project + 1. Reading the
-    # LAST-INSERTED row instead collided whenever specs were imported out of
-    # numeric order (markdown import, or legacy RF-042 ids preserved by
-    # migration v11) — e.g. last-inserted SPEC-001b next to an existing
-    # SPEC-002 produced a duplicate SPEC-002.
-    # Only considers SPEC-NNN shaped ids (digit suffix after SPEC).
-    best = 0
-    for r in conn.execute(
-        "SELECT spec_id FROM spec WHERE project_id=?", (project_id,)
-    ):
-        sid = r["spec_id"] or ""
-        if not sid.upper().startswith("SPEC"):
-            continue
-        digits = "".join(c for c in sid if c.isdigit())
-        if digits:
-            best = max(best, int(digits))
-    return f"SPEC-{best + 1:03d}"
+# Reject minting/accepting PREFIX-NNN ids (SPEC-001, BE-RF-102, …). OpenSpec
+# slugs are the only dialect; a colliding slug gets a numeric suffix instead.
+_NUMERIC_ID_RE = re.compile(r"^[A-Za-z]+-\d+$")
+
+
+def is_legacy_numeric_spec_id(spec_id: str) -> bool:
+    """True for ``SPEC-001`` / ``AUTH-12`` (single PREFIX-NNN). OpenSpec slugs
+    and multi-segment store ids like ``BE-RF-102`` are not this shape."""
+    return bool(_NUMERIC_ID_RE.match((spec_id or "").strip()))
 
 
 def disambiguated_slug_id(candidate: str, taken: Container[str]) -> str:
@@ -222,13 +213,19 @@ def register(
 
         Auto-assigns ``spec_id`` from the title (+ module) as an OpenSpec
         slug (e.g. ``auth-user-login``); a title that collides gets
-        ``auth-user-login-2``, never a different id scheme. Pass ``spec_id``
-        explicitly to override.
+        ``auth-user-login-2``. Pass ``spec_id`` explicitly to override with
+        another slug — ``SPEC-001``-shaped ids are rejected.
         `kind` classifies the spec — see SpecKind for the documented values
         (free-text column, not DB-enforced, so custom kinds also work). Not
         idempotent — use `update_spec` for changes.""" + WORKSPACE_DOCSTRING_NOTE
         st = get_state(workspace)
         pid = st.project_id
+        if spec_id is not None and is_legacy_numeric_spec_id(spec_id):
+            return mcp_error(
+                f"spec_id {spec_id!r} uses the removed PREFIX-NNN dialect",
+                hint="use an OpenSpec slug (e.g. auth-user-login), or omit "
+                "spec_id to derive one from the title",
+            )
         sid = spec_id or _default_spec_id(st.conn, pid, title, module)
         module_id = None
         if module:
@@ -637,38 +634,35 @@ def register(
     @mutation_tool(annotations={"readOnlyHint": False, "idempotentHint": True})
     def import_specs_from_markdown(
         path: str,
-        fmt: str = "auto",
+        fmt: str = "openspec",
         workspace: Workspace | None = None,
     ) -> dict[str, Any]:
-        """Bulk-create / update Specs from Markdown — OpenSpec preferred, native legacy.
+        """Bulk-create / update Specs from OpenSpec Markdown.
 
-        Two dialects, auto-detected per file (`fmt="auto"`):
-        - **openspec** (preferred authoring SSoT / Fission-AI): `### Requirement: <name>`
-          anchors with SHALL prose + `#### Scenario:` WHEN/THEN blocks. The
-          requirement name becomes the title; a slug becomes the spec_id;
-          `## REMOVED Requirements` → status `deprecated`, else `active`.
-          Point `path` at a single file, or at an `openspec/` directory to
-          walk its whole `specs/`/`changes/` tree (capability = folder name).
-        - **livespec** (legacy native catalog): `## SPEC-NNN: Title` headers with
-          `**Prioridad:** alta` / `**Módulo:** auth` metadata (ES/EN variants).
-          Prefer migrating these to OpenSpec for new work.
+        OpenSpec only (`### Requirement: <name>` + SHALL prose +
+        `#### Scenario:` WHEN/THEN). The requirement name becomes the title;
+        a slug becomes the spec_id; `## REMOVED Requirements` → `deprecated`,
+        else `active`. Point `path` at a single file, or at an `openspec/`
+        directory to walk its `specs/`/`changes/` tree (capability = folder).
 
-        `fmt` forces a dialect (`"openspec"` | `"livespec"`); default `"auto"`
-        sniffs each file (OpenSpec wins if `### Requirement:` is present) and
-        treats a directory as an OpenSpec tree. Idempotent: re-import updates
-        in place. OpenSpec specs default to `kind=functional_requirement` —
-        reclassify with `update_spec`.
+        The former native `## SPEC-NNN:` catalog is removed — migrate those
+        files under `openspec/specs/<capability>/spec.md` and use
+        `sync_openspec`. `fmt` accepts `"openspec"` or `"auto"` only.
 
+        Idempotent: re-import updates in place. Specs default to
+        `kind=functional_requirement` — reclassify with `update_spec`.
         Path is resolved relative to the workspace root if not absolute.
         """
-        if fmt not in ("auto", "livespec", "openspec"):
+        if fmt not in ("auto", "openspec"):
             return mcp_error(
                 f"invalid fmt: {fmt!r}",
-                did_you_mean=["auto", "livespec", "openspec"],
-                hint="fmt selects the markdown dialect; default 'auto' sniffs per file",
+                did_you_mean=["openspec", "auto"],
+                hint="OpenSpec only — native ## SPEC-NNN catalogs are removed; "
+                "migrate to openspec/ and call sync_openspec",
             )
         st = get_state(workspace)
         try:
+            from livespec_mcp.domain.md_specs import UnsupportedSpecCatalogError
             from livespec_mcp.domain.specs_sync import (
                 import_specs_from_markdown_file,
             )
@@ -677,6 +671,11 @@ def register(
             # Internal bookkeeping for the full-tree sweep, not payload.
             out.pop("spec_ids", None)
             return out
+        except UnsupportedSpecCatalogError as e:
+            return mcp_error(
+                str(e),
+                hint="write ### Requirement: under openspec/specs/<capability>/spec.md",
+            )
         except FileNotFoundError:
             return mcp_error(
                 f"file not found: {path}",
@@ -716,7 +715,7 @@ def register(
         (kind defaults to "functional_requirement"):
 
           {
-            "proposed_spec_id": "auth-auth",       # OpenSpec slug; SPEC-NNN on collision
+            "proposed_spec_id": "auth-auth",       # OpenSpec slug; -2 on collision
             "title": "Auth",                       # humanized module name
             "description": "...",                  # first sentence of top symbol's docstring
             "module_key": "pkg.auth",
@@ -995,13 +994,12 @@ def register(
     def scan_spec_annotations(workspace: Workspace | None = None) -> dict[str, Any]:
         """Re-scan all symbol docstrings for Spec annotations and (re)link them.
 
-        Two-level matcher, both levels speaking OpenSpec ids:
+        Two-level matcher, OpenSpec slugs only:
         - Explicit prefix `@spec:auth-user-login` / `@implements:auth-user-login`
           -> confidence 1.0
         - Verb-anchored `implements auth-user-login` (negation guard) -> 0.7
-        A slug is recognized when it is a spec id in the store; legacy
-        `SPEC-001`-shaped ids are matched by shape, store or not.
-        Idempotent: skips existing links.
+        A slug is recognized when it is a spec id in the store. Idempotent:
+        skips existing links.
 
         Ids annotated in code that match no spec come back as
         `unknown_annotation_ids` (complete) plus a capped

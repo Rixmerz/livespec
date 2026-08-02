@@ -4,7 +4,7 @@ The `implements` / `tests` links between each self-Spec and the symbols
 that satisfy it are committed as a deterministic data seed:
 
 - **`livespec-spec-links.json`** — sorted list of
-  `{"spec_id": "SPEC-NNN", "qname": "<symbol qname>", "relation": "implements" | "tests"}`.
+  `{"spec_id": "auth-user-login", "qname": "<symbol qname>", "relation": "implements" | "tests"}`.
 
 ## Reproduce the links
 

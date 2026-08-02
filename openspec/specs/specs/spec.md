@@ -12,7 +12,7 @@ The livespec MCP server SHALL ensure that the system SHALL parse `@spec:` annota
 
 #### Scenario: Annotation scan
 
-- **WHEN** code contains `@spec:SPEC-001` and Specs exist
+- **WHEN** code contains `@spec:auth-user-login` and that Spec exists
 - **THEN** `scan_spec_annotations` creates or refreshes Spec↔symbol links
 
 ### Requirement: OpenSpec (Fission-AI) interoperability

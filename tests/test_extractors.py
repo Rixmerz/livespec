@@ -158,10 +158,10 @@ def test_ts_jsdoc_docstring_populated(tmp_path: Path):
  */
 export async function getManyChatToken() { return 'x'; }
 
-/** @spec:SPEC-001, SPEC-002 */
+/** @spec:auth-user-login, auth-session */
 function helper() {}
 
-// @spec:SPEC-009
+// @spec:untested-feature
 function lineCommented() {}
 """
     p = tmp_path / "main.ts"
@@ -170,13 +170,13 @@ function lineCommented() {}
     by_name = {s.name: s for s in result.symbols}
     assert "getManyChatToken" in by_name
     assert "@spec:BE-SPEC-016" in (by_name["getManyChatToken"].docstring or "")
-    assert "@spec:SPEC-001" in (by_name["helper"].docstring or "")
+    assert "@spec:auth-user-login" in (by_name["helper"].docstring or "")
     # // line comments are also kept so inline `@spec:` tags still match
-    assert "@spec:SPEC-009" in (by_name["lineCommented"].docstring or "")
+    assert "@spec:untested-feature" in (by_name["lineCommented"].docstring or "")
 
 
 def test_ts_jsdoc_wins_over_adjacent_separator_line_comment(tmp_path: Path):
-    """Bug from real session: `// ---\n/** @spec:SPEC-001 */\nfunction foo() {}`
+    """Bug from real session: `// ---\n/** @spec:auth-user-login */\nfunction foo() {}`
     used to concatenate raw text and run a single strip pass keyed on the
     leading `//`, leaving the block's `/**` mid-text and defeating the
     matcher's line-start anchor for `@spec:`. Each comment must be stripped
@@ -201,9 +201,9 @@ export async function getManyChatToken() { return 'x'; }
     # Pure separator line dropped — lead is the meaningful content.
     assert not sym.docstring.lstrip().startswith("---")
     # Block delimiters cleaned, so `@spec:` lives at line start.
-    hits = parse_annotations(sym.docstring)
+    hits = parse_annotations(sym.docstring, prefixes=("BE-SPEC",))
     spec_ids = {h.spec_id for h in hits}
-    assert "SPEC-016" in spec_ids, f"matcher missed @spec in {sym.docstring!r}"
+    assert "BE-SPEC-016" in spec_ids, f"matcher missed @spec in {sym.docstring!r}"
 
 
 def test_ts_jsdoc_skips_banner_with_internal_text(tmp_path: Path):

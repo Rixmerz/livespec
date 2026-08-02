@@ -6,23 +6,43 @@ follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Breaking — native `SPEC-NNN` dialect removed (OpenSpec slugs only)
+
+Hard cut, same spirit as the v0.20 RF→Spec rename: no import alias, no
+shape-match discovery, no mint.
+
+- **`## SPEC-NNN:` markdown import is gone.** `import_specs_from_markdown` /
+  config sync accept OpenSpec (`### Requirement:`) only; a native catalog
+  returns a shaped error asking to migrate under `openspec/`. `fmt="livespec"`
+  is removed.
+- **`@spec:SPEC-001` no longer matches by form.** The matcher derives
+  PREFIX-NNN prefixes only from ids already in the store (unmigrated rows);
+  an empty / slug-only store resolves annotations exclusively via `known_ids`.
+- **`create_spec` rejects `PREFIX-NNN` ids** (`SPEC-001`, `AUTH-12`, …). Omit
+  `spec_id` or pass an OpenSpec slug; collisions number the slug
+  (`ui-theme-selection-2`). `_next_spec_id` is deleted.
+- **`validate_openspec` treats tree-sourced legacy numeric ids as errors**
+  (not warnings). Drop the `<!-- livespec:id=SPEC-… -->` marker and
+  `sync_openspec` to adopt the slug in place (links kept). Markers with the
+  **slug** remain the rename pin — not a numeric dialect.
+- Teaching surface (playbook, Skill, README, presentation, prompts) no longer
+  documents the native catalog. Dogfood catalog pointer:
+  `docs/requirements/livespec-specs.md` → `openspec/specs/`.
+
 ### Changed — the docs teach OpenSpec ids, and this repo annotates with them
 
 The store migration was only half the job: every example an agent reads still
 said `@spec:SPEC-003`, and agents copy what they read.
 
 - Annotation examples across the agent playbook, quickstart, README, tool
-  docstrings and `spec_id` parameter description now use OpenSpec slugs
-  (`@spec:auth-user-login`). The legacy sections that describe `## SPEC-NNN`
-  import compat stay, marked as such. A prompt test now fails if a
-  `@spec:SPEC-` example creeps back into the playbook.
+  docstrings and `spec_id` parameter description use OpenSpec slugs
+  (`@spec:auth-user-login`). A prompt test fails if a `@spec:SPEC-` example
+  creeps back into the playbook.
 - livespec's own source is annotated with its own slugs — six anchor symbols
   (`index_project`, `extract`, `graph_pagerank`, `sync_openspec_tree`,
   `scan_annotations`, `connect`), which the indexer links automatically.
-- Documented what makes a slug matchable: it is recognized because it is a
-  spec id in the store, so the spec exists before the annotation. Both
-  confidence levels accept slugs — verified end to end, level 1 at 1.0 and
-  verb-anchored level 2 at 0.7.
+- A slug is matchable because it is a spec id in the store — the spec exists
+  before the annotation. Both confidence levels accept slugs (1.0 and 0.7).
 
 ### Changed — OpenSpec ids are the dialect, and migrating to them is free
 
@@ -41,10 +61,8 @@ marker cost every link the spec had.
   `propose_specs_from_codebase` fell back to `SPEC-NNN` when two titles
   produced the same slug, so a single clash switched dialects mid-project.
   They now number the slug: `ui-theme-selection-2`.
-- **`validate_openspec` names specs still pinned to a legacy id.** A warning
-  (not a gate) with the migration hint, only for specs that came from the tree
-  — a hand-written `SPEC-900` in the native catalog is nobody's business. Fires
-  13 times on livespec's pre-migration tree, 0 across 14 real repos today.
+- **`validate_openspec` names specs still pinned to a legacy id** (now an
+  **error** under the hard cut above), only for specs that came from the tree.
 
 ### Fixed — two dead ends the self-audit walked into
 

@@ -39,17 +39,17 @@ async def test_spec_coverage_derived_from_call_graph(workspace):
     async with Client(mcp) as c:
         await c.call_tool("index_project", {})
         await c.call_tool(
-            "create_spec", {"spec_id": "SPEC-001", "title": "Feature"}
+            "create_spec", {"spec_id": "auth-user-login", "title": "Feature"}
         )
         await c.call_tool(
             "link_spec_symbol",
-            {"spec_id": "SPEC-001", "symbol_qname": "pkg.feature.implementer"},
+            {"spec_id": "auth-user-login", "symbol_qname": "pkg.feature.implementer"},
         )
         out = (await c.call_tool("audit_coverage", {})).data
 
     by_id = {r["spec_id"]: r for r in out["spec_coverage"]}
-    assert "SPEC-001" in by_id, f"SPEC-001 missing from spec_coverage: {out['spec_coverage']}"
-    entry = by_id["SPEC-001"]
+    assert "auth-user-login" in by_id, f"auth-user-login missing from spec_coverage: {out['spec_coverage']}"
+    entry = by_id["auth-user-login"]
     assert entry["test_coverage_ratio"] > 0, (
         f"derived coverage should be > 0: {entry}"
     )
@@ -140,17 +140,17 @@ async def test_spec_coverage_explicit_link_without_call_edge(workspace):
     async with Client(mcp) as c:
         await c.call_tool("index_project", {})
         await c.call_tool(
-            "create_spec", {"spec_id": "SPEC-002", "title": "Harness-tested"}
+            "create_spec", {"spec_id": "auth-session", "title": "Harness-tested"}
         )
         await c.call_tool(
             "link_spec_symbol",
-            {"spec_id": "SPEC-002", "symbol_qname": "pkg.feature.implementer"},
+            {"spec_id": "auth-session", "symbol_qname": "pkg.feature.implementer"},
         )
         # Explicit tests link to the impl symbol itself (the only signal).
         await c.call_tool(
             "link_spec_symbol",
             {
-                "spec_id": "SPEC-002",
+                "spec_id": "auth-session",
                 "symbol_qname": "pkg.feature.implementer",
                 "relation": "tests",
             },
@@ -158,8 +158,8 @@ async def test_spec_coverage_explicit_link_without_call_edge(workspace):
         out = (await c.call_tool("audit_coverage", {})).data
 
     by_id = {r["spec_id"]: r for r in out["spec_coverage"]}
-    assert "SPEC-002" in by_id, f"SPEC-002 missing: {out['spec_coverage']}"
-    entry = by_id["SPEC-002"]
+    assert "auth-session" in by_id, f"auth-session missing: {out['spec_coverage']}"
+    entry = by_id["auth-session"]
     assert entry["test_coverage_ratio"] > 0, (
         f"explicit-link coverage should be > 0: {entry}"
     )
@@ -189,17 +189,17 @@ async def test_spec_coverage_zero_when_nothing_reaches_impl(workspace):
     async with Client(mcp) as c:
         await c.call_tool("index_project", {})
         await c.call_tool(
-            "create_spec", {"spec_id": "SPEC-003", "title": "Untested"}
+            "create_spec", {"spec_id": "untested-feature", "title": "Untested"}
         )
         await c.call_tool(
             "link_spec_symbol",
-            {"spec_id": "SPEC-003", "symbol_qname": "pkg.feature.untested_impl"},
+            {"spec_id": "untested-feature", "symbol_qname": "pkg.feature.untested_impl"},
         )
         out = (await c.call_tool("audit_coverage", {})).data
 
     by_id = {r["spec_id"]: r for r in out["spec_coverage"]}
-    assert "SPEC-003" in by_id, f"SPEC-003 missing: {out['spec_coverage']}"
-    entry = by_id["SPEC-003"]
+    assert "untested-feature" in by_id, f"untested-feature missing: {out['spec_coverage']}"
+    entry = by_id["untested-feature"]
     assert entry["test_coverage_ratio"] == 0.0, (
         f"no test reaches the impl, no explicit link → ratio 0: {entry}"
     )
@@ -233,15 +233,15 @@ async def test_spec_coverage_from_lcov_report_without_static_call_edge(workspace
     async with Client(mcp) as c:
         await c.call_tool("index_project", {})
         await c.call_tool(
-            "create_spec", {"spec_id": "SPEC-004", "title": "Report-covered"}
+            "create_spec", {"spec_id": "report-covered", "title": "Report-covered"}
         )
         await c.call_tool(
             "link_spec_symbol",
-            {"spec_id": "SPEC-004", "symbol_qname": "src.feature.reportCovered"},
+            {"spec_id": "report-covered", "symbol_qname": "src.feature.reportCovered"},
         )
         out = (await c.call_tool("audit_coverage", {})).data
 
-    entry = {r["spec_id"]: r for r in out["spec_coverage"]}["SPEC-004"]
+    entry = {r["spec_id"]: r for r in out["spec_coverage"]}["report-covered"]
     assert entry["test_coverage_ratio"] == 1.0, entry
     assert entry["coverage_source"] == "report", entry
 
@@ -265,16 +265,16 @@ async def test_spec_coverage_backward_compat_explicit_fields_intact(workspace):
     async with Client(mcp) as c:
         await c.call_tool("index_project", {})
         await c.call_tool(
-            "create_spec", {"spec_id": "SPEC-200", "title": "Tested"}
+            "create_spec", {"spec_id": "tested-feature", "title": "Tested"}
         )
         await c.call_tool(
             "link_spec_symbol",
-            {"spec_id": "SPEC-200", "symbol_qname": "pkg.feature.implementer"},
+            {"spec_id": "tested-feature", "symbol_qname": "pkg.feature.implementer"},
         )
         await c.call_tool(
             "link_spec_symbol",
             {
-                "spec_id": "SPEC-200",
+                "spec_id": "tested-feature",
                 "symbol_qname": "pkg.feature.test_runner",
                 "relation": "tests",
             },
@@ -286,9 +286,9 @@ async def test_spec_coverage_backward_compat_explicit_fields_intact(workspace):
         f"explicit specs_with_linked_tests must be intact: {out['counts']}"
     )
     assert any(
-        r["spec_id"] == "SPEC-200" and r["test_count"] == 1
+        r["spec_id"] == "tested-feature" and r["test_count"] == 1
         for r in out["spec_test_coverage"]
-    ), f"SPEC-200 must still be in spec_test_coverage: {out['spec_test_coverage']}"
+    ), f"tested-feature must still be in spec_test_coverage: {out['spec_test_coverage']}"
     # New auto-derived block coexists.
     by_id = {r["spec_id"]: r for r in out["spec_coverage"]}
-    assert "SPEC-200" in by_id
+    assert "tested-feature" in by_id

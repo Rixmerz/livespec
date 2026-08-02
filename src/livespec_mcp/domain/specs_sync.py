@@ -7,9 +7,8 @@ from pathlib import Path
 from typing import Any
 
 from livespec_mcp.domain.md_specs import (
-    detect_spec_format,
+    UnsupportedSpecCatalogError,
     parse_openspec_markdown,
-    parse_specs_markdown,
 )
 
 # spec_symbol.relation is a free-text column, but the query surface only knows
@@ -43,10 +42,13 @@ def scan_duplicate_spec_markdown_specs(
         except OSError:
             continue
         scanned += 1
-        # Reuse the real parser so this heuristic agrees with it — in
-        # particular it skips `## SPEC-NNN:` headers shown inside ``` fenced
-        # code blocks, which would otherwise raise phantom duplicate warnings.
-        for spec in parse_specs_markdown(text):
+        # OpenSpec only — skip files that still use the removed ## SPEC-NNN
+        # dialect (or that aren't requirement files at all).
+        try:
+            parsed = parse_openspec_markdown(text)
+        except UnsupportedSpecCatalogError:
+            continue
+        for spec in parsed:
             spec_id = spec.spec_id
             by_spec.setdefault(spec_id, [])
             if rel not in by_spec[spec_id]:
@@ -72,9 +74,8 @@ def _sync_spec_scenarios(
 ) -> None:
     """Reconcile a spec's ``spec_scenario`` rows against a parsed scenario list.
 
-    No-op when ``scenarios`` is empty so a native ``## SPEC-NNN:`` re-import
-    (which never carries scenarios) does not wipe scenarios that an OpenSpec
-    import populated for the same spec_id.
+    No-op when ``scenarios`` is empty so a re-import that carries no
+    ``#### Scenario:`` blocks does not wipe scenarios already linked.
 
     **Upsert, not replace:** scenarios are matched by ``(spec_id, name)`` and
     updated in place; scenarios no longer present are deleted. This preserves
@@ -171,21 +172,25 @@ def import_specs_from_markdown_file(
     st: Any,
     path: str | Path,
     *,
-    fmt: str = "auto",
+    fmt: str = "openspec",
     check_duplicates: bool = True,
     source: str = "markdown",
 ) -> dict[str, Any]:
     """Shared import logic for MCP tool and index post-hook.
 
-    ``fmt`` selects the source dialect: ``"livespec"`` (native
-    ``## SPEC-NNN:`` headers), ``"openspec"`` (Fission-AI OpenSpec
-    ``### Requirement:`` anchors), or ``"auto"`` (default — sniff per file,
-    and treat a directory ``path`` as an OpenSpec tree).
+    OpenSpec only (``### Requirement:``). ``fmt`` is accepted for call-site
+    compatibility but only ``"openspec"`` / ``"auto"`` are valid — the native
+    ``## SPEC-NNN:`` dialect is removed. A directory ``path`` is walked as an
+    OpenSpec tree.
 
     ``source`` is stamped on every spec written, so a later full-tree sync can
     tell its own specs from hand-made ones. The result carries ``spec_ids``
     (everything this pass wrote) for the caller that needs to compare.
     """
+    if fmt not in ("openspec", "auto"):
+        raise UnsupportedSpecCatalogError(
+            f"fmt={fmt!r} is removed — OpenSpec only (fmt='openspec' or 'auto')"
+        )
     pid = st.project_id
     p = Path(path)
     if not p.is_absolute():
@@ -193,17 +198,10 @@ def import_specs_from_markdown_file(
     if not p.exists():
         raise FileNotFoundError(str(p))
     if p.is_dir():
-        # A directory is only meaningful as an OpenSpec tree — the native
-        # format is single-file.
         parsed = _parse_openspec_tree(p)
     else:
         text = p.read_text(encoding="utf-8", errors="replace")
-        chosen = detect_spec_format(text) if fmt == "auto" else fmt
-        parsed = (
-            parse_openspec_markdown(text)
-            if chosen == "openspec"
-            else parse_specs_markdown(text)
-        )
+        parsed = parse_openspec_markdown(text)
     created = 0
     updated = 0
     adopted: list[str] = []

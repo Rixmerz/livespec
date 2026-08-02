@@ -38,8 +38,12 @@ def test_matcher_golden_dataset():
     for case in cases:
         text = case["text"]
         expected = case["expected"]
+        known_ids = case.get("known_ids")
         got = sorted(
-            (_hit_to_dict(h) for h in parse_annotations(text)),
+            (
+                _hit_to_dict(h)
+                for h in parse_annotations(text, known_ids=known_ids or ())
+            ),
             key=lambda d: (d["spec_id"], d["relation"]),
         )
         exp_sorted = sorted(expected, key=lambda d: (d["spec_id"], d["relation"]))

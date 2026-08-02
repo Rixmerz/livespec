@@ -25,7 +25,7 @@ async def test_findings_grouped_and_project_level_flag_on_large_corpus(workspace
             await c.call_tool(
                 "create_spec",
                 {
-                    "spec_id": f"SPEC-{i:03d}",
+                    "spec_id": f"validate-spec-{i:03d}",
                     "title": f"Spec {i}",
                     "description": "The system SHALL do the thing.",
                 },
@@ -53,16 +53,15 @@ async def test_valid_reflects_only_errors_not_warnings(workspace):
         await c.call_tool("index_project", {})
         await c.call_tool(
             "create_spec",
-            {"spec_id": "SPEC-900", "title": "No scenario", "description": "The app SHALL do X."},
+            {"spec_id": "handmade-rule", "title": "No scenario", "description": "The app SHALL do X."},
         )
         loose = (await c.call_tool("validate_openspec", {})).data
         strict = (await c.call_tool("validate_openspec", {"strict": True})).data
 
-    # Non-strict: missing-scenario is a warning only -> valid stays True.
     assert loose["valid"] is True
     assert loose["warning_count"] >= 1
     assert loose["error_count"] == 0
-    assert "SPEC-900" in loose["specs_without_scenarios"]
+    assert "handmade-rule" in loose["specs_without_scenarios"]
 
     # Strict: the same finding is promoted to an error -> valid flips.
     assert strict["valid"] is False

@@ -147,11 +147,11 @@ def validate_openspec(
             # Always an error, unconditionally (missing title is never OK).
             _record("error", "requirement has no title", sid, title)
 
-        # OpenSpec identifies a requirement by its heading. A spec that came
-        # from the tree yet answers to `SPEC-007` is pinned by a leftover id
-        # marker, so the id says nothing about what the requirement is.
+        # OpenSpec identifies a requirement by its heading. A tree-sourced
+        # row that still answers to `SPEC-007` is pinned by a leftover id
+        # marker — hard error now that PREFIX-NNN is removed.
         if r["source"] == "openspec" and _LEGACY_ID_RE.match(sid or ""):
-            _record("warning", LEGACY_ID_ISSUE, sid, title)
+            _record("error", LEGACY_ID_ISSUE, sid, title)
 
         if r["scenario_count"] == 0:
             without_scenarios.append(sid)

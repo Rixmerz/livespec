@@ -43,11 +43,19 @@ Todo el stack es local-first: 0 servicios externos, 0 API keys obligatorias, 0 D
 
 ## 3. Estado actual
 
-**HEAD: backlog del barrido cerrado (puntos 1, 2 y 3) + anotaciones huérfanas visibles + specs fantasma + vocabulario unificado + ids OpenSpec como único dialecto. Tests 660.**
-Sin tag nuevo — todo bajo `[Unreleased]`.
+**HEAD: hard-cut del dialecto nativo `SPEC-NNN` — solo slugs OpenSpec. Tests 660.**
+Sin tag nuevo — todo bajo `[Unreleased]` (**BREAKING**).
 
 Qué landeó, con evidencia sobre repos reales (antes → después):
 
+- **Hard-cut `SPEC-NNN` (estilo v0.20 RF→Spec).** Fuera: import `## SPEC-NNN`,
+  `fmt="livespec"`, mint `_next_spec_id`, match de `@spec:SPEC-001` por forma,
+  docs que enseñan el catálogo nativo. Dentro: slugs OpenSpec, árbol
+  `openspec/`, anotaciones vía `known_ids` del store, markers
+  `<!-- livespec:id=<slug> -->` como pin de rename. `create_spec` rechaza
+  `PREFIX-NNN` (`^[A-Za-z]+-\d+$`); `validate_openspec` trata ids numéricos
+  tree-sourced como **error**. Dogfood: `sync_openspec` 13 updated,
+  `validate_openspec(strict=True)` green, `scan_annotations` 0 unknown.
 - **IDs de rutas call-style navegables.** Una ruta Express/Hono con arrow
   inline se reportaba como `swagger.js:459` y toda tool que toma símbolo
   respondía `Symbol not found`. El arrow no tiene símbolo propio, pero
@@ -56,29 +64,17 @@ Qué landeó, con evidencia sobre repos reales (antes → después):
   sus edges *son* los del handler. Nuevo campo `handler_resolution`
   (`handler` | `enclosing_scope` | `unresolved`). 13 repos reales:
   **93 endpoints call-style, IDs muertos 14 → 0**, sin cambiar el conteo.
-- **La superficie que enseña también habla OpenSpec.** Los ejemplos de
-  anotación en playbook, quickstart, README, docstrings de tools y la
-  descripción de `spec_id` usan slugs (`@spec:auth-user-login`); las secciones
-  de compat legacy (`## SPEC-NNN`) siguen, marcadas como tales, y un test de
-  prompt falla si vuelve a colarse un ejemplo `@spec:SPEC-`. Además el propio
-  código de livespec está anotado con sus propios slugs en seis símbolos ancla
+- **La superficie que enseña solo habla OpenSpec.** Playbook, Skill, README,
+  presentación y prompts usan slugs; un test de prompt falla si vuelve
+  `@spec:SPEC-`. El código de livespec está anotado con slugs en seis anclas
   (`index_project`, `extract`, `graph_pagerank`, `sync_openspec_tree`,
-  `scan_annotations`, `connect`) y el indexer los enlaza solo. Un slug se
-  reconoce porque **es** un id en el store, así que la spec existe antes que la
-  anotación; ambos niveles de confianza aceptan slugs (1.0 y 0.7 verificados).
-- **Los ids OpenSpec ya son el único dialecto, y migrar sale gratis.** El
-  dogfooding sobre el propio repo mostró que nuestro árbol seguía clavando
-  `SPEC-001…013` con marcadores `<!-- livespec:id=… -->`, porque soltarlos
-  costaba todos los links. Ahora, misma capability + mismo heading con id
-  distinto = la misma requirement: la fila conserva su PK (links, escenarios,
-  historia) y pasa a responder al slug; `sync_openspec` los lista en
-  `adopted`. Migramos nuestro árbol: 13 specs a slugs conservando los **191**
-  links (antes forkeaba las 13 y retiraba las originales). Un heading
-  cambiado sigue siendo requirement nueva. Además: una colisión de slug se
-  resuelve numerando el slug (`ui-theme-selection-2`) en vez de saltar a
-  `SPEC-NNN`, y `validate_openspec` avisa (warning, no gate) cuando una spec
-  venida del árbol sigue con id legacy — 13 en nuestro árbol pre-migración,
-  0 en los 14 repos reales de hoy.
+  `scan_annotations`, `connect`). Un slug se reconoce porque **es** un id en
+  el store.
+- **Migrar de un pin legacy sale gratis.** Misma capability + mismo heading
+  con id distinto = la misma requirement: la fila conserva PK (links,
+  escenarios, historia) y pasa al slug; `sync_openspec` los lista en
+  `adopted`. Nuestro árbol: 13 specs a slugs con **191** links. Colisión de
+  slug → `ui-theme-selection-2`, nunca `SPEC-NNN`.
 - **Dos callejones sin salida que encontró la propia auditoría.** Borrado
   `_route_handler_name` (wrapper sin llamadores que detectó `find_dead_code`
   sobre nosotros mismos) y `find_orphan_tests` ya no reporta

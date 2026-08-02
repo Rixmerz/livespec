@@ -18,13 +18,13 @@ async def _create_rfs(client, *spec_ids: str) -> None:
 async def test_link_and_walk_dependencies(workspace):
     async with Client(mcp) as c:
         await c.call_tool("index_project", {})
-        await _create_rfs(c, "SPEC-001", "SPEC-002", "SPEC-003")
+        await _create_rfs(c, "auth-user-login", "auth-session", "report-covered")
 
-        # SPEC-002 requires SPEC-001; SPEC-003 extends SPEC-002
+        # auth-session requires auth-user-login; report-covered extends auth-session
         out = (
             await c.call_tool(
                 "link_spec_dependency",
-                {"parent_spec_id": "SPEC-002", "child_spec_id": "SPEC-001"},
+                {"parent_spec_id": "auth-session", "child_spec_id": "auth-user-login"},
             )
         ).data
         assert out["linked"] is True
@@ -32,33 +32,33 @@ async def test_link_and_walk_dependencies(workspace):
         out = (
             await c.call_tool(
                 "link_spec_dependency",
-                {"parent_spec_id": "SPEC-003", "child_spec_id": "SPEC-002", "kind": "extends"},
+                {"parent_spec_id": "report-covered", "child_spec_id": "auth-session", "kind": "extends"},
             )
         ).data
         assert out["linked"] is True
 
-        # Forward from SPEC-003: should reach SPEC-002 and SPEC-001
+        # Forward from report-covered: should reach auth-session and auth-user-login
         fwd = (
             await c.call_tool(
                 "get_spec_dependency_graph",
-                {"spec_id": "SPEC-003", "direction": "forward"},
+                {"spec_id": "report-covered", "direction": "forward"},
             )
         ).data
         node_ids = {n["spec_id"] for n in fwd["nodes"]}
-        assert {"SPEC-001", "SPEC-002", "SPEC-003"} <= node_ids
+        assert {"auth-user-login", "auth-session", "report-covered"} <= node_ids
         edge_pairs = {(e["parent"], e["child"]) for e in fwd["edges"]}
-        assert ("SPEC-003", "SPEC-002") in edge_pairs
-        assert ("SPEC-002", "SPEC-001") in edge_pairs
+        assert ("report-covered", "auth-session") in edge_pairs
+        assert ("auth-session", "auth-user-login") in edge_pairs
 
-        # Backward from SPEC-001: who depends on me?
+        # Backward from auth-user-login: who depends on me?
         back = (
             await c.call_tool(
                 "get_spec_dependency_graph",
-                {"spec_id": "SPEC-001", "direction": "backward"},
+                {"spec_id": "auth-user-login", "direction": "backward"},
             )
         ).data
         back_ids = {n["spec_id"] for n in back["nodes"]}
-        assert {"SPEC-001", "SPEC-002", "SPEC-003"} <= back_ids
+        assert {"auth-user-login", "auth-session", "report-covered"} <= back_ids
 
 
 @pytest.mark.asyncio
@@ -128,36 +128,36 @@ async def test_analyze_impact_cascades_through_dependents(workspace):
     (pkg / "__init__.py").write_text("")
     (pkg / "auth.py").write_text(
         "def verify():\n"
-        '    """@spec:SPEC-001"""\n'
+        '    """@spec:auth-user-login"""\n'
         "    return True\n"
     )
     (pkg / "api.py").write_text(
         "from pkg.auth import verify\n"
         "\n"
         "def handle():\n"
-        '    """@spec:SPEC-002"""\n'
+        '    """@spec:auth-session"""\n'
         "    return verify()\n"
     )
 
     async with Client(mcp) as c:
         await c.call_tool("index_project", {})
-        await _create_rfs(c, "SPEC-001", "SPEC-002")
+        await _create_rfs(c, "auth-user-login", "auth-session")
         await c.call_tool("scan_spec_annotations", {})
-        # SPEC-002 (api) requires SPEC-001 (auth)
+        # auth-session (api) requires auth-user-login (auth)
         await c.call_tool(
             "link_spec_dependency",
-            {"parent_spec_id": "SPEC-002", "child_spec_id": "SPEC-001"},
+            {"parent_spec_id": "auth-session", "child_spec_id": "auth-user-login"},
         )
 
         out = (
             await c.call_tool(
                 "analyze_impact",
-                {"target_type": "spec", "target": "SPEC-001"},
+                {"target_type": "spec", "target": "auth-user-login"},
             )
         ).data
-        # impact of changing SPEC-001 must mention SPEC-002 as a dependent
+        # impact of changing auth-user-login must mention auth-session as a dependent
         dep_ids = {r["spec_id"] for r in out["dependent_specs"]}
-        assert "SPEC-002" in dep_ids, f"SPEC-002 should cascade as dependent: {out}"
+        assert "auth-session" in dep_ids, f"auth-session should cascade as dependent: {out}"
         # implementing_symbols must include both auth.verify and api.handle
         impl_qnames = {s["qualified_name"] for s in out["implementing_symbols"]}
         assert "pkg.auth.verify" in impl_qnames

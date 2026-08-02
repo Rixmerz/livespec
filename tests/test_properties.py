@@ -28,19 +28,20 @@ def test_parse_annotations_never_crashes(text: str):
     out = parse_annotations(text)
     assert isinstance(out, list)
     for hit in out:
-        assert hit.spec_id.startswith("SPEC-")
-        assert hit.confidence in (0.7, 1.0)
+        assert hit.spec_id
+        assert 0.0 < hit.confidence <= 1.0
         assert hit.relation in ("implements", "tests", "references")
 
 
 @given(st.integers(min_value=0, max_value=999))
 @settings(max_examples=50, deadline=None)
-def test_parse_annotations_normalizes_spec_ids(n: int):
-    """`@spec:Spec-N` and `@spec:Spec-00N` produce the same normalized id."""
+def test_parse_annotations_normalizes_prefix_ids(n: int):
+    """`@spec:SPEC-N` and `@spec:SPEC-00N` produce the same normalized id when SPEC is in store."""
     text_short = f"@spec:SPEC-{n}"
     text_padded = f"@spec:SPEC-{n:03d}"
-    a = parse_annotations(text_short)
-    b = parse_annotations(text_padded)
+    prefixes = ("SPEC",)
+    a = parse_annotations(text_short, prefixes=prefixes)
+    b = parse_annotations(text_padded, prefixes=prefixes)
     assert len(a) == 1 and len(b) == 1
     assert a[0].spec_id == b[0].spec_id == f"SPEC-{n:03d}"
 

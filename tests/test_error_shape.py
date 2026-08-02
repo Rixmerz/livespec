@@ -93,15 +93,15 @@ async def test_self_link_spec_dependency_error_shape(workspace):
 async def test_cycle_error_shape_includes_hint(workspace):
     async with Client(mcp) as c:
         await c.call_tool("index_project", {})
-        for r in ("SPEC-1", "SPEC-2"):
+        for r in ("spec-alpha", "spec-beta"):
             await c.call_tool("create_spec", {"spec_id": r, "title": r})
         await c.call_tool(
-            "link_spec_dependency", {"parent_spec_id": "SPEC-1", "child_spec_id": "SPEC-2"}
+            "link_spec_dependency", {"parent_spec_id": "spec-alpha", "child_spec_id": "spec-beta"}
         )
         out = (
             await c.call_tool(
                 "link_spec_dependency",
-                {"parent_spec_id": "SPEC-2", "child_spec_id": "SPEC-1"},
+                {"parent_spec_id": "spec-beta", "child_spec_id": "spec-alpha"},
             )
         ).data
         _assert_canonical_error(out, must_have_hint=True)

@@ -104,7 +104,7 @@ PARAM_DESCRIPTIONS: dict[str, str] = {
     ),
     "spec_id": (
         "OpenSpec requirement id — the slug derived from its heading, e.g. "
-        "``auth-user-login``. Legacy ``SPEC-042`` ids still resolve."
+        "``auth-user-login``."
     ),
     "parent_spec_id": "Parent Spec id for a Spec→Spec dependency edge.",
     "child_spec_id": "Child Spec id for a Spec→Spec dependency edge.",
@@ -126,7 +126,7 @@ PARAM_DESCRIPTIONS: dict[str, str] = {
     "dry_run": "If true, validate/apply preview without writing Spec changes.",
     "openspec_dir": "Path to the ``openspec/`` directory (default: ``<workspace>/openspec``).",
     "scope": "Search scope: ``code``, ``spec``, or ``all`` (FTS5 over AST chunks / Specs).",
-    "fmt": "Markdown dialect hint: ``auto``, ``openspec``, or ``livespec`` native.",
+    "fmt": "OpenSpec only: ``openspec`` or ``auto`` (native ``## SPEC-NNN`` removed).",
     "path": "Filesystem path to a markdown Spec file or tree to import.",
     "title": "Human-readable Spec title.",
     "description": "Longer Spec description / body text.",

@@ -74,25 +74,25 @@ async def test_requirement_crud_and_link(sample_repo):
         spec = (
             await c.call_tool(
                 "create_spec",
-                {"title": "Login flow", "spec_id": "SPEC-001", "priority": "high"},
+                {"title": "Login flow", "spec_id": "auth-user-login", "priority": "high"},
             )
         ).data
-        assert spec["spec_id"] == "SPEC-001"
+        assert spec["spec_id"] == "auth-user-login"
 
         rf2 = (
             await c.call_tool(
                 "create_spec",
-                {"title": "API surface", "spec_id": "SPEC-002"},
+                {"title": "API surface", "spec_id": "auth-session"},
             )
         ).data
-        assert rf2["spec_id"] == "SPEC-002"
+        assert rf2["spec_id"] == "auth-session"
 
-        # Annotation scan should link SPEC-001 -> pkg.auth.login via @spec: in docstring
+        # Annotation scan should link auth-user-login -> pkg.auth.login via @spec: in docstring
         scan = (await c.call_tool("scan_spec_annotations", {})).data
         assert scan["links_created"] >= 1
 
         impl = (
-            await c.call_tool("get_spec_implementation", {"spec_id": "SPEC-001"})
+            await c.call_tool("get_spec_implementation", {"spec_id": "auth-user-login"})
         ).data
         qnames = {s["qualified_name"] for s in impl["symbols"]}
         assert "pkg.auth.login" in qnames
@@ -101,7 +101,7 @@ async def test_requirement_crud_and_link(sample_repo):
         linked = (
             await c.call_tool(
                 "link_spec_symbol",
-                {"spec_id": "SPEC-002", "symbol_qname": "pkg.api.API.handle"},
+                {"spec_id": "auth-session", "symbol_qname": "pkg.api.API.handle"},
             )
         ).data
         assert linked["linked"] is True
@@ -109,10 +109,10 @@ async def test_requirement_crud_and_link(sample_repo):
         impact = (
             await c.call_tool(
                 "analyze_impact",
-                {"target_type": "spec", "target": "SPEC-001"},
+                {"target_type": "spec", "target": "auth-user-login"},
             )
         ).data
-        assert impact["spec_id"] == "SPEC-001"
+        assert impact["spec_id"] == "auth-user-login"
         assert len(impact["implementing_symbols"]) >= 1
 
 

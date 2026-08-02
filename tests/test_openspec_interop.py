@@ -106,14 +106,18 @@ async def test_import_persists_scenarios(sample_repo):
 
 
 @pytest.mark.asyncio
-async def test_native_reimport_keeps_scenarios(sample_repo):
-    """A native ## SPEC-NNN re-import must not wipe scenarios another import set."""
+async def test_native_reimport_rejects_legacy_catalog(sample_repo):
+    """Native ## SPEC-NNN re-import is rejected (OpenSpec-only)."""
     (sample_repo / "os.md").write_text(CANONICAL)
     (sample_repo / "native.md").write_text("## SPEC-010: Something\ndesc\n")
     async with Client(mcp) as c:
         await c.call_tool("index_project", {})
         await c.call_tool("import_specs_from_markdown", {"path": "os.md"})
-        await c.call_tool("import_specs_from_markdown", {"path": "native.md"})
+        native = (
+            await c.call_tool("import_specs_from_markdown", {"path": "native.md"})
+        ).data
+        assert native.get("isError") is True
+        assert "SPEC-NNN" in native["error"]
         impl = (
             await c.call_tool(
                 "get_spec_implementation", {"spec_id": "theme-selection"}
@@ -134,10 +138,10 @@ async def test_validate_openspec_flags_missing_scenario(sample_repo):
         # Add a spec with no scenario via create_spec.
         await c.call_tool(
             "create_spec",
-            {"title": "No scenario", "description": "The app SHALL do X.", "spec_id": "SPEC-900"},
+            {"title": "No scenario", "description": "The app SHALL do X.", "spec_id": "handmade-rule"},
         )
         loose = (await c.call_tool("validate_openspec", {})).data
-        assert "SPEC-900" in loose["specs_without_scenarios"]
+        assert "handmade-rule" in loose["specs_without_scenarios"]
         assert loose["valid"] is True  # non-strict: scenario gap is a warning
 
         strict = (await c.call_tool("validate_openspec", {"strict": True})).data
@@ -171,14 +175,14 @@ async def test_export_roundtrip(sample_repo):
 
 
 @pytest.mark.asyncio
-async def test_export_preserves_numeric_spec_id(sample_repo):
-    """create_spec(SPEC-001) → export → sync must not mint a duplicate slug id."""
+async def test_export_preserves_slug_spec_id(sample_repo):
+    """create_spec(slug) → export → sync must not mint a duplicate slug id."""
     async with Client(mcp) as c:
         await c.call_tool("index_project", {})
         await c.call_tool(
             "create_spec",
             {
-                "spec_id": "SPEC-001",
+                "spec_id": "auth-user-login",
                 "title": "Indexing & workspace walk",
                 "module": "indexing",
                 "description": "Walk the workspace.",
@@ -189,11 +193,10 @@ async def test_export_preserves_numeric_spec_id(sample_repo):
         assert result["specs_written"] == 1
 
     exported = (sample_repo / "out" / "specs" / "indexing" / "spec.md").read_text()
-    assert "<!-- livespec:id=SPEC-001 -->" in exported
+    assert "<!-- livespec:id=auth-user-login -->" in exported
     reparsed = parse_openspec_markdown(exported, capability="indexing")
-    assert reparsed[0].spec_id == "SPEC-001"
+    assert reparsed[0].spec_id == "auth-user-login"
 
-    # Import into a second pass: still SPEC-001, not indexing-indexing-...
     async with Client(mcp) as c:
         synced = (
             await c.call_tool(
@@ -204,9 +207,9 @@ async def test_export_preserves_numeric_spec_id(sample_repo):
         assert synced.get("updated", 0) + synced.get("created", 0) >= 1
         listed = (await c.call_tool("list_specs", {})).data
         ids = {s["spec_id"] for s in listed["specs"]}
-        assert "SPEC-001" in ids
+        assert "auth-user-login" in ids
         assert not any(
-            s.startswith("indexing-") and s != "SPEC-001" for s in ids
+            s.startswith("indexing-") and s != "auth-user-login" for s in ids
         )
 
 
@@ -596,13 +599,13 @@ async def test_sweep_leaves_hand_made_specs_alone(sample_repo):
     async with Client(mcp) as c:
         await c.call_tool("index_project", {})
         await c.call_tool(
-            "create_spec", {"title": "Handmade rule", "spec_id": "SPEC-900"}
+            "create_spec", {"title": "Handmade rule", "spec_id": "handmade-rule"}
         )
         synced = (await c.call_tool("sync_openspec", {})).data
         assert "retired" not in synced["specs"], synced
 
         specs = {s["spec_id"]: s for s in (await c.call_tool("list_specs", {})).data["specs"]}
-        assert specs["SPEC-900"]["status"] != "deprecated"
+        assert specs["handmade-rule"]["status"] != "deprecated"
 
 
 CANONICAL_PINNED = CANONICAL.replace(
@@ -676,10 +679,10 @@ async def test_validate_names_the_specs_still_pinned_to_a_legacy_id(sample_repo)
         report = (await c.call_tool("validate_openspec", {})).data
         legacy = [f for f in report["findings"] if "legacy numeric id" in f["issue"]]
         assert len(legacy) == 1, report["findings"]
-        assert legacy[0]["severity"] == "warning"
+        assert legacy[0]["severity"] == "error"
         assert [s["spec_id"] for s in legacy[0]["sample"]] == ["SPEC-042"]
         assert "sync_openspec" in legacy[0]["hint"]
-        assert report["valid"] is True  # advisory, not a gate
+        assert report["valid"] is False
 
         # Migrating silences it without any other change.
         (tree / "spec.md").write_text(CANONICAL)
@@ -693,6 +696,19 @@ async def test_a_hand_made_numeric_id_is_not_the_trees_business(sample_repo):
     """Only tree-sourced specs are held to OpenSpec ids."""
     async with Client(mcp) as c:
         await c.call_tool("index_project", {})
-        await c.call_tool("create_spec", {"title": "Hand made", "spec_id": "SPEC-900"})
+        rejected = (
+            await c.call_tool("create_spec", {"title": "Hand made", "spec_id": "SPEC-900"})
+        ).data
+        assert rejected.get("isError") is True
+        # Historic unmigrated row (direct SQL) is not the tree's business.
+        from livespec_mcp.state import get_state
+
+        st = get_state(str(sample_repo))
+        st.conn.execute(
+            "INSERT INTO spec(project_id, spec_id, title, description, status) "
+            "VALUES (?, 'SPEC-900', 'Hand made', 'The app SHALL work.', 'active')",
+            (st.project_id,),
+        )
+        st.conn.commit()
         report = (await c.call_tool("validate_openspec", {})).data
         assert not [f for f in report["findings"] if "legacy numeric id" in f["issue"]]

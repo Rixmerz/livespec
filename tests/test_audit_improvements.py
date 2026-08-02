@@ -13,19 +13,54 @@ from livespec_mcp.state import get_state
 from livespec_mcp.tools.analysis import compute_endpoints, filter_api_endpoints
 from livespec_mcp.tools.plugins import CORE_PLUGIN_TOOL_NAMES, SPEC_MUTATION_TOOL_NAMES
 
+OPENSPEC_DUP = """\
+# Auth Specification
+
+## Purpose
+Auth flows.
+
+## Requirements
+
+### Requirement: Login flow
+The app SHALL authenticate users.
+
+#### Scenario: Valid credentials
+- **WHEN** credentials are valid
+- **THEN** the user is logged in
+"""
+
+OPENSPEC_SYNC = """\
+# Sync Specification
+
+## Purpose
+Sync test.
+
+## Requirements
+
+### Requirement: Sync test
+The app SHALL sync specs from config.
+
+#### Scenario: Config import
+- **WHEN** sync runs
+- **THEN** specs are imported
+"""
+
 
 def test_import_requirements_always_visible():
     assert "import_specs_from_markdown" in CORE_PLUGIN_TOOL_NAMES
     assert "import_specs_from_markdown" not in SPEC_MUTATION_TOOL_NAMES
 
 
-def test_duplicate_rf_spec_warning(tmp_path: Path):
-    (tmp_path / "a.md").write_text("## SPEC-001: One\n", encoding="utf-8")
+def test_duplicate_openspec_warning(tmp_path: Path):
+    (tmp_path / "a.md").write_text(OPENSPEC_DUP, encoding="utf-8")
     (tmp_path / "docs").mkdir()
-    (tmp_path / "docs" / "b.md").write_text("## SPEC-001: Duplicate\n", encoding="utf-8")
+    (tmp_path / "docs" / "b.md").write_text(
+        OPENSPEC_DUP.replace("Auth Specification", "Auth copy"),
+        encoding="utf-8",
+    )
     warns = scan_duplicate_spec_markdown_specs(tmp_path)
     assert len(warns) == 1
-    assert warns[0]["spec_id"] == "SPEC-001"
+    assert warns[0]["spec_id"] == "login-flow"
 
 
 def test_filter_endpoints_excludes_pytest_fixtures(workspace: Path):
@@ -53,7 +88,7 @@ def test_filter_endpoints_excludes_pytest_fixtures(workspace: Path):
 def test_specs_sync_from_config(tmp_path: Path):
     spec = tmp_path / "docs" / "spec.md"
     spec.parent.mkdir(parents=True)
-    spec.write_text("## SPEC-010: Sync test\n**Prioridad:** alta\n", encoding="utf-8")
+    spec.write_text(OPENSPEC_SYNC, encoding="utf-8")
     (tmp_path / ".livespec.toml").write_text(
         '[specs]\nsync_from = ["docs/spec.md"]\n',
         encoding="utf-8",

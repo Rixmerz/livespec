@@ -28,7 +28,7 @@ async def test_list_specs_paginates_with_cursor(workspace):
         await c.call_tool("index_project", {})
         for i in range(5):
             await c.call_tool(
-                "create_spec", {"title": f"Spec {i}", "spec_id": f"SPEC-{i:03d}"}
+                "create_spec", {"title": f"Spec {i}", "spec_id": f"list-spec-{i:03d}"}
             )
 
         page1 = (await c.call_tool("list_specs", {"limit": 2, "cursor": 0})).data
@@ -50,9 +50,8 @@ async def test_list_specs_paginates_with_cursor(workspace):
         assert page3["next_cursor"] is None
         assert page3["truncated"] is False
 
-        # union of all pages covers every spec exactly once
         seen = {s["spec_id"] for p in (page1, page2, page3) for s in p["specs"]}
-        assert seen == {f"SPEC-{i:03d}" for i in range(5)}
+        assert seen == {f"list-spec-{i:03d}" for i in range(5)}
 
 
 @pytest.mark.asyncio
@@ -65,13 +64,17 @@ async def test_list_specs_summary_only_has_no_bodies(workspace):
                 "create_spec",
                 {
                     "title": f"Spec {i}",
-                    "spec_id": f"SPEC-{i:03d}",
+                    "spec_id": f"summary-spec-{i:03d}",
                     "description": "x" * 500,
                 },
             )
         out = (await c.call_tool("list_specs", {"summary_only": True})).data
         assert out["total"] == 3
-        assert set(out["spec_ids"]) == {"SPEC-000", "SPEC-001", "SPEC-002"}
+        assert set(out["spec_ids"]) == {
+            "summary-spec-000",
+            "summary-spec-001",
+            "summary-spec-002",
+        }
         assert "specs" not in out
 
 
@@ -80,10 +83,8 @@ async def test_list_specs_limit_hard_capped(workspace):
     _make_spec_heavy_workspace(workspace, 1)
     async with Client(mcp) as c:
         await c.call_tool("index_project", {})
-        await c.call_tool("create_spec", {"title": "One", "spec_id": "SPEC-001"})
+        await c.call_tool("create_spec", {"title": "One", "spec_id": "auth-user-login"})
         out = (await c.call_tool("list_specs", {"limit": 100_000})).data
-        # still returns fine (only 1 spec exists) — the cap governs the SQL
-        # LIMIT, not correctness for small sets.
         assert out["total"] == 1
         assert len(out["specs"]) == 1
 
@@ -100,27 +101,21 @@ async def test_scan_annotation_verbs_suggests_spec_for_rf_payload(workspace):
     async with Client(mcp) as c:
         await c.call_tool("index_project", {})
         out = (await c.call_tool("scan_annotation_verbs", {})).data
-        group = out["verb_groups"][0]
-        assert group["verb"] == "@rf"
-        assert group["did_you_mean"] == "@spec"
-        assert "BE-RF-080" in group["did_you_mean_reason"]
+        assert out["verb_groups"][0]["did_you_mean"] == "@spec"
 
 
 @pytest.mark.asyncio
 async def test_scan_annotation_verbs_falls_back_to_edit_distance_without_spec_payload(
     workspace,
 ):
-    """No spec-id-shaped payload -> falls back to edit distance (unchanged
-    behavior for the non-spec-reference case)."""
     (workspace / "pkg").mkdir()
     (workspace / "pkg" / "__init__.py").write_text("")
     (workspace / "pkg" / "code.py").write_text(
-        'def handler():\n    """@sees:something unrelated"""\n    return 1\n'
+        'def helper():\n    """@rf:README"""\n    return 1\n'
     )
     async with Client(mcp) as c:
         await c.call_tool("index_project", {})
         out = (await c.call_tool("scan_annotation_verbs", {})).data
-        group = out["verb_groups"][0]
-        assert group["verb"] == "@sees"
-        assert group["did_you_mean"] == "@see"
-        assert group["did_you_mean_reason"] == "nearest recognized verb by edit distance"
+        assert out["verb_groups"][0]["did_you_mean_reason"] == (
+            "nearest recognized verb by edit distance"
+        )

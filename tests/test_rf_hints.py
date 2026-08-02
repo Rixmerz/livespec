@@ -70,10 +70,10 @@ async def test_scan_docstrings_skips_already_linked(workspace):
 
     async with Client(mcp) as c:
         await c.call_tool("index_project", {})
-        await c.call_tool("create_spec", {"spec_id": "SPEC-001", "title": "A"})
+        await c.call_tool("create_spec", {"spec_id": "auth-user-login", "title": "A"})
         await c.call_tool(
             "link_spec_symbol",
-            {"spec_id": "SPEC-001", "symbol_qname": "pkg.m.linked_fn"},
+            {"spec_id": "auth-user-login", "symbol_qname": "pkg.m.linked_fn"},
         )
         out = (await c.call_tool("scan_docstrings_for_spec_hints", {})).data
 

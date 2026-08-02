@@ -5,11 +5,16 @@ from __future__ import annotations
 from pathlib import Path
 
 import networkx as nx
+import pytest
 
 from livespec_mcp.domain.extractors import _py_extract, extract
 from livespec_mcp.domain.graph import descendants_within
 from livespec_mcp.domain.matcher import parse_annotations
-from livespec_mcp.domain.md_specs import parse_specs_markdown
+from livespec_mcp.domain.md_specs import (
+    UnsupportedSpecCatalogError,
+    parse_openspec_markdown,
+    reject_legacy_spec_catalog,
+)
 
 
 def test_descendants_within_is_bfs_not_dfs():
@@ -63,51 +68,50 @@ def test_python_parse_error_flag_set():
 
 def test_matcher_verb_boundary_rejects_prefix_words():
     """H10: @specifically / @testsuite / @seed must NOT create 1.0 links."""
+    known = ["auth-user-login"]
     for text in (
-        "@specifically SPEC-004 is out of scope",
-        "@testsuite for SPEC-009",
-        "@seed SPEC-012 data loader",
+        "@specifically auth-user-login is out of scope",
+        "@testsuite for auth-user-login",
+        "@seed auth-user-login data loader",
     ):
-        hits = parse_annotations(text)
+        hits = parse_annotations(text, known_ids=known)
         assert all(h.confidence < 1.0 for h in hits), (text, hits)
 
 
 def test_matcher_real_prefix_still_matches():
-    hits = parse_annotations("@spec:SPEC-001")
-    assert any(h.spec_id == "SPEC-001" and h.confidence == 1.0 for h in hits)
+    hits = parse_annotations(
+        "@spec:auth-user-login", known_ids=["auth-user-login"]
+    )
+    assert any(h.spec_id == "auth-user-login" and h.confidence == 1.0 for h in hits)
 
 
 def test_matcher_cannot_negation():
-    """L14: 'cannot implement SPEC-001' is a negation."""
-    hits = parse_annotations("this cannot implement SPEC-001 yet")
-    assert all(h.spec_id != "SPEC-001" or h.confidence == 0 for h in hits) or not hits
+    """L14: 'cannot implement auth-user-login' is a negation."""
+    hits = parse_annotations(
+        "this cannot implement auth-user-login yet",
+        known_ids=["auth-user-login"],
+    )
+    assert all(h.spec_id != "auth-user-login" for h in hits)
 
 
-def test_md_specs_ignores_headers_in_code_fences():
-    """M13: a SPEC header inside a ``` block is not a real spec."""
+def test_md_specs_ignores_legacy_headers_in_code_fences():
+    """M13: a SPEC header inside a ``` block does not trip the hard-cut."""
     md = (
-        "## SPEC-001: Real\n"
-        "Body.\n\n"
+        "### Requirement: Real\n"
+        "The system SHALL work.\n\n"
         "```\n"
         "## SPEC-099: Example in a code block\n"
         "```\n"
     )
-    specs = parse_specs_markdown(md)
-    ids = {s.spec_id for s in specs}
-    assert "SPEC-001" in ids
-    assert "SPEC-099" not in ids
+    reject_legacy_spec_catalog(md)
+    specs = parse_openspec_markdown(md)
+    assert {s.spec_id for s in specs} == {"real"}
 
 
-def test_md_specs_prose_status_not_swallowed():
-    """M12: prose containing 'status:' mid-line stays in the description."""
-    md = (
-        "## SPEC-001: Dashboard\n"
-        "The dashboard must show status: active users and totals.\n"
-    )
-    specs = parse_specs_markdown(md)
-    assert len(specs) == 1
-    assert "active users" in specs[0].description
-    assert specs[0].status == "active"  # default, not parsed from prose
+def test_md_specs_rejects_native_catalog():
+    """Native ## SPEC-NNN: dialect is removed."""
+    with pytest.raises(UnsupportedSpecCatalogError):
+        parse_openspec_markdown("## SPEC-001: Dashboard\nstatus: active users\n")
 
 
 def test_ts_chained_method_calls_each_recorded(tmp_path: Path):

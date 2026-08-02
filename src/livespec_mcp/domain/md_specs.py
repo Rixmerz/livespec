@@ -1,6 +1,6 @@
-"""Parse a Markdown file containing Spec definitions.
+"""Parse OpenSpec (Fission-AI) Markdown into Spec definitions.
 
-**Preferred authoring format (OpenSpec / Fission-AI)** — write under ``openspec/``:
+Authoring lives under ``openspec/``:
 
     ### Requirement: User login
     The system SHALL authenticate users with email + password.
@@ -8,23 +8,8 @@
     - **WHEN** credentials are valid
     - **THEN** a session token is returned
 
-**Legacy / compat format** (livespec-native catalog — import only; prefer migrating
-to OpenSpec for new work):
-
-    ## SPEC-001: Title
-    **Prioridad:** alta · **Módulo:** auth · **Kind:** adr
-    description...
-    blank line
-    ## SPEC-002: ...
-
-Recognised priority synonyms (Spanish / English):
-    crítica/critical, alta/high, media/medium, baja/low
-
-Status keywords: draft, active, deprecated. Default = active.
-
-Recognised kind synonyms (Spanish / English), default = functional_requirement:
-    rf/fr/funcional/functional_requirement, nfr/no funcional/non_functional_requirement,
-    adr, design/diseño, constraint/restricción, epic/épica, other/otro
+The former livespec-native ``## SPEC-NNN:`` catalog is removed (hard cut).
+Migrate those files to ``openspec/specs/<capability>/spec.md`` and sync.
 """
 
 from __future__ import annotations
@@ -32,7 +17,6 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 
-_HEADER_RE = re.compile(r"^##+\s+(?P<spec>SPEC[-_]?\d+)\s*[:\-]\s*(?P<title>.+?)\s*$")
 # OpenSpec (Fission-AI) interop: `### Requirement: <name>` anchors one spec;
 # `## ADDED|MODIFIED|REMOVED Requirements` are the change-delta section headers;
 # `#### Scenario: <name>` is a requirement's atomic WHEN/THEN behaviour block.
@@ -51,6 +35,14 @@ _OSPEC_PURPOSE_RE = re.compile(r"^##\s+Purpose\s*$", re.IGNORECASE)
 _OSPEC_RENAME_RE = re.compile(
     r"^\s*[-*]\s*(?P<dir>FROM|TO)\s*:\s*(?P<val>.+?)\s*$", re.IGNORECASE
 )
+# Detected only to reject — the native catalog dialect is gone.
+_LEGACY_SPEC_HEADER_RE = re.compile(
+    r"^##+\s+SPEC[-_]?\d+\s*[:\-]\s*.+?\s*$", re.IGNORECASE
+)
+
+
+class UnsupportedSpecCatalogError(ValueError):
+    """Markdown uses the removed ``## SPEC-NNN:`` dialect."""
 
 
 def _clean_rename_value(raw: str) -> str:
@@ -95,41 +87,37 @@ def extract_purpose(text: str) -> str | None:
             out.append(raw)
     body = "\n".join(out).strip()
     return body or None
-# Match `Prioridad: value` after stripping markdown bold markers.
-_META_RE = re.compile(
-    r"\b(prioridad|priority|módulo|modulo|module|status|estado|kind|tipo)\s*[:=]\s*"
-    r"(?P<value>[^\n·•|]+)",
-    re.IGNORECASE,
-)
 
-_PRIORITY_MAP = {
-    "crítica": "critical", "critica": "critical", "critical": "critical",
-    "alta": "high", "high": "high",
-    "media": "medium", "medium": "medium",
-    "baja": "low", "low": "low",
-}
-_STATUS_MAP = {
-    "draft": "draft", "borrador": "draft",
-    "active": "active", "activa": "active", "activo": "active",
-    "deprecated": "deprecated", "deprecada": "deprecated",
-}
-_KIND_MAP = {
-    "rf": "functional_requirement", "fr": "functional_requirement",
-    "funcional": "functional_requirement", "functional": "functional_requirement",
-    "functional_requirement": "functional_requirement",
-    "nfr": "non_functional_requirement", "no funcional": "non_functional_requirement",
-    "non_functional_requirement": "non_functional_requirement",
-    "adr": "adr",
-    "design": "design", "diseño": "design", "diseno": "design",
-    "constraint": "constraint", "restricción": "constraint", "restriccion": "constraint",
-    "epic": "epic", "épica": "epic", "epica": "epic",
-    "other": "other", "otro": "other",
-}
+
+def reject_legacy_spec_catalog(text: str) -> None:
+    """Raise if ``text`` still uses the removed ``## SPEC-NNN:`` dialect.
+
+    Headers inside fenced code blocks are ignored (examples stay allowed).
+    """
+    in_fence = False
+    fence_marker = ""
+    for raw in text.splitlines():
+        stripped = raw.lstrip()
+        if stripped.startswith("```") or stripped.startswith("~~~"):
+            marker = stripped[:3]
+            if not in_fence:
+                in_fence, fence_marker = True, marker
+            elif stripped.startswith(fence_marker):
+                in_fence, fence_marker = False, ""
+            continue
+        if in_fence:
+            continue
+        if _LEGACY_SPEC_HEADER_RE.match(raw.rstrip()):
+            raise UnsupportedSpecCatalogError(
+                "native ## SPEC-NNN: catalogs are removed — migrate to "
+                "openspec/specs/<capability>/spec.md (### Requirement:) and "
+                "call sync_openspec"
+            )
 
 
 @dataclass
 class ParsedSpec:
-    spec_id: str  # normalized, e.g. "SPEC-001"
+    spec_id: str  # OpenSpec slug, e.g. "auth-user-login"
     title: str
     description: str
     priority: str = "medium"
@@ -137,7 +125,7 @@ class ParsedSpec:
     module: str | None = None
     kind: str = "functional_requirement"
     # OpenSpec interop: `#### Scenario:` blocks under the requirement, as
-    # (name, body) pairs in source order. Empty for native livespec specs.
+    # (name, body) pairs in source order.
     scenarios: list[tuple[str, str]] = field(default_factory=list)
     # OpenSpec change-delta operation for this requirement: added | modified |
     # removed | renamed. ``None`` for a canonical (non-delta) spec.
@@ -148,96 +136,6 @@ class ParsedSpec:
     # The capability's ``## Purpose`` prose (same for every spec parsed from one
     # OpenSpec file); persisted onto the module so export can re-emit it.
     capability_purpose: str | None = None
-
-
-def _normalize_spec(raw: str) -> str:
-    digits = "".join(c for c in raw if c.isdigit())
-    return f"SPEC-{int(digits):03d}" if digits else raw.upper()
-
-
-def parse_specs_markdown(text: str) -> list[ParsedSpec]:
-    """Walk the markdown line by line, splitting on `## SPEC-NNN: Title` headers."""
-    specs: list[ParsedSpec] = []
-    current: dict | None = None
-    description_lines: list[str] = []
-
-    def _flush() -> None:
-        if current is None:
-            return
-        desc = "\n".join(description_lines).strip()
-        specs.append(ParsedSpec(
-            spec_id=current["spec_id"],
-            title=current["title"],
-            description=desc,
-            priority=current.get("priority", "medium"),
-            status=current.get("status", "active"),
-            module=current.get("module"),
-            kind=current.get("kind", "functional_requirement"),
-        ))
-
-    in_fence = False
-    fence_marker = ""
-
-    for raw_line in text.splitlines():
-        line = raw_line.rstrip()
-        stripped = line.lstrip()
-
-        # Fenced code blocks: never parse headers/metadata inside ``` / ~~~
-        # so a `## SPEC-099:` shown as an EXAMPLE in a code block doesn't
-        # become a phantom spec. Fence content stays in the description.
-        if stripped.startswith("```") or stripped.startswith("~~~"):
-            marker = stripped[:3]
-            if not in_fence:
-                in_fence, fence_marker = True, marker
-            elif stripped.startswith(fence_marker):
-                in_fence, fence_marker = False, ""
-            if current is not None:
-                description_lines.append(raw_line)
-            continue
-        if in_fence:
-            if current is not None:
-                description_lines.append(raw_line)
-            continue
-
-        m = _HEADER_RE.match(line)
-        if m:
-            _flush()
-            current = {
-                "spec_id": _normalize_spec(m.group("spec")),
-                "title": m.group("title").strip(),
-            }
-            description_lines = []
-            continue
-        if current is None:
-            continue
-        # Metadata lines (Prioridad, Módulo, Status) — accumulate; do not include
-        # in description. Strip markdown bold/italic markers first so the regex
-        # doesn't have to handle every `**Name:**` / `**Name**: ` permutation.
-        # Only treat a line as metadata when a key sits at its START (after
-        # bullets/markers) — otherwise prose like "must show status: active
-        # users" would be swallowed and mis-set a field.
-        cleaned = line.replace("**", "").replace("__", "")
-        meta_start = cleaned.lstrip(" \t-*·•>")
-        if _META_RE.match(meta_start):
-            for h in _META_RE.finditer(cleaned):
-                key = h.group(1).lower()
-                value = h.group("value").strip().rstrip(".").lower()
-                if key in ("prioridad", "priority"):
-                    current["priority"] = _PRIORITY_MAP.get(value, "medium")
-                elif key in ("módulo", "modulo", "module"):
-                    current["module"] = value
-                elif key in ("status", "estado"):
-                    current["status"] = _STATUS_MAP.get(value, "active")
-                elif key in ("kind", "tipo"):
-                    current["kind"] = _KIND_MAP.get(value, "functional_requirement")
-            continue
-        description_lines.append(raw_line)
-
-    _flush()
-    return specs
-
-
-# ---------- OpenSpec (Fission-AI) interop ----------
 
 
 def _slugify(text: str) -> str:
@@ -254,9 +152,8 @@ def _ospec_spec_id(name: str, capability: str | None) -> str:
     """Slug spec_id for an OpenSpec requirement.
 
     OpenSpec identifies requirements by name within a capability, not by a
-    numeric id. We derive a readable, stable slug id (free-text `spec_id`
-    column allows it, same as legacy ``RF-042`` values). The capability
-    prefix disambiguates same-named requirements across capabilities.
+    numeric id. We derive a readable, stable slug id. The capability prefix
+    disambiguates same-named requirements across capabilities.
     """
     name_slug = _slugify(name)
     if capability:
@@ -336,7 +233,12 @@ def parse_openspec_markdown(
     specs) is ``active``. ``kind`` defaults to ``functional_requirement`` —
     OpenSpec requirements are functional by nature; reclassify with
     ``update_spec`` if needed.
+
+    Raises ``UnsupportedSpecCatalogError`` when the file still uses
+    ``## SPEC-NNN:`` headers (removed dialect).
     """
+    reject_legacy_spec_catalog(text)
+
     specs: list[ParsedSpec] = []
     current: dict | None = None
     description_lines: list[str] = []
@@ -438,7 +340,7 @@ def parse_openspec_markdown(
             description_lines = []
             continue
 
-        # Prefer stable id from export_openspec (<!-- livespec:id=SPEC-001 -->).
+        # Prefer stable id from export_openspec (<!-- livespec:id=… -->).
         # Must appear before body prose (blank lines after the heading are OK);
         # not kept in the description.
         if current is not None and not any(ln.strip() for ln in description_lines):
@@ -464,20 +366,3 @@ def parse_openspec_markdown(
 
     _flush()
     return specs
-
-
-def detect_spec_format(text: str) -> str:
-    """Return ``"openspec"`` or ``"livespec"`` for a markdown spec file.
-
-    OpenSpec files use ``### Requirement:`` anchors; the legacy livespec-native
-    catalog uses ``## SPEC-NNN:`` headers. When a file has both (unusual),
-    **OpenSpec wins** — authoring SSoT is OpenSpec; native headers are treated as
-    leftover noise rather than forcing the legacy parser.
-    """
-    has_livespec = any(_HEADER_RE.match(ln) for ln in text.splitlines())
-    has_openspec = bool(re.search(r"^###\s+Requirement:", text, re.MULTILINE))
-    if has_openspec:
-        return "openspec"
-    if has_livespec:
-        return "livespec"
-    return "livespec"

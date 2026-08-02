@@ -254,8 +254,7 @@ def _m011_rename_rf_to_spec(conn: sqlite3.Connection) -> None:
     reference a renamed table or column automatically.
 
     Existing `rf_id` string values (e.g. ``RF-042``) are preserved as-is in
-    the renamed `spec_id` column — only newly created specs get the
-    ``SPEC-NNN`` format (see `_next_spec_id` in tools/specs.py).
+    the renamed `spec_id` column — newly created specs use OpenSpec slugs.
 
     Note: on a brand-new database, migrations 1-11 all run in the same
     first `connect()` — `_m009_rf_coverage_snapshot` still unconditionally

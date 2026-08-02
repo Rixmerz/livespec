@@ -5,7 +5,7 @@ description: >-
   graph, run impact/blast-radius analysis, find likely-unused HTTP flows across a
   polyrepo group_db, and maintain bidirectional Spec<->code traceability (FRs,
   ADRs, NFRs). Use whenever the user asks "what calls this?", "what breaks if I
-  change X?", "what code implements SPEC-NNN?", "what Specs touch this file?",
+  change X?", "what code implements auth-user-login?", "what Specs touch this file?",
   "which flows/routes look unused?", or mentions livespec, the Spec Explorer,
   Flow Explorer, or code-intelligence indexing.
 ---
@@ -151,7 +151,7 @@ fixed cost it doesn't otherwise need.
 | Intent | Tool |
 |--------|------|
 | What Specs exist? | `list_specs(status?, module?, kind?, has_implementation?)` |
-| What implements SPEC-NNN? | `get_spec_implementation(spec_id)` — one round-trip |
+| What implements a Spec? | `get_spec_implementation(spec_id)` — one round-trip |
 | Coverage gaps / orphans | `audit_coverage(summary_only=True)` |
 | Brownfield Spec proposals | `propose_specs_from_codebase()` — skips groups with **any** Spec link by default (`skipped_covered_count`); **user approves before create** |
 | Batch link (configs, SQL, no-annotation langs) | `bulk_link_spec_symbols(mappings)` |
@@ -175,23 +175,19 @@ competing authoring dialect for new work.
 | Intent | Tool |
 |--------|------|
 | Ingest hand-authored `openspec/` tree | `sync_openspec(openspec_dir?)` — **read the warning below** |
-| Ingest one markdown file | `import_specs_from_markdown(path, fmt="auto")` — sniffs OpenSpec vs legacy |
+| Ingest one markdown file | `import_specs_from_markdown(path, fmt="openspec")` — OpenSpec only |
 | Structural check (`openspec validate`) | `validate_openspec(strict=False)` — every requirement needs ≥1 scenario |
 | Store → markdown (engine dump) | `export_openspec(out_dir="openspec", include_changes=True)` |
 | List change proposals | `list_spec_changes(status?)` — `proposed`\|`applied`\|`archived` |
 | Read one change package | `get_spec_change(name)` — proposal/design/tasks + delta requirements |
-
-Legacy catalogs (`## SPEC-NNN:` headers) still import via
-`import_specs_from_markdown(..., fmt="livespec")` or `fmt="auto"`. Prefer migrating
-those files to OpenSpec rather than keeping two dialects in one repo.
 
 > **`sync_openspec` can duplicate your whole store — do not run it on a tree you
 > just `export_openspec`'d.** Export rewrites titles into OpenSpec shape; re-sync
 > then slugifies those titles into **new** `spec_id`s (one real run: 176 → 358).
 > Use `sync_openspec` only on trees **authored** as OpenSpec. For a single
 > hand-written OpenSpec file use
-> `import_specs_from_markdown(path="openspec/specs/<cap>/spec.md", fmt="auto")`
-> (or `fmt="openspec"`). Never force `fmt="livespec"` on `### Requirement:` files.
+> `import_specs_from_markdown(path="openspec/specs/<cap>/spec.md", fmt="openspec")`.
+> The native `## SPEC-NNN:` catalog dialect is removed.
 
 ### Spec mutation — `livespec-spec` plugin (operator; plugin-gated)
 
@@ -246,10 +242,8 @@ For the full annotation grammar and examples, fetch the MCP prompt `agent_playbo
 - Do not run `sync_openspec` on a tree produced by `export_openspec` — it duplicates
   every spec. Ingest hand-authored OpenSpec with `sync_openspec` or
   `import_specs_from_markdown(..., fmt="auto"|"openspec")`.
-- Do not author new Specs as `## SPEC-NNN:` when the repo can use OpenSpec —
-  OpenSpec markdown is the preferred authoring SSoT; native headers are legacy import.
-- Do not mix OpenSpec `### Requirement:` and native `## SPEC-NNN:` catalogs in the
-  same repo (duplicate ids / noisy validate).
+- Do not author Specs as `## SPEC-NNN:` — that dialect is removed; use OpenSpec
+  under `openspec/specs/<capability>/spec.md`.
 - Do not treat `find_legacy_flows` / `find_dead_code` as proof code is unused in
   production — graph evidence only; confirm with traffic before delete.
 - Do not treat `orphan_client` as dead code when the SA/repo is simply outside

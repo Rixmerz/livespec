@@ -32,7 +32,7 @@ def _write_flask_app(workspace: Path) -> None:
         "\n"
         "@app.route('/login', methods=['POST'])\n"
         "def login(user, password):\n"
-        '    """Login handler.\n\n    @spec:SPEC-001\n    """\n'
+        '    """Login handler.\n\n    @spec:auth-user-login\n    """\n'
         "    return verify(user, password)\n"
         "\n"
         "@app.route('/health')\n"
@@ -134,22 +134,22 @@ async def test_export_explorer_data_schema(workspace: Path):
     _write_flask_app(workspace)
     async with Client(mcp) as c:
         await c.call_tool("index_project", {})
-        # Make SPEC-001 real and link it, plus a second Spec + a dependency edge.
-        await c.call_tool("create_spec", {"spec_id": "SPEC-001", "title": "Login"})
+        # Make auth-user-login real and link it, plus a second Spec + a dependency edge.
+        await c.call_tool("create_spec", {"spec_id": "auth-user-login", "title": "Login"})
         await c.call_tool(
-            "create_spec", {"spec_id": "SPEC-002", "title": "Auth lib", "kind": "adr"}
+            "create_spec", {"spec_id": "auth-session", "title": "Auth lib", "kind": "adr"}
         )
         await c.call_tool(
             "link_spec_symbol",
-            {"spec_id": "SPEC-001", "symbol_qname": "app.routes.login"},
+            {"spec_id": "auth-user-login", "symbol_qname": "app.routes.login"},
         )
         await c.call_tool(
             "link_spec_symbol",
-            {"spec_id": "SPEC-002", "symbol_qname": "app.lib.verify"},
+            {"spec_id": "auth-session", "symbol_qname": "app.lib.verify"},
         )
         await c.call_tool(
             "link_spec_dependency",
-            {"parent_spec_id": "SPEC-001", "child_spec_id": "SPEC-002"},
+            {"parent_spec_id": "auth-user-login", "child_spec_id": "auth-session"},
         )
         await c.call_tool("export_explorer", {})
 
@@ -192,18 +192,18 @@ async def test_export_explorer_data_schema(workspace: Path):
         1 for r in data["specs"] if r["test_coverage_ratio"] > 0
     )
 
-    # SPEC-001 carries its implementing symbol (with signature), endpoint, dep.
-    rf1 = next(r for r in data["specs"] if r["id"] == "SPEC-001")
+    # auth-user-login carries its implementing symbol (with signature), endpoint, dep.
+    rf1 = next(r for r in data["specs"] if r["id"] == "auth-user-login")
     assert any(s["qname"] == "app.routes.login" for s in rf1["symbols"])
     sym = next(s for s in rf1["symbols"] if s["qname"] == "app.routes.login")
     assert "signature" in sym and "file" in sym and "line" in sym
     assert "app.routes.login" in rf1["endpoints"]
-    assert rf1["depends_on"] == ["SPEC-002"]
+    assert rf1["depends_on"] == ["auth-session"]
     assert rf1["coverage"] is not None
 
     # v0.20: `kind` taxonomy flows through — default vs explicit.
     assert rf1["kind"] == "functional_requirement"
-    rf2 = next(r for r in data["specs"] if r["id"] == "SPEC-002")
+    rf2 = next(r for r in data["specs"] if r["id"] == "auth-session")
     assert rf2["kind"] == "adr"
 
     # Every spec carries a derived dev_state in the valid vocabulary.
@@ -228,7 +228,7 @@ async def test_export_explorer_data_schema(workspace: Path):
         assert isinstance(r["uncovered_symbols"], list)
         assert isinstance(r["uncovered_symbols_count"], int)
         assert r["uncovered_symbols_count"] >= len(r["uncovered_symbols"])
-    # SPEC-001 has a high-confidence link but no test coverage -> implemented.
+    # auth-user-login has a high-confidence link but no test coverage -> implemented.
     assert rf1["dev_state"] == "implemented"
     assert rf1["test_coverage_ratio"] == 0.0
     assert rf1["coverage_source"] == "none"
@@ -237,17 +237,17 @@ async def test_export_explorer_data_schema(workspace: Path):
     for n in data["spec_topology"]["nodes"]:
         assert n["dev_state"] in valid_states
 
-    # topology has the SPEC-001 -> SPEC-002 edge
+    # topology has the auth-user-login -> auth-session edge
     edges = {(e["from"], e["to"]) for e in data["spec_topology"]["edges"]}
-    assert ("SPEC-001", "SPEC-002") in edges
+    assert ("auth-user-login", "auth-session") in edges
     node_ids = {n["id"] for n in data["spec_topology"]["nodes"]}
-    assert {"SPEC-001", "SPEC-002"} <= node_ids
+    assert {"auth-user-login", "auth-session"} <= node_ids
 
-    # endpoints surface includes the login route, tagged with SPEC-001
+    # endpoints surface includes the login route, tagged with auth-user-login
     handlers = {e["handler"] for e in data["endpoints"]}
     assert "app.routes.login" in handlers
     login_ep = next(e for e in data["endpoints"] if e["handler"] == "app.routes.login")
-    assert "SPEC-001" in login_ep["spec_ids"]
+    assert "auth-user-login" in login_ep["spec_ids"]
     for ep in data["endpoints"]:
         assert set(ep.keys()) == {
             "kind", "framework", "handler", "signature", "path", "method",
@@ -406,7 +406,7 @@ async def test_export_explorer_mermaid_labels_sanitized(workspace: Path):
         # A title loaded with Mermaid-breaking characters.
         await c.call_tool(
             "create_spec",
-            {"spec_id": "SPEC-001", "title": 'Dead-code & coverage <x> "q" (9 langs)'},
+            {"spec_id": "auth-user-login", "title": 'Dead-code & coverage <x> "q" (9 langs)'},
         )
         await c.call_tool("export_explorer", {})
 
@@ -416,7 +416,7 @@ async def test_export_explorer_mermaid_labels_sanitized(workspace: Path):
     # The raw, unsanitized title is stored verbatim in the data (the viewer
     # sanitizes at render time via mermaidLabel()). This locks in that the
     # breaking chars reach the viewer and rely on JS encoding.
-    node = next(n for n in data["spec_topology"]["nodes"] if n["id"] == "SPEC-001")
+    node = next(n for n in data["spec_topology"]["nodes"] if n["id"] == "auth-user-login")
     assert "&" in node["title"] and "<" in node["title"]
 
     # Mirror the viewer's mermaidLabel() transform in Python and assert the
@@ -463,10 +463,10 @@ async def test_export_explorer_idempotent(workspace: Path):
     data_path = workspace / ".mcp-docs" / "explorer" / "data.json"
     async with Client(mcp) as c:
         await c.call_tool("index_project", {})
-        await c.call_tool("create_spec", {"spec_id": "SPEC-001", "title": "Login"})
+        await c.call_tool("create_spec", {"spec_id": "auth-user-login", "title": "Login"})
         await c.call_tool(
             "link_spec_symbol",
-            {"spec_id": "SPEC-001", "symbol_qname": "app.routes.login"},
+            {"spec_id": "auth-user-login", "symbol_qname": "app.routes.login"},
         )
 
         await c.call_tool("export_explorer", {"generated_at": "2026-01-01T00:00:00Z"})
