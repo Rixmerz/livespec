@@ -790,9 +790,9 @@ get_spec_implementation(
           <div class="hint">transport-l: 77 símbolos sin callers. Revisar antes de borrar.</div>
         </div>
         <div class="stat">
-          <div class="n warn-n">≈1:1</div>
-          <div class="label">API ≈ no usada</div>
-          <div class="hint">api-legacy-j: ~60 endpoints y ~61 dead. Mucha superficie dudosa.</div>
+          <div class="n warn-n">61</div>
+          <div class="label">Dead ≠ endpoints</div>
+          <div class="hint">api-legacy-j: 61 símbolos sin callers (de 339). Los 60 endpoints son otra cuenta — rutas HTTP, no “dead ⊂ endpoints”.</div>
         </div>
         <div class="stat">
           <div class="n">8/10</div>
@@ -814,6 +814,163 @@ get_spec_implementation(
           <div class="label">Specs OK + dead UI</div>
           <div class="hint">Mensis: todas ligadas; 21 dead son helpers sin callers.</div>
         </div>
+      </div>
+    </section>
+
+    <!-- 17 — one slide per group_db repo -->
+    <section class="slide" data-title="g1">
+      <p class="eyebrow">17 · Group 1/13</p>
+      <h2>api-composer-a</h2>
+      <p class="lede">Composer Node · 114 símbolos · 51 archivos</p>
+      <div class="stat-grid">
+        <div class="stat"><div class="n warn-n">32</div><div class="label">Candidatos a dead</div><div class="hint">Funciones sin callers en el grafo (de 114). Revisar; no borrar a ciegas.</div></div>
+        <div class="stat"><div class="n">5</div><div class="label">Endpoints HTTP</div><div class="hint">Rutas detectadas. Universo distinto al dead (no son el mismo conteo).</div></div>
+        <div class="stat"><div class="n warn-n">2 / 9</div><div class="label">Specs con código</div><div class="hint">9 Specs en store; solo 2 ligadas. 7 Specs sin implementación.</div></div>
+        <div class="stat"><div class="n">35</div><div class="label">Módulos sin Spec</div><div class="hint">Módulos huérfanos: sin ninguna Spec anclada.</div></div>
+      </div>
+    </section>
+
+    <section class="slide" data-title="g2">
+      <p class="eyebrow">17 · Group 2/13</p>
+      <h2>api-composer-b</h2>
+      <p class="lede">Composer Node · 314 símbolos · 105 archivos</p>
+      <div class="stat-grid">
+        <div class="stat"><div class="n warn-n">70</div><div class="label">Candidatos a dead</div><div class="hint">Alto: ~22% de los símbolos sin callers en el grafo.</div></div>
+        <div class="stat"><div class="n">9</div><div class="label">Endpoints HTTP</div><div class="hint">Pocas rutas vs mucho código interno sin uso aparente.</div></div>
+        <div class="stat"><div class="n warn-n">3 / 10</div><div class="label">Specs con código</div><div class="hint">10 Specs; 3 ligadas; 7 sin impl. Specs “flotan”.</div></div>
+        <div class="stat"><div class="n">56</div><div class="label">Módulos sin Spec</div><div class="hint">Más módulos huérfanos que Specs ligadas.</div></div>
+      </div>
+    </section>
+
+    <section class="slide" data-title="g3">
+      <p class="eyebrow">17 · Group 3/13</p>
+      <h2>api-composer-c</h2>
+      <p class="lede">Composer Node · 66 símbolos · repo chico</p>
+      <div class="stat-grid">
+        <div class="stat"><div class="n warn-n">17</div><div class="label">Candidatos a dead</div><div class="hint">~¼ del grafo sin callers.</div></div>
+        <div class="stat"><div class="n">5</div><div class="label">Endpoints HTTP</div><div class="hint">Superficie HTTP chica y clara.</div></div>
+        <div class="stat"><div class="n warn-n">2 / 9</div><div class="label">Specs con código</div><div class="hint">Mismo patrón composers: Specs existen, casi no anclan.</div></div>
+        <div class="stat"><div class="n">14</div><div class="label">Módulos sin Spec</div><div class="hint">14 módulos sin trazabilidad Spec.</div></div>
+      </div>
+    </section>
+
+    <section class="slide" data-title="g4">
+      <p class="eyebrow">17 · Group 4/13</p>
+      <h2>api-composer-d</h2>
+      <p class="lede">Composer Node · 62 símbolos · grafo fino (23 edges)</p>
+      <div class="stat-grid">
+        <div class="stat"><div class="n warn-n">15</div><div class="label">Candidatos a dead</div><div class="hint">Poco grafo → muchos símbolos parecen aislados.</div></div>
+        <div class="stat"><div class="n">3</div><div class="label">Endpoints HTTP</div><div class="hint">Solo 3 rutas indexadas.</div></div>
+        <div class="stat"><div class="n warn-n">2 / 9</div><div class="label">Specs con código</div><div class="hint">7 Specs sin implementación.</div></div>
+        <div class="stat"><div class="n">22</div><div class="label">Módulos sin Spec</div><div class="hint">Más huérfanos que símbolos totales casi.</div></div>
+      </div>
+    </section>
+
+    <section class="slide" data-title="g5">
+      <p class="eyebrow">17 · Group 5/13</p>
+      <h2>api-sa-availability-e</h2>
+      <p class="lede">SA Java · 213 símbolos · 198 edges</p>
+      <div class="stat-grid">
+        <div class="stat"><div class="n">1</div><div class="label">Candidatos a dead</div><div class="hint">Casi limpio: el grafo conecta casi todo.</div></div>
+        <div class="stat"><div class="n">28</div><div class="label">Endpoints HTTP</div><div class="hint">Superficie SOAP/HTTP amplia vs dead mínimo.</div></div>
+        <div class="stat"><div class="n warn-n">3 / 9</div><div class="label">Specs con código</div><div class="hint">Código vivo; Specs aún flojas (6 sin impl).</div></div>
+        <div class="stat"><div class="n">6</div><div class="label">Módulos sin Spec</div><div class="hint">Pocos huérfanos — mejor que composers.</div></div>
+      </div>
+    </section>
+
+    <section class="slide" data-title="g6">
+      <p class="eyebrow">17 · Group 6/13</p>
+      <h2>api-sa-bags-f</h2>
+      <p class="lede">SA Java · 707 símbolos · 1135 edges</p>
+      <div class="stat-grid">
+        <div class="stat"><div class="n">0</div><div class="label">Candidatos a dead</div><div class="hint">Ningún símbolo sin callers. Grafo denso y sano.</div></div>
+        <div class="stat"><div class="n">31</div><div class="label">Endpoints HTTP</div><div class="hint">API ancha; todo el resto parece usado en grafo.</div></div>
+        <div class="stat"><div class="n warn-n">2 / 9</div><div class="label">Specs con código</div><div class="hint">Código OK, trazabilidad Spec no: 7 sin impl.</div></div>
+        <div class="stat"><div class="n">16</div><div class="label">Módulos sin Spec</div><div class="hint">Hueco = Specs, no dead code.</div></div>
+      </div>
+    </section>
+
+    <section class="slide" data-title="g7">
+      <p class="eyebrow">17 · Group 7/13</p>
+      <h2>api-sa-flight-search-g</h2>
+      <p class="lede">SA Java · 611 símbolos · 766 edges</p>
+      <div class="stat-grid">
+        <div class="stat"><div class="n warn-n">52</div><div class="label">Candidatos a dead</div><div class="hint">Mucho código sin callers pese a grafo grande.</div></div>
+        <div class="stat"><div class="n">31</div><div class="label">Endpoints HTTP</div><div class="hint">Dead (52) &gt; endpoints (31): son cuentas distintas.</div></div>
+        <div class="stat"><div class="n warn-n">2 / 9</div><div class="label">Specs con código</div><div class="hint">7 Specs sin código. Superficie HTTP con Specs flotando.</div></div>
+        <div class="stat"><div class="n warn-n">7</div><div class="label">Tests huérfanos</div><div class="hint">Archivos/tests sin símbolo de producción claro.</div></div>
+      </div>
+    </section>
+
+    <section class="slide" data-title="g8">
+      <p class="eyebrow">17 · Group 8/13</p>
+      <h2>api-search-hotel-h</h2>
+      <p class="lede">Server del join cross-repo · 989 símbolos</p>
+      <div class="stat-grid">
+        <div class="stat"><div class="n warn-n">24</div><div class="label">Candidatos a dead</div><div class="hint">De 989 símbolos; el grafo usa la mayoría.</div></div>
+        <div class="stat"><div class="n">41</div><div class="label">Endpoints HTTP</div><div class="hint">Incluye getHotelList — target del hop desde Composer.</div></div>
+        <div class="stat"><div class="n warn-n">3 / 9</div><div class="label">Specs con código</div><div class="hint">6 Specs sin impl. Server clave, Specs flojas.</div></div>
+        <div class="stat"><div class="n">27</div><div class="label">Módulos sin Spec</div><div class="hint">Hueco de trazabilidad en el server del grupo.</div></div>
+      </div>
+    </section>
+
+    <section class="slide" data-title="g9">
+      <p class="eyebrow">17 · Group 9/13</p>
+      <h2>api-search-manager-i</h2>
+      <p class="lede">Orquestador · 104 símbolos · mejor Spec link del grupo</p>
+      <div class="stat-grid">
+        <div class="stat"><div class="n warn-n">16</div><div class="label">Candidatos a dead</div><div class="hint">Dead moderado en un repo chico.</div></div>
+        <div class="stat"><div class="n">4</div><div class="label">Endpoints HTTP</div><div class="hint">Pocas rutas; rol = orquestar, no exponer API ancha.</div></div>
+        <div class="stat"><div class="n">8 / 10</div><div class="label">Specs con código</div><div class="hint">Así se ve bien: casi todas las Specs anclan código.</div></div>
+        <div class="stat"><div class="n">32</div><div class="label">Módulos sin Spec</div><div class="hint">Aún hay módulos huérfanos; Specs sí están ligadas.</div></div>
+      </div>
+    </section>
+
+    <section class="slide" data-title="g10">
+      <p class="eyebrow">17 · Group 10/13</p>
+      <h2>api-legacy-j</h2>
+      <p class="lede">339 símbolos · ¿por qué dead (61) &gt; endpoints (60)?</p>
+      <div class="stat-grid">
+        <div class="stat"><div class="n warn-n">61</div><div class="label">Candidatos a dead</div><div class="hint">Símbolos sin callers entre los 339. Helpers, utils, métodos internos.</div></div>
+        <div class="stat"><div class="n">60</div><div class="label">Endpoints HTTP</div><div class="hint">Rutas. No es un subconjunto del dead: un endpoint puede tener callers y un helper no.</div></div>
+        <div class="stat"><div class="n warn-n">2 / 9</div><div class="label">Specs con código</div><div class="hint">7 Specs sin impl. API ancha, Specs flojas.</div></div>
+        <div class="stat"><div class="n">23</div><div class="label">Módulos sin Spec</div><div class="hint">Dead y Specs sin código conviven — dos problemas distintos.</div></div>
+      </div>
+    </section>
+
+    <section class="slide" data-title="g11">
+      <p class="eyebrow">17 · Group 11/13</p>
+      <h2>results (SPA)</h2>
+      <p class="lede">Front · 2330 símbolos · 6047 edges</p>
+      <div class="stat-grid">
+        <div class="stat"><div class="n warn-n">52</div><div class="label">Candidatos a dead</div><div class="hint">Poco % del total; el ruido fuerte es otra métrica.</div></div>
+        <div class="stat"><div class="n">167</div><div class="label">Endpoints / rutas UI</div><div class="hint">Superficie grande (routes/handlers indexados).</div></div>
+        <div class="stat"><div class="n">9 / 10</div><div class="label">Specs con código</div><div class="hint">Casi todas ligadas — buen ancla Spec↔código.</div></div>
+        <div class="stat"><div class="n warn-n">222</div><div class="label">Tests huérfanos</div><div class="hint">El hallazgo dominante: tests sin símbolo de prod claro.</div></div>
+      </div>
+    </section>
+
+    <section class="slide" data-title="g12">
+      <p class="eyebrow">17 · Group 12/13</p>
+      <h2>sa-transport-l</h2>
+      <p class="lede">SA Java · 1233 símbolos · más dead del grupo</p>
+      <div class="stat-grid">
+        <div class="stat"><div class="n warn-n">77</div><div class="label">Candidatos a dead</div><div class="hint">Máximo del group. Prioridad de revisión (≠ borrar aún).</div></div>
+        <div class="stat"><div class="n">32</div><div class="label">Endpoints HTTP</div><div class="hint">Dead (77) &gt; endpoints (32): helpers internos sin callers.</div></div>
+        <div class="stat"><div class="n warn-n">2 / 9</div><div class="label">Specs con código</div><div class="hint">7 Specs sin impl.</div></div>
+        <div class="stat"><div class="n warn-n">17</div><div class="label">Tests huérfanos</div><div class="hint">También hay tests sin ancla clara.</div></div>
+      </div>
+    </section>
+
+    <section class="slide" data-title="g13">
+      <p class="eyebrow">17 · Group 13/13</p>
+      <h2>sm-composer-m</h2>
+      <p class="lede">Home del smoke cross-repo · 234 símbolos</p>
+      <div class="stat-grid">
+        <div class="stat"><div class="n warn-n">46</div><div class="label">Candidatos a dead</div><div class="hint">~20% del repo sin callers en grafo.</div></div>
+        <div class="stat"><div class="n">7</div><div class="label">Endpoints HTTP</div><div class="hint">Pocas rutas; desde acá sale el hop a HotelSvc.</div></div>
+        <div class="stat"><div class="n warn-n">4 / 11</div><div class="label">Specs con código</div><div class="hint">7 sin impl (incluye probe de audit). Specs flojas.</div></div>
+        <div class="stat"><div class="n">2</div><div class="label">Clientes → HotelSvc</div><div class="hint">listByChunk* llaman getHotelList en api-search-hotel-h.</div></div>
       </div>
     </section>
 
