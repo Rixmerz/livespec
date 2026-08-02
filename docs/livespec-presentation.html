@@ -173,31 +173,59 @@
     table.cmp th:not(:first-child),
     table.cmp td:not(:first-child) { width: 41%; }
 
-    ul.findings {
-      list-style: none;
-      display: flex;
-      flex-direction: column;
-      gap: 0.55rem;
-      max-width: none;
-      font-size: 0.82rem;
-      line-height: 1.4;
-    }
-    ul.findings li {
-      padding-left: 0.85rem;
-      border-left: 2px solid var(--line);
-    }
-    ul.findings li strong { color: var(--accent); font-weight: 600; }
-    ul.findings .repo { color: var(--ink); font-family: var(--mono); font-size: 0.78em; }
-    .legend {
+    .stat-grid {
       display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 0.35rem 1.2rem;
-      font-size: 0.78rem;
-      color: var(--muted);
-      margin: 0.35rem 0 0.7rem;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 0.85rem;
       max-width: none;
+      width: 100%;
     }
-    .legend strong { color: var(--ink); font-weight: 600; }
+    .stat-grid.cols-3 { grid-template-columns: repeat(3, 1fr); }
+    .stat {
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 1.1rem 1.2rem;
+    }
+    .stat .n {
+      font-family: var(--display);
+      font-size: clamp(2.2rem, 5vw, 3.2rem);
+      font-weight: 600;
+      line-height: 1;
+      letter-spacing: -0.03em;
+      color: var(--accent);
+    }
+    .stat .n.muted-n { color: var(--muted); }
+    .stat .n.warn-n { color: var(--warn); }
+    .stat .label {
+      margin-top: 0.45rem;
+      font-size: 1.05rem;
+      font-weight: 600;
+      color: var(--ink);
+    }
+    .stat .hint {
+      margin-top: 0.25rem;
+      font-size: 0.95rem;
+      color: var(--muted);
+      line-height: 1.35;
+      max-width: 28ch;
+    }
+    .chip-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.45rem;
+      margin-top: 0.85rem;
+    }
+    .chip {
+      font-family: var(--mono);
+      font-size: 0.95rem;
+      padding: 0.35rem 0.65rem;
+      border-radius: 8px;
+      border: 1px solid var(--line);
+      background: var(--card);
+      color: var(--ink);
+    }
+    .chip em { color: var(--accent); font-style: normal; font-weight: 600; }
 
     .pill {
       display: inline-block;
@@ -695,72 +723,104 @@ get_spec_implementation(
       </div>
     </section>
 
-    <!-- 16 — narrative findings -->
+    <!-- 16 — big numbers only -->
     <section class="slide" data-title="Barrido">
-      <p class="eyebrow">16 · Qué encontró livespec · 2026-08-02</p>
-      <h2 style="max-width:28ch">Cómo se leyó el barrido</h2>
-      <p class="lede" style="max-width:52ch;font-size:1.05rem">
-        En cada repo: re-index forzado + tools read-only. Los números son
-        <em>evidencia de grafo</em>, no tráfico de producción.
-      </p>
-      <div class="legend">
-        <div><strong>Dead code</strong> — símbolos sin callers en el índice. Candidatos a revisar; no borrar a ciegas.</div>
-        <div><strong>Specs ligadas</strong> — tienen ≥1 símbolo vía <span class="mono">@spec:</span> / link. El resto existe en el store pero nadie las ancla.</div>
-        <div><strong>Endpoints</strong> — handlers HTTP/CLI que el extractor vio (framework-aware).</div>
-        <div><strong>Orphan modules</strong> — módulos sin ninguna Spec. Suele correlacionar con dead / superficie sin trazabilidad.</div>
-      </div>
-      <div class="card" style="max-width:none">
-        <h3>Cross-repo (<span class="mono">group_db</span> · home sm-composer-m)</h3>
-        <ul class="findings" style="margin-top:0.55rem">
-          <li><strong>Join real Composer → HotelSvc:</strong> <span class="mono">find_symbol(getHotelList)</span> resolvió el método en <span class="repo">api-search-hotel-h</span> desde otro repo del grupo.</li>
-          <li><strong>Quién llama al endpoint:</strong> <span class="mono">who_calls</span> reportó <strong>2 route_callers</strong> (<span class="mono">listByChunk</span>, <span class="mono">listByChunkSupplierA</span>) — clientes indexados que pegan al servidor HotelSvc.</li>
-          <li><strong>Qué invoca el cliente:</strong> <span class="mono">who_does_this_call(listByChunk)</span> → <strong>1</strong> <span class="mono">invokes_endpoints</span> de vuelta a <span class="mono">getHotelList</span>. El hop HTTP cross-repo está cableado.</li>
-          <li><strong>Flujos “vivos” vs huérfanos:</strong> <strong>24</strong> servers y <strong>19</strong> clients con hop indexado; <strong>2</strong> servers y <strong>36</strong> clients sin pareja en el grafo (falta SA / extract incompleto / ruta muerta — confirmar con APM).</li>
-        </ul>
+      <p class="eyebrow">16 · Barrido hard-cut</p>
+      <h2>23 repos · evidencia de grafo</h2>
+      <p class="lede">Re-index + tools read-only. No es tráfico de prod.</p>
+      <div class="stat-grid" style="margin-top:0.4rem">
+        <div class="stat">
+          <div class="n">23</div>
+          <div class="label">Workspaces</div>
+          <div class="hint">13 polyrepo + 10 solo</div>
+        </div>
+        <div class="stat">
+          <div class="n">23/23</div>
+          <div class="label">validate strict</div>
+          <div class="hint">OpenSpec green tras hard-cut</div>
+        </div>
+        <div class="stat">
+          <div class="n warn-n">~2–4</div>
+          <div class="label">Specs ligadas / repo</div>
+          <div class="hint">Típico del grupo · ~9 Specs existen</div>
+        </div>
+        <div class="stat">
+          <div class="n">13/13</div>
+          <div class="label">livespec self</div>
+          <div class="hint">Todas las Specs ancladas · 1 dead</div>
+        </div>
       </div>
     </section>
 
-    <section class="slide" data-title="Group">
-      <p class="eyebrow">16b · Polyrepo (13 repos en group_db)</p>
-      <h2 style="max-width:none;font-size:clamp(1.4rem,2.6vw,1.85rem)">Qué se encontró en cada repo del grupo</h2>
-      <ul class="findings">
-        <li><span class="repo">api-composer-a</span> — 114 símbolos, <strong>5</strong> endpoints. <strong>32</strong> candidatos a dead. <strong>9</strong> Specs; solo <strong>2</strong> ligadas → <strong>7</strong> Specs sin código. 35 módulos huérfanos: mucha superficie sin trazabilidad Spec.</li>
-        <li><span class="repo">api-composer-b</span> — 314 símbolos, <strong>9</strong> endpoints. Dead alto: <strong>70</strong>. Specs 10 / ligadas 3 (7 sin impl). El grafo ve más “código suelto” que Specs ancladas.</li>
-        <li><span class="repo">api-composer-c</span> — chico (66 sym). <strong>17</strong> dead, <strong>5</strong> endpoints. Specs 9→2 ligadas (7 sin impl). Mismo patrón composers: Specs existen, casi no tocan el código.</li>
-        <li><span class="repo">api-composer-d</span> — 62 sym, <strong>15</strong> dead, <strong>3</strong> endpoints. Specs 9→2 ligadas. Poco grafo (23 edges): poco que conectar aún.</li>
-        <li><span class="repo">api-sa-availability-e</span> — Java SA. Dead casi limpio (<strong>1</strong>), <strong>28</strong> endpoints. Specs 9→3 ligadas. Mejor ratio “código vivo / Spec” que los composers Node.</li>
-        <li><span class="repo">api-sa-bags-f</span> — <strong>0</strong> dead, <strong>31</strong> endpoints, grafo denso (1135 edges). Specs 9→2 ligadas: el código está cableado entre sí, pero las Specs casi no.</li>
-        <li><span class="repo">api-sa-flight-search-g</span> — <strong>52</strong> dead + <strong>31</strong> endpoints + 7 orphan tests. Specs 9→2. Mucha superficie HTTP con Specs flotando.</li>
-        <li><span class="repo">api-search-hotel-h</span> — <strong>41</strong> endpoints, <strong>24</strong> dead. Specs 9→3. Es el server del join cross-repo (<span class="mono">getHotelList</span>).</li>
-        <li><span class="repo">api-search-manager-i</span> — mejor del grupo en Specs: <strong>8/10 ligadas</strong> (solo 2 sin impl). Dead 16, endpoints 4. Orquestador con trazabilidad real.</li>
-        <li><span class="repo">api-legacy-j</span> — <strong>60</strong> endpoints vs <strong>61</strong> dead (casi 1:1). Specs 9→2. Mucha API expuesta y mucha señal de no-usada en grafo.</li>
-        <li><span class="repo">results</span> (SPA) — 2330 sym, <strong>167</strong> endpoints, <strong>52</strong> dead, <strong>222</strong> orphan tests. Specs <strong>9/10 ligadas</strong>. Tests huérfanos dominan el ruido.</li>
-        <li><span class="repo">sa-transport-l</span> — dead más alto del grupo (<strong>77</strong>), <strong>32</strong> endpoints, 17 orphan tests. Specs 9→2. SA Java con mucho candidato a limpieza.</li>
-        <li><span class="repo">sm-composer-m</span> — home del smoke cross-repo. <strong>46</strong> dead, <strong>7</strong> endpoints. Specs 11→4 (7 sin impl, una es probe de audit). Desde acá se ve el hop a HotelSvc.</li>
-      </ul>
-      <p class="muted small" style="margin-top:0.5rem">Patrón del grupo: Specs cargadas (~9–11) pero <strong>ligadas 2–4</strong> salvo search-manager y la SPA. Dead y Specs sin impl conviven — el hueco es trazabilidad, no solo “código basura”.</p>
+    <section class="slide" data-title="Cross">
+      <p class="eyebrow">16b · Cross-repo</p>
+      <h2>Cliente → servidor en el group_db</h2>
+      <div class="stat-grid" style="margin-top:0.5rem">
+        <div class="stat">
+          <div class="n">2</div>
+          <div class="label">route_callers</div>
+          <div class="hint">listByChunk* → getHotelList (HotelSvc)</div>
+        </div>
+        <div class="stat">
+          <div class="n">1</div>
+          <div class="label">invokes_endpoints</div>
+          <div class="hint">Hop HTTP confirmado ida y vuelta</div>
+        </div>
+        <div class="stat">
+          <div class="n">24 / 19</div>
+          <div class="label">live srv / cli</div>
+          <div class="hint">Con pareja indexada en el grafo</div>
+        </div>
+        <div class="stat">
+          <div class="n warn-n">2 / 36</div>
+          <div class="label">legacy srv / orphan cli</div>
+          <div class="hint">Sin hop · confirmar con APM</div>
+        </div>
+      </div>
+      <p class="lede" style="margin-top:1rem;max-width:40ch">sm-composer-m ve getHotelList en api-search-hotel-h.</p>
     </section>
 
-    <section class="slide" data-title="Solo">
-      <p class="eyebrow">16c · Solo + propios (10 repos)</p>
-      <h2 style="max-width:none;font-size:clamp(1.4rem,2.6vw,1.85rem)">Fuera del group_db · y el self-dogfood</h2>
-      <ul class="findings">
-        <li><span class="repo">wapp-hsd-admin-hotel</span> — front grande (3265 sym, <strong>215</strong> endpoints). <strong>0 Specs</strong>. Dead bajo (16) pero <strong>473</strong> módulos huérfanos: sin catálogo Spec no hay ancla, solo grafo.</li>
-        <li><span class="repo">api-hotel-hsd-utils</span> — <strong>64</strong> dead, <strong>75</strong> endpoints, 0 Specs. Utils con mucha superficie HTTP y candidatos a no-usada.</li>
-        <li><span class="repo">api-search-hotel-detail-hotelsvc</span> — <strong>27</strong> dead, <strong>40</strong> endpoints, 0 Specs. 126 módulos huérfanos. Detalle HotelSvc sin trazabilidad Spec.</li>
-        <li><span class="repo">api-businessrules-operation-validator</span> — chico: <strong>2</strong> dead, <strong>4</strong> endpoints, 0 Specs. Casi limpio en dead; falta adoptar Specs.</li>
-        <li><span class="repo">api-br-quote-ideasfractal</span> — <strong>21</strong> dead, <strong>18</strong> endpoints, 0 Specs. Dead ≈ endpoints: revisar antes de podar.</li>
-        <li><span class="repo">agent-wiser-copilot</span> — <strong>12</strong> dead, <strong>13</strong> endpoints, <strong>58</strong> orphan tests, 0 Specs. El ruido es tests, no Specs.</li>
-        <li><span class="repo">livespec-mcp</span> (self) — <strong>13/13 Specs ligadas</strong>, <strong>0</strong> Specs sin impl, <strong>1</strong> dead, <strong>62</strong> endpoints (explorer). Hard-cut OK: validate strict green. Referencia de “cómo se ve bien”.</li>
-        <li><span class="repo">vise</span> — <strong>10</strong> dead, <strong>48</strong> endpoints, 0 Specs, 78 orphan tests. Producto propio sin catálogo Spec aún.</li>
-        <li><span class="repo">Mensis</span> — <strong>15/15 Specs ligadas</strong> pero <strong>21</strong> dead y 0 endpoints HTTP. Specs anclan código; el dead son helpers/UI sin callers en grafo.</li>
-        <li><span class="repo">flowtrace-debugger</span> — <strong>5</strong> dead, <strong>34</strong> endpoints, 0 Specs, 22 legacy servers. Grafo creció (+270 sym / +1378 edges vs barrido previo).</li>
-      </ul>
-      <p class="muted small" style="margin-top:0.5rem">
-        <strong>Lectura general:</strong> donde hay Specs + links (livespec, Mensis, search-manager, SPA) se puede preguntar “qué implementa X”.
-        Donde hay 0 Specs, livespec igual da dead/endpoints/impact — pero no cierra el loop Spec↔código.
-        Cross-repo solo aporta donde <span class="mono">group_db</span> une cliente y server indexados.
-      </p>
+    <section class="slide" data-title="Repos">
+      <p class="eyebrow">16c · Hallazgos por perfil</p>
+      <h2>Dónde duele · dónde está bien</h2>
+      <div class="stat-grid cols-3" style="margin-top:0.5rem">
+        <div class="stat">
+          <div class="n warn-n">77</div>
+          <div class="label">Max dead</div>
+          <div class="hint">sa-transport-l</div>
+        </div>
+        <div class="stat">
+          <div class="n warn-n">61≈60</div>
+          <div class="label">Dead ≈ endpoints</div>
+          <div class="hint">api-legacy-j</div>
+        </div>
+        <div class="stat">
+          <div class="n">8/10</div>
+          <div class="label">Mejor Spec link</div>
+          <div class="hint">api-search-manager-i</div>
+        </div>
+        <div class="stat">
+          <div class="n">0</div>
+          <div class="label">Dead limpio</div>
+          <div class="hint">bags-f SA · Specs aún flojas</div>
+        </div>
+        <div class="stat">
+          <div class="n muted-n">0</div>
+          <div class="label">Specs en solos</div>
+          <div class="hint">wapp / utils / detail / wiser…</div>
+        </div>
+        <div class="stat">
+          <div class="n">15/15</div>
+          <div class="label">Mensis Specs</div>
+          <div class="hint">Ligadas · 21 dead UI/helpers</div>
+        </div>
+      </div>
+      <div class="chip-row">
+        <span class="chip">composers <em>9 Specs → 2 ligadas</em></span>
+        <span class="chip">SPA results <em>9/10</em></span>
+        <span class="chip">flight-v2 <em>70 dead</em></span>
+        <span class="chip">wapp <em>215 eps · 0 Specs</em></span>
+      </div>
     </section>
 
     <!-- cierre -->
