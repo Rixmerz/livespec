@@ -3,7 +3,7 @@
 [![PyPI](https://img.shields.io/pypi/v/livespec.svg)](https://pypi.org/project/livespec/)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/downloads/)
 [![License: AGPL v3](https://img.shields.io/badge/license-AGPL--3.0--only-blue.svg)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-639%20passed-brightgreen.svg)](https://github.com/Rixmerz/livespec/actions)
+[![Tests](https://img.shields.io/badge/tests-660%20passed-brightgreen.svg)](https://github.com/Rixmerz/livespec/actions)
 
 > **Public beta (v0.30).** Local-first code intelligence for AI agents.
 > Call graph, impact analysis, and Spec ↔ code traceability. Search is
@@ -607,6 +607,7 @@ static Explorer bundles.
 | `get_requirement_dependencies` (v0.6 alias) | `get_spec_dependency_graph` |
 | `get_index_status` (v0.9, deprecated in v0.8) | read the `project://index/status` resource |
 | `list_requirements` / `get_requirement_implementation` / `create_requirement` / etc. (RF nomenclature, removed v0.20 — hard cut) | `list_specs` / `get_spec_implementation` / `create_spec` / etc. |
+| `## SPEC-NNN:` native catalog / `fmt="livespec"` / `@spec:SPEC-001` shape-match / `create_spec(spec_id="SPEC-…")` (removed — hard cut under `[Unreleased]`) | OpenSpec slugs under `openspec/`; `sync_openspec` / `import_specs_from_markdown(..., fmt="openspec")`; `@spec:auth-user-login` (id must exist in store) |
 
 ## Resources
 

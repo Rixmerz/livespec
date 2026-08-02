@@ -155,7 +155,7 @@ fixed cost it doesn't otherwise need.
 | Coverage gaps / orphans | `audit_coverage(summary_only=True)` |
 | Brownfield Spec proposals | `propose_specs_from_codebase()` — skips groups with **any** Spec link by default (`skipped_covered_count`); **user approves before create** |
 | Batch link (configs, SQL, no-annotation langs) | `bulk_link_spec_symbols(mappings)` |
-| Import specs from markdown | `import_specs_from_markdown(path, fmt?)` — `fmt` is `"livespec"` \| `"openspec"`, auto-detected |
+| Import specs from markdown | `import_specs_from_markdown(path, fmt?)` — OpenSpec only (`"openspec"` \| `"auto"`) |
 | Which `@word:` comments the matcher ignores | `scan_annotation_verbs()` |
 
 **`bulk_link_spec_symbols` parameter trap.** Each mapping entry is

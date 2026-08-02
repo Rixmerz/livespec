@@ -43,8 +43,8 @@ Todo el stack es local-first: 0 servicios externos, 0 API keys obligatorias, 0 D
 
 ## 3. Estado actual
 
-**HEAD: hard-cut del dialecto nativo `SPEC-NNN` — solo slugs OpenSpec. Tests 660.**
-Sin tag nuevo — todo bajo `[Unreleased]` (**BREAKING**).
+**HEAD: `c237fd1` — hard-cut del dialecto nativo `SPEC-NNN` — solo slugs OpenSpec. Tests 660.**
+Sin tag nuevo — todo bajo `[Unreleased]` (**BREAKING**). Pin PyPI/plugin sigue `0.30.1`.
 
 Qué landeó, con evidencia sobre repos reales (antes → después):
 
@@ -193,10 +193,10 @@ P0 group lookup; legacy infra filter; dead_code auto non-python; Spring hint.
 ### v0.23+ / OpenSpec resumen (referencia)
 
 **Nomenclatura (authoring):** OpenSpec markdown (`openspec/specs/...` con
-`### Requirement:` + `#### Scenario:`) es la **SSoT de autoría**. Livespec es el
-motor de grafo/trazabilidad debajo. El catálogo nativo `## SPEC-NNN:` queda como
-**import-compat / legacy** — no mezclar dialectos en el mismo repo. Ver
-`CHANGELOG` `[0.23.0]`/`[0.29.0]`/`[0.30.0]` + Skill `livespec` + `docs/AGENT_PLAYBOOK.md` §5.5.
+`### Requirement:` + `#### Scenario:`) es la **única** SSoT de autoría.
+Livespec es el motor de grafo/trazabilidad debajo. El catálogo nativo
+`## SPEC-NNN:` fue **hard-cut** (ver `[Unreleased]` / HEAD actual) — no hay
+import-compat. Ver Skill `livespec` + `docs/AGENT_PLAYBOOK.md` §5.
 
 **Shipped through `v0.23.0` then `v0.29.0`/`v0.30.0`:** OpenSpec round-trip + change
 lifecycle + scenario traceability; product/`livespec` command (PyPI package

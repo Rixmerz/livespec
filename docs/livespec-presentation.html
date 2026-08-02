@@ -572,27 +572,68 @@
       <h2>Dogfood sobre superficie real</h2>
       <div class="grid-3">
         <div class="card">
-          <h3>Barrido multi-repo</h3>
-          <p class="muted" style="margin-top:0.45rem">Re-index + tools read-only sobre decenas de repos. Endpoints, dead code, coverage, legacy flows ejercitados de punta a punta.</p>
+          <h3>Barrido hard-cut</h3>
+          <p class="muted" style="margin-top:0.45rem"><strong>23</strong> workspaces (13 polyrepo + 10 solo). Force re-index + <strong>23</strong> tools read-only. Cero fallos de producto (solo <span class="mono">git_diff</span> en clones sin historia).</p>
         </div>
         <div class="card">
           <h3>OpenSpec en nosotros</h3>
-          <p class="muted" style="margin-top:0.45rem">13 requirements migradas de <span class="mono">SPEC-NNN</span> a slugs conservando 191 links. El propio código se anota con <span class="mono">@spec:&lt;slug&gt;</span>.</p>
+          <p class="muted" style="margin-top:0.45rem"><strong>13/13</strong> specs linked · <span class="mono">validate_openspec(strict)</span> green. Migración <span class="mono">SPEC-NNN</span>→slugs conservó <strong>191</strong> links.</p>
         </div>
         <div class="card">
-          <h3>Contrato de payload</h3>
-          <p class="muted" style="margin-top:0.45rem"><span class="mono">count</span>, <span class="mono">grouped</span>/<span class="mono">group_db</span>, paginación de <span class="mono">find_symbol</span> — un vocabulario, no tres.</p>
+          <h3>Cross-repo <span class="mono">group_db</span></h3>
+          <p class="muted" style="margin-top:0.45rem"><span class="mono">find_symbol</span> cruza proyectos · <span class="mono">route_callers=2</span> · <span class="mono">invokes_endpoints=1</span> · live HTTP <strong>24</strong>/<strong>19</strong> (srv/cli).</p>
         </div>
       </div>
       <ul class="clean" style="margin-top:0.85rem">
-        <li>Toda mejora se prueba contra repos reales antes de merge (ver <span class="mono">CONTRIBUTING.md</span>)</li>
-        <li>Suite verde ≠ suficiente: el dogfood es la prueba</li>
+        <li>Legacy flows: 2 srv / 36 orphan client — grafo ≠ tráfico; confirmar con APM</li>
+        <li>Suite verde ≠ suficiente: el dogfood es la prueba (<span class="mono">CONTRIBUTING.md</span>)</li>
       </ul>
+    </section>
+
+    <!-- 10b -->
+    <section class="slide" data-title="Números">
+      <p class="eyebrow">09b · Números del barrido</p>
+      <h2>Qué contestó en cada perfil</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>Perfil</th>
+            <th>Workspaces</th>
+            <th>Señal</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Polyrepo (<span class="mono">group_db</span>)</td>
+            <td>13</td>
+            <td>Join cliente→servidor HTTP; endpoints + legacy flows agregados</td>
+          </tr>
+          <tr>
+            <td>Solo (apps / APIs)</td>
+            <td>10</td>
+            <td>Dead code, endpoints, orphan tests, overview — tools verdes</td>
+          </tr>
+          <tr>
+            <td>livespec (self)</td>
+            <td>1</td>
+            <td>1331 symbols · 2365 edges · 13 Specs · 62 endpoints · 1 dead</td>
+          </tr>
+          <tr>
+            <td>OpenSpec strict</td>
+            <td>23/23</td>
+            <td><span class="mono">validate_openspec(strict=True)</span> green tras hard-cut</td>
+          </tr>
+        </tbody>
+      </table>
+      <p class="muted small" style="margin-top:0.85rem;max-width:70ch">
+        Sin scripts ni paths de cliente en el repo público. La matriz vive fuera del
+        árbol; acá solo los números que un agente / stakeholder necesita.
+      </p>
     </section>
 
     <!-- 11 -->
     <section class="slide" data-title="Limitaciones">
-      <p class="eyebrow">10 · Limitaciones</p>
+      <p class="eyebrow">11 · Limitaciones</p>
       <h2>Lo que livespec <em>no</em> es</h2>
       <div class="grid-2">
         <div class="card">
@@ -607,10 +648,6 @@
           <h3><span class="pill warn">Índice = verdad</span></h3>
           <p class="muted" style="margin-top:0.45rem">Sin <span class="mono">index_project</span> fresco, grep e impacto mienten. Watcher no es el camino feliz.</p>
         </div>
-        <div class="card">
-          <h3><span class="pill warn">Pin = PyPI</span></h3>
-          <p class="muted" style="margin-top:0.45rem">Marketplace puede ir atrás del checkout. Para dogfood, apuntá al path local.</p>
-        </div>
       </div>
       <ul class="clean" style="margin-top:0.85rem">
         <li>Jest/Vitest anónimo: el diagnostic avisa archivos ciegos; no inventa tests</li>
@@ -621,7 +658,7 @@
 
     <!-- 12 -->
     <section class="slide" data-title="Cuándo">
-      <p class="eyebrow">11 · Cuándo usarlo</p>
+      <p class="eyebrow">12 · Cuándo usarlo</p>
       <h2>Fit / no-fit</h2>
       <div class="grid-2">
         <div class="card">
@@ -651,7 +688,7 @@
 
     <!-- 13 -->
     <section class="slide" data-title="Provecho">
-      <p class="eyebrow">12 · Playbook</p>
+      <p class="eyebrow">13 · Playbook</p>
       <h2>Cómo sacarle el máximo provecho</h2>
       <div class="grid-2">
         <ol class="steps">
@@ -684,7 +721,7 @@ get_spec_implementation(
       <div class="grid-3" style="margin-top:0.7rem">
         <div class="card"><h3>Qué</h3><p class="muted">Call graph + Spec↔código local</p></div>
         <div class="card"><h3>Vs Graphify</h3><p class="muted">Ellos mapean; nosotros anclamos Specs y polyrepo</p></div>
-        <div class="card"><h3>Límite</h3><p class="muted">Grafo ≠ prod · pin ≠ HEAD</p></div>
+        <div class="card"><h3>Límite</h3><p class="muted">Grafo ≠ prod · índice fresco</p></div>
       </div>
       <p class="footnote">
         github.com/Rixmerz/livespec · PyPI <span class="mono">livespec</span> · v0.30.1<br />
