@@ -204,11 +204,11 @@
       color: var(--ink);
     }
     .stat .hint {
-      margin-top: 0.25rem;
-      font-size: 0.95rem;
+      margin-top: 0.35rem;
+      font-size: 1rem;
       color: var(--muted);
-      line-height: 1.35;
-      max-width: 28ch;
+      line-height: 1.4;
+      max-width: 34ch;
     }
     .chip-row {
       display: flex;
@@ -723,103 +723,97 @@ get_spec_implementation(
       </div>
     </section>
 
-    <!-- 16 — big numbers only -->
+    <!-- 16 — big numbers + plain-language meaning -->
     <section class="slide" data-title="Barrido">
       <p class="eyebrow">16 · Barrido hard-cut</p>
-      <h2>23 repos · evidencia de grafo</h2>
-      <p class="lede">Re-index + tools read-only. No es tráfico de prod.</p>
+      <h2>Qué midió livespec</h2>
+      <p class="lede">23 repos indexados. Cada cifra = señal del grafo, no de prod.</p>
       <div class="stat-grid" style="margin-top:0.4rem">
         <div class="stat">
           <div class="n">23</div>
-          <div class="label">Workspaces</div>
-          <div class="hint">13 polyrepo + 10 solo</div>
+          <div class="label">Repos analizados</div>
+          <div class="hint">13 comparten una DB (polyrepo). 10 se midieron solos.</div>
         </div>
         <div class="stat">
           <div class="n">23/23</div>
-          <div class="label">validate strict</div>
-          <div class="hint">OpenSpec green tras hard-cut</div>
+          <div class="label">Árbol OpenSpec válido</div>
+          <div class="hint">Tras el hard-cut a slugs, ningún repo falló validate estricto.</div>
         </div>
         <div class="stat">
-          <div class="n warn-n">~2–4</div>
-          <div class="label">Specs ligadas / repo</div>
-          <div class="hint">Típico del grupo · ~9 Specs existen</div>
+          <div class="n warn-n">2–4</div>
+          <div class="label">Specs con código</div>
+          <div class="hint">En el grupo hay ~9 Specs, pero solo 2–4 tienen símbolo ligado. El resto “flota”.</div>
         </div>
         <div class="stat">
           <div class="n">13/13</div>
-          <div class="label">livespec self</div>
-          <div class="hint">Todas las Specs ancladas · 1 dead</div>
+          <div class="label">Meta: livespec</div>
+          <div class="hint">En nosotros, las 13 Specs están ancladas a código. Solo 1 candidato a dead.</div>
         </div>
       </div>
     </section>
 
     <section class="slide" data-title="Cross">
       <p class="eyebrow">16b · Cross-repo</p>
-      <h2>Cliente → servidor en el group_db</h2>
-      <div class="stat-grid" style="margin-top:0.5rem">
+      <h2>¿Se ven llamadas entre repos?</h2>
+      <p class="lede">Desde sm-composer-m hacia api-search-hotel-h.</p>
+      <div class="stat-grid" style="margin-top:0.35rem">
         <div class="stat">
           <div class="n">2</div>
-          <div class="label">route_callers</div>
-          <div class="hint">listByChunk* → getHotelList (HotelSvc)</div>
+          <div class="label">Clientes que llaman al server</div>
+          <div class="hint">Dos funciones del composer pegan a getHotelList en HotelSvc.</div>
         </div>
         <div class="stat">
           <div class="n">1</div>
-          <div class="label">invokes_endpoints</div>
-          <div class="hint">Hop HTTP confirmado ida y vuelta</div>
+          <div class="label">Endpoint cruzado</div>
+          <div class="hint">Ese hop HTTP aparece en el grafo (cliente ↔ server).</div>
         </div>
         <div class="stat">
           <div class="n">24 / 19</div>
-          <div class="label">live srv / cli</div>
-          <div class="hint">Con pareja indexada en el grafo</div>
+          <div class="label">Rutas con pareja</div>
+          <div class="hint">24 servers y 19 clients tienen al menos un hop indexado.</div>
         </div>
         <div class="stat">
           <div class="n warn-n">2 / 36</div>
-          <div class="label">legacy srv / orphan cli</div>
-          <div class="hint">Sin hop · confirmar con APM</div>
+          <div class="label">Sin pareja en el grafo</div>
+          <div class="hint">2 servers y 36 clients sin hop. Puede ser ruta muerta o SA faltante — mirar APM.</div>
         </div>
       </div>
-      <p class="lede" style="margin-top:1rem;max-width:40ch">sm-composer-m ve getHotelList en api-search-hotel-h.</p>
     </section>
 
     <section class="slide" data-title="Repos">
-      <p class="eyebrow">16c · Hallazgos por perfil</p>
-      <h2>Dónde duele · dónde está bien</h2>
-      <div class="stat-grid cols-3" style="margin-top:0.5rem">
+      <p class="eyebrow">16c · Por tipo de repo</p>
+      <h2>Ejemplos que importan</h2>
+      <div class="stat-grid cols-3" style="margin-top:0.35rem">
         <div class="stat">
           <div class="n warn-n">77</div>
-          <div class="label">Max dead</div>
-          <div class="hint">sa-transport-l</div>
+          <div class="label">Más dead code</div>
+          <div class="hint">transport-l: 77 símbolos sin callers. Revisar antes de borrar.</div>
         </div>
         <div class="stat">
-          <div class="n warn-n">61≈60</div>
-          <div class="label">Dead ≈ endpoints</div>
-          <div class="hint">api-legacy-j</div>
+          <div class="n warn-n">≈1:1</div>
+          <div class="label">API ≈ no usada</div>
+          <div class="hint">api-legacy-j: ~60 endpoints y ~61 dead. Mucha superficie dudosa.</div>
         </div>
         <div class="stat">
           <div class="n">8/10</div>
-          <div class="label">Mejor Spec link</div>
-          <div class="hint">api-search-manager-i</div>
+          <div class="label">Specs bien ancladas</div>
+          <div class="hint">search-manager: 8 de 10 Specs tienen código. Así se ve bien.</div>
         </div>
         <div class="stat">
           <div class="n">0</div>
-          <div class="label">Dead limpio</div>
-          <div class="hint">bags-f SA · Specs aún flojas</div>
+          <div class="label">Sin dead, Specs flojas</div>
+          <div class="hint">bags-f: grafo limpio, pero casi ninguna Spec ligada.</div>
         </div>
         <div class="stat">
           <div class="n muted-n">0</div>
-          <div class="label">Specs en solos</div>
-          <div class="hint">wapp / utils / detail / wiser…</div>
+          <div class="label">Sin Specs (solos)</div>
+          <div class="hint">wapp/utils/…: hay grafo y endpoints, pero no se puede preguntar “qué implementa X”.</div>
         </div>
         <div class="stat">
           <div class="n">15/15</div>
-          <div class="label">Mensis Specs</div>
-          <div class="hint">Ligadas · 21 dead UI/helpers</div>
+          <div class="label">Specs OK + dead UI</div>
+          <div class="hint">Mensis: todas ligadas; 21 dead son helpers sin callers.</div>
         </div>
-      </div>
-      <div class="chip-row">
-        <span class="chip">composers <em>9 Specs → 2 ligadas</em></span>
-        <span class="chip">SPA results <em>9/10</em></span>
-        <span class="chip">flight-v2 <em>70 dead</em></span>
-        <span class="chip">wapp <em>215 eps · 0 Specs</em></span>
       </div>
     </section>
 
