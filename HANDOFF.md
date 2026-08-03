@@ -106,6 +106,27 @@ Pendiente post-P0: P1 14–20, P2 Explorer/hop inverso, slides CTA/screenshot.
 - **P2.24 hop inverso:** `who_calls(getHotelList)` en HotelSvc →
   `route_callers` = `listByChunk` + `listByChunkSupplierA` (Composer) ✓
 
+**P2 validation (2026-08-03):**
+- **21 Flow Explorer:** `export_flow_explorer` OK — 13 projects, 110
+  endpoints, 165 route_ref; HTML menciona hop Composer→HotelSvc (`listByChunk` /
+  `getHotelList`); `bridge_note` = HTTP hops resolved.
+- **22 Spec Explorer:** `export_explorer` + `index_project(explorer=True)`;
+  `livespec explorer serve .` → HTTP 200 `/explorer/`, `/data.json`,
+  `/specs`, `/playground/status` (playground readonly).
+- **23 SA faltante:** orphan_client=36; samples `/airlines`, `/send-fare`,
+  Third-party SPA paths → `no_indexed_server_hop` confidence=low; hint pide
+  APM. Narrativa “orphan ≠ basura” sostenida.
+- **25 spot:** solo-own livespec (13 Specs linked, dead=1) + vise
+  (dead=10, 0 Specs). **solo-demo:** clones no están en disco — skipped.
+- **27 did_you_mean:** `find_symbol(mcp_eror)` sugiere `mcp_error`;
+  `who_calls` typo → error + did_you_mean; `create_spec(SPEC-999)` →
+  PREFIX-NNN rejected.
+- **28 perf SPA (340 files / 2330 sym):** cold `force` **7.49s**, warm
+  **0.21s** (files_changed 340→0). Alineado al claim ~7s.
+
+Checklist A (plugin) + P1 + P2 core: **cerrada** salvo solo-demo on-disk
+y slides CTA/screenshot (talk B).
+
 ### v0.30.0 / v0.30.1 resumen (referencia)
 
 **Release `v0.30.0` on `main`.** Tests **639**. PyPI `livespec==0.30.1`
