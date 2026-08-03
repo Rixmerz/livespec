@@ -61,6 +61,10 @@ PARAM_DESCRIPTIONS: dict[str, str] = {
     "include_ts_framework_routes": (
         "Treat TS/JS framework route handlers as entry points when sweeping dead code."
     ),
+    "include_tests": (
+        "Include symbols under test paths (``tests/``, ``src/test/``, ``*.test.ts``, "
+        "``*Test.java``, …) that are excluded from dead-code candidates by default."
+    ),
     "include_infra_routes": (
         "Include infra/docs/UI *routes* (``/health``, ``/metrics``, swagger, …) "
         "that are filtered by default. For symbols see ``include_infrastructure``."

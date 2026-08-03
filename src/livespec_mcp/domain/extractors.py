@@ -1578,6 +1578,141 @@ def scan_hono_routes(source: str, language: str) -> list[dict]:
     return routes
 
 
+_GO_HTTP_ROUTE_VERBS = frozenset({
+    "get", "post", "put", "delete", "patch", "head", "options", "any",
+    "handlefunc", "handle", "method",
+})
+
+_GO_HTTP_RECEIVERS = frozenset({
+    "r", "router", "mux", "e", "engine", "app", "api", "http", "group", "g",
+})
+
+
+def _is_go_http_route_receiver(name: str | None) -> bool:
+    if not name:
+        return False
+    n = name.lower()
+    if n in _GO_HTTP_RECEIVERS:
+        return True
+    return n.endswith(("router", "mux", "engine", "group", "server"))
+
+
+def scan_go_routes(source: str) -> list[dict]:
+    """Call-style HTTP routes in a Go file (gin / echo / chi / net/http).
+
+    Returns ``[{method, path, handler_name, line, framework}]`` for patterns
+    like ``r.GET("/x", Hello)``, ``http.HandleFunc("/x", Hello)``,
+    ``mux.HandleFunc("/y", Hello)``, ``r.Method("PUT", "/z", h)``.
+
+    Tree-sitter Go uses ``selector_expression`` + ``interpreted_string_literal``
+    (not TS ``member_expression`` / ``string``). Pre-filter callers by import
+    markers so non-HTTP ``.GET`` noise stays rare.
+    """
+    try:
+        parser = get_parser("go")
+    except Exception:
+        return []
+    src_bytes = source.encode("utf-8", errors="replace")
+    try:
+        tree = parser.parse(src_bytes)
+    except Exception:
+        return []
+
+    def text(n) -> str:
+        return src_bytes[n.start_byte : n.end_byte].decode("utf-8", errors="replace")
+
+    def str_arg(n) -> str | None:
+        if n is None:
+            return None
+        if n.type == "interpreted_string_literal":
+            raw = text(n)
+            return raw[1:-1] if len(raw) >= 2 else raw
+        if n.type == "raw_string_literal":
+            raw = text(n)
+            # `path` or ``path``
+            if len(raw) >= 2 and raw[0] == "`":
+                return raw[1:-1]
+        return None
+
+    def infer_fw(receiver: str | None, pname: str) -> str:
+        recv = (receiver or "").lower()
+        if pname in ("handlefunc", "handle") or recv in ("http", "mux"):
+            return "nethttp"
+        src_l = source.lower()
+        if "gin-gonic/gin" in src_l or "github.com/gin-gonic" in src_l:
+            return "gin"
+        if "labstack/echo" in src_l:
+            return "echo"
+        if "go-chi/chi" in src_l:
+            return "chi"
+        return "nethttp"
+
+    routes: list[dict] = []
+
+    def walk(node) -> None:
+        if node.type == "call_expression":
+            fn = node.child_by_field_name("function")
+            if fn is not None and fn.type == "selector_expression":
+                prop = fn.child_by_field_name("field")
+                obj = fn.child_by_field_name("operand")
+                if prop is not None:
+                    pname = text(prop).lower()
+                    receiver = None
+                    if obj is not None and obj.type == "identifier":
+                        receiver = text(obj).strip() or None
+                    elif obj is not None and obj.type == "selector_expression":
+                        # package.symbol — treat leftmost as receiver package
+                        left = obj.child_by_field_name("operand")
+                        if left is not None and left.type == "identifier":
+                            receiver = text(left).strip() or None
+                    if pname in _GO_HTTP_ROUTE_VERBS and _is_go_http_route_receiver(
+                        receiver
+                    ):
+                        args_node = node.child_by_field_name("arguments")
+                        args = [
+                            a
+                            for a in (
+                                args_node.children if args_node is not None else []
+                            )
+                            if a.type not in ("(", ")", ",", "comment")
+                        ]
+                        line = node.start_point[0] + 1
+                        handler = None
+                        for a in reversed(args):
+                            if a.type == "identifier":
+                                handler = text(a).strip() or None
+                                break
+                            if a.type == "selector_expression":
+                                field = a.child_by_field_name("field")
+                                if field is not None:
+                                    handler = text(field).strip() or None
+                                    break
+                        method = None
+                        path = None
+                        if pname == "method" and len(args) >= 2:
+                            method = (str_arg(args[0]) or "METHOD").upper()
+                            path = str_arg(args[1])
+                        elif pname in ("handlefunc", "handle") and args:
+                            method = "*"
+                            path = str_arg(args[0])
+                        elif args:
+                            method = "ANY" if pname == "any" else pname.upper()
+                            path = str_arg(args[0])
+                        if path is not None and method is not None:
+                            routes.append({
+                                "method": method,
+                                "path": path,
+                                "handler_name": handler,
+                                "line": line,
+                                "framework": infer_fw(receiver, pname),
+                            })
+        for c in node.children:
+            walk(c)
+
+    walk(tree.root_node)
+    return routes
+
+
 def _ts_leftmost_ident(node, text) -> str | None:
     """Walk a member/call chain down to its base identifier for import scoping.
 

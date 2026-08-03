@@ -19,12 +19,18 @@
 
 ## 0. Estado v0.20 (addendum, reemplaza al "Estado v0.7" del final)
 
+**Addendum v0.31.0 — OpenSpec-slug-only + honest endpoints.** Hard-cut of the
+native `SPEC-NNN` dialect (slugs under `openspec/` only). Default
+`find_endpoints` is HTTP-ish (Spring DI / Angular UI / Click / FastMCP /
+Celery opt-in; Go routes; Next.js pages heuristic fixed). `find_dead_code`
+excludes test paths by default. Still public beta — pin `uvx livespec@0.31.0`.
+Next toward 1.0 remains adopters + trust, not more tools.
+
 **Addendum v0.30.0 — Explorer playground + honest Spec gaps.** Spec Explorer
 can Execute read-only MCP tools via `livespec explorer serve` playground;
 orphan KPIs split product vs tests/scripts/bench; Cursor/`tools/list` schemas
-are typed end-to-end; self-repo OpenSpec tree is strict-valid. Still public
-beta — pin `uvx livespec@0.30.0`. Next toward 1.0 remains adopters + trust,
-not more tools.
+are typed end-to-end; self-repo OpenSpec tree is strict-valid. Pin histórico
+`uvx livespec@0.30.0`.
 
 **Addendum v0.29.0 — dense vectors removed.** `search` stays on the
 **core** surface as **FTS5-only**. Dropped: `embed_chunks`, `[embeddings]`

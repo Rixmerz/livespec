@@ -15,8 +15,8 @@
   era la máquina macOS anterior — referencias viejas en este doc pueden
   mencionarlo)
 - **Demo project:** `<demo-repo>` (4 archivos Python con `@rf:` annotations en docstrings, ya tiene RFs persistidas en su `.mcp-docs/docs.db`)
-- **MCP server:** Claude Code plugin `livespec@livespec` **0.30.0**
-  (`uvx livespec@0.30.1`) and/or Cursor `user-livespec` pointing at a local
+- **MCP server:** Claude Code plugin `livespec@livespec` **0.31.0**
+  (`uvx livespec@0.31.0`) and/or Cursor `user-livespec` pointing at a local
   checkout. **Every tool requires `workspace=/abs/repo`** — there is no
   `LIVESPEC_WORKSPACE` env fallback (removed).
 - **Git user:** Juan Pablo Díaz S.
@@ -43,115 +43,31 @@ Todo el stack es local-first: 0 servicios externos, 0 API keys obligatorias, 0 D
 
 ## 3. Estado actual
 
-**HEAD: `c237fd1` — hard-cut del dialecto nativo `SPEC-NNN` — solo slugs OpenSpec. Tests 660.**
-Sin tag nuevo — todo bajo `[Unreleased]` (**BREAKING**). Pin PyPI/plugin sigue `0.30.1`.
+**HEAD: release `v0.31.0` — OpenSpec hard-cut + honest endpoints. Tests 667.**
+Pin PyPI / plugin / `uvx livespec@0.31.0`.
 
-Qué landeó, con evidencia sobre repos reales (antes → después):
+Qué landeó en 0.31.0 (además del hard-cut OpenSpec ya en `main`):
 
-- **Hard-cut `SPEC-NNN` (estilo v0.20 RF→Spec).** Fuera: import `## SPEC-NNN`,
-  `fmt="livespec"`, mint `_next_spec_id`, match de `@spec:SPEC-001` por forma,
-  docs que enseñan el catálogo nativo. Dentro: slugs OpenSpec, árbol
-  `openspec/`, anotaciones vía `known_ids` del store, markers
-  `<!-- livespec:id=<slug> -->` como pin de rename. `create_spec` rechaza
-  `PREFIX-NNN` (`^[A-Za-z]+-\d+$`); `validate_openspec` trata ids numéricos
-  tree-sourced como **error**. Dogfood: `sync_openspec` 13 updated,
-  `validate_openspec(strict=True)` green, `scan_annotations` 0 unknown.
-- **IDs de rutas call-style navegables.** Una ruta Express/Hono con arrow
-  inline se reportaba como `swagger.js:459` y toda tool que toma símbolo
-  respondía `Symbol not found`. El arrow no tiene símbolo propio, pero
-  `_ts_collect_calls` ya atribuye sus llamadas al scope que lo contiene
-  (`__module__` si está a nivel de archivo): ese scope es el target honesto,
-  sus edges *son* los del handler. Nuevo campo `handler_resolution`
-  (`handler` | `enclosing_scope` | `unresolved`). 13 repos reales:
-  **93 endpoints call-style, IDs muertos 14 → 0**, sin cambiar el conteo.
-- **La superficie que enseña solo habla OpenSpec.** Playbook, Skill, README,
-  presentación y prompts usan slugs; un test de prompt falla si vuelve
-  `@spec:SPEC-`. El código de livespec está anotado con slugs en seis anclas
-  (`index_project`, `extract`, `graph_pagerank`, `sync_openspec_tree`,
-  `scan_annotations`, `connect`). Un slug se reconoce porque **es** un id en
-  el store.
-- **Migrar de un pin legacy sale gratis.** Misma capability + mismo heading
-  con id distinto = la misma requirement: la fila conserva PK (links,
-  escenarios, historia) y pasa al slug; `sync_openspec` los lista en
-  `adopted`. Nuestro árbol: 13 specs a slugs con **191** links. Colisión de
-  slug → `ui-theme-selection-2`, nunca `SPEC-NNN`.
-- **Dos callejones sin salida que encontró la propia auditoría.** Borrado
-  `_route_handler_name` (wrapper sin llamadores que detectó `find_dead_code`
-  sobre nosotros mismos) y `find_orphan_tests` ya no reporta
-  `tests/__init__.py` como archivo ciego.
-- **Un solo vocabulario en los payloads.** `count` es el total exacto en todas
-  las tools (`list_specs` decía `total`; ahora devuelve ambos). `find_symbol`
-  cumple el contrato de paginación: aceptaba `limit` sin devolver conteo ni
-  cursor, así que una respuesta truncada parecía completa — en un repo real
-  `limit=5` devolvía 5 de **1812** sin decirlo. `grouped`/`group_db` se
-  reportan siempre juntos y desde toda tool group-aware, incluida
-  `get_project_overview` (en un group_db sus números son solo del proyecto
-  local, y eso antes era mudo). `include_infra` → `include_infra_routes` en
-  `find_legacy_flows`: parecía abreviatura de `include_infrastructure` y
-  significa otra cosa (rutas vs símbolos). Rename duro, sin alias.
-- **Renombrar una requirement OpenSpec ya no deja una spec fantasma.** Como el
-  ID se deriva del encabezado, el rename creaba una spec nueva y dejaba la
-  vieja con sus links, idéntica a una viva en `list_specs` (servicio real: 10
-  specs antes, 11 vivas después). `sync_openspec` ahora pasa a `deprecated`
-  las specs que el árbol dejó de declarar y las reporta en `specs.retired`;
-  no las borra, porque su traceability es la evidencia de qué hay que
-  reapuntar. El barrido se limita por procedencia (**migración v20**, columna
-  aditiva `spec.source`, sin re-extract): las specs hechas a mano con
-  `create_spec` y las filas anteriores a la columna nunca se tocan. 14 repos
-  reales con DB existente: **0 specs retiradas**, idempotente en la segunda
-  pasada.
-- **`scan_spec_annotations` nombra los IDs que no existen.** Una requirement
-  OpenSpec no tiene ID propio: se deriva del encabezado, así que renombrarlo
-  cambia el slug y todo `@spec:` que lo usaba deja de matchear. Antes el payload
-  decía `links_created: 0` y nada más. Ahora trae `unknown_annotation_ids`,
-  un `unknown_annotation_sample` capado con símbolo y archivo, y un hint que
-  apunta a `export_openspec` (el marcador `<!-- livespec:id= -->` fija el ID
-  ante renames). Servicio Node real sin marcadores: de `{links_created: 0}` a
-  3 IDs nombrados con su archivo. 14 repos reales en estado normal: **0 falsos
-  positivos**. `scan_annotations` devuelve `ScanResult` en vez de int (solo
-  llamadores internos).
-- **`find_symbol` en grupo dice qué DB respondió y dónde vive el repo.**
-  Devolvía `grouped: true` sin `group_db`, y el `file_path` de un match
-  cross-repo es relativo al repo dueño, no al workspace pasado. Ahora emite
-  `group_db` y `project_root` por match; ungrouped mantiene el payload magro.
-  Grupo real de 13 repos: 20 de 20 matches en 5 proyectos, abribles.
+- **`find_endpoints` default = HTTP-ish.** Spring DI (`@Bean`/`@Service`/…),
+  Angular UI, Click, FastMCP y Celery salen del sweep default (opt-in con
+  `framework=`). Go: `scan_go_routes` (gin/echo/chi/`HandleFunc`). Next.js
+  ya no confunde `src/app/pages/` (Angular) ni `error.component.ts` con
+  magic files.
+- **`find_dead_code` excluye tests por defecto** (`src/test/`, `*.test.ts`,
+  …); `include_tests=True` para verlos. En el group demo: TransportSvc 77→4,
+  flight-search-g 52→1, SPA default endpoints 167→~1 (angular=143).
+- **Presentación** alineada (audiencia devs, arquetipos SA, léxico).
+- **Hard-cut `SPEC-NNN`** (ya en `c237fd1`): solo slugs OpenSpec; validate
+  estricto; mint/`fmt=livespec`/import nativo fuera.
 
-- **Spring con ruta.** `compute_endpoints` joinea `route_ref` (role `server`) y
-  emite `http_method`/`http_path`/`http_framework` como express/hono/python.
-  La ruta ya estaba indexada; solo la leía `find_legacy_flows`. Servicio Spring
-  real: endpoints con ruta **0 → 4 de 8**. Sin migración ni re-extract.
-  Sigue faltando (extractor + re-extract): prefijo `@RequestMapping` de clase,
-  `@RequestMapping(method=…)` y mapping sin path.
-- **Flow Explorer dejó de inventar rutas Spring.** `_spring_route_from_source`
-  tomaba la *primera* anotación de una ventana de 25 líneas, así que cada
-  handler heredaba la ruta del anterior. Borrada.
-- **`find_orphan_tests` declara los archivos ciegos por archivo**
-  (`test_files_without_symbols` + sample capado). El hint de 0.29 se apagaba en
-  cuanto otro lenguaje aportaba un test nombrado. Repo Node real: campo ausente
-  → `1`, hint `False` → `True`.
-- **CI verde otra vez.** El job `ruff + package build` estaba rojo en `main`
-  (reglas nuevas de ruff: `I001`, `RUF100`, `B007`, `RUF001`); los tests
-  siempre pasaron.
-- **`CONTRIBUTING.md`** — la barra de evidencia: nada se sube sin antes/después
-  contra una superficie de aplicación real, y borrar una tool que la evidencia
-  no sostiene es contribución de primera clase.
-
-**Rechazado por evidencia (no reintentar sin datos nuevos):** frenar el picking
-de handler de Express en la flecha inline final. Contra un servicio Express real
-convirtió `/health` → `healthController.check` (correcto) en un centinela, y no
-arregló ningún caso medible. Las rutas reales cierran con error handler
-`(err, req, res, next)` o una flecha de logging; la aridad tampoco discrimina
-(el tail de logging es de 2). Detalle en `CHANGELOG.md` `[Unreleased]`.
-
-Backlog del barrido: cerrado. Lo que queda es extractor puro y pide
-re-extract: prefijo `@RequestMapping` de clase en Spring, y emitir un símbolo
-propio para el arrow inline (hoy resuelve al scope contenedor, que es correcto
-para impacto pero no distingue dos rutas inline del mismo archivo).
+Retest post-fix: 13/13 group tools green + cross-repo Composer→HotelSvc hop OK
+(`user-livespec` local). El marketplace pin viejo `0.30.1` seguía
+reportando TransportSvc dead=77 hasta este tag.
 
 ### v0.30.0 / v0.30.1 resumen (referencia)
 
 **Release `v0.30.0` on `main`.** Tests **639**. PyPI `livespec==0.30.1`
-(Trusted Publishing via tag). Plugin pin `livespec@0.30.1`.
+(Trusted Publishing via tag). Plugin pin `livespec@0.30.1` (histórico).
 
 Highlights: Spec Explorer MCP playground (Try it / `call_tool`); product-only
 orphan KPIs (`modules_non_product` vs `modules_truly_orphan`); typed Explorer
@@ -160,7 +76,7 @@ OpenSpec self-tree strict-valid; harness test-credit for verified Specs;
 AGPL-3.0-only. Surface **27** core + **12** Spec + **5** docs = **44**.
 
 **Public beta** (not 1.0): README + `docs/BETA_DOGFOOD.md` /
-`docs/BETA_CHECKLIST.md`. Pin `uvx livespec@0.30.1`.
+`docs/BETA_CHECKLIST.md`. Pin histórico `uvx livespec@0.30.1`.
 
 **OpenSpec self-dogfood:** `validate_openspec(strict=True)` green; SPEC-013
 linked; Explorer **13/13 verified**; product orphans **0**.
@@ -171,12 +87,10 @@ tools read-only sobre 13 repos de un grupo `group_db` y 10 repos sueltos.
 El script y los datos viven **fuera de este repo** (workspaces privados; nunca
 commitear paths ni nombres de repos de terceros).
 
-Backlog que salió del barrido (no bloquea):
-1. `find_endpoints` devuelve IDs `archivo.js:linea` en rutas call-style; pasarlos
-   a `who_calls`/`analyze_impact` da `Symbol not found` (6/23 repos).
-2. `find_endpoints(framework="spring")` no puebla `http_method`/`http_path`
-   (solo `decorators`), aunque `route_ref` sí resuelve esas rutas.
-3. `find_symbol` responde `grouped: true` con `group_db: null`.
+Backlog del barrido: cerrado en 0.31.0 (call-style ids, Spring routes,
+`grouped`/`group_db`). Lo que queda es extractor puro y pide re-extract:
+prefijo `@RequestMapping` de clase en Spring, y símbolo propio para arrow
+inline (hoy resuelve al scope contenedor).
 
 ### v0.29.0 resumen (referencia)
 
@@ -195,13 +109,13 @@ P0 group lookup; legacy infra filter; dead_code auto non-python; Spring hint.
 **Nomenclatura (authoring):** OpenSpec markdown (`openspec/specs/...` con
 `### Requirement:` + `#### Scenario:`) es la **única** SSoT de autoría.
 Livespec es el motor de grafo/trazabilidad debajo. El catálogo nativo
-`## SPEC-NNN:` fue **hard-cut** (ver `[Unreleased]` / HEAD actual) — no hay
-import-compat. Ver Skill `livespec` + `docs/AGENT_PLAYBOOK.md` §5.
+`## SPEC-NNN:` fue **hard-cut** en **0.31.0** — no hay import-compat. Ver
+Skill `livespec` + `docs/AGENT_PLAYBOOK.md` §5.
 
-**Shipped through `v0.23.0` then `v0.29.0`/`v0.30.0`:** OpenSpec round-trip + change
-lifecycle + scenario traceability; product/`livespec` command (PyPI package
-`livespec`); cross-repo routes + `group_db`; FTS-only curation; Explorer
-playground. Pin is **0.30.0**.
+**Shipped through `v0.23.0` then `v0.29.0`/`v0.30.0`/`v0.31.0`:** OpenSpec
+round-trip + change lifecycle + scenario traceability; product/`livespec`
+command (PyPI package `livespec`); cross-repo routes + `group_db`; FTS-only
+curation; Explorer playground; OpenSpec-slug-only dialect. Pin is **0.31.0**.
 
 <details><summary>OpenSpec batch detail (v0.22→0.23 era)</summary>
 

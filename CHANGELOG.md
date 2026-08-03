@@ -6,6 +6,36 @@ follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.31.0] - 2026-08-03
+
+### Changed — Spring endpoints and dead-code honesty
+
+- **`find_endpoints` no longer lists Spring DI stereotypes as routes.**
+  Default sweep and `framework='spring'` keep `@RestController` /
+  `@*Mapping` / `@ExceptionHandler`; `@Bean`, `@Configuration`,
+  `@Service`, `@Repository`, `@SpringBootApplication`, Java `@Component`,
+  `@EventListener`, and `@Scheduled` are omitted from the endpoint *list*
+  (they remain protected in `find_dead_code` — zero callers is expected
+  under DI).
+- **`find_dead_code` excludes test paths by default** using the shared
+  `_is_test_file_path` heuristic (`src/test/`, `*.test.ts`, `*Test.java`,
+  …). Pass `include_tests=True` to surface them. Fixes Java/TS repos where
+  “dead” was mostly the test tree.
+
+### Changed — Angular / Python / Go endpoint honesty
+
+- **Angular UI is opt-in:** `@Component` / `@Injectable` / … no longer
+  appear in the default `find_endpoints` sweep; use `framework='angular'`.
+- **Click / FastMCP / Celery are opt-in:** default sweep is HTTP-ish
+  (Flask/FastAPI/Spring/Express/Hono/Go). Use `framework='click'|'fastmcp'|
+  'celery'`. FastMCP preset also matches `mutation_tool` / `agentic_tool`
+  aliases.
+- **Go HTTP routes:** `scan_go_routes` + `framework='gin'|'echo'|'chi'|
+  'nethttp'` (and default) detect `r.GET("/x", h)` / `http.HandleFunc`.
+- **Next.js `pages/` heuristic:** do not treat Angular `src/app/pages/`
+  feature folders as Next.js pages-router entry points. Magic app-router
+  files must be exactly ``page.tsx`` (not ``error.component.ts``).
+
 ### Breaking — native `SPEC-NNN` dialect removed (OpenSpec slugs only)
 
 Hard cut, same spirit as the v0.20 RF→Spec rename: no import alias, no

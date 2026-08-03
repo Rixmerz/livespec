@@ -163,6 +163,9 @@ async def test_find_endpoints_angular(workspace):
         out = (await c.call_tool("find_endpoints", {"framework": "angular"})).data
         qnames = {e["qualified_name"] for e in out["endpoints"]}
         assert any(q.endswith("DashComponent") for q in qnames), qnames
+        default = (await c.call_tool("find_endpoints", {})).data
+        default_q = {e["qualified_name"] for e in default["endpoints"]}
+        assert not any("DashComponent" in q for q in default_q), default_q
 
 
 @pytest.mark.asyncio
@@ -280,6 +283,98 @@ async def test_dead_code_angular_injectable_methods_protected(workspace):
     qnames = {d["qualified_name"] for d in out["dead_symbols"]}
     assert not any("ApiService" in q for q in qnames), qnames
     assert any(q.endswith("localDead") for q in qnames), qnames
+
+
+@pytest.mark.asyncio
+async def test_find_endpoints_spring_excludes_di_beans(workspace):
+    """@Bean/@Configuration/@Service are not HTTP endpoints (default + spring)."""
+    (workspace / "UserController.java").write_text(SPRING_SRC)
+    (workspace / "AppConfig.java").write_text(
+        "package com.example.api;\n"
+        "\n"
+        "import org.springframework.context.annotation.Bean;\n"
+        "import org.springframework.context.annotation.Configuration;\n"
+        "import org.springframework.boot.autoconfigure.SpringBootApplication;\n"
+        "import org.springframework.stereotype.Component;\n"
+        "import org.springframework.stereotype.Service;\n"
+        "\n"
+        "@SpringBootApplication\n"
+        "public class BootApp {}\n"
+        "\n"
+        "@Configuration\n"
+        "class AppConfig {\n"
+        "    @Bean\n"
+        "    public String greeting() { return \"hi\"; }\n"
+        "}\n"
+        "\n"
+        "@Service\n"
+        "class UserService {\n"
+        "    public String lookup() { return \"x\"; }\n"
+        "}\n"
+        "\n"
+        "@Component\n"
+        "class HelperBean {}\n"
+    )
+    async with Client(mcp) as c:
+        await c.call_tool("index_project", {})
+        spring = (await c.call_tool("find_endpoints", {"framework": "spring"})).data
+        default = (await c.call_tool("find_endpoints", {})).data
+    for label, out in (("spring", spring), ("default", default)):
+        qnames = {e["qualified_name"] for e in out["endpoints"]}
+        assert any(q.endswith("list") for q in qnames), (label, qnames)
+        assert any(q.endswith("create") for q in qnames), (label, qnames)
+        assert not any(q.endswith("greeting") for q in qnames), (label, qnames)
+        assert not any(q.endswith("BootApp") for q in qnames), (label, qnames)
+        assert not any(q.endswith("AppConfig") for q in qnames), (label, qnames)
+        assert not any(q.endswith("UserService") for q in qnames), (label, qnames)
+        assert not any(q.endswith("HelperBean") for q in qnames), (label, qnames)
+        assert not any(q.endswith("lookup") for q in qnames), (label, qnames)
+
+
+@pytest.mark.asyncio
+async def test_find_dead_code_skips_java_src_test_by_default(workspace):
+    """Java ``src/test/...`` symbols are not dead candidates (tests ≠ prod)."""
+    main = workspace / "src" / "main" / "java" / "com" / "ex"
+    test = workspace / "src" / "test" / "java" / "com" / "ex"
+    main.mkdir(parents=True)
+    test.mkdir(parents=True)
+    (main / "Prod.java").write_text(
+        "package com.ex;\n"
+        "public class Prod {\n"
+        "    public static String unusedProd() { return \"p\"; }\n"
+        "}\n"
+    )
+    (test / "ProdTest.java").write_text(
+        "package com.ex;\n"
+        "public class ProdTest {\n"
+        "    public void testUnused() { }\n"
+        "}\n"
+    )
+    async with Client(mcp) as c:
+        await c.call_tool("index_project", {})
+        out = (
+            await c.call_tool(
+                "find_dead_code",
+                {"include_non_python": True, "include_public": True},
+            )
+        ).data
+        with_tests = (
+            await c.call_tool(
+                "find_dead_code",
+                {
+                    "include_non_python": True,
+                    "include_public": True,
+                    "include_tests": True,
+                },
+            )
+        ).data
+    qnames = {d["qualified_name"] for d in out["dead_symbols"]}
+    paths = {d["file_path"] for d in out["dead_symbols"]}
+    assert not any("src/test/" in p for p in paths), paths
+    assert not any(q.endswith("testUnused") for q in qnames), qnames
+    assert any(q.endswith("unusedProd") for q in qnames), qnames
+    with_q = {d["qualified_name"] for d in with_tests["dead_symbols"]}
+    assert any(q.endswith("testUnused") for q in with_q), with_q
 
 
 @pytest.mark.asyncio

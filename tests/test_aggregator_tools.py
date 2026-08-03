@@ -489,12 +489,12 @@ async def test_find_endpoints_all_and_per_framework(workspace):
     async with Client(mcp) as c:
         await c.call_tool("index_project", {})
 
-        # No framework filter -> HTTP/CLI entry points (pytest fixtures excluded)
+        # No framework filter -> HTTP entry points (Click/pytest opt-in)
         all_eps = (await c.call_tool("find_endpoints", {})).data
         all_qnames = {e["qualified_name"] for e in all_eps["endpoints"]}
         assert "app.main.list_users" in all_qnames
         assert "app.main.get_items" in all_qnames
-        assert "app.main.cli_run" in all_qnames
+        assert "app.main.cli_run" not in all_qnames
         assert "app.main.db" not in all_qnames
         assert "app.main.plain" not in all_qnames
 
@@ -556,8 +556,9 @@ async def test_find_endpoints_detects_plugin_decorator_alias(workspace):
     """v0.14 (F4): a tool decorated via an alias factory
     (`mutation_tool = mcp.tool if X else _noop`) — the pattern the Spec
     plugin uses for `@mutation_tool`/`@agentic_tool` — must be surfaced by
-    `find_endpoints` (framework=None) even though the stored decorator name
-    (`mutation_tool`) isn't a known entry-point last segment."""
+    `find_endpoints(framework='fastmcp')` even though the stored decorator
+    name (`mutation_tool`) isn't a known entry-point last segment.
+    Default sweep is HTTP-only (MCP tools are opt-in)."""
     pkg = workspace / "app"
     pkg.mkdir()
     (pkg / "__init__.py").write_text("")
@@ -581,9 +582,13 @@ async def test_find_endpoints_detects_plugin_decorator_alias(workspace):
 
     async with Client(mcp) as c:
         await c.call_tool("index_project", {})
-        all_eps = (await c.call_tool("find_endpoints", {})).data
+        default = (await c.call_tool("find_endpoints", {})).data
+        mcp_eps = (
+            await c.call_tool("find_endpoints", {"framework": "fastmcp"})
+        ).data
 
-    qnames = {e["qualified_name"] for e in all_eps["endpoints"]}
+    assert not default["endpoints"], default
+    qnames = {e["qualified_name"] for e in mcp_eps["endpoints"]}
     assert "app.plugin.register.link_spec_symbol" in qnames, (
         f"alias-decorated plugin tool must be reported as endpoint: {qnames}"
     )

@@ -28,6 +28,7 @@ from livespec_mcp.domain.extractors import (
     get_parser,
     infer_python_http_framework,
     parse_python_http_route,
+    scan_go_routes,
     scan_hono_routes,
     ts_registered_callback_names,
 )
@@ -370,6 +371,40 @@ _ENTRY_POINT_DECORATOR_LASTSEG = frozenset({
     "hostlistener",
 })
 
+# Spring DI / lifecycle / messaging — protect from dead-code (via
+# `_ENTRY_POINT_DECORATOR_LASTSEG`) but do NOT list as find_endpoints.
+# Agents asking "what HTTP routes?" were drowning in @Bean/@Configuration.
+_SPRING_DI_ONLY_LASTSEGS = frozenset({
+    "service", "repository", "configuration", "bean", "autowired",
+    "eventlistener", "postconstruct", "predestroy",
+    "kafkalistener", "rabbitlistener", "jmslistener",
+    "springbootapplication",
+})
+
+# Angular UI — protect from dead-code; list only with framework='angular'.
+_ANGULAR_UI_ONLY_LASTSEGS = frozenset({
+    "component", "injectable", "directive", "pipe", "ngmodule", "hostlistener",
+})
+
+# CLI / MCP / Celery — protect from dead-code; list via framework=click|fastmcp|celery.
+# NOTE: ``fixture`` stays on the default *compute_endpoints* surface so the
+# Spec Explorer can split fixtures into DATA.fixtures; ``find_endpoints``
+# still drops them via ``filter_api_endpoints`` unless framework='pytest'.
+_NON_HTTP_SURFACE_LASTSEGS = frozenset({
+    "command", "group",
+    "tool", "resource", "prompt",
+    "task", "shared_task",
+})
+
+# Default find_endpoints ≈ HTTP(+FS routing) surface. Opt into Angular / CLI /
+# MCP / Celery with framework=. Java @Component still excluded via path check.
+_ENDPOINT_SURFACE_DECORATOR_LASTSEG = (
+    _ENTRY_POINT_DECORATOR_LASTSEG
+    - _SPRING_DI_ONLY_LASTSEGS
+    - _ANGULAR_UI_ONLY_LASTSEGS
+    - _NON_HTTP_SURFACE_LASTSEGS
+)
+
 # Per-framework decorator presets for `find_endpoints(framework=...)`.
 _FRAMEWORK_DECORATOR_PATTERNS: dict[str, tuple[str, ...]] = {
     "flask": (
@@ -382,17 +417,19 @@ _FRAMEWORK_DECORATOR_PATTERNS: dict[str, tuple[str, ...]] = {
     ),
     "click": ("command", "group"),
     "pytest": ("fixture",),
-    "fastmcp": ("tool", "resource", "prompt"),
+    "fastmcp": ("tool", "resource", "prompt", "mutation_tool", "agentic_tool"),
     "celery": ("task", "shared_task"),
     "django": ("login_required", "permission_required", "staff_member_required"),
-    # v0.13 P2: Java Spring Boot (annotations extracted since migration v8)
+    # v0.13 P2 / Unreleased: HTTP mappings + controllers only (not @Bean/@Service).
     "spring": (
         "GetMapping", "PostMapping", "PutMapping", "DeleteMapping",
         "PatchMapping", "RequestMapping", "RestController", "Controller",
-        "ExceptionHandler", "EventListener", "Scheduled",
+        "ExceptionHandler",
     ),
-    # v0.13 P2: Angular (TS decorators extracted since migration v8)
-    "angular": ("Component", "Injectable", "Directive", "Pipe", "NgModule"),
+    # v0.13 P2 / Unreleased: Angular UI entry points (not in default HTTP sweep).
+    "angular": (
+        "Component", "Injectable", "Directive", "Pipe", "NgModule", "HostListener",
+    ),
 }
 
 # v0.13 P2: Angular lifecycle hooks — invoked by the framework, never by
@@ -456,6 +493,24 @@ def _decorator_matches_any(name: str, patterns: tuple[str, ...]) -> bool:
     """True if `name` equals or has-as-last-segment any of `patterns`."""
     last = _decorator_lastseg(name)
     return last in {p.lower() for p in patterns}
+
+
+def _is_endpoint_surface_decorator(name: str, file_path: str = "") -> bool:
+    """True if ``name`` should appear in ``find_endpoints`` default sweep.
+
+    Spring DI / Angular UI / Click / FastMCP / Celery stay in
+    ``_ENTRY_POINT_DECORATOR_LASTSEG`` so ``find_dead_code`` still protects
+    them, but they are not HTTP routes — use ``framework=…`` to list them.
+    Java ``@Component`` shares a lastseg with Angular ``@Component`` — only
+    the Java form is path-excluded here (Angular is already subtracted).
+    """
+    seg = _decorator_lastseg(name)
+    if seg not in _ENDPOINT_SURFACE_DECORATOR_LASTSEG:
+        return False
+    fp = file_path.replace("\\", "/").lower()
+    if seg == "component" and fp.endswith((".java", ".kt")):
+        return False
+    return True
 
 
 _DJANGO_CBV_BASES = frozenset({
@@ -1177,19 +1232,28 @@ def _ts_framework_entry_point_kind(path: str) -> str | None:
         if "/app/routes/" in normalised or normalised.startswith("/app/routes/"):
             return "remix"
 
-    # Next.js pages router
-    if "/pages/" in normalised:
-        return "nextjs_pages"
+    # Next.js pages router: ``pages/`` or ``src/pages/``.
+    # NOT ``src/app/pages/`` — that is the Angular feature-folder convention
+    # (results SPA was listing 68 fake nextjs_pages endpoints).
+    segs = [s for s in normalised.split("/") if s]
+    for i, seg in enumerate(segs):
+        if seg == "pages":
+            if i > 0 and segs[i - 1] == "app":
+                break
+            return "nextjs_pages"
 
-    # Next.js app router
-    if "/app/" in normalised:
+    # Next.js app router — skip Angular ``app/pages/**`` feature trees.
+    # Magic files are exactly ``page.tsx`` / ``layout.ts`` / … (one stem +
+    # one extension). ``error.component.ts`` must NOT match.
+    if "/app/" in normalised and "/app/pages/" not in normalised:
         app_router_stems = frozenset(
             {
                 "page", "layout", "loading", "error",
                 "not-found", "template", "default", "route",
             }
         )
-        if stem in app_router_stems:
+        parts = basename.split(".")
+        if len(parts) == 2 and parts[0] in app_router_stems:
             return "nextjs_app"
 
     return None
@@ -1372,37 +1436,37 @@ def compute_endpoints(
 
     if framework is not None:
         patterns = _FRAMEWORK_DECORATOR_PATTERNS.get(framework, ())
-
-        def keep(decs: list[str]) -> list[str]:
-            return [d for d in decs if _decorator_matches_any(d, patterns)]
-    else:
-        # v0.14: mirror find_dead_code's alias detection so plugin-
-        # registered tools decorated via an alias factory
-        # (`mutation_tool = mcp.tool if X else _noop`, used by the
-        # Spec plugin's `@mutation_tool`/`@agentic_tool`) are surfaced
-        # too — without this they read as plain decorators whose last
-        # segment isn't in _ENTRY_POINT_DECORATOR_LASTSEG and get missed.
-        workspace_path = st.settings.workspace
         alias_lastsegs: set[str] = set()
-        for path_row in st.conn.execute(
-            "SELECT f.path, f.mtime FROM file f WHERE f.project_id=? AND f.path LIKE '%.py'",
-            (pid,),
-        ):
-            try:
-                abs_path = str(workspace_path / path_row["path"])
-                alias_lastsegs |= _entry_point_decorator_aliases(
-                    abs_path, float(path_row["mtime"])
-                )
-            except Exception:
-                continue
+        # FastMCP plugin aliases (`mutation_tool = mcp.tool if …`) only matter
+        # when listing MCP tools — not for flask/fastapi/spring/….
+        if framework == "fastmcp":
+            workspace_path = st.settings.workspace
+            for path_row in st.conn.execute(
+                "SELECT f.path, f.mtime FROM file f WHERE f.project_id=? AND f.path LIKE '%.py'",
+                (pid,),
+            ):
+                try:
+                    abs_path = str(workspace_path / path_row["path"])
+                    alias_lastsegs |= _entry_point_decorator_aliases(
+                        abs_path, float(path_row["mtime"])
+                    )
+                except Exception:
+                    continue
 
-        def keep(decs: list[str]) -> list[str]:
+        def keep(decs: list[str], file_path: str = "") -> list[str]:
+            del file_path  # framework filter is decorator-only
             return [
                 d
                 for d in decs
-                if _decorator_lastseg(d) in _ENTRY_POINT_DECORATOR_LASTSEG
+                if _decorator_matches_any(d, patterns)
                 or _decorator_lastseg(d) in alias_lastsegs
             ]
+    else:
+        # Default = HTTP-ish surface (Flask/FastAPI/Spring mappings/…).
+        # Angular / Click / FastMCP / Celery / Spring DI require framework=.
+        # (Alias factories for mcp.tool are intentionally omitted here.)
+        def keep(decs: list[str], file_path: str = "") -> list[str]:
+            return [d for d in decs if _is_endpoint_surface_decorator(d, file_path)]
 
     endpoints: list[dict[str, Any]] = []
     seen_qnames: set[Any] = set()
@@ -1472,7 +1536,7 @@ def compute_endpoints(
             decs = json.loads(r["decorators"] or "[]")
         except (json.JSONDecodeError, TypeError):
             continue
-        matching = keep(decs)
+        matching = keep(decs, r["file_path"])
         if not matching:
             continue
         entry = {
@@ -1637,6 +1701,93 @@ def compute_endpoints(
                     "http_method": rt["method"],
                     "http_path": rt["path"],
                     "http_framework": call_fw,
+                    "handler_resolution": resolution,
+                })
+                seen_qnames.add(route_key)
+
+    # Unreleased: Go call-style routes (gin / echo / chi / net/http).
+    _GO_FRAMEWORKS = ("gin", "echo", "chi", "nethttp")
+    go_frameworks = (
+        (framework,)
+        if framework in _GO_FRAMEWORKS
+        else (_GO_FRAMEWORKS if framework is None else ())
+    )
+    if go_frameworks:
+        workspace_path = st.settings.workspace
+        for fr in st.conn.execute(
+            """SELECT id, path, language FROM file
+               WHERE project_id=? AND language='go'
+               ORDER BY path""",
+            (pid,),
+        ).fetchall():
+            try:
+                src = (workspace_path / fr["path"]).read_text(
+                    encoding="utf-8", errors="replace"
+                )
+            except OSError:
+                continue
+            src_l = src.lower()
+            # Cheap prefilter: skip files with no HTTP-ish markers.
+            if not any(
+                m in src_l
+                for m in (
+                    "gin-gonic", "labstack/echo", "go-chi/chi",
+                    "handlefunc", "net/http",
+                )
+            ):
+                continue
+            for rt in scan_go_routes(src):
+                fw = rt.get("framework") or "nethttp"
+                if framework is not None and fw != framework:
+                    continue
+                qname = None
+                kind = "route"
+                resolution = "unresolved"
+                start_line = end_line = rt["line"]
+                handler = rt.get("handler_name")
+                if handler:
+                    sym = st.conn.execute(
+                        """SELECT qualified_name, kind, start_line, end_line
+                           FROM symbol WHERE file_id=? AND name=?
+                           LIMIT 1""",
+                        (int(fr["id"]), handler),
+                    ).fetchone()
+                    if sym is None:
+                        sym = st.conn.execute(
+                            """SELECT s.qualified_name, s.kind, s.start_line, s.end_line
+                               FROM symbol s JOIN file f ON f.id=s.file_id
+                               WHERE f.project_id=? AND s.name=?
+                               LIMIT 1""",
+                            (pid, handler),
+                        ).fetchone()
+                    if sym is not None:
+                        qname = sym["qualified_name"]
+                        kind = sym["kind"]
+                        start_line = sym["start_line"]
+                        end_line = sym["end_line"]
+                        resolution = "handler"
+                if qname is None:
+                    enclosing = _enclosing_symbol_for_line(
+                        st.conn, int(fr["id"]), rt["line"]
+                    )
+                    if enclosing is not None:
+                        qname = enclosing["qualified_name"]
+                        kind = enclosing["kind"]
+                        resolution = "enclosing_scope"
+                entry_qname = qname or f"{fr['path']}:{rt['line']}"
+                route_key = (rt["method"], rt["path"], entry_qname)
+                if route_key in seen_qnames:
+                    continue
+                endpoints.append({
+                    "qualified_name": entry_qname,
+                    "kind": kind,
+                    "file_path": fr["path"],
+                    "start_line": start_line,
+                    "end_line": end_line,
+                    "decorators": [],
+                    "http_method": rt["method"],
+                    "http_path": rt["path"],
+                    "http_framework": fw,
                     "handler_resolution": resolution,
                 })
                 seen_qnames.add(route_key)
@@ -3599,6 +3750,7 @@ def register(mcp: FastMCP) -> None:
         include_public: bool = False,
         include_non_python: bool = False,
         include_ts_framework_routes: bool = False,
+        include_tests: bool = False,
         min_weight: float = 0.0,
         limit: int = 200,
         cursor: int = 0,
@@ -3608,7 +3760,12 @@ def register(mcp: FastMCP) -> None:
         """Symbols with zero callers and zero Spec links — removal candidates.
 
         Filters out, by default:
-        - Files under `tests/`, `scripts/`, `bin/`; `__main__.py`; `manage.py`
+        - **Test files** (``tests/``, ``src/test/``, ``*.test.ts``,
+          ``*_test.go``, ``*Test.java``, … — same heuristic as
+          ``find_orphan_tests``). Tests almost never have production callers;
+          flagging them as dead is noise. Pass ``include_tests=True`` to keep
+          them.
+        - Files under `scripts/`, `bin/`; `__main__.py`; `manage.py`
         - Bundler/build output dirs (`_fresh/`, `dist/`, `build/`, `.next/`,
           `out/`, `node_modules/`, `.svelte-kit/`, `target/`, `__pycache__/`,
           `.turbo/`, `.vite/`, `.cache/`, `.parcel-cache/`) and minified
@@ -3680,9 +3837,10 @@ def register(mcp: FastMCP) -> None:
         ).fetchall()
 
         def is_entry_point_path(p: str) -> bool:
+            if not include_tests and _is_test_file_path(p):
+                return True
             return (
-                p.startswith(("tests/", "bin/", "scripts/"))
-                or "/tests/" in p
+                p.startswith(("bin/", "scripts/"))
                 or "/bin/" in p
                 or "/scripts/" in p
                 or p.endswith("/__main__.py")
@@ -3943,7 +4101,7 @@ def register(mcp: FastMCP) -> None:
         framework: Literal[
             "flask", "fastapi", "click", "pytest", "fastmcp", "celery", "django",
             "nextjs", "fresh", "sveltekit", "remix", "spring", "angular",
-            "hono", "express",
+            "hono", "express", "gin", "echo", "chi", "nethttp",
         ] | None = None,
         limit: int = 200,
         cursor: int = 0,
@@ -3956,11 +4114,10 @@ def register(mcp: FastMCP) -> None:
         expose?", "what CLI commands does this script support?", "which
         pytest fixtures live in this repo?".
 
-        Pass `framework=None` (default) to surface every recognized
-        entry-point decorator across the project. Pass a specific framework
-        to filter to its decorator set (matched against the LAST dotted
-        segment of each decorator, so aliasing like `from flask import Flask
-        as App; @App().route(...)` still resolves).
+        Pass `framework=None` (default) for the **HTTP-ish** surface: Flask /
+        FastAPI / Spring mappings / Express / Hono / Go (gin·echo·chi·net/http)
+        / FS-routing frameworks. Angular UI, Click CLI, FastMCP tools, Celery
+        tasks, and Spring DI beans require an explicit ``framework=`` filter.
 
         v0.11 P1: ``framework='fresh'``, ``'nextjs'``, ``'sveltekit'``,
         ``'remix'`` (or ``None``) surfaces symbols in filesystem-routing
@@ -3976,10 +4133,19 @@ def register(mcp: FastMCP) -> None:
         MiddlewareMixin) are also surfaced even when they have no
         decorator. Closes session-04 bug #15.
 
-        v0.13 P2: ``framework='spring'`` surfaces Java Spring Boot
-        annotations (@RestController, @GetMapping & friends, requires the
-        v8 re-extract); ``framework='angular'`` surfaces @Component /
-        @Injectable / @Directive / @Pipe / @NgModule classes.
+        v0.13 P2: ``framework='spring'`` surfaces Java Spring Boot *HTTP*
+        annotations (@RestController, @GetMapping & friends — not
+        @Bean/@Service/@Configuration; those stay protected in
+        ``find_dead_code`` but are not listed as routes). Requires the v8
+        re-extract. ``framework='angular'`` surfaces @Component /
+        @Injectable / @Directive / @Pipe / @NgModule / @HostListener.
+
+        Default sweep (``framework=None``) omits Spring DI stereotypes,
+        Java ``@Component``, Angular UI, Click, FastMCP, and Celery.
+
+        Unreleased: ``framework='gin'|'echo'|'chi'|'nethttp'`` (and
+        ``None``) scan ``.go`` files for call-style routes
+        (``r.GET("/x", h)``, ``http.HandleFunc(...)``).
 
         v0.13 P3: ``framework='hono'`` / ``'express'`` (and ``None``) scan
         indexed TS/JS files for call-style route registrations

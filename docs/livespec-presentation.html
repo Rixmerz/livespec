@@ -380,7 +380,7 @@
         y trazabilidad Spec ↔ código — con OpenSpec como único dialecto.
       </p>
       <div class="title-meta">
-        <span class="pill">public beta · v0.30.1</span>
+        <span class="pill">public beta · v0.31.0</span>
         <span class="pill">9 lenguajes</span>
         <span class="pill">OpenSpec slugs</span>
         <span class="pill">group_db cross-repo</span>
@@ -679,6 +679,14 @@
           <h3><span class="pill warn">FTS, no vectores</span></h3>
           <p class="muted" style="margin-top:0.45rem">Search es keyword. Semántica profunda no es el producto.</p>
         </div>
+        <div class="card">
+          <h3><span class="pill ok">Spring ≠ beans</span></h3>
+          <p class="muted" style="margin-top:0.45rem"><span class="mono">find_endpoints</span> lista mappings HTTP — no <span class="mono">@Bean</span>/<span class="mono">@Service</span>.</p>
+        </div>
+        <div class="card">
+          <h3><span class="pill ok">Dead ≠ tests</span></h3>
+          <p class="muted" style="margin-top:0.45rem">Por defecto excluye <span class="mono">src/test</span> / <span class="mono">*.test.ts</span>. Opt-in: <span class="mono">include_tests</span>.</p>
+        </div>
       </div>
       <div class="next-step"><strong>Acción:</strong> usalo para orientar y anclar Specs — no como juez final de “borrá esto”.</div>
     </section>
@@ -690,11 +698,11 @@
       <div class="stat-grid" style="margin-top:0.5rem">
         <div class="stat">
           <div class="label">Dead</div>
-          <div class="hint">Símbolo sin callers en el grafo. Candidato a revisar — no “basura confirmada”.</div>
+          <div class="hint">Símbolo de prod sin callers. Tests excluidos por defecto — no “basura confirmada”.</div>
         </div>
         <div class="stat">
           <div class="label">Endpoint</div>
-          <div class="hint">Ruta HTTP/CLI detectada. Otra cuenta: no es un subconjunto del dead.</div>
+          <div class="hint">Ruta HTTP/CLI (o UI si pedís Angular). Spring: mappings — no @Bean/@Config.</div>
         </div>
         <div class="stat">
           <div class="label">Spec ligada</div>
@@ -705,7 +713,7 @@
           <div class="hint">Módulo sin ninguna Spec. Hay grafo, no hay pregunta “qué implementa X”.</div>
         </div>
       </div>
-      <div class="next-step"><strong>Acción:</strong> cuando veas dead &gt; endpoints, no compares — son universos distintos.</div>
+      <div class="next-step"><strong>Acción:</strong> dead por defecto es prod (tests fuera). Endpoints Spring ≠ beans DI.</div>
     </section>
 
     <!-- 11 Victoria -->
@@ -797,9 +805,9 @@
       <p class="archetype">“Casi no hay dead… pero igual no podés preguntar qué implementa X.”</p>
       <div class="stat-grid">
         <div class="stat">
-          <div class="n">0–1</div>
-          <div class="label">Dead</div>
-          <div class="hint">bags-f = 0 · availability = 1. Código bien conectado.</div>
+          <div class="n">0–4</div>
+          <div class="label">Dead (prod)</div>
+          <div class="hint">bags-f 0 · availability/flight-search-g 1 · TransportSvc 4. Tests ya no inflan.</div>
         </div>
         <div class="stat">
           <div class="n warn-n">2–3 / 9</div>
@@ -808,9 +816,9 @@
         </div>
       </div>
       <div class="chip-row">
-        <span class="chip">bags-f <em>0 dead</em></span>
-        <span class="chip">availability <em>1 dead · 28 eps</em></span>
-        <span class="chip">flight-search-g / transport-l <em>más dead</em></span>
+        <span class="chip">bags-f <em>0 dead · 11 eps</em></span>
+        <span class="chip">availability <em>1 dead · 11 eps</em></span>
+        <span class="chip">flight-search-g / TransportSvc <em>Specs 2/9</em></span>
       </div>
       <div class="next-step"><strong>Acción:</strong> anotar <span class="mono">@spec:</span> en handlers — el grafo ya está listo.</div>
     </section>
@@ -829,7 +837,7 @@
         <div class="stat">
           <div class="n">9 / 10</div>
           <div class="label">SPA results</div>
-          <div class="hint">Bien anclado; el ruido son 222 tests huérfanos.</div>
+          <div class="hint">Bien anclado; UI vía framework=angular; 222 orphan tests.</div>
         </div>
         <div class="stat">
           <div class="n">13 / 13</div>
@@ -847,11 +855,11 @@
 
     <!-- 16 Fit -->
     <section class="slide" data-title="Cuándo">
-      <p class="eyebrow">16 · Cuándo usarlo</p>
+      <p class="eyebrow">16 · Cuándo usarlo · audiencia: devs</p>
       <h2>Fit / no-fit</h2>
       <div class="grid-2">
         <div class="card">
-          <h3><span class="pill ok">Usar</span></h3>
+          <h3><span class="pill ok">Usar (devs)</span></h3>
           <ul class="clean" style="margin-top:0.55rem">
             <li>Cold-open de repo desconocido</li>
             <li>Impact antes de un refactor</li>
@@ -907,7 +915,7 @@ get_spec_implementation(
         <div class="card"><h3>Límite</h3><p class="muted">Grafo ≠ prod · índice fresco</p></div>
       </div>
       <p class="footnote">
-        github.com/Rixmerz/livespec · PyPI <span class="mono">livespec</span> · v0.30.1<br />
+        github.com/Rixmerz/livespec · PyPI <span class="mono">livespec</span> · v0.31.0<br />
         Comparativa Graphify: docs/COMPETITIVE_GRAPHIFY.md
       </p>
     </section>
@@ -975,7 +983,7 @@ get_spec_implementation(
       <p class="lede">SA Java · 213 símbolos · 198 edges</p>
       <div class="stat-grid">
         <div class="stat"><div class="n">1</div><div class="label">Candidatos a dead</div><div class="hint">Casi limpio: el grafo conecta casi todo.</div></div>
-        <div class="stat"><div class="n">28</div><div class="label">Endpoints HTTP</div><div class="hint">Superficie SOAP/HTTP amplia vs dead mínimo.</div></div>
+        <div class="stat"><div class="n">11</div><div class="label">Endpoints HTTP</div><div class="hint">Mappings Spring (sin beans DI).</div></div>
         <div class="stat"><div class="n warn-n">3 / 9</div><div class="label">Specs con código</div><div class="hint">Código vivo; Specs aún flojas (6 sin impl).</div></div>
         <div class="stat"><div class="n">6</div><div class="label">Módulos sin Spec</div><div class="hint">Pocos huérfanos — mejor que composers.</div></div>
       </div>
@@ -987,7 +995,7 @@ get_spec_implementation(
       <p class="lede">SA Java · 707 símbolos · 1135 edges</p>
       <div class="stat-grid">
         <div class="stat"><div class="n">0</div><div class="label">Candidatos a dead</div><div class="hint">Ningún símbolo sin callers. Grafo denso y sano.</div></div>
-        <div class="stat"><div class="n">31</div><div class="label">Endpoints HTTP</div><div class="hint">API ancha; todo el resto parece usado en grafo.</div></div>
+        <div class="stat"><div class="n">11</div><div class="label">Endpoints HTTP</div><div class="hint">Mappings HTTP; beans DI fuera del listado.</div></div>
         <div class="stat"><div class="n warn-n">2 / 9</div><div class="label">Specs con código</div><div class="hint">Código OK, trazabilidad Spec no: 7 sin impl.</div></div>
         <div class="stat"><div class="n">16</div><div class="label">Módulos sin Spec</div><div class="hint">Hueco = Specs, no dead code.</div></div>
       </div>
@@ -998,9 +1006,9 @@ get_spec_implementation(
       <h2>api-sa-flight-search-g</h2>
       <p class="lede">SA Java · 611 símbolos · 766 edges</p>
       <div class="stat-grid">
-        <div class="stat"><div class="n warn-n">52</div><div class="label">Candidatos a dead</div><div class="hint">Mucho código sin callers pese a grafo grande.</div></div>
-        <div class="stat"><div class="n">31</div><div class="label">Endpoints HTTP</div><div class="hint">Dead (52) &gt; endpoints (31): son cuentas distintas.</div></div>
-        <div class="stat"><div class="n warn-n">2 / 9</div><div class="label">Specs con código</div><div class="hint">7 Specs sin código. Superficie HTTP con Specs flotando.</div></div>
+        <div class="stat"><div class="n">1</div><div class="label">Candidatos a dead</div><div class="hint">Prod casi limpio (tests ya no cuentan como dead).</div></div>
+        <div class="stat"><div class="n">7</div><div class="label">Endpoints HTTP</div><div class="hint">Mappings Spring reales.</div></div>
+        <div class="stat"><div class="n warn-n">2 / 9</div><div class="label">Specs con código</div><div class="hint">7 Specs sin código. Specs flotando pese a API viva.</div></div>
         <div class="stat"><div class="n warn-n">7</div><div class="label">Tests huérfanos</div><div class="hint">Archivos/tests sin símbolo de producción claro.</div></div>
       </div>
     </section>
@@ -1010,8 +1018,8 @@ get_spec_implementation(
       <h2>api-search-hotel-h</h2>
       <p class="lede">Server del join cross-repo · 989 símbolos</p>
       <div class="stat-grid">
-        <div class="stat"><div class="n warn-n">24</div><div class="label">Candidatos a dead</div><div class="hint">De 989 símbolos; el grafo usa la mayoría.</div></div>
-        <div class="stat"><div class="n">41</div><div class="label">Endpoints HTTP</div><div class="hint">Incluye getHotelList — target del hop desde Composer.</div></div>
+        <div class="stat"><div class="n">6</div><div class="label">Candidatos a dead</div><div class="hint">De 989 símbolos; tests fuera. Revisar Redis/logs/helpers.</div></div>
+        <div class="stat"><div class="n">12</div><div class="label">Endpoints HTTP</div><div class="hint">Incluye getHotelList — target del hop desde Composer.</div></div>
         <div class="stat"><div class="n warn-n">3 / 9</div><div class="label">Specs con código</div><div class="hint">6 Specs sin impl. Server clave, Specs flojas.</div></div>
         <div class="stat"><div class="n">27</div><div class="label">Módulos sin Spec</div><div class="hint">Hueco de trazabilidad en el server del grupo.</div></div>
       </div>
@@ -1046,8 +1054,8 @@ get_spec_implementation(
       <h2>results (SPA)</h2>
       <p class="lede">Front · 2330 símbolos · 6047 edges</p>
       <div class="stat-grid">
-        <div class="stat"><div class="n warn-n">52</div><div class="label">Candidatos a dead</div><div class="hint">Poco % del total; el ruido fuerte es otra métrica.</div></div>
-        <div class="stat"><div class="n">167</div><div class="label">Endpoints / rutas UI</div><div class="hint">Superficie grande (routes/handlers indexados).</div></div>
+        <div class="stat"><div class="n warn-n">44</div><div class="label">Candidatos a dead</div><div class="hint">Poco % del total; el ruido fuerte es otra métrica.</div></div>
+        <div class="stat"><div class="n">143</div><div class="label">Entry points UI</div><div class="hint">framework=angular. Default HTTP ≈ 0–1.</div></div>
         <div class="stat"><div class="n">9 / 10</div><div class="label">Specs con código</div><div class="hint">Casi todas ligadas — buen ancla Spec↔código.</div></div>
         <div class="stat"><div class="n warn-n">222</div><div class="label">Tests huérfanos</div><div class="hint">El hallazgo dominante: tests sin símbolo de prod claro.</div></div>
       </div>
@@ -1056,10 +1064,10 @@ get_spec_implementation(
     <section class="slide" data-appendix="1" data-title="g12">
       <p class="eyebrow">Anexo A12/13 · detalle</p>
       <h2>sa-transport-l</h2>
-      <p class="lede">SA Java · 1233 símbolos · más dead del grupo</p>
+      <p class="lede">SA Java · 1233 símbolos · Specs flojas, dead bajo</p>
       <div class="stat-grid">
-        <div class="stat"><div class="n warn-n">77</div><div class="label">Candidatos a dead</div><div class="hint">Máximo del group. Prioridad de revisión (≠ borrar aún).</div></div>
-        <div class="stat"><div class="n">32</div><div class="label">Endpoints HTTP</div><div class="hint">Dead (77) &gt; endpoints (32): helpers internos sin callers.</div></div>
+        <div class="stat"><div class="n">4</div><div class="label">Candidatos a dead</div><div class="hint">Prod; tests excluidos por defecto.</div></div>
+        <div class="stat"><div class="n">13</div><div class="label">Endpoints HTTP</div><div class="hint">Mappings Spring (sin @Bean/@Config).</div></div>
         <div class="stat"><div class="n warn-n">2 / 9</div><div class="label">Specs con código</div><div class="hint">7 Specs sin impl.</div></div>
         <div class="stat"><div class="n warn-n">17</div><div class="label">Tests huérfanos</div><div class="hint">También hay tests sin ancla clara.</div></div>
       </div>

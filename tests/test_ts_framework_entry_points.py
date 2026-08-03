@@ -54,6 +54,21 @@ class TestTsFrameworkEntryPointKind:
     def test_nextjs_pages_src_prefix(self):
         assert _ts_framework_entry_point_kind("src/pages/index.tsx") == "nextjs_pages"
 
+    def test_angular_app_pages_is_not_nextjs(self):
+        """Angular feature folders live under src/app/pages/ — not Next.js."""
+        assert (
+            _ts_framework_entry_point_kind(
+                "src/app/pages/hotel/hotel.component.ts"
+            )
+            is None
+        )
+        assert (
+            _ts_framework_entry_point_kind(
+                "src/app/pages/third-party-spa/third-party-spa.component.ts"
+            )
+            is None
+        )
+
     # --- Next.js app router ---
     def test_nextjs_app_page(self):
         assert _ts_framework_entry_point_kind("app/dashboard/page.tsx") == "nextjs_app"
@@ -74,6 +89,14 @@ class TestTsFrameworkEntryPointKind:
         # helpers.ts inside app/ is not a Next.js entry point
         result = _ts_framework_entry_point_kind("app/helpers.ts")
         assert result != "nextjs_app"
+
+    def test_angular_error_component_is_not_nextjs_error(self):
+        assert (
+            _ts_framework_entry_point_kind(
+                "src/app/shared/components/error/error.component.ts"
+            )
+            is None
+        )
 
     # --- SvelteKit ---
     def test_sveltekit_page(self):
