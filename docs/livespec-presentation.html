@@ -421,9 +421,77 @@
       </p>
     </section>
 
-    <!-- 3 -->
+    <!-- 3 Bundle -->
+    <section class="slide" data-title="Bundle">
+      <p class="eyebrow">02 · Qué instalás</p>
+      <h2>No es solo un MCP</h2>
+      <div class="grid-2" style="margin-top:0.3rem">
+        <div class="card">
+          <h3>MCP server</h3>
+          <p class="muted">Las tools (<span class="mono">uvx livespec@0.31.0</span>). Call graph, impacto, Specs, OpenSpec.</p>
+        </div>
+        <div class="card">
+          <h3>Skill <span class="mono">livespec</span></h3>
+          <p class="muted">Manual del agente: cold-open, mapa de tools, traps (<span class="mono">workspace</span>, graph ≠ tráfico).</p>
+        </div>
+        <div class="card">
+          <h3>Subagent <span class="mono">livespec</span></h3>
+          <p class="muted">Especialista proactivo. Precarga el Skill; no inventa callers con Grep si el MCP está caído.</p>
+        </div>
+        <div class="card">
+          <h3>Command <span class="mono">/livespec-onboard</span></h3>
+          <p class="muted">Un atajo: delega al subagent el cold-open (<span class="mono">index → overview → list_specs</span>).</p>
+        </div>
+      </div>
+      <div class="next-step"><strong>Acción:</strong> si solo conectás el MCP, te falta el playbook. El plugin trae los cuatro.</div>
+    </section>
+
+    <!-- 4 Install -->
+    <section class="slide" data-title="Install">
+      <p class="eyebrow">03 · Primer minuto</p>
+      <h2>Marketplace → onboard → <span class="mono">workspace=</span></h2>
+      <div class="card" style="margin-top:0.4rem">
+        <pre style="margin:0;white-space:pre-wrap;font-family:var(--mono);font-size:0.95rem;line-height:1.55;color:var(--fg)">claude plugin marketplace add Rixmerz/livespec
+claude plugin install livespec@rixmerz
+# Restart Claude Code / reconnect MCP
+
+/livespec-onboard /abs/path/al/repo</pre>
+      </div>
+      <ul class="clean" style="margin-top:0.85rem">
+        <li>Marketplace = owner (<span class="mono">rixmerz</span>); producto = <span class="mono">livespec</span> → <span class="mono">livespec@rixmerz</span></li>
+        <li>Cada tool exige <span class="mono">workspace=/abs/repo</span> — sin path → error shaped</li>
+        <li>Tras update: reconnect MCP (tool list stale = falla clásica en demo)</li>
+      </ul>
+      <div class="next-step"><strong>Pin:</strong> <span class="mono">uvx livespec@0.31.0</span> · PyPI Trusted Publishing</div>
+    </section>
+
+    <!-- 5 Demo -->
+    <section class="slide" data-title="Demo">
+      <p class="eyebrow">04 · Demo en vivo</p>
+      <h2>Tres pasos. No más.</h2>
+      <div class="grid-3" style="margin-top:0.35rem">
+        <div class="card">
+          <h3>1. Orientar</h3>
+          <p class="muted"><span class="mono">/livespec-onboard</span> o cold-open. Decí counts + Specs.</p>
+        </div>
+        <div class="card">
+          <h3>2. Hop cross-repo</h3>
+          <p class="muted">Composer → HotelSvc: <span class="mono">listByChunk*</span> → <span class="mono">getHotelList</span> vía <span class="mono">group_db</span>.</p>
+        </div>
+        <div class="card">
+          <h3>3. Spec flotante</h3>
+          <p class="muted">Arquetipo A: Specs en el árbol sin links. “¿Qué falta ligar?”</p>
+        </div>
+      </div>
+      <p class="lede" style="margin-top:0.55rem">
+        Backup sin red: números del anexo (13 fichas). Si MCP cae: no inventar con Grep.
+      </p>
+      <div class="next-step"><strong>Caveat en voz alta:</strong> dead / legacy = grafo estático ≠ tráfico de prod.</div>
+    </section>
+
+    <!-- 6 -->
     <section class="slide" data-title="Preguntas">
-      <p class="eyebrow">02 · Qué responde</p>
+      <p class="eyebrow">05 · Qué responde</p>
       <h2>Las preguntas que un agente hace de verdad</h2>
       <table>
         <thead>
@@ -443,7 +511,7 @@
 
     <!-- 4 -->
     <section class="slide" data-title="Cómo">
-      <p class="eyebrow">03 · Cómo funciona</p>
+      <p class="eyebrow">06 · Cómo funciona</p>
       <h2>Pipeline local, sin nube</h2>
       <div class="flow" style="margin:0.2rem 0 0.9rem">
         <span>walk repo</span><span class="arrow">→</span>
@@ -474,7 +542,7 @@
 
     <!-- 5 -->
     <section class="slide" data-title="OpenSpec">
-      <p class="eyebrow">04 · Nomenclatura</p>
+      <p class="eyebrow">07 · Nomenclatura</p>
       <h2>Un solo dialecto: OpenSpec</h2>
       <div class="grid-2">
         <div class="card">
@@ -505,7 +573,7 @@
 
     <!-- 6 -->
     <section class="slide" data-title="Superficie">
-      <p class="eyebrow">05 · Superficie</p>
+      <p class="eyebrow">08 · Superficie</p>
       <h2>44 tools en tres tiers</h2>
       <div class="grid-3">
         <div class="card">
@@ -530,7 +598,7 @@
 
     <!-- 7 -->
     <section class="slide" data-title="Cross-repo">
-      <p class="eyebrow">06 · Cross-repo</p>
+      <p class="eyebrow">09 · Cross-repo</p>
       <h2>group_db: el flujo entre servicios</h2>
       <div class="grid-2">
         <div class="card">
@@ -559,7 +627,7 @@
 
     <!-- 8 — comparative table WITH Graphify -->
     <section class="slide" data-title="Comparativa">
-      <p class="eyebrow">07 · Comparativa</p>
+      <p class="eyebrow">10 · Comparativa</p>
       <h2>OpenSpec · livespec · Graphify</h2>
       <p class="muted small" style="margin-bottom:0.2rem;max-width:70ch">
         OpenSpec no compite: autoría. Graphify sí se solapa (grafo local + MCP).
@@ -629,7 +697,7 @@
 
     <!-- 9 — livespec vs Graphify deep dive -->
     <section class="slide" data-title="vs Graphify">
-      <p class="eyebrow">08 · Competencia directa</p>
+      <p class="eyebrow">11 · Competencia directa</p>
       <h2>livespec frente a Graphify</h2>
       <div class="grid-2">
         <div class="card">
@@ -660,7 +728,7 @@
 
     <!-- 09 Limitaciones -->
     <section class="slide" data-title="Limitaciones">
-      <p class="eyebrow">09 · Limitaciones</p>
+      <p class="eyebrow">12 · Limitaciones</p>
       <h2>Lo que livespec <em>no</em> es</h2>
       <div class="grid-2">
         <div class="card">
@@ -693,7 +761,7 @@
 
     <!-- 10 Cómo leer -->
     <section class="slide" data-title="Léxico">
-      <p class="eyebrow">10 · Cómo leer el barrido</p>
+      <p class="eyebrow">13 · Cómo leer el barrido</p>
       <h2>Cuatro palabras, un significado</h2>
       <div class="stat-grid" style="margin-top:0.5rem">
         <div class="stat">
@@ -718,7 +786,7 @@
 
     <!-- 11 Victoria -->
     <section class="slide" data-title="Victoria">
-      <p class="eyebrow">11 · Victoria del hard-cut</p>
+      <p class="eyebrow">14 · Victoria del hard-cut</p>
       <h2>Qué salió bien · en una frase</h2>
       <div class="stat-grid" style="margin-top:0.45rem">
         <div class="stat">
@@ -747,7 +815,7 @@
 
     <!-- 12 Cross visual -->
     <section class="slide" data-title="Hop">
-      <p class="eyebrow">12 · Cross-repo en una imagen</p>
+      <p class="eyebrow">15 · Cross-repo en una imagen</p>
       <h2>¿Se ven llamadas entre servicios?</h2>
       <div class="flow-boxes">
         <div class="box"><strong>sm-composer-m</strong><span>cliente · listByChunk*</span></div>
@@ -773,7 +841,7 @@
 
     <!-- 13 Arquetipo A -->
     <section class="slide" data-title="A-composer">
-      <p class="eyebrow">13 · Arquetipo A · Composer</p>
+      <p class="eyebrow">16 · Arquetipo A · Composer</p>
       <h2>Specs de adorno</h2>
       <p class="archetype">“El código está, las Specs también… pero casi no se tocan.”</p>
       <div class="stat-grid">
@@ -800,7 +868,7 @@
 
     <!-- 14 Arquetipo B -->
     <section class="slide" data-title="A-sa">
-      <p class="eyebrow">14 · Arquetipo B · SA Java</p>
+      <p class="eyebrow">17 · Arquetipo B · SA Java</p>
       <h2>Grafo sano · Specs flojas</h2>
       <p class="archetype">“Casi no hay dead… pero igual no podés preguntar qué implementa X.”</p>
       <div class="stat-grid">
@@ -825,7 +893,7 @@
 
     <!-- 15 Arquetipo C -->
     <section class="slide" data-title="A-good">
-      <p class="eyebrow">15 · Arquetipo C · Bien anclado</p>
+      <p class="eyebrow">18 · Arquetipo C · Bien anclado</p>
       <h2>Así se ve el objetivo</h2>
       <p class="archetype">“Casi todas las Specs tienen código. El agente puede cerrar el loop.”</p>
       <div class="stat-grid">
@@ -855,7 +923,7 @@
 
     <!-- 16 Fit -->
     <section class="slide" data-title="Cuándo">
-      <p class="eyebrow">16 · Cuándo usarlo · audiencia: devs</p>
+      <p class="eyebrow">19 · Cuándo usarlo · audiencia: devs</p>
       <h2>Fit / no-fit</h2>
       <div class="grid-2">
         <div class="card">
@@ -882,7 +950,7 @@
 
     <!-- 17 Playbook -->
     <section class="slide" data-title="Provecho">
-      <p class="eyebrow">17 · Playbook</p>
+      <p class="eyebrow">20 · Playbook</p>
       <h2>Cómo sacarle el máximo</h2>
       <div class="grid-2">
         <ol class="steps">
@@ -903,7 +971,7 @@ get_spec_implementation(
 
     <!-- cierre -->
     <section class="slide" data-title="Cierre">
-      <p class="eyebrow">18 · Cierre</p>
+      <p class="eyebrow">21 · Cierre</p>
       <h2>Una frase</h2>
       <p class="lede" style="font-size:clamp(1.15rem,2.3vw,1.55rem);color:var(--ink);max-width:38ch">
         OpenSpec define el viaje. livespec muestra el radar: conexiones,
@@ -924,7 +992,7 @@ get_spec_implementation(
     <section class="slide" data-title="Anexo">
       <p class="eyebrow">Anexo</p>
       <h2>Detalle por repo del group_db</h2>
-      <p class="lede">Las 13 fichas siguientes son opcionales. El talk termina en la diapo 18.</p>
+      <p class="lede">Las 13 fichas siguientes son opcionales. El talk termina en la diapo 21.</p>
       <div class="next-step"><strong>Tip:</strong> End / flechas — saltá si el público ya entendió los arquetipos.</div>
     </section>
 

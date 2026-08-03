@@ -22,6 +22,12 @@ follows [SemVer](https://semver.org/).
   claude plugin install livespec@rixmerz
   ```
 
+### Docs — presentation: install / demo / plugin bundle
+
+- Talk slides 02–04: what the plugin installs (MCP + Skill + subagent +
+  `/livespec-onboard`), marketplace install (`livespec@rixmerz`), and a
+  three-step live demo script. Main arc is now 21 slides before the annex.
+
 ## [0.31.0] - 2026-08-03
 
 ### Changed — Spring endpoints and dead-code honesty

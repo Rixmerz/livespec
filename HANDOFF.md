@@ -65,6 +65,15 @@ Retest post-fix: 13/13 group tools green + cross-repo Composer→HotelSvc hop OK
 (`user-livespec` local). El marketplace pin viejo `0.30.1` seguía
 reportando TransportSvc dead=77 hasta este tag.
 
+**P0 plugin checklist (2026-08-03):** install `livespec@rixmerz` 0.31 ✓;
+Skill+onboard+subagent en cache ✓; cold-open `index→overview→list_specs`
+✓ (13 Specs); `workspace` omit/empty → `mcp_error` ✓; gate vacío = 27
+core / con Specs o `LIVESPEC_PLUGINS=all` = 44 ✓; mutation smoke
+`create_spec`+`link_spec_symbol`+`export_openspec` ✓; dogfood dead=1.
+Pendiente P0: Skill cold-open *solo* en sesión Claude Code (no
+automatizable aquí), `git_diff_impact`/`analyze_impact` en PR chico,
+`find_legacy_flows` sample humano.
+
 ### v0.30.0 / v0.30.1 resumen (referencia)
 
 **Release `v0.30.0` on `main`.** Tests **639**. PyPI `livespec==0.30.1`
