@@ -6,6 +6,22 @@ follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed — Claude Code marketplace namespace is the owner
+
+- Marketplace `name` in `.claude-plugin/marketplace.json` is **`rixmerz`**
+  (owner kebab-case), not `livespec`. The product stays the plugin
+  `livespec`, so the install id is **`livespec@rixmerz`**. Claude Code
+  requires marketplace names in kebab-case (no capitals), so this is not
+  `Rixmerz@livespec`. Existing installs on `livespec@livespec` need a
+  one-time re-register:
+
+  ```text
+  claude plugin uninstall livespec@livespec
+  claude plugin marketplace remove livespec
+  claude plugin marketplace add Rixmerz/livespec
+  claude plugin install livespec@rixmerz
+  ```
+
 ## [0.31.0] - 2026-08-03
 
 ### Changed — Spring endpoints and dead-code honesty

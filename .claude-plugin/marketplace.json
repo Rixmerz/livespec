@@ -1,6 +1,6 @@
 {
-  "name": "livespec",
-  "description": "Marketplace for the livespec Claude Code plugin (code intelligence + Spec traceability). Served from github.com/Rixmerz/livespec — not a local checkout.",
+  "name": "rixmerz",
+  "description": "Rixmerz Claude Code marketplace (owner namespace). Hosts the livespec plugin from github.com/Rixmerz/livespec — not a local checkout. Install as livespec@rixmerz.",
   "owner": {
     "name": "Juan Pablo Diaz",
     "email": "juanpablo516@gmail.com"

@@ -66,8 +66,19 @@ The published plugin runs:
 uvx livespec@<version>
 ```
 
-Ensure `uv` is installed. Then add this plugin to a marketplace and install it, or
-point Claude Code at this directory as a local plugin.
+Ensure `uv` is installed. Register the **owner** marketplace and install the
+**product** plugin (`plugin@marketplace`):
+
+```text
+claude plugin marketplace add Rixmerz/livespec
+claude plugin install livespec@rixmerz
+claude plugin update livespec@rixmerz
+```
+
+(`rixmerz` = marketplace `name` in `.claude-plugin/marketplace.json`, kebab-case
+of the GitHub owner. The plugin product name remains `livespec`.)
+
+Or point Claude Code at this directory as a local plugin.
 
 > **Version pin (published):** keep `plugin/.mcp.json` and
 > `plugin/.claude-plugin/plugin.json` on the same version. Local checkout mode

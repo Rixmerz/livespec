@@ -15,8 +15,9 @@
   era la máquina macOS anterior — referencias viejas en este doc pueden
   mencionarlo)
 - **Demo project:** `<demo-repo>` (4 archivos Python con `@rf:` annotations en docstrings, ya tiene RFs persistidas en su `.mcp-docs/docs.db`)
-- **MCP server:** Claude Code plugin `livespec@livespec` **0.31.0**
-  (`uvx livespec@0.31.0`) and/or Cursor `user-livespec` pointing at a local
+- **MCP server:** Claude Code plugin `livespec@rixmerz` **0.31.0**
+  (marketplace name = owner kebab-case `rixmerz`; product = `livespec`).
+  Pin `uvx livespec@0.31.0` and/or Cursor `user-livespec` pointing at a local
   checkout. **Every tool requires `workspace=/abs/repo`** — there is no
   `LIVESPEC_WORKSPACE` env fallback (removed).
 - **Git user:** Juan Pablo Díaz S.

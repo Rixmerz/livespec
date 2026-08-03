@@ -195,6 +195,15 @@ livespec-mcp status /path/to/repo                      # index status JSON
 
 ### Claude Code / Cursor wiring
 
+**Claude Code plugin** (owner marketplace + product plugin):
+
+```bash
+claude plugin marketplace add Rixmerz/livespec
+claude plugin install livespec@rixmerz
+```
+
+Or wire the MCP server directly in Cursor / Claude (local checkout or `uvx`):
+
 ```json
 {
   "mcpServers": {
