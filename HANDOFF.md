@@ -82,6 +82,30 @@ orphan_client=36, hint “Confirm with traffic… confidence=low” ✓
 
 Pendiente post-P0: P1 14–20, P2 Explorer/hop inverso, slides CTA/screenshot.
 
+**P1 validation (2026-08-03):**
+- **14 orphan SPA:** count=222; caveat del tool nombra FP por indirección.
+  Sample `app.routes.spec.ts`: TestBed + mocks + `it(` — helpers
+  `loadRoutes`/`buildRoute` salen como `no_outgoing_calls` (helpers de
+  spec, no “suite muerta”). Además 33/95 test files sin símbolo
+  (Jest/vitest anónimo) → hint honesto.
+- **15 who_calls Go/Rust/Ruby:** fixtures `Helper`/`helper` → 2 callers
+  c/u (`TopLevelOne` + `Greet`/`greet`). Resolución scoped OK.
+- **16 frameworks:** Express insurance default=5; Spring TransportSvc=13;
+  Angular SPA default=1 / `framework=angular`=143; sandbox
+  FastAPI=1 + Hono=1 (default=2). (`framework=next` inválido —
+  usar `nextjs`.)
+- **17** `search(mcp_error)` count=5; `grep(include_tests)` count=5
+  `scope_fresh=true`.
+- **18** `propose_specs` → 2 proposals (skipped_covered=11);
+  `scan_annotation_verbs` → `@rf` did_you_mean=`@spec`;
+  `bulk_link` bad id → failed shaped.
+- **19** import nativo `## SPEC-NNN` → error migrate; `fmt=livespec`
+  → invalid + did_you_mean openspec/auto; árbol OpenSpec → created=1.
+- **20** pagination dead `limit=3`: next_cursor=3, páginas disjuntas;
+  count exacto 540 (con tests).
+- **P2.24 hop inverso:** `who_calls(getHotelList)` en HotelSvc →
+  `route_callers` = `listByChunk` + `listByChunkSupplierA` (Composer) ✓
+
 ### v0.30.0 / v0.30.1 resumen (referencia)
 
 **Release `v0.30.0` on `main`.** Tests **639**. PyPI `livespec==0.30.1`
