@@ -341,6 +341,53 @@
       line-height: 1.4;
     }
     .next-step strong { color: var(--accent); }
+
+    .shot-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 0.85rem;
+      max-width: 1100px;
+      align-items: start;
+    }
+    .shot-grid figure {
+      margin: 0;
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      overflow: hidden;
+    }
+    .shot-grid img {
+      display: block;
+      width: 100%;
+      height: auto;
+      max-height: 42vh;
+      object-fit: cover;
+      object-position: top left;
+    }
+    .shot-grid figcaption {
+      font-family: var(--mono);
+      font-size: 0.72rem;
+      color: var(--muted);
+      padding: 0.45rem 0.7rem 0.55rem;
+      border-top: 1px solid var(--line);
+    }
+    @media (max-width: 860px) {
+      .shot-grid { grid-template-columns: 1fr; }
+    }
+
+    .timing {
+      display: grid;
+      grid-template-columns: 4.5rem 1fr;
+      gap: 0.35rem 0.85rem;
+      max-width: 70ch;
+      font-size: 0.92rem;
+    }
+    .timing .t {
+      font-family: var(--mono);
+      color: var(--accent);
+      font-size: 0.8rem;
+    }
+
     .archetype {
       font-size: 1.15rem;
       color: var(--ink);
@@ -969,9 +1016,76 @@ get_spec_implementation(
       </div>
     </section>
 
+    <!-- Visual -->
+    <section class="slide" data-title="Visual">
+      <p class="eyebrow">21 · Visual</p>
+      <h2>Explorer: Specs y flujos</h2>
+      <div class="shot-grid" style="margin-top:0.35rem">
+        <figure>
+          <img src="assets/spec-explorer.png" alt="Spec Explorer on livespec-mcp — 13 Specs verified" />
+          <figcaption>Spec Explorer · livespec-mcp · 13/13 verified</figcaption>
+        </figure>
+        <figure>
+          <img src="assets/flow-explorer.png" alt="Flow Explorer group_db — projects, xrepo specs, route hops" />
+          <figcaption>Flow Explorer · group_db · hop Composer→HotelSvc en route edges</figcaption>
+        </figure>
+      </div>
+      <div class="next-step"><strong>Demo:</strong> <span class="mono">livespec explorer serve .</span> · Flow bundle vía <span class="mono">export_flow_explorer</span> (plugin docs).</div>
+    </section>
+
+    <!-- CTA -->
+    <section class="slide" data-title="CTA">
+      <p class="eyebrow">22 · Qué pedimos hoy</p>
+      <h2>Próximo paso del equipo</h2>
+      <div class="grid-3" style="margin-top:0.35rem">
+        <div class="card">
+          <h3>1. Instalar</h3>
+          <p class="muted"><span class="mono">livespec@rixmerz</span> · cold-open en tu servicio.</p>
+        </div>
+        <div class="card">
+          <h3>2. Ligar Specs</h3>
+          <p class="muted">Árbol <span class="mono">openspec/</span> + <span class="mono">@spec:slug</span> en handlers. Sin link = ruido.</p>
+        </div>
+        <div class="card">
+          <h3>3. Group donde importa</h3>
+          <p class="muted"><span class="mono">group_db</span> en el flujo HTTP real (composer ↔ SA). No indexar la carpeta padre.</p>
+        </div>
+      </div>
+      <ul class="clean" style="margin-top:0.85rem">
+        <li><strong>Madurez:</strong> public beta <span class="mono">v0.31.0</span> — OpenSpec-only, endpoints HTTP-ish, dead sin tests.</li>
+        <li><strong>No pedimos:</strong> borrar código por dead/legacy sin APM.</li>
+        <li><strong>Quién adopta primero:</strong> un composer + su SA (hop medible en una tarde).</li>
+      </ul>
+      <div class="next-step"><strong>CTA:</strong> esta semana — install + onboard + 1 Spec ligada en tu repo.</div>
+    </section>
+
+    <!-- Q&A -->
+    <section class="slide" data-title="QA">
+      <p class="eyebrow">23 · Q&amp;A esperado</p>
+      <h2>Respuestas de una frase</h2>
+      <table>
+        <thead><tr><th>Pregunta</th><th>Respuesta</th></tr></thead>
+        <tbody>
+          <tr><td>¿Borro el dead?</td><td>No. Candidato de grafo — confirmá con APM/logs.</td></tr>
+          <tr><td>¿Orphan = basura?</td><td>No. Suele ser SA/repo fuera del <span class="mono">group_db</span>.</td></tr>
+          <tr><td>¿Por qué <span class="mono">workspace</span>?</td><td>Abs path del repo. Sin fallback env. Un repo por llamada.</td></tr>
+          <tr><td>¿Solo veo ~27 tools?</td><td>Core. Spec/Docs se desbloquean con Specs / <span class="mono">LIVESPEC_PLUGINS</span>.</td></tr>
+          <tr><td>¿9 lenguajes?</td><td>Extractors + fixtures. Barrido demo = JS/TS/Java; Go/Rust/Ruby en fixtures.</td></tr>
+          <tr><td>¿Sin red / MCP caído?</td><td>Números del anexo. No inventar callers con Grep.</td></tr>
+        </tbody>
+      </table>
+      <div class="timing" style="margin-top:0.85rem">
+        <span class="t">0–3′</span><span>Producto + install + demo script</span>
+        <span class="t">3–10′</span><span>OpenSpec + tiers + límites + léxico</span>
+        <span class="t">10–16′</span><span>Victoria + hop + 3 arquetipos</span>
+        <span class="t">16–20′</span><span>Visual + CTA + Q&amp;A</span>
+        <span class="t">+opc</span><span>Anexo 13 fichas — solo si preguntan por un repo</span>
+      </div>
+    </section>
+
     <!-- cierre -->
     <section class="slide" data-title="Cierre">
-      <p class="eyebrow">21 · Cierre</p>
+      <p class="eyebrow">24 · Cierre</p>
       <h2>Una frase</h2>
       <p class="lede" style="font-size:clamp(1.15rem,2.3vw,1.55rem);color:var(--ink);max-width:38ch">
         OpenSpec define el viaje. livespec muestra el radar: conexiones,
@@ -992,7 +1106,7 @@ get_spec_implementation(
     <section class="slide" data-title="Anexo">
       <p class="eyebrow">Anexo</p>
       <h2>Detalle por repo del group_db</h2>
-      <p class="lede">Las 13 fichas siguientes son opcionales. El talk termina en la diapo 21.</p>
+      <p class="lede">Las 13 fichas siguientes son opcionales. El talk termina en la diapo 24.</p>
       <div class="next-step"><strong>Tip:</strong> End / flechas — saltá si el público ya entendió los arquetipos.</div>
     </section>
 

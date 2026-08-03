@@ -124,8 +124,9 @@ Pendiente post-P0: P1 14–20, P2 Explorer/hop inverso, slides CTA/screenshot.
 - **28 perf SPA (340 files / 2330 sym):** cold `force` **7.49s**, warm
   **0.21s** (files_changed 340→0). Alineado al claim ~7s.
 
-Checklist A (plugin) + P1 + P2 core: **cerrada** salvo solo-demo on-disk
-y slides CTA/screenshot (talk B).
+Checklist A (plugin) + P1 + P2 core: **cerrada** salvo solo-demo on-disk.
+Talk B: slides Visual + CTA + Q&A/timing añadidas (arc → 24 antes del anexo);
+screenshots Spec/Flow Explorer en `docs/assets/`.
 
 ### v0.30.0 / v0.30.1 resumen (referencia)
 

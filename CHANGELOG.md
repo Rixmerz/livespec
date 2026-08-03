@@ -28,6 +28,12 @@ follows [SemVer](https://semver.org/).
   `/livespec-onboard`), marketplace install (`livespec@rixmerz`), and a
   three-step live demo script. Main arc is now 21 slides before the annex.
 
+### Docs — presentation: visual / CTA / Q&A
+
+- Slides 21–23: Spec + Flow Explorer screenshots, team CTA (install →
+  ligar Specs → group_db), expected Q&A one-liners + 20′ timing map.
+  Main arc ends at slide 24 (Cierre). Assets under `docs/assets/`.
+
 ## [0.31.0] - 2026-08-03
 
 ### Changed — Spring endpoints and dead-code honesty
