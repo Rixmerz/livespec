@@ -69,10 +69,18 @@ reportando TransportSvc dead=77 hasta este tag.
 Skill+onboard+subagent en cache ✓; cold-open `index→overview→list_specs`
 ✓ (13 Specs); `workspace` omit/empty → `mcp_error` ✓; gate vacío = 27
 core / con Specs o `LIVESPEC_PLUGINS=all` = 44 ✓; mutation smoke
-`create_spec`+`link_spec_symbol`+`export_openspec` ✓; dogfood dead=1.
-Pendiente P0: Skill cold-open *solo* en sesión Claude Code (no
-automatizable aquí), `git_diff_impact`/`analyze_impact` en PR chico,
-`find_legacy_flows` sample humano.
+`create_spec`+`link_spec_symbol`+`export_openspec` ✓; dogfood dead=1;
+`/livespec-onboard` vía comando Cursor ✓.
+**P0.8–10:** `git_diff_impact(HEAD~5..HEAD)` OK (no shallow fail) —
+release `222c042..83cadfe` → 20 files / 252 symbols / 160 callers /
+11 Specs / 32 suggested tests; docs-only HEAD~1 → 0 symbols + hint
+honesto. `analyze_impact(mcp_error)` → 40 callers / 6 Specs;
+`analyze_impact(file=analysis.py)` → 72 callers / 7 Specs.
+`find_legacy_flows` en hub Composer group_db → legacy_server=2,
+orphan_client=36, hint “Confirm with traffic… confidence=low” ✓
+(candidatos ≠ borrar).
+
+Pendiente post-P0: P1 14–20, P2 Explorer/hop inverso, slides CTA/screenshot.
 
 ### v0.30.0 / v0.30.1 resumen (referencia)
 
