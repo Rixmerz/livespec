@@ -3,7 +3,7 @@
 **Date:** 2026-07-31  
 **Workspace:** this repo root (absolute path passed as `workspace=`)  
 **MCP:** `user-livespec` (local checkout)  
-**Product pin:** `livespec==0.31.0`
+**Product pin:** `livespec==0.31.1`
 
 ## What we ran
 
