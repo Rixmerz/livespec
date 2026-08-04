@@ -1,6 +1,6 @@
 {
   "name": "livespec",
-  "version": "0.31.0",
+  "version": "0.31.1",
   "description": "Code intelligence for AI agents: live call graph, impact analysis, and bidirectional Spec<->code traceability. Bundles the livespec MCP server, a specialized livespec subagent, and the livespec Skill.",
   "author": {
     "name": "Juan Pablo Diaz",

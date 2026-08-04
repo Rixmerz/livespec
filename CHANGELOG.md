@@ -6,6 +6,16 @@ follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.31.1] - 2026-08-04
+
+### Fixed — sdist no longer bundles internal docs
+
+The published sdist (`.tar.gz`) included `HANDOFF.md`, `CLAUDE.md`, and
+`docs/livespec-presentation.html` — session-resume notes and a conference
+deck, not user-facing docs. `[tool.hatch.build.targets.sdist].exclude` now
+lists them by name. The wheel was never affected (it only force-includes
+`docs/AGENT_PLAYBOOK.md`). **v0.31.0 is yanked** — reinstall from 0.31.1.
+
 ### Changed — history rewritten (generic repo names in docs)
 
 Documentation examples now use generic repo names (`api-composer-a`…
@@ -42,7 +52,7 @@ git reset --hard origin/main` (a plain `git pull` will conflict).
   ligar Specs → group_db), expected Q&A one-liners + 20′ timing map.
   Main arc ends at slide 24 (Cierre). Assets under `docs/assets/`.
 
-## [0.31.0] - 2026-08-03
+## [0.31.0] - 2026-08-03 (yanked — see 0.31.1)
 
 ### Changed — Spring endpoints and dead-code honesty
 

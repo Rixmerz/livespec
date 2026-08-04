@@ -15,9 +15,9 @@
   era la máquina macOS anterior — referencias viejas en este doc pueden
   mencionarlo)
 - **Demo project:** `<demo-repo>` (4 archivos Python con `@rf:` annotations en docstrings, ya tiene RFs persistidas en su `.mcp-docs/docs.db`)
-- **MCP server:** Claude Code plugin `livespec@rixmerz` **0.31.0**
+- **MCP server:** Claude Code plugin `livespec@rixmerz` **0.31.1**
   (marketplace name = owner kebab-case `rixmerz`; product = `livespec`).
-  Pin `uvx livespec@0.31.0` and/or Cursor `user-livespec` pointing at a local
+  Pin `uvx livespec@0.31.1` and/or Cursor `user-livespec` pointing at a local
   checkout. **Every tool requires `workspace=/abs/repo`** — there is no
   `LIVESPEC_WORKSPACE` env fallback (removed).
 - **Git user:** Juan Pablo Díaz S.
@@ -44,8 +44,8 @@ Todo el stack es local-first: 0 servicios externos, 0 API keys obligatorias, 0 D
 
 ## 3. Estado actual
 
-**HEAD: release `v0.31.0`. Tests 667.**
-Pin PyPI / plugin / `uvx livespec@0.31.0`.
+**HEAD: release `v0.31.1`. Tests 667.**
+Pin PyPI / plugin / `uvx livespec@0.31.1`.
 
 ### Nota (2026-08-04) — historial reescrito
 
@@ -55,6 +55,12 @@ reales del barrido. Al normalizarlos se reescribió todo el historial, así
 que **cambiaron todos los SHAs** y los tags quedaron re-apuntados: un
 clon viejo necesita re-clonar o `git fetch --all && git reset --hard
 origin/main`. Mantener los nombres genéricos en cualquier ejemplo nuevo.
+
+- **v0.31.0 quedó yanked en PyPI**: el sdist empaquetaba notas internas de
+  sesión y el deck de la charla, no solo código de usuario.
+  `[tool.hatch.build.targets.sdist].exclude` ahora las excluye por nombre;
+  `tests/test_plugin_pin_sync.py` fuerza que el pin del plugin siga a
+  `pyproject.toml`. Reinstalar desde **0.31.1**.
 
 Qué landeó en 0.31.0 (además del hard-cut OpenSpec ya en `main`):
 
@@ -188,7 +194,7 @@ Skill `livespec` + `docs/AGENT_PLAYBOOK.md` §5.
 **Shipped through `v0.23.0` then `v0.29.0`/`v0.30.0`/`v0.31.0`:** OpenSpec
 round-trip + change lifecycle + scenario traceability; product/`livespec`
 command (PyPI package `livespec`); cross-repo routes + `group_db`; FTS-only
-curation; Explorer playground; OpenSpec-slug-only dialect. Pin is **0.31.0**.
+curation; Explorer playground; OpenSpec-slug-only dialect. Pin is **0.31.1**.
 
 <details><summary>OpenSpec batch detail (v0.22→0.23 era)</summary>
 
