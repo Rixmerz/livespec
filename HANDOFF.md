@@ -44,8 +44,17 @@ Todo el stack es local-first: 0 servicios externos, 0 API keys obligatorias, 0 D
 
 ## 3. Estado actual
 
-**HEAD: release `v0.31.0` — OpenSpec hard-cut + honest endpoints. Tests 667.**
+**HEAD: release `v0.31.0`. Tests 667.**
 Pin PyPI / plugin / `uvx livespec@0.31.0`.
+
+### Nota (2026-08-04) — historial reescrito
+
+Los ejemplos de la presentación y de este HANDOFF usan **nombres de repo
+genéricos** (`api-composer-a`…`sm-composer-m`); las métricas son las
+reales del barrido. Al normalizarlos se reescribió todo el historial, así
+que **cambiaron todos los SHAs** y los tags quedaron re-apuntados: un
+clon viejo necesita re-clonar o `git fetch --all && git reset --hard
+origin/main`. Mantener los nombres genéricos en cualquier ejemplo nuevo.
 
 Qué landeó en 0.31.0 (además del hard-cut OpenSpec ya en `main`):
 

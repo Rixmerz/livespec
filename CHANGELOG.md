@@ -6,6 +6,14 @@ follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed — history rewritten (generic repo names in docs)
+
+Documentation examples now use generic repo names (`api-composer-a`…
+`sm-composer-m`); the reported metrics are unchanged. Normalizing them
+required rewriting history, so **all commit SHAs changed and tags were
+re-pointed** — existing clones must re-clone or `git fetch --all &&
+git reset --hard origin/main` (a plain `git pull` will conflict).
+
 ### Changed — Claude Code marketplace namespace is the owner
 
 - Marketplace `name` in `.claude-plugin/marketplace.json` is **`rixmerz`**
