@@ -195,12 +195,24 @@ livespec-mcp status /path/to/repo                      # index status JSON
 
 ### Claude Code / Cursor wiring
 
-**Claude Code plugin** (owner marketplace + product plugin):
+**Claude Code plugin** — published in the `rixmerz` owner marketplace:
 
 ```bash
-claude plugin marketplace add Rixmerz/livespec
+claude plugin marketplace add Rixmerz/claude-plugins
 claude plugin install livespec@rixmerz
 ```
+
+Update with:
+
+```bash
+claude plugin marketplace update rixmerz
+claude plugin update livespec
+```
+
+A plugin update takes effect on restart. To install from a clone instead, run
+`claude plugin marketplace add <path-to-clone>` and
+`claude plugin install livespec@livespec-dev` — a clone registers under its own
+name so it cannot displace the published index.
 
 Or wire the MCP server directly in Cursor / Claude (local checkout or `uvx`):
 

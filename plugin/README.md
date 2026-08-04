@@ -70,13 +70,17 @@ Ensure `uv` is installed. Register the **owner** marketplace and install the
 **product** plugin (`plugin@marketplace`):
 
 ```text
-claude plugin marketplace add Rixmerz/livespec
+claude plugin marketplace add Rixmerz/claude-plugins
 claude plugin install livespec@rixmerz
-claude plugin update livespec@rixmerz
+claude plugin update livespec
 ```
 
-(`rixmerz` = marketplace `name` in `.claude-plugin/marketplace.json`, kebab-case
-of the GitHub owner. The plugin product name remains `livespec`.)
+(`rixmerz` is the owner-namespace marketplace, published at
+[Rixmerz/claude-plugins](https://github.com/Rixmerz/claude-plugins), which
+indexes both `livespec` and `vise`. It lives in its own repo rather than in a
+plugin's: Claude Code keys marketplaces by **name** across all sources, so two
+repos declaring the same name displace each other and the loser's plugins stop
+resolving.)
 
 Or point Claude Code at this directory as a local plugin.
 

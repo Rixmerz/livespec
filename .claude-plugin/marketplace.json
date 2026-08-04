@@ -1,6 +1,6 @@
 {
-  "name": "rixmerz",
-  "description": "Rixmerz Claude Code marketplace (owner namespace). Hosts the livespec plugin from github.com/Rixmerz/livespec — not a local checkout. Install as livespec@rixmerz.",
+  "name": "livespec-dev",
+  "description": "Local development marketplace — lets a clone of this repo be installed as a plugin without going through the published index. For normal installs use the rixmerz marketplace (github.com/Rixmerz/claude-plugins), which is where livespec is published.",
   "owner": {
     "name": "Juan Pablo Diaz",
     "email": "juanpablo516@gmail.com"
