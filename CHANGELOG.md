@@ -6,6 +6,31 @@ follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Added — Cross-repo Spec discovery for agents
+
+Agents often missed that Specs can span sibling repos. New surfaces:
+
+- Prompt `cross_repo_workflow` + doc `docs/CROSS_REPO.md` (group_db, mirrored
+  `xrepo-*` Specs, Flow Explorer, traps)
+- Resources `guide://cross-repo` (static how-to) and `project://group` (live
+  membership + `xrepo-*` rollup for the MRU workspace)
+- Server instructions, Skill, and agent playbook point at the same loop
+
+### Fixed — Flow Explorer Mermaid diagram
+
+`export_flow_explorer` diagrams failed to render when node ids contained
+`:` (`proj:…`) or route labels contained `{}` path params
+(`GET /list/{}/{}/{}`). IDs and labels now use the same sanitizers as Spec
+Explorer (quoted edge text; `{param}` → `:param`). Nodes/edges are coloured
+(project vs Spec vs HTTP hop) with a legend.
+
+### Changed — Flow Explorer embeds Spec Explorer
+
+`livespec explorer serve --flow` serves the Flow bundle at `/` and each
+repo's Spec Explorer at `/repos/<name>/explorer/` (iframe from Repos /
+Implementation — no `file://` copy-path dead ends). Cross-repo Specs use a
+master–detail layout.
+
 ## [0.31.1] - 2026-08-04
 
 ### Fixed — sdist no longer bundles internal docs

@@ -40,17 +40,21 @@ def test_agent_playbook_advertises_openspec_interop():
 
 
 @pytest.mark.asyncio
-async def test_openspec_workflow_prompt_registered():
+async def test_cross_repo_workflow_prompt_registered():
     async with Client(mcp) as c:
         names = {p.name for p in await c.list_prompts()}
-        assert "openspec_workflow" in names
-        result = await c.get_prompt("openspec_workflow")
+        assert "cross_repo_workflow" in names
+        result = await c.get_prompt("cross_repo_workflow")
         text = result.messages[0].content.text
-        for tool in (
-            "sync_openspec",
-            "export_openspec",
-            "validate_openspec",
-            "link_scenario_symbol",
-            "apply_spec_change",
-        ):
-            assert tool in text, f"{tool} missing from openspec_workflow prompt"
+        for needle in ("group_db", "xrepo-", "export_flow_explorer", "guide://cross-repo"):
+            assert needle in text, f"{needle} missing from cross_repo_workflow"
+
+
+def test_cross_repo_guide_file_loads():
+    from livespec_mcp.prompts import _CROSS_REPO, _load_cross_repo_guide
+
+    assert _CROSS_REPO.is_file()
+    text = _load_cross_repo_guide()
+    assert "xrepo-" in text
+    assert "group_db" in text
+

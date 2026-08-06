@@ -473,6 +473,83 @@ def write_flow_explorer_bundle(
     }
 
 
+def create_flow_host_app(flow_dir: Path, projects: list[dict[str, Any]] | None = None):
+    """HTTP app: Flow Explorer at ``/`` + each repo Spec Explorer at ``/repos/<name>/explorer/``.
+
+    Spec Explorer bundles need the ``/explorer`` path segment so their History
+    router resolves (same as ``livespec explorer serve``).
+    """
+    from starlette.applications import Starlette
+    from starlette.responses import RedirectResponse
+    from starlette.routing import Mount, Route
+    from starlette.staticfiles import StaticFiles
+
+    flow_dir = Path(flow_dir).resolve()
+    if projects is None:
+        data_path = flow_dir / "data.json"
+        projects = []
+        if data_path.is_file():
+            projects = json.loads(data_path.read_text(encoding="utf-8")).get(
+                "projects"
+            ) or []
+
+    repo_routes: list[Any] = []
+    mounted: list[str] = []
+    for p in projects:
+        name = str(p.get("name") or "").strip()
+        local = p.get("local_explorer")
+        if not name or not local:
+            continue
+        bundle = Path(str(local)).resolve()
+        if bundle.is_file():
+            bundle = bundle.parent
+        if not bundle.is_dir() or not (bundle / "index.html").is_file():
+            continue
+        prefix = f"/repos/{name}/explorer"
+
+        async def _redir(_request: Any, _prefix: str = prefix) -> Any:
+            return RedirectResponse(url=_prefix + "/", status_code=307)
+
+        repo_routes.append(Route(prefix, _redir, methods=["GET", "HEAD"]))
+        repo_routes.append(
+            Mount(
+                prefix,
+                app=StaticFiles(directory=str(bundle), html=True),
+                name=f"repo-{name}",
+            )
+        )
+        mounted.append(name)
+
+    async def _root_index(_request: Any) -> Any:
+        return RedirectResponse(url="/index.html", status_code=307)
+
+    routes: list[Any] = [
+        *repo_routes,
+        Route("/", _root_index, methods=["GET", "HEAD"]),
+        Mount("/", app=StaticFiles(directory=str(flow_dir), html=True), name="flow"),
+    ]
+    return Starlette(routes=routes), mounted
+
+
+def serve_flow_explorer(
+    flow_dir: Path | str,
+    *,
+    host: str = "127.0.0.1",
+    port: int = 8767,
+) -> None:
+    """Serve Flow Explorer with embedded per-repo Spec Explorer mounts."""
+    import uvicorn
+
+    flow_dir = Path(flow_dir).resolve()
+    app, mounted = create_flow_host_app(flow_dir)
+    print(f"Flow Explorer: http://{host}:{port}/", flush=True)
+    print(
+        f"Spec Explorers: /repos/<name>/explorer/ ({len(mounted)} mounted)",
+        flush=True,
+    )
+    uvicorn.run(app, host=host, port=port, log_level="info")
+
+
 def _render_flow_html(data: dict[str, Any]) -> str:
     payload = json.dumps(data, ensure_ascii=False)
     # Escape </script> so inlined JSON cannot break out of the data block.
@@ -528,25 +605,113 @@ main { padding:20px; max-width:1200px; margin:0 auto; }
 }
 .card:hover { border-color:var(--accent); }
 .card h3 { margin:0 0 6px; font-size:15px; }
-.card .meta { color:var(--muted); font-size:12px; }
+.card .meta, .meta { color:var(--muted); font-size:12px; }
 .note {
   background:var(--accent-weak); border-radius:8px; padding:10px 12px;
   margin-bottom:16px; color:var(--fg); font-size:13px;
 }
-.mermaid { background:var(--surface); border:1px solid var(--line); border-radius:10px; padding:16px; }
+.mermaid, .mermaid-host { background:var(--surface); border:1px solid var(--line); border-radius:10px; padding:16px; overflow:auto; }
+.legend {
+  display:flex; flex-wrap:wrap; gap:10px 16px; margin:12px 0 0; font-size:12px; color:var(--muted);
+}
+.legend .swatch {
+  display:inline-block; width:12px; height:12px; border-radius:3px; margin-right:6px;
+  vertical-align:-1px; border:1px solid transparent;
+}
 table { width:100%; border-collapse:collapse; background:var(--surface); }
 th, td { text-align:left; padding:8px 10px; border-bottom:1px solid var(--line); vertical-align:top; }
 th { font-size:12px; color:var(--muted); text-transform:uppercase; letter-spacing:.03em; }
 .mono { font-family:var(--mono); font-size:12px; }
 .chip {
   display:inline-block; padding:2px 8px; border-radius:999px; background:var(--accent-weak);
-  font-size:11px; margin-right:4px;
+  font-size:11px; margin-right:4px; margin-bottom:4px;
 }
-.detail { margin-top:16px; background:var(--surface); border:1px solid var(--line); border-radius:10px; padding:16px; }
-.detail h2 { margin-top:0; font-size:16px; }
-.sym { font-family:var(--mono); font-size:12px; display:block; padding:2px 0; }
+.chip.req { background:#e8eefc; color:#3b6fd8; }
+.chip.used { background:#e3f4ec; color:#1f8a5b; }
+@media (prefers-color-scheme: dark) {
+  .chip.req { background:#1e2a44; color:#7aa2ff; }
+  .chip.used { background:#243028; color:#4cc38a; }
+}
+.btn {
+  appearance:none; border:1px solid var(--line); background:var(--surface); color:var(--accent);
+  font:inherit; font-size:12px; padding:6px 10px; border-radius:8px; cursor:pointer;
+}
+.btn:hover { border-color:var(--accent); }
+.btn.primary { background:var(--accent); color:#fff; border-color:var(--accent); }
+.btn.primary:hover { filter:brightness(1.08); }
+
+.frame-overlay {
+  position:fixed; inset:0; z-index:40; display:none; flex-direction:column;
+  background:var(--bg);
+}
+.frame-overlay.open { display:flex; }
+.frame-bar {
+  display:flex; align-items:center; gap:10px; padding:10px 14px;
+  background:var(--surface); border-bottom:1px solid var(--line); flex-shrink:0;
+}
+.frame-bar .title { font-weight:600; flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.frame-overlay iframe { flex:1; width:100%; border:0; background:var(--surface); }
+
+/* Cross-repo Specs: master–detail */
+.specs-layout {
+  display:grid; grid-template-columns:minmax(260px,340px) 1fr; gap:16px; align-items:start;
+}
+@media (max-width:900px) { .specs-layout { grid-template-columns:1fr; } }
+.spec-list { display:flex; flex-direction:column; gap:8px; max-height:calc(100vh - 220px); overflow:auto; }
+.spec-item {
+  background:var(--surface); border:1px solid var(--line); border-radius:10px;
+  padding:12px 14px; cursor:pointer; text-align:left;
+}
+.spec-item:hover { border-color:var(--accent); }
+.spec-item[aria-current="true"] {
+  border-color:var(--accent); box-shadow:0 0 0 1px var(--accent);
+}
+.spec-item .slug { font-family:var(--mono); font-size:12px; color:var(--accent); margin:0 0 4px; }
+.spec-item h3 { margin:0 0 6px; font-size:14px; font-weight:600; line-height:1.35; }
+.spec-item .row { display:flex; flex-wrap:wrap; gap:6px; align-items:center; margin-top:8px; }
+.spec-item .badge {
+  display:inline-block; padding:2px 8px; border-radius:999px;
+  background:var(--accent-weak); color:var(--accent); font-size:11px; font-weight:600;
+}
+.spec-item .badge.zero { opacity:0.55; }
+.spec-item .repos { font-size:11px; color:var(--muted); }
+
+.detail {
+  background:var(--surface); border:1px solid var(--line); border-radius:12px; padding:20px 22px;
+  min-height:280px;
+}
+.detail .spec-head { margin-bottom:16px; padding-bottom:14px; border-bottom:1px solid var(--line); }
+.detail .spec-head .slug {
+  font-family:var(--mono); font-size:12px; color:var(--accent); letter-spacing:0.02em;
+}
+.detail .spec-head h2 { margin:6px 0 8px; font-size:1.35rem; line-height:1.3; font-weight:650; }
+.detail .spec-head .desc {
+  margin:10px 0 0; color:var(--muted); font-size:13px; line-height:1.55; white-space:pre-wrap;
+}
+.detail .chips { margin-top:12px; }
+.detail .section-label {
+  font-size:11px; text-transform:uppercase; letter-spacing:0.06em; color:var(--muted);
+  margin:18px 0 8px; font-weight:600;
+}
+.impl-block {
+  margin-top:10px; padding:14px; border:1px solid var(--line); border-radius:10px;
+  background:var(--bg);
+}
+.impl-block h3 { margin:0 0 10px; font-size:13px; display:flex; justify-content:space-between; gap:8px; }
+.impl-block h3 .n { color:var(--accent); font-family:var(--mono); font-weight:600; }
+.sym {
+  font-family:var(--mono); font-size:12px; display:grid;
+  grid-template-columns:72px 1fr; gap:6px 10px; padding:5px 0;
+  border-top:1px solid var(--line);
+}
+.sym:first-of-type { border-top:0; }
+.sym .rel { color:var(--accent); font-weight:600; }
+.sym .loc { color:var(--muted); grid-column:2; font-size:11px; }
+.mirror-note { margin-top:16px; font-size:12px; color:var(--muted); line-height:1.45; }
 .empty { color:var(--muted); }
 a { color:var(--accent); }
+.repo-path { font-family:var(--mono); font-size:11px; color:var(--muted); word-break:break-all; margin:8px 0; }
+
 </style>
 </head>
 <body>
@@ -564,13 +729,18 @@ a { color:var(--accent); }
 <main>
   <section class="panel active" data-panel="flow">
     <div class="note">Project → Spec edges mean the repo has linked symbols for that xrepo id. Spec → Spec edges are <code>spec_dependency</code>. Solid route edges are resolved HTTP hops.</div>
-    <div class="mermaid" id="flow-mermaid">Loading diagram…</div>
+    <div id="flow-mermaid" class="mermaid-host">Loading diagram…</div>
+    <div class="legend" id="flow-legend" aria-label="Diagram legend"></div>
   </section>
   <section class="panel" data-panel="specs">
-    <div class="grid" id="spec-grid"></div>
-    <div class="detail" id="spec-detail"><p class="empty">Select a cross-repo spec.</p></div>
+    <div class="note">Shared Specs across the group (<code>xrepo-*</code>). Left: pick a Spec. Right: title, deps, and <strong>only repos with code links</strong>.</div>
+    <div class="specs-layout">
+      <div class="spec-list" id="spec-grid" role="listbox" aria-label="Cross-repo Specs"></div>
+      <div class="detail" id="spec-detail"><p class="empty">Select a Spec →</p></div>
+    </div>
   </section>
   <section class="panel" data-panel="repos">
+    <div class="note">Open each repo’s Spec Explorer <strong>inside</strong> Flow (full UI). Served at <code>/repos/&lt;name&gt;/explorer/</code>.</div>
     <div class="grid" id="repo-grid"></div>
   </section>
   <section class="panel" data-panel="api">
@@ -581,6 +751,14 @@ a { color:var(--accent); }
     </table></div>
   </section>
 </main>
+<div id="frame-overlay" class="frame-overlay" hidden>
+  <div class="frame-bar">
+    <button type="button" class="btn" id="frame-back">← Back to Flow</button>
+    <span class="title" id="frame-title">Spec Explorer</span>
+    <a class="btn" id="frame-popout" href="#" target="_blank" rel="noopener">Pop out</a>
+  </div>
+  <iframe id="explorer-frame" title="Spec Explorer"></iframe>
+</div>
 <script id="flow-data" type="application/json">__DATA__</script>
 <script>
 "use strict";
@@ -611,92 +789,272 @@ document.querySelectorAll("nav button").forEach((b) => {
   b.addEventListener("click", () => showTab(b.dataset.tab));
 });
 
+// Mirror Spec Explorer sanitizers: Mermaid v10 breaks on `:` in IDs and on
+// raw `{}` / `&<>"` inside edge/node labels (path templates like /list/{}/{}).
+function safeId(s) {
+  return String(s == null ? "" : s).replace(/[^A-Za-z0-9_]/g, "_");
+}
+function mermaidLabel(s) {
+  return String(s == null ? "" : s)
+    .replace(/\{([^}]{0,64})\}/g, ":$1")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+function cssVar(name, fallback) {
+  const v = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  return v && !/^var\(/.test(v) ? v : fallback;
+}
+function flowPalette() {
+  // Literal hex only — Mermaid classDef rejects CSS var().
+  const dark = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches;
+  if (dark) {
+    return {
+      projectFill: "#1e2a44", projectStroke: "#7aa2ff", projectInk: "#e8ebf2",
+      specFill: "#243028", specStroke: "#4cc38a", specInk: "#e8ebf2",
+      route: "#9b93f5", implements: "#7aa2ff", requires: "#8a93a6",
+    };
+  }
+  return {
+    projectFill: "#e8eefc", projectStroke: "#3b6fd8", projectInk: "#1a2030",
+    specFill: "#e3f4ec", specStroke: "#1f8a5b", specInk: "#1a2030",
+    route: "#4c3dcf", implements: "#3b6fd8", requires: "#8a93a6",
+  };
+}
 function renderMermaid() {
   const box = document.getElementById("flow-mermaid");
+  const legend = document.getElementById("flow-legend");
   const nodes = (DATA.flow_topology && DATA.flow_topology.nodes) || [];
   const edges = (DATA.flow_topology && DATA.flow_topology.edges) || [];
   if (!nodes.length) {
     box.textContent = "No topology nodes.";
+    if (legend) legend.innerHTML = "";
     return;
   }
-  const safe = (id) => String(id).replace(/[^a-zA-Z0-9_:]/g, "_");
+  const P = flowPalette();
+  if (legend) {
+    legend.innerHTML = [
+      ["projectFill", "projectStroke", "Repo / project"],
+      ["specFill", "specStroke", "Cross-repo Spec"],
+      [null, "route", "HTTP hop (route)"],
+      [null, "implements", "implements"],
+      [null, "requires", "requires"],
+    ].map(([fillKey, strokeKey, label]) => {
+      const fill = fillKey ? P[fillKey] : "transparent";
+      const stroke = P[strokeKey];
+      return "<span><span class=\"swatch\" style=\"background:" + fill +
+        ";border-color:" + stroke + "\"></span>" + esc(label) + "</span>";
+    }).join("");
+  }
   const lines = ["flowchart LR"];
   nodes.forEach((n) => {
-    const sid = safe(n.id);
-    const label = (n.label || n.id).replace(/"/g, "'");
-    if (n.kind === "project") lines.push("  " + sid + "[\"" + label + "\"]");
-    else lines.push("  " + sid + "(\"" + label + "\")");
+    const sid = safeId(n.id);
+    const label = mermaidLabel(n.label || n.id);
+    lines.push("  " + sid + "[\"" + label + "\"]");
   });
   edges.forEach((e) => {
-    const a = safe(e.from);
-    const b = safe(e.to);
+    const a = safeId(e.from);
+    const b = safeId(e.to);
     const arrow = e.kind === "route" ? "==>" : (e.kind === "implements" ? "-->" : "-.->");
-    lines.push("  " + a + " " + arrow + "|" + (e.label || e.kind || "") + "| " + b);
+    let label = mermaidLabel(e.label || e.kind || "");
+    label = label.replace(/\/+$/g, "");
+    lines.push("  " + a + " " + arrow + "|\"" + label + "\"| " + b);
+  });
+  lines.push(
+    "  classDef node_project fill:" + P.projectFill + ",stroke:" + P.projectStroke +
+      ",stroke-width:2px,color:" + P.projectInk + ";"
+  );
+  lines.push(
+    "  classDef node_spec fill:" + P.specFill + ",stroke:" + P.specStroke +
+      ",stroke-width:2px,color:" + P.specInk + ";"
+  );
+  nodes.forEach((n) => {
+    lines.push(
+      "  class " + safeId(n.id) + " " + (n.kind === "project" ? "node_project" : "node_spec")
+    );
+  });
+  edges.forEach((e, i) => {
+    const stroke = e.kind === "route" ? P.route
+      : (e.kind === "implements" ? P.implements : P.requires);
+    const width = e.kind === "route" ? "2.5px" : "1.5px";
+    lines.push("  linkStyle " + i + " stroke:" + stroke + ",stroke-width:" + width);
   });
   const src = lines.join("\n");
+  box.className = "mermaid";
   box.removeAttribute("data-processed");
   box.textContent = src;
   if (window.mermaid) {
-    window.mermaid.initialize({ startOnLoad: false, securityLevel: "loose", theme: "neutral" });
-    window.mermaid.run({ nodes: [box] }).catch(() => {
-      box.innerHTML = "<pre class=\"mono\">" + esc(src) + "</pre>";
+    window.mermaid.initialize({
+      startOnLoad: false,
+      securityLevel: "loose",
+      theme: "base",
+      flowchart: { curve: "basis", nodeSpacing: 36, rankSpacing: 48, padding: 12 },
+      themeVariables: {
+        primaryColor: P.projectFill,
+        primaryTextColor: P.projectInk,
+        primaryBorderColor: P.projectStroke,
+        lineColor: P.implements,
+        secondaryColor: P.specFill,
+        tertiaryColor: cssVar("--bg", "#f4f6fb"),
+        fontFamily: "system-ui, sans-serif",
+      },
+    });
+    window.mermaid.run({ nodes: [box] }).catch((err) => {
+      box.innerHTML =
+        "<p class=\"empty\">Diagram failed to render — raw Mermaid below.</p>" +
+        "<pre class=\"mono\">" + esc(src) + "</pre>" +
+        (err && err.message ? "<p class=\"empty\">" + esc(err.message) + "</p>" : "");
     });
   }
 }
 
+function explorerUrl(projectName) {
+  return "/repos/" + encodeURIComponent(projectName) + "/explorer/";
+}
+function openExplorer(projectName) {
+  const url = explorerUrl(projectName);
+  const overlay = document.getElementById("frame-overlay");
+  const frame = document.getElementById("explorer-frame");
+  const title = document.getElementById("frame-title");
+  const pop = document.getElementById("frame-popout");
+  if (!overlay || !frame) {
+    window.open(url, "_blank");
+    return;
+  }
+  title.textContent = "Spec Explorer · " + projectName;
+  pop.href = url;
+  frame.src = url;
+  overlay.hidden = false;
+  overlay.classList.add("open");
+}
+function closeExplorer() {
+  const overlay = document.getElementById("frame-overlay");
+  const frame = document.getElementById("explorer-frame");
+  if (!overlay) return;
+  overlay.classList.remove("open");
+  overlay.hidden = true;
+  if (frame) frame.src = "about:blank";
+}
+const _frameBack = document.getElementById("frame-back");
+if (_frameBack) _frameBack.addEventListener("click", closeExplorer);
+if (window.mermaid) window.mermaid.initialize({ startOnLoad: false, securityLevel: "loose" });
+
 function renderSpecs() {
   const grid = document.getElementById("spec-grid");
-  grid.innerHTML = (DATA.xrepo_specs || []).map((s) => {
-    const nProj = (s.projects || []).filter((p) => p.links > 0).length;
-    return "<div class=\"card\" data-spec=\"" + esc(s.id) + "\">" +
-      "<h3>" + esc(s.id) + "</h3>" +
-      "<div class=\"meta\">" + esc(s.title || "") + "</div>" +
-      "<div class=\"meta\">" + nProj + " repos linked · deps " +
-      esc((s.depends_on || []).length) + "</div></div>";
-  }).join("") || "<p class=\"empty\">No xrepo-* specs.</p>";
-  grid.querySelectorAll(".card").forEach((card) => {
-    card.addEventListener("click", () => showSpec(card.getAttribute("data-spec")));
+  const specs = DATA.xrepo_specs || [];
+  if (!specs.length) {
+    grid.innerHTML = "<p class=\"empty\">No xrepo-* Specs in this group.</p>";
+    return;
+  }
+  const ordered = specs.slice().sort((a, b) => {
+    const la = (a.projects || []).filter((p) => p.links > 0).length;
+    const lb = (b.projects || []).filter((p) => p.links > 0).length;
+    return lb - la;
   });
+  grid.innerHTML = ordered.map((s, i) => {
+    const linked = (s.projects || []).filter((p) => p.links > 0);
+    const implNames = linked.map((p) => p.project).slice(0, 3).join(", ");
+    const more = linked.length > 3 ? " +" + (linked.length - 3) : "";
+    const zero = linked.length === 0;
+    return "<button type=\"button\" class=\"spec-item\" role=\"option\" data-spec=\"" +
+      esc(s.id) + "\"" + (i === 0 ? " aria-current=\"true\"" : "") + ">" +
+      "<div class=\"slug\">" + esc(s.id) + "</div>" +
+      "<h3>" + esc(s.title || s.id) + "</h3>" +
+      "<div class=\"row\">" +
+      "<span class=\"badge" + (zero ? " zero" : "") + "\">" + linked.length +
+      " with code</span>" +
+      (implNames ? "<span class=\"repos\">" + esc(implNames + more) + "</span>" : "") +
+      "</div></button>";
+  }).join("");
+  grid.querySelectorAll(".spec-item").forEach((card) => {
+    card.addEventListener("click", () => {
+      grid.querySelectorAll(".spec-item").forEach((c) => c.removeAttribute("aria-current"));
+      card.setAttribute("aria-current", "true");
+      showSpec(card.getAttribute("data-spec"));
+    });
+  });
+  showSpec(ordered[0].id);
 }
 
 function showSpec(id) {
   const s = (DATA.xrepo_specs || []).find((x) => x.id === id);
   const box = document.getElementById("spec-detail");
   if (!s) { box.innerHTML = "<p class=\"empty\">Not found.</p>"; return; }
-  let h = "<h2>" + esc(s.id) + "</h2>";
-  h += "<p>" + esc(s.title || "") + "</p>";
-  h += "<p class=\"meta\">" + esc((s.description || "").slice(0, 500)) + "</p>";
-  h += "<p>";
-  (s.depends_on || []).forEach((d) => { h += "<span class=\"chip\">requires " + esc(d) + "</span>"; });
-  (s.depended_by || []).forEach((d) => { h += "<span class=\"chip\">used by " + esc(d) + "</span>"; });
-  h += "</p>";
-  (s.projects || []).forEach((p) => {
-    h += "<h3>" + esc(p.project) + " <span class=\"meta\">(" + p.links + " links)</span></h3>";
-    if (!(p.symbols || []).length) {
-      h += "<p class=\"empty\">Mirrored spec, no symbol links in this repo.</p>";
-      return;
-    }
-    (p.symbols || []).forEach((sym) => {
-      h += "<span class=\"sym\">" + esc(sym.relation) + " · " + esc(sym.qname) +
-        " <span class=\"meta\">" + esc(sym.file) + ":" + esc(sym.line) + "</span></span>";
+  const projects = s.projects || [];
+  const linked = projects.filter((p) => p.links > 0);
+  const mirrored = projects.filter((p) => !(p.links > 0));
+  let h = "<div class=\"spec-head\">";
+  h += "<div class=\"slug\">" + esc(s.id) + "</div>";
+  h += "<h2>" + esc(s.title || s.id) + "</h2>";
+  h += "<div class=\"meta mono\">" + esc(s.kind || "spec") + " · " + esc(s.status || "active") + "</div>";
+  if (s.description) {
+    h += "<p class=\"desc\">" + esc(String(s.description).slice(0, 900)) + "</p>";
+  }
+  if ((s.depends_on || []).length || (s.depended_by || []).length) {
+    h += "<div class=\"chips\">";
+    (s.depends_on || []).forEach((d) => {
+      h += "<span class=\"chip req\">requires " + esc(d) + "</span>";
     });
-  });
+    (s.depended_by || []).forEach((d) => {
+      h += "<span class=\"chip used\">used by " + esc(d) + "</span>";
+    });
+    h += "</div>";
+  }
+  h += "</div>";
+
+  h += "<div class=\"section-label\">Implementation</div>";
+  if (!linked.length) {
+    h += "<p class=\"empty\">No repo in this group has symbol links for this Spec yet.</p>";
+  } else {
+    linked.forEach((p) => {
+      h += "<div class=\"impl-block\"><h3><span>" + esc(p.project) +
+        "</span><span class=\"n\">" + p.links + " link" + (p.links === 1 ? "" : "s") +
+        "</span></h3>";
+      (p.symbols || []).forEach((sym) => {
+        h += "<div class=\"sym\"><span class=\"rel\">" + esc(sym.relation) +
+          "</span><span>" + esc(sym.qname) + "</span>" +
+          "<span class=\"loc\">" + esc(sym.file) + ":" + esc(sym.line) + "</span></div>";
+      });
+      h += "<p style=\"margin-top:10px\"><button type=\"button\" class=\"btn primary\" data-open-explorer=\"" +
+        esc(p.project) + "\">Open Spec Explorer</button></p>";
+      h += "</div>";
+    });
+  }
+  if (mirrored.length) {
+    h += "<p class=\"mirror-note\">Mirrored without code in " + mirrored.length +
+      " repo" + (mirrored.length === 1 ? "" : "s") + ": " +
+      esc(mirrored.map((p) => p.project).join(", ")) + ".</p>";
+  }
   box.innerHTML = h;
+  box.querySelectorAll("[data-open-explorer]").forEach((btn) => {
+    btn.addEventListener("click", () => openExplorer(btn.getAttribute("data-open-explorer")));
+  });
 }
 
 function renderRepos() {
   const grid = document.getElementById("repo-grid");
+  const byName = {};
+  (DATA.projects || []).forEach((p) => { byName[p.name] = p; });
   grid.innerHTML = (DATA.projects || []).map((p) => {
     const ct = p.counts || {};
-    const link = p.local_explorer
-      ? "<p><a href=\"file://" + esc(p.local_explorer) + "\">Open local Spec Explorer</a></p>"
-      : "";
+    const has = !!p.local_explorer;
+    const actions = has
+      ? "<p style=\"margin-top:10px\"><button type=\"button\" class=\"btn primary\" data-open-explorer=\"" +
+        esc(p.name) + "\">Open Spec Explorer</button></p>"
+      : "<p class=\"meta empty\">No Spec Explorer bundle for this repo</p>";
     return "<div class=\"card\" style=\"cursor:default\">" +
       "<h3>" + esc(p.name) + "</h3>" +
       "<div class=\"meta\">" + esc(ct.symbols) + " symbols · " + esc(ct.specs) +
       " specs · " + esc(ct.links) + " links · " + esc(ct.endpoints) + " endpoints</div>" +
-      link + "</div>";
+      actions + "</div>";
   }).join("");
+  grid.querySelectorAll("[data-open-explorer]").forEach((btn) => {
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      openExplorer(btn.getAttribute("data-open-explorer"));
+    });
+  });
 }
 
 function renderApi() {

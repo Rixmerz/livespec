@@ -88,4 +88,6 @@ then the evidence:
 
 If you need a capability outside your preloaded Skill (e.g. the `@spec:` annotation
 grammar), invoke the `Skill` tool or fetch the MCP prompt `agent_playbook` — you may
-call project, user, and plugin skills that are not preloaded.
+call project, user, and plugin skills that are not preloaded. For polyrepo /
+mirrored `xrepo-*` Specs, fetch prompt `cross_repo_workflow` or read
+`guide://cross-repo` / `project://group`.

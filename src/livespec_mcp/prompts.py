@@ -12,20 +12,36 @@ from fastmcp import FastMCP
 # resolves to site-packages' parent there, where docs/ does not exist.
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _AGENT_PLAYBOOK = _REPO_ROOT / "docs" / "AGENT_PLAYBOOK.md"
+_CROSS_REPO = _REPO_ROOT / "docs" / "CROSS_REPO.md"
 
 
-def _load_agent_playbook() -> str:
+def _load_packaged_or_docs(name: str, docs_path: Path, missing: str) -> str:
     try:
-        res = resources.files("livespec_mcp") / "templates" / "AGENT_PLAYBOOK.md"
+        res = resources.files("livespec_mcp") / "templates" / name
         if res.is_file():
             return res.read_text(encoding="utf-8")
     except (OSError, ModuleNotFoundError):
         pass
-    if _AGENT_PLAYBOOK.is_file():
-        return _AGENT_PLAYBOOK.read_text(encoding="utf-8")
-    return (
+    if docs_path.is_file():
+        return docs_path.read_text(encoding="utf-8")
+    return missing
+
+
+def _load_agent_playbook() -> str:
+    return _load_packaged_or_docs(
+        "AGENT_PLAYBOOK.md",
+        _AGENT_PLAYBOOK,
         "Agent playbook file missing. See docs/AGENT_QUICKSTART.md and README.md "
-        "in the livespec repository."
+        "in the livespec repository.",
+    )
+
+
+def _load_cross_repo_guide() -> str:
+    return _load_packaged_or_docs(
+        "CROSS_REPO.md",
+        _CROSS_REPO,
+        "Cross-repo guide missing. Set [workspace] group_db in .livespec.toml, "
+        "use Spec ids xrepo-*, and see README / docs/CROSS_REPO.md.",
     )
 
 
@@ -54,6 +70,17 @@ def register(mcp: FastMCP) -> None:
             "4) If `openspec/` already exists, run `sync_openspec()` + `validate_openspec`.\n"
             "5) Report Spec totals and suggest `@spec:` / bulk links for top symbols."
         )
+
+    @mcp.prompt
+    def cross_repo_workflow() -> str:
+        """Polyrepo group_db + mirrored xrepo-* Specs across sibling repos.
+
+        Invoke when the user has several related repos, asks about end-to-end
+        flows, HTTP hops across SAs, or shared Specs. Covers .livespec.toml
+        group_db, authoring xrepo-* Specs, @spec: annotations, Flow Explorer,
+        and find_legacy_flows traps.
+        """
+        return _load_cross_repo_guide()
 
     @mcp.prompt
     def openspec_workflow() -> str:

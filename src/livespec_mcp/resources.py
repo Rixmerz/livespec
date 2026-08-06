@@ -1,28 +1,32 @@
 """MCP resources: project:// addressable views.
 
-Canonical URI scheme (v0.20):
+Canonical URI scheme (v0.20+):
 
 | URI | MIME | Purpose |
 |-----|------|---------|
 | ``project://overview`` | JSON | Project overview (PageRank spine) |
 | ``project://index/status`` | JSON | Index stats |
+| ``project://group`` | JSON | Polyrepo group_db + ``xrepo-*`` Specs |
 | ``project://specs`` | JSON | All Specs |
 | ``project://specs/{spec_id}`` | JSON | Spec + implementations |
 | ``project://files/{path}`` | JSON | Indexed file + symbols |
 | ``project://symbols/{qname}`` | JSON | Symbol metadata |
+| ``guide://cross-repo`` | markdown | How to use group_db + xrepo Specs |
 | ``doc://symbol/{qname}`` | markdown | Generated symbol doc |
 | ``doc://spec/{spec_id}`` | markdown | Generated Spec doc |
 | ``code://symbol/{qname}`` | plain | Raw symbol source slice |
 
 Legacy alias ``livespec://…`` is **not** registered — use ``project://`` /
-``doc://`` / ``code://`` as above. External docs may refer to the product as
-"livespec" but resource URIs stay ``project://`` for MCP compatibility.
+``doc://`` / ``code://`` / ``guide://`` as above. External docs may refer to the
+product as "livespec" but resource URIs stay on these schemes for MCP
+compatibility.
 
 Workspace resolution (v0.14): resource URIs have no ``workspace`` parameter
 channel, so resources bind to the **most recently used** workspace (the one
 the last tool call touched). Before any tool call there is nothing to bind
 to — JSON resources then return an `mcp_error`-shaped payload with a hint,
-text resources a one-line explanation.
+text resources a one-line explanation. ``guide://cross-repo`` is static and
+does not need a workspace.
 
 Error shape (v0.14, closes the v0.6 P4 contract gap): JSON resources use
 ``tools._errors.mcp_error`` for every error payload. Text resources
@@ -33,14 +37,17 @@ inside a markdown document would be worse than a sentence.
 from __future__ import annotations
 
 import json
+from pathlib import Path
+from typing import Any
 
 from fastmcp import FastMCP
 
+from livespec_mcp.prompts import _load_cross_repo_guide
 from livespec_mcp.state import AppState, get_mru_state, get_state
 from livespec_mcp.tools._errors import mcp_error
 from livespec_mcp.tools.analysis import compute_project_overview
 from livespec_mcp.tools.indexing import compute_index_status
-from livespec_mcp.workspace_param import WorkspaceRequiredError
+from livespec_mcp.workspace_param import WorkspaceNotIndexedError, WorkspaceRequiredError
 
 _NO_WORKSPACE_HINT = (
     "Resources bind to the most recently used workspace. Call any tool with "
@@ -49,17 +56,127 @@ _NO_WORKSPACE_HINT = (
 
 
 def _resolve_state() -> AppState | None:
+    # Resources have no workspace= channel — MRU is the contract. Prefer it
+    # before get_state(): test harnesses monkeypatch missing-workspace to cwd,
+    # which can be an unindexed parent of a group_db polyrepo.
+    st = get_mru_state()
+    if st is not None:
+        return st
     try:
         return get_state()
-    except WorkspaceRequiredError:
-        return get_mru_state()
+    except (WorkspaceRequiredError, WorkspaceNotIndexedError, FileNotFoundError):
+        return None
 
 
 def _no_workspace_json() -> str:
     return json.dumps(mcp_error("No active workspace", hint=_NO_WORKSPACE_HINT))
 
 
+def compute_group_view(st: AppState) -> dict[str, Any]:
+    """Membership + mirrored ``xrepo-*`` Specs for the active workspace DB."""
+    grouped = bool(st.settings.grouped)
+    conn = st.conn
+    projects = [
+        {
+            "id": int(r["id"]),
+            "name": Path(r["root"]).name,
+            "root": r["root"],
+            "xrepo_spec_count": int(
+                conn.execute(
+                    """SELECT COUNT(*) FROM spec
+                       WHERE project_id=? AND spec_id LIKE 'xrepo-%'""",
+                    (r["id"],),
+                ).fetchone()[0]
+            ),
+            "spec_count": int(
+                conn.execute(
+                    "SELECT COUNT(*) FROM spec WHERE project_id=?",
+                    (r["id"],),
+                ).fetchone()[0]
+            ),
+        }
+        for r in conn.execute("SELECT id, root FROM project ORDER BY id")
+    ]
+    xrepo_ids = [
+        row[0]
+        for row in conn.execute(
+            """SELECT DISTINCT spec_id FROM spec
+               WHERE spec_id LIKE 'xrepo-%' ORDER BY 1"""
+        )
+    ]
+    xrepo_specs: list[dict[str, Any]] = []
+    for xid in xrepo_ids:
+        meta = conn.execute(
+            """SELECT title, status, kind FROM spec
+               WHERE spec_id=? ORDER BY project_id LIMIT 1""",
+            (xid,),
+        ).fetchone()
+        by_project = [
+            {
+                "project": Path(r["root"]).name,
+                "root": r["root"],
+                "links": int(r["links"]),
+            }
+            for r in conn.execute(
+                """SELECT p.root AS root, COUNT(ss.id) AS links
+                   FROM spec s
+                   JOIN project p ON p.id = s.project_id
+                   LEFT JOIN spec_symbol ss ON ss.spec_id = s.id
+                   WHERE s.spec_id=?
+                   GROUP BY s.project_id
+                   ORDER BY links DESC""",
+                (xid,),
+            )
+        ]
+        xrepo_specs.append(
+            {
+                "spec_id": xid,
+                "title": meta["title"] if meta else None,
+                "status": meta["status"] if meta else None,
+                "kind": meta["kind"] if meta else None,
+                "repos": by_project,
+                "repo_count": len(by_project),
+            }
+        )
+    return {
+        "grouped": grouped,
+        "group_db": str(st.settings.db_path) if grouped else None,
+        "workspace": str(st.settings.workspace),
+        "project_id": st.project_id,
+        "projects": projects,
+        "xrepo_specs": xrepo_specs,
+        "counts": {
+            "projects": len(projects),
+            "xrepo_specs": len(xrepo_specs),
+        },
+        "hint": (
+            None
+            if grouped
+            else (
+                "This workspace is not using group_db. Set "
+                "[workspace] group_db in .livespec.toml on each sibling repo, "
+                "mirror Spec ids as xrepo-*, then re-index. "
+                "Read guide://cross-repo or fetch prompt cross_repo_workflow."
+            )
+        ),
+        "how_to": "guide://cross-repo",
+    }
+
+
 def register(mcp: FastMCP) -> None:
+    @mcp.resource("guide://cross-repo", mime_type="text/markdown")
+    def cross_repo_guide() -> str:
+        """Static how-to: group_db, mirrored xrepo-* Specs, Flow Explorer."""
+        return _load_cross_repo_guide()
+
+    @mcp.resource("project://group", mime_type="application/json")
+    def project_group() -> str:
+        """Polyrepo membership + xrepo-* Spec rollup for the MRU workspace."""
+        st = _resolve_state()
+        if st is None:
+            return _no_workspace_json()
+        return json.dumps(compute_group_view(st))
+
     @mcp.resource("project://overview", mime_type="application/json")
     def project_overview() -> str:
         """Tool-parity view of get_project_overview (default include_infrastructure=False)."""

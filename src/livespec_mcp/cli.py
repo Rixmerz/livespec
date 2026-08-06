@@ -88,6 +88,16 @@ def main(argv: list[str] | None = None) -> int:
         default="/explorer",
         help="URL prefix (default: /explorer)",
     )
+    p_explorer_serve.add_argument(
+        "--flow",
+        action="store_true",
+        help="serve Flow Explorer (group) at / with Spec Explorers at /repos/<name>/explorer/",
+    )
+    p_explorer_serve.add_argument(
+        "--flow-dir",
+        default=None,
+        help="Flow Explorer bundle dir (default: <group_db parent>/flow-explorer)",
+    )
 
     p_fastapi = sub.add_parser(
         "fastapi",
@@ -127,15 +137,38 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if args.cmd == "explorer":
         if args.explorer_cmd == "serve":
-            from livespec_mcp.explorer.asgi import serve_explorer
-
             try:
-                serve_explorer(
-                    args.path,
-                    host=args.host,
-                    port=args.port,
-                    prefix=args.mount_path,
-                )
+                if getattr(args, "flow", False):
+                    from pathlib import Path
+
+                    from livespec_mcp.state import get_state
+                    from livespec_mcp.tools.flow_explorer import (
+                        flow_out_dir,
+                        serve_flow_explorer,
+                    )
+
+                    if args.flow_dir:
+                        flow_dir = Path(args.flow_dir)
+                    else:
+                        st = get_state(args.path, create=False)
+                        flow_dir = flow_out_dir(st)
+                    if not (flow_dir / "index.html").is_file():
+                        raise FileNotFoundError(
+                            f"Flow Explorer bundle missing at {flow_dir} — "
+                            "run export_flow_explorer first"
+                        )
+                    serve_flow_explorer(
+                        flow_dir, host=args.host, port=args.port
+                    )
+                else:
+                    from livespec_mcp.explorer.asgi import serve_explorer
+
+                    serve_explorer(
+                        args.path,
+                        host=args.host,
+                        port=args.port,
+                        prefix=args.mount_path,
+                    )
             except FileNotFoundError as e:
                 print(f"error: {e}", file=sys.stderr)
                 return 1

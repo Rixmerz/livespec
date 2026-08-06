@@ -30,7 +30,7 @@ env var and **no** cwd fallback; omitting it returns a shaped `mcp_error`.
 
 State lives at `<repo>/.mcp-docs/docs.db` — safe to delete to reset; never commit secrets there.
 
-## Polyrepo / `group_db` (cross-repo HTTP)
+## Polyrepo / `group_db` (cross-repo HTTP **and** Specs)
 
 Several sibling repos can share one SQLite via `.livespec.toml`:
 
@@ -39,15 +39,26 @@ Several sibling repos can share one SQLite via `.livespec.toml`:
 group_db = "../.livespec-group/flow-group.db"
 ```
 
+**Discover how:** fetch prompt `cross_repo_workflow`, or read resources
+`guide://cross-repo` (static how-to) and `project://group` (live membership +
+`xrepo-*` rollup after any `workspace=` tool call).
+
 Call tools from **any** member workspace (usually the hub/composer). Then:
 
-| Intent | Tool |
-|--------|------|
+| Intent | Tool / resource |
+|--------|-----------------|
 | Client → server hops | `who_does_this_call` → `invokes_endpoints` |
 | Server → client hops | `who_calls` → `route_callers` |
 | Symbol in another repo | `find_symbol` / `get_symbol_source` / `quick_orient` (group-wide lookup) |
+| Shared Specs across repos | Mirror Spec ids as `xrepo-*` in **each** repo + `@spec:xrepo-…`; `list_specs` / `get_spec_implementation`; `project://group` |
 | Likely-unused HTTP flows | `find_legacy_flows(summary_only=True)` — then full list |
 | Flow UI bundle | `export_flow_explorer` (docs plugin) |
+
+**Cross-repo Specs (`xrepo-*`):** livespec does not invent one global Spec row.
+Author the same OpenSpec slug `xrepo-<slug>` in each participating repo
+(`sync_openspec` or `create_spec`), annotate code with `@spec:xrepo-…`,
+re-index. Flow Explorer’s Specs tab unions mirrored ids. Annotation alone does
+**not** create the Spec row.
 
 **`find_legacy_flows` traps (critical):**
 

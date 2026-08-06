@@ -58,6 +58,7 @@ packages = ["src/livespec_mcp"]
 # The agent_playbook MCP prompt serves this file; docs/ is the single source
 # of truth and wheels get a packaged copy readable via importlib.resources.
 "docs/AGENT_PLAYBOOK.md" = "livespec_mcp/templates/AGENT_PLAYBOOK.md"
+"docs/CROSS_REPO.md" = "livespec_mcp/templates/CROSS_REPO.md"
 
 [tool.hatch.build.targets.sdist]
 # HANDOFF.md/CLAUDE.md are internal session-resume notes, not user docs, and

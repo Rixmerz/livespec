@@ -164,14 +164,21 @@
     }
     td .mono { color: var(--accent-dim); }
 
+    table.cmp {
+      width: 100%;
+      font-size: 0.78rem;
+    }
+    table.cmp th, table.cmp td {
+      padding: 0.4rem 0.45rem;
+    }
     table.cmp td:first-child {
       font-weight: 600;
-      width: 18%;
+      width: 11%;
       color: var(--muted);
-      font-size: 0.85rem;
+      font-size: 0.75rem;
     }
     table.cmp th:not(:first-child),
-    table.cmp td:not(:first-child) { width: 41%; }
+    table.cmp td:not(:first-child) { width: 22.25%; }
 
     .stat-grid {
       display: grid;
@@ -306,6 +313,64 @@
       flex-wrap: wrap;
       gap: 0.5rem;
     }
+    .title-hero {
+      display: grid;
+      grid-template-columns: minmax(0, 1.15fr) minmax(0, 0.95fr);
+      gap: clamp(1.5rem, 4vw, 3rem);
+      align-items: center;
+      width: 100%;
+      max-width: 1100px;
+    }
+    @media (max-width: 860px) {
+      .title-hero { grid-template-columns: 1fr; }
+    }
+    .title-aside {
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      padding: 1.15rem 1.25rem;
+    }
+    .title-aside .aside-label {
+      font-family: var(--mono);
+      font-size: 0.68rem;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: var(--muted);
+      margin-bottom: 0.85rem;
+    }
+    .title-aside .stack {
+      display: flex;
+      flex-direction: column;
+      gap: 0.55rem;
+    }
+    .title-aside .row {
+      display: flex;
+      align-items: center;
+      gap: 0.65rem;
+      font-size: 0.92rem;
+    }
+    .title-aside .row .dot {
+      width: 0.55rem;
+      height: 0.55rem;
+      border-radius: 50%;
+      background: var(--accent);
+      flex-shrink: 0;
+    }
+    .title-aside .row.muted-row .dot { background: var(--muted); }
+    .title-aside .bridge {
+      margin: 0.35rem 0 0.35rem 0.2rem;
+      font-family: var(--mono);
+      font-size: 0.78rem;
+      color: var(--accent);
+    }
+    .title-aside .aside-foot {
+      margin-top: 1rem;
+      padding-top: 0.85rem;
+      border-top: 1px solid var(--line);
+      font-size: 0.85rem;
+      color: var(--muted);
+      line-height: 1.45;
+    }
     .footnote {
       margin-top: auto;
       padding-top: 1.2rem;
@@ -363,6 +428,7 @@
       max-height: 42vh;
       object-fit: cover;
       object-position: top left;
+      cursor: zoom-in;
     }
     .shot-grid figcaption {
       font-family: var(--mono);
@@ -373,6 +439,51 @@
     }
     @media (max-width: 860px) {
       .shot-grid { grid-template-columns: 1fr; }
+    }
+
+    .lightbox {
+      position: fixed;
+      inset: 0;
+      z-index: 100;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      padding: 1.25rem;
+      background: rgba(6, 8, 14, 0.88);
+      cursor: zoom-out;
+    }
+    .lightbox.open { display: flex; }
+    .lightbox img {
+      max-width: min(96vw, 1400px);
+      max-height: 92vh;
+      width: auto;
+      height: auto;
+      object-fit: contain;
+      border-radius: 8px;
+      box-shadow: 0 12px 48px rgba(0, 0, 0, 0.45);
+      cursor: default;
+    }
+    .lightbox .lb-cap {
+      position: absolute;
+      left: 50%;
+      bottom: 1rem;
+      transform: translateX(-50%);
+      font-family: var(--mono);
+      font-size: 0.75rem;
+      color: #c8ceda;
+      background: rgba(10, 12, 20, 0.7);
+      padding: 0.35rem 0.7rem;
+      border-radius: 6px;
+      max-width: 90vw;
+      text-align: center;
+    }
+    .lightbox .lb-hint {
+      position: absolute;
+      top: 0.85rem;
+      right: 1rem;
+      font-family: var(--mono);
+      font-size: 0.7rem;
+      color: #9aa3b5;
     }
 
     .timing {
@@ -420,20 +531,36 @@
 
     <!-- 1 -->
     <section class="slide active" data-title="Title">
-      <p class="eyebrow">Claude Code plugin · MCP · agent toolkit</p>
-      <h1>livespec</h1>
-      <p class="lede">
-        Inteligencia de código local-first para agentes: call graph, impacto,
-        y trazabilidad Spec ↔ código — con OpenSpec como único dialecto.
-      </p>
-      <div class="title-meta">
-        <span class="pill">public beta · v0.31.1</span>
-        <span class="pill">9 lenguajes</span>
-        <span class="pill">OpenSpec slugs</span>
-        <span class="pill">group_db cross-repo</span>
-        <span class="pill">sin API keys</span>
+      <div class="title-hero">
+        <div>
+          <p class="eyebrow">Claude Code plugin · MCP · agent toolkit</p>
+          <h1>livespec</h1>
+          <p class="lede">
+            Inteligencia de código local-first para agentes: call graph, impacto,
+            y trazabilidad Spec ↔ código — con OpenSpec como único dialecto.
+          </p>
+          <div class="title-meta">
+            <span class="pill">public beta · v0.31.1</span>
+            <span class="pill">9 lenguajes</span>
+            <span class="pill">OpenSpec slugs</span>
+            <span class="pill">group_db cross-repo</span>
+            <span class="pill">sin API keys</span>
+          </div>
+        </div>
+        <aside class="title-aside" aria-label="Qué responde">
+          <div class="aside-label">Preguntas que cierra</div>
+          <div class="stack">
+            <div class="row"><span class="dot"></span><span>¿Qué llama a esto?</span></div>
+            <div class="row"><span class="dot"></span><span>¿Qué rompe si cambio X?</span></div>
+            <div class="row"><span class="dot"></span><span>¿Qué código implementa esta Spec?</span></div>
+            <div class="bridge">Spec ↔ símbolo ↔ hop HTTP</div>
+            <div class="row muted-row"><span class="dot"></span><span>Grafo local · 100% determinista</span></div>
+            <div class="row muted-row"><span class="dot"></span><span>OpenSpec in / OpenSpec out</span></div>
+          </div>
+          <p class="aside-foot">No es un mapa decorativo: ancla requisitos al call graph — también entre repos.</p>
+        </aside>
       </div>
-      <p class="footnote">← → · espacio · End = cierre (antes del anexo) · Shift+End = última ficha</p>
+      <p class="footnote">← → · espacio · End = cierre</p>
     </section>
 
     <!-- 2 -->
@@ -531,7 +658,7 @@ claude plugin install livespec@rixmerz
         </div>
       </div>
       <p class="lede" style="margin-top:0.55rem">
-        Backup sin red: números del anexo (13 fichas). Si MCP cae: no inventar con Grep.
+        Backup sin red: hop + arquetipos en el deck. Si MCP cae: no inventar con Grep.
       </p>
       <div class="next-step"><strong>Caveat en voz alta:</strong> dead / legacy = grafo estático ≠ tráfico de prod.</div>
     </section>
@@ -618,6 +745,41 @@ claude plugin install livespec@rixmerz
       </p>
     </section>
 
+    <!-- 5b · ejemplo concreto -->
+    <section class="slide" data-title="Spec en código">
+      <p class="eyebrow">07b · De markdown a símbolo</p>
+      <h2>Así se ve el ancla Spec ↔ código</h2>
+      <div class="grid-2" style="margin-top:0.25rem;align-items:stretch">
+        <div>
+          <p class="muted small" style="margin-bottom:0.35rem"><span class="mono">openspec/specs/auth/spec.md</span></p>
+          <div class="codeblock" style="font-size:0.78rem;min-height:14rem"><span class="c">### Requirement: User login</span>
+The system SHALL authenticate
+with email + password and return
+a session token.
+
+<span class="c">#### Scenario: Valid credentials</span>
+- <strong>WHEN</strong> credentials are valid
+- <strong>THEN</strong> a session is created
+- <strong>AND</strong> a token is returned</div>
+          <p class="muted small" style="margin-top:0.45rem">→ slug: <span class="mono">auth-user-login</span> · <span class="mono">sync_openspec</span></p>
+        </div>
+        <div>
+          <p class="muted small" style="margin-bottom:0.35rem"><span class="mono">src/auth/login.py</span> — livespec lee el docstring</p>
+          <div class="codeblock" style="font-size:0.78rem;min-height:14rem"><span class="c">def login(email, password):</span>
+    <span class="c">"""@spec:auth-user-login</span>
+
+    Authenticate and issue a session
+    token for the given credentials.
+    <span class="c">"""</span>
+    user = find_user(email)
+    …
+    return issue_token(user)</div>
+          <p class="muted small" style="margin-top:0.45rem">→ <span class="mono">get_spec_implementation("auth-user-login")</span> encuentra este símbolo</p>
+        </div>
+      </div>
+      <div class="next-step"><strong>Sin el <span class="mono">@spec:</span>:</strong> la Spec “flota” (escrita en OpenSpec, invisible al agente en el grafo).</div>
+    </section>
+
     <!-- 6 -->
     <section class="slide" data-title="Superficie">
       <p class="eyebrow">08 · Superficie</p>
@@ -647,38 +809,40 @@ claude plugin install livespec@rixmerz
     <section class="slide" data-title="Cross-repo">
       <p class="eyebrow">09 · Cross-repo</p>
       <h2>group_db: el flujo entre servicios</h2>
+      <div class="flow-boxes" style="margin:0.55rem 0 0.85rem">
+        <div class="box"><strong>Composer</strong><span>listByChunk*</span></div>
+        <div class="arrow">→</div>
+        <div class="box"><strong>group_db</strong><span>route_callers</span></div>
+        <div class="arrow">→</div>
+        <div class="box"><strong>HotelSvc</strong><span>getHotelList</span></div>
+      </div>
       <div class="grid-2">
         <div class="card">
           <h3>Qué une</h3>
           <ul class="clean" style="margin-top:0.55rem">
-            <li><span class="mono">who_does_this_call</span> → invokes_endpoints</li>
-            <li><span class="mono">who_calls</span> → route_callers</li>
-            <li><span class="mono">find_symbol</span> group-wide + <span class="mono">project_root</span></li>
-            <li><span class="mono">find_legacy_flows</span></li>
-            <li><span class="mono">export_flow_explorer</span></li>
+            <li><span class="mono">who_calls</span> → <span class="mono">route_callers</span></li>
+            <li><span class="mono">who_does_this_call</span> → hops salientes</li>
+            <li><span class="mono">export_flow_explorer</span> → mapa visual</li>
           </ul>
         </div>
         <div class="card">
-          <h3>Qué significa en la práctica</h3>
+          <h3>En la práctica</h3>
           <p class="muted" style="margin-top:0.55rem">
-            Un agente en el BFF puede preguntar qué SA atiende un path, o qué
-            clientes llaman un endpoint del SA, sin abrir 10 repos a mano.
-          </p>
-          <p class="muted" style="margin-top:0.7rem">
-            Orphans ≠ basura: casi siempre un SA que falta en el group o un
-            cliente third-party fuera del índice.
+            Un agente pregunta qué clientes llaman un endpoint del SA sin abrir 10 repos.
+            Orphans ≠ basura: suele faltar un SA en el group. No indexar la carpeta padre.
           </p>
         </div>
       </div>
+      <div class="next-step"><strong>Demo live:</strong> Flow Explorer del <span class="mono">group_db</span> (HTML abierto) — no el Flow solo del repo livespec.</div>
     </section>
 
-    <!-- 8 — comparative table WITH Graphify -->
+    <!-- 8 — comparative table WITH Graphify + Engram -->
     <section class="slide" data-title="Comparativa">
       <p class="eyebrow">10 · Comparativa</p>
-      <h2>OpenSpec · livespec · Graphify</h2>
-      <p class="muted small" style="margin-bottom:0.2rem;max-width:70ch">
-        OpenSpec no compite: autoría. Graphify sí se solapa (grafo local + MCP).
-        Se diferencian en la pregunta que responden.
+      <h2>OpenSpec · livespec · Graphify · Engram</h2>
+      <p class="muted small" style="margin-bottom:0.2rem;max-width:78ch">
+        OpenSpec no compite: autoría. Engram no compite: memoria del agente.
+        Graphify sí se solapa (grafo local + MCP). Se diferencian en la pregunta.
       </p>
       <table class="cmp">
         <thead>
@@ -687,6 +851,7 @@ claude plugin install livespec@rixmerz
             <th>OpenSpec</th>
             <th>livespec</th>
             <th>Graphify</th>
+            <th>Engram</th>
           </tr>
         </thead>
         <tbody>
@@ -695,50 +860,58 @@ claude plugin install livespec@rixmerz
             <td>SDD / authoring de requirements</td>
             <td>Code intel + Spec↔código</td>
             <td>Knowledge graph del repo</td>
+            <td>Memoria persistente del agente</td>
           </tr>
           <tr>
             <td>Pregunta</td>
             <td>¿Qué debemos construir?</td>
             <td>¿Qué código implementa / qué rompe?</td>
             <td>¿Cómo está organizado y qué lo atraviesa?</td>
+            <td>¿Qué ya aprendimos / decidimos?</td>
           </tr>
           <tr>
             <td>Artefacto</td>
             <td><span class="mono">openspec/</span> markdown</td>
             <td>SQLite + call graph + Specs</td>
             <td><span class="mono">graph.json</span> + HTML / Obsidian / Neo4j</td>
+            <td>SQLite + FTS5 (<span class="mono">~/.engram/</span>)</td>
           </tr>
           <tr>
             <td>Fuerte en</td>
             <td>Gates, proposals, changes</td>
             <td>Spec↔código, <span class="mono">group_db</span>, endpoints, PR impact</td>
             <td>Comunidades Leiden, god nodes, multimodal</td>
+            <td>Facts, decisions, recall cross-session</td>
           </tr>
           <tr>
             <td>LLM</td>
             <td>No (markdown humano)</td>
             <td><strong>Nunca</strong> — 100% determinista</td>
             <td>No para código; sí para docs/medios</td>
+            <td>No en storage; el agente escribe/lee</td>
           </tr>
           <tr>
             <td>Lenguajes</td>
             <td>—</td>
             <td>9 con tests de extractor</td>
             <td>36 declarados</td>
+            <td>— (agnóstico al código)</td>
           </tr>
           <tr>
             <td>Cuándo</td>
             <td>Escribir y gobernar Specs</td>
             <td>Orientar, impact, coverage, polyrepo HTTP</td>
             <td>Repo sin Specs, mucha doc, mapa rápido</td>
+            <td>Continuidad entre sesiones / preferencias</td>
           </tr>
         </tbody>
       </table>
-      <div style="margin-top:0.55rem">
+      <div style="margin-top:0.45rem">
         <span class="pill ok">OpenSpec ⊂ proceso</span>
         <span class="pill ok">livespec ⊂ grafo + Specs</span>
         <span class="pill warn">Graphify ⊂ mapa / multimodal</span>
-        <span class="pill">Conviven: dos MCP en el mismo agente</span>
+        <span class="pill ok">Engram ⊂ memoria agente</span>
+        <span class="pill">Conviven: varios MCP en el mismo agente</span>
       </div>
     </section>
 
@@ -794,14 +967,6 @@ claude plugin install livespec@rixmerz
           <h3><span class="pill warn">FTS, no vectores</span></h3>
           <p class="muted" style="margin-top:0.45rem">Search es keyword. Semántica profunda no es el producto.</p>
         </div>
-        <div class="card">
-          <h3><span class="pill ok">Spring ≠ beans</span></h3>
-          <p class="muted" style="margin-top:0.45rem"><span class="mono">find_endpoints</span> lista mappings HTTP — no <span class="mono">@Bean</span>/<span class="mono">@Service</span>.</p>
-        </div>
-        <div class="card">
-          <h3><span class="pill ok">Dead ≠ tests</span></h3>
-          <p class="muted" style="margin-top:0.45rem">Por defecto excluye <span class="mono">src/test</span> / <span class="mono">*.test.ts</span>. Opt-in: <span class="mono">include_tests</span>.</p>
-        </div>
       </div>
       <div class="next-step"><strong>Acción:</strong> usalo para orientar y anclar Specs — no como juez final de “borrá esto”.</div>
     </section>
@@ -828,7 +993,7 @@ claude plugin install livespec@rixmerz
           <div class="hint">Módulo sin ninguna Spec. Hay grafo, no hay pregunta “qué implementa X”.</div>
         </div>
       </div>
-      <div class="next-step"><strong>Acción:</strong> dead por defecto es prod (tests fuera). Endpoints Spring ≠ beans DI.</div>
+      <div class="next-step"><strong>Acción:</strong> leé dead/endpoint/Spec con estas definiciones — no con intuición de APM.</div>
     </section>
 
     <!-- 11 Victoria -->
@@ -864,6 +1029,7 @@ claude plugin install livespec@rixmerz
     <section class="slide" data-title="Hop">
       <p class="eyebrow">15 · Cross-repo en una imagen</p>
       <h2>¿Se ven llamadas entre servicios?</h2>
+      <p class="muted small" style="margin:0.2rem 0 0.55rem">Pregunta del agente: <span class="mono">who_calls(getHotelList)</span> → 2 clientes en el group.</p>
       <div class="flow-boxes">
         <div class="box"><strong>sm-composer-m</strong><span>cliente · listByChunk*</span></div>
         <div class="arrow">→</div>
@@ -886,86 +1052,44 @@ claude plugin install livespec@rixmerz
       <div class="next-step"><strong>Acción:</strong> el group_db sirve cuando cliente y server están indexados juntos.</div>
     </section>
 
-    <!-- 13 Arquetipo A -->
-    <section class="slide" data-title="A-composer">
-      <p class="eyebrow">16 · Arquetipo A · Composer</p>
-      <h2>Specs de adorno</h2>
-      <p class="archetype">“El código está, las Specs también… pero casi no se tocan.”</p>
+    <!-- 3 repos representativos (no 13) -->
+    <section class="slide" data-title="Repo composer">
+      <p class="eyebrow">16 · Repo · Composer</p>
+      <h2>sm-composer-m</h2>
+      <p class="lede">Home del smoke cross-repo · Specs de adorno · de acá sale el hop</p>
       <div class="stat-grid">
-        <div class="stat">
-          <div class="n warn-n">2 / 9</div>
-          <div class="label">Specs con código</div>
-          <div class="hint">Ej. flight-hotel, insurance, transport. ~7 Specs flotando.</div>
-        </div>
-        <div class="stat">
-          <div class="n warn-n">32–70</div>
-          <div class="label">Dead típico</div>
-          <div class="hint">flight-v2 llega a 70. Mucho interno sin callers.</div>
-        </div>
+        <div class="stat"><div class="n warn-n">46</div><div class="label">Candidatos a dead</div><div class="hint">~20% del repo sin callers en grafo.</div></div>
+        <div class="stat"><div class="n">7</div><div class="label">Endpoints HTTP</div><div class="hint">Pocas rutas; cliente del hop a HotelSvc.</div></div>
+        <div class="stat"><div class="n warn-n">4 / 11</div><div class="label">Specs con código</div><div class="hint">7 sin impl. Specs “flotan”.</div></div>
+        <div class="stat"><div class="n">2</div><div class="label">Clientes → HotelSvc</div><div class="hint"><span class="mono">listByChunk*</span> → <span class="mono">getHotelList</span>.</div></div>
       </div>
-      <div class="chip-row">
-        <span class="chip">flight-hotel</span>
-        <span class="chip">flight-v2</span>
-        <span class="chip">insurance</span>
-        <span class="chip">transport</span>
-        <span class="chip">sm-composer-m <em>4/11</em></span>
-      </div>
-      <div class="next-step"><strong>Acción:</strong> ligar o archivar Specs flotantes — hoy son ruido para el agente.</div>
+      <div class="next-step"><strong>Arquetipo A:</strong> código + Specs existen… casi no se tocan. Ligar o archivar.</div>
     </section>
 
-    <!-- 14 Arquetipo B -->
-    <section class="slide" data-title="A-sa">
-      <p class="eyebrow">17 · Arquetipo B · SA Java</p>
-      <h2>Grafo sano · Specs flojas</h2>
-      <p class="archetype">“Casi no hay dead… pero igual no podés preguntar qué implementa X.”</p>
+    <section class="slide" data-title="Repo HotelSvc">
+      <p class="eyebrow">17 · Repo · Server del hop</p>
+      <h2>api-search-hotel-h</h2>
+      <p class="lede">Target del join cross-repo · grafo denso · Specs flojas</p>
       <div class="stat-grid">
-        <div class="stat">
-          <div class="n">0–4</div>
-          <div class="label">Dead (prod)</div>
-          <div class="hint">bags-f 0 · availability/flight-search-g 1 · TransportSvc 4. Tests ya no inflan.</div>
-        </div>
-        <div class="stat">
-          <div class="n warn-n">2–3 / 9</div>
-          <div class="label">Specs ligadas</div>
-          <div class="hint">El hueco es trazabilidad, no basura.</div>
-        </div>
+        <div class="stat"><div class="n">6</div><div class="label">Candidatos a dead</div><div class="hint">De 989 símbolos; tests fuera.</div></div>
+        <div class="stat"><div class="n">12</div><div class="label">Endpoints HTTP</div><div class="hint">Incluye <span class="mono">getHotelList</span>.</div></div>
+        <div class="stat"><div class="n warn-n">3 / 9</div><div class="label">Specs con código</div><div class="hint">Server clave del group; Specs aún flojas.</div></div>
+        <div class="stat"><div class="n">27</div><div class="label">Módulos sin Spec</div><div class="hint">Hueco = trazabilidad, no “basura”.</div></div>
       </div>
-      <div class="chip-row">
-        <span class="chip">bags-f <em>0 dead · 11 eps</em></span>
-        <span class="chip">availability <em>1 dead · 11 eps</em></span>
-        <span class="chip">flight-search-g / TransportSvc <em>Specs 2/9</em></span>
-      </div>
-      <div class="next-step"><strong>Acción:</strong> anotar <span class="mono">@spec:</span> en handlers — el grafo ya está listo.</div>
+      <div class="next-step"><strong>Arquetipo B:</strong> grafo sano · igual no podés preguntar “qué implementa X” sin links.</div>
     </section>
 
-    <!-- 15 Arquetipo C -->
-    <section class="slide" data-title="A-good">
-      <p class="eyebrow">18 · Arquetipo C · Bien anclado</p>
-      <h2>Así se ve el objetivo</h2>
-      <p class="archetype">“Casi todas las Specs tienen código. El agente puede cerrar el loop.”</p>
+    <section class="slide" data-title="Repo manager">
+      <p class="eyebrow">18 · Repo · Bien anclado</p>
+      <h2>api-search-manager-i</h2>
+      <p class="lede">Orquestador · mejor Spec↔código del group</p>
       <div class="stat-grid">
-        <div class="stat">
-          <div class="n">8 / 10</div>
-          <div class="label">search-manager</div>
-          <div class="hint">Mejor del group. Orquestador con Specs reales.</div>
-        </div>
-        <div class="stat">
-          <div class="n">9 / 10</div>
-          <div class="label">SPA results</div>
-          <div class="hint">Bien anclado; UI vía framework=angular; 222 orphan tests.</div>
-        </div>
-        <div class="stat">
-          <div class="n">13 / 13</div>
-          <div class="label">livespec self</div>
-          <div class="hint">Referencia: slugs + links + validate green.</div>
-        </div>
-        <div class="stat">
-          <div class="n">15 / 15</div>
-          <div class="label">Mensis</div>
-          <div class="hint">Specs OK; 21 dead son UI/helpers sin callers.</div>
-        </div>
+        <div class="stat"><div class="n warn-n">16</div><div class="label">Candidatos a dead</div><div class="hint">Dead moderado en un repo chico.</div></div>
+        <div class="stat"><div class="n">4</div><div class="label">Endpoints HTTP</div><div class="hint">Rol = orquestar, no API ancha.</div></div>
+        <div class="stat"><div class="n">8 / 10</div><div class="label">Specs con código</div><div class="hint">Así se ve bien: casi todas anclan.</div></div>
+        <div class="stat"><div class="n">32</div><div class="label">Módulos sin Spec</div><div class="hint">Aún hay huérfanos; Specs sí están ligadas.</div></div>
       </div>
-      <div class="next-step"><strong>Acción:</strong> copiá este patrón a composers/SAs — Specs sin link no sirven al agente.</div>
+      <div class="next-step"><strong>Arquetipo C:</strong> copiá este patrón a composers/SAs — Specs sin link no sirven al agente.</div>
     </section>
 
     <!-- 16 Fit -->
@@ -1022,15 +1146,15 @@ get_spec_implementation(
       <h2>Explorer: Specs y flujos</h2>
       <div class="shot-grid" style="margin-top:0.35rem">
         <figure>
-          <img src="assets/spec-explorer.png" alt="Spec Explorer on livespec-mcp — 13 Specs verified" />
-          <figcaption>Spec Explorer · livespec-mcp · 13/13 verified</figcaption>
+          <img src="assets/spec-explorer.png" alt="Spec Explorer on livespec — 13 Specs verified" />
+          <figcaption>Spec Explorer · livespec · 13/13 verified</figcaption>
         </figure>
         <figure>
           <img src="assets/flow-explorer.png" alt="Flow Explorer group_db — projects, xrepo specs, route hops (nombres de repo genéricos)" />
           <figcaption>Flow Explorer · group_db · hop Composer→HotelSvc en route edges <span class="muted">(nombres genéricos)</span></figcaption>
         </figure>
       </div>
-      <div class="next-step"><strong>Demo:</strong> <span class="mono">livespec explorer serve .</span> · Flow bundle vía <span class="mono">export_flow_explorer</span> (plugin docs).</div>
+      <div class="next-step"><strong>Demo live:</strong> Flow cross-repo HTML del <span class="mono">group_db</span> (ya abierto). Screenshots del deck = backup con zoom.</div>
     </section>
 
     <!-- CTA -->
@@ -1079,7 +1203,7 @@ get_spec_implementation(
         <span class="t">3–10′</span><span>OpenSpec + tiers + límites + léxico</span>
         <span class="t">10–16′</span><span>Victoria + hop + 3 arquetipos</span>
         <span class="t">16–20′</span><span>Visual + CTA + Q&amp;A</span>
-        <span class="t">+opc</span><span>Anexo 13 fichas — solo si preguntan por un repo</span>
+        <span class="t">+opc</span><span>Flow Explorer live (group_db) si preguntan por hops</span>
       </div>
     </section>
 
@@ -1101,175 +1225,6 @@ get_spec_implementation(
         Comparativa Graphify: docs/COMPETITIVE_GRAPHIFY.md
       </p>
     </section>
-
-
-    <section class="slide" data-title="Anexo">
-      <p class="eyebrow">Anexo</p>
-      <h2>Detalle por repo del group_db</h2>
-      <p class="lede">Las 13 fichas siguientes son opcionales. El talk termina en la diapo 24.
-        Los nombres de repo son genéricos (<span class="mono">api-composer-a</span>…<span class="mono">sm-composer-m</span>);
-        las métricas son las reales del barrido.</p>
-      <div class="next-step"><strong>Tip:</strong> End / flechas — saltá si el público ya entendió los arquetipos.</div>
-    </section>
-
-    <!-- 17 — one slide per group_db repo -->
-    <section class="slide" data-appendix="1" data-title="g1">
-      <p class="eyebrow">Anexo A1/13 · detalle</p>
-      <h2>api-composer-a</h2>
-      <p class="lede">Composer Node · 114 símbolos · 51 archivos</p>
-      <div class="stat-grid">
-        <div class="stat"><div class="n warn-n">32</div><div class="label">Candidatos a dead</div><div class="hint">Funciones sin callers en el grafo (de 114). Revisar; no borrar a ciegas.</div></div>
-        <div class="stat"><div class="n">5</div><div class="label">Endpoints HTTP</div><div class="hint">Rutas detectadas. Universo distinto al dead (no son el mismo conteo).</div></div>
-        <div class="stat"><div class="n warn-n">2 / 9</div><div class="label">Specs con código</div><div class="hint">9 Specs en store; solo 2 ligadas. 7 Specs sin implementación.</div></div>
-        <div class="stat"><div class="n">35</div><div class="label">Módulos sin Spec</div><div class="hint">Módulos huérfanos: sin ninguna Spec anclada.</div></div>
-      </div>
-    </section>
-
-    <section class="slide" data-appendix="1" data-title="g2">
-      <p class="eyebrow">Anexo A2/13 · detalle</p>
-      <h2>api-composer-b</h2>
-      <p class="lede">Composer Node · 314 símbolos · 105 archivos</p>
-      <div class="stat-grid">
-        <div class="stat"><div class="n warn-n">70</div><div class="label">Candidatos a dead</div><div class="hint">Alto: ~22% de los símbolos sin callers en el grafo.</div></div>
-        <div class="stat"><div class="n">9</div><div class="label">Endpoints HTTP</div><div class="hint">Pocas rutas vs mucho código interno sin uso aparente.</div></div>
-        <div class="stat"><div class="n warn-n">3 / 10</div><div class="label">Specs con código</div><div class="hint">10 Specs; 3 ligadas; 7 sin impl. Specs “flotan”.</div></div>
-        <div class="stat"><div class="n">56</div><div class="label">Módulos sin Spec</div><div class="hint">Más módulos huérfanos que Specs ligadas.</div></div>
-      </div>
-    </section>
-
-    <section class="slide" data-appendix="1" data-title="g3">
-      <p class="eyebrow">Anexo A3/13 · detalle</p>
-      <h2>api-composer-c</h2>
-      <p class="lede">Composer Node · 66 símbolos · repo chico</p>
-      <div class="stat-grid">
-        <div class="stat"><div class="n warn-n">17</div><div class="label">Candidatos a dead</div><div class="hint">~¼ del grafo sin callers.</div></div>
-        <div class="stat"><div class="n">5</div><div class="label">Endpoints HTTP</div><div class="hint">Superficie HTTP chica y clara.</div></div>
-        <div class="stat"><div class="n warn-n">2 / 9</div><div class="label">Specs con código</div><div class="hint">Mismo patrón composers: Specs existen, casi no anclan.</div></div>
-        <div class="stat"><div class="n">14</div><div class="label">Módulos sin Spec</div><div class="hint">14 módulos sin trazabilidad Spec.</div></div>
-      </div>
-    </section>
-
-    <section class="slide" data-appendix="1" data-title="g4">
-      <p class="eyebrow">Anexo A4/13 · detalle</p>
-      <h2>api-composer-d</h2>
-      <p class="lede">Composer Node · 62 símbolos · grafo fino (23 edges)</p>
-      <div class="stat-grid">
-        <div class="stat"><div class="n warn-n">15</div><div class="label">Candidatos a dead</div><div class="hint">Poco grafo → muchos símbolos parecen aislados.</div></div>
-        <div class="stat"><div class="n">3</div><div class="label">Endpoints HTTP</div><div class="hint">Solo 3 rutas indexadas.</div></div>
-        <div class="stat"><div class="n warn-n">2 / 9</div><div class="label">Specs con código</div><div class="hint">7 Specs sin implementación.</div></div>
-        <div class="stat"><div class="n">22</div><div class="label">Módulos sin Spec</div><div class="hint">Más huérfanos que símbolos totales casi.</div></div>
-      </div>
-    </section>
-
-    <section class="slide" data-appendix="1" data-title="g5">
-      <p class="eyebrow">Anexo A5/13 · detalle</p>
-      <h2>api-sa-availability-e</h2>
-      <p class="lede">SA Java · 213 símbolos · 198 edges</p>
-      <div class="stat-grid">
-        <div class="stat"><div class="n">1</div><div class="label">Candidatos a dead</div><div class="hint">Casi limpio: el grafo conecta casi todo.</div></div>
-        <div class="stat"><div class="n">11</div><div class="label">Endpoints HTTP</div><div class="hint">Mappings Spring (sin beans DI).</div></div>
-        <div class="stat"><div class="n warn-n">3 / 9</div><div class="label">Specs con código</div><div class="hint">Código vivo; Specs aún flojas (6 sin impl).</div></div>
-        <div class="stat"><div class="n">6</div><div class="label">Módulos sin Spec</div><div class="hint">Pocos huérfanos — mejor que composers.</div></div>
-      </div>
-    </section>
-
-    <section class="slide" data-appendix="1" data-title="g6">
-      <p class="eyebrow">Anexo A6/13 · detalle</p>
-      <h2>api-sa-bags-f</h2>
-      <p class="lede">SA Java · 707 símbolos · 1135 edges</p>
-      <div class="stat-grid">
-        <div class="stat"><div class="n">0</div><div class="label">Candidatos a dead</div><div class="hint">Ningún símbolo sin callers. Grafo denso y sano.</div></div>
-        <div class="stat"><div class="n">11</div><div class="label">Endpoints HTTP</div><div class="hint">Mappings HTTP; beans DI fuera del listado.</div></div>
-        <div class="stat"><div class="n warn-n">2 / 9</div><div class="label">Specs con código</div><div class="hint">Código OK, trazabilidad Spec no: 7 sin impl.</div></div>
-        <div class="stat"><div class="n">16</div><div class="label">Módulos sin Spec</div><div class="hint">Hueco = Specs, no dead code.</div></div>
-      </div>
-    </section>
-
-    <section class="slide" data-appendix="1" data-title="g7">
-      <p class="eyebrow">Anexo A7/13 · detalle</p>
-      <h2>api-sa-flight-search-g</h2>
-      <p class="lede">SA Java · 611 símbolos · 766 edges</p>
-      <div class="stat-grid">
-        <div class="stat"><div class="n">1</div><div class="label">Candidatos a dead</div><div class="hint">Prod casi limpio (tests ya no cuentan como dead).</div></div>
-        <div class="stat"><div class="n">7</div><div class="label">Endpoints HTTP</div><div class="hint">Mappings Spring reales.</div></div>
-        <div class="stat"><div class="n warn-n">2 / 9</div><div class="label">Specs con código</div><div class="hint">7 Specs sin código. Specs flotando pese a API viva.</div></div>
-        <div class="stat"><div class="n warn-n">7</div><div class="label">Tests huérfanos</div><div class="hint">Archivos/tests sin símbolo de producción claro.</div></div>
-      </div>
-    </section>
-
-    <section class="slide" data-appendix="1" data-title="g8">
-      <p class="eyebrow">Anexo A8/13 · detalle</p>
-      <h2>api-search-hotel-h</h2>
-      <p class="lede">Server del join cross-repo · 989 símbolos</p>
-      <div class="stat-grid">
-        <div class="stat"><div class="n">6</div><div class="label">Candidatos a dead</div><div class="hint">De 989 símbolos; tests fuera. Revisar Redis/logs/helpers.</div></div>
-        <div class="stat"><div class="n">12</div><div class="label">Endpoints HTTP</div><div class="hint">Incluye getHotelList — target del hop desde Composer.</div></div>
-        <div class="stat"><div class="n warn-n">3 / 9</div><div class="label">Specs con código</div><div class="hint">6 Specs sin impl. Server clave, Specs flojas.</div></div>
-        <div class="stat"><div class="n">27</div><div class="label">Módulos sin Spec</div><div class="hint">Hueco de trazabilidad en el server del grupo.</div></div>
-      </div>
-    </section>
-
-    <section class="slide" data-appendix="1" data-title="g9">
-      <p class="eyebrow">Anexo A9/13 · detalle</p>
-      <h2>api-search-manager-i</h2>
-      <p class="lede">Orquestador · 104 símbolos · mejor Spec link del grupo</p>
-      <div class="stat-grid">
-        <div class="stat"><div class="n warn-n">16</div><div class="label">Candidatos a dead</div><div class="hint">Dead moderado en un repo chico.</div></div>
-        <div class="stat"><div class="n">4</div><div class="label">Endpoints HTTP</div><div class="hint">Pocas rutas; rol = orquestar, no exponer API ancha.</div></div>
-        <div class="stat"><div class="n">8 / 10</div><div class="label">Specs con código</div><div class="hint">Así se ve bien: casi todas las Specs anclan código.</div></div>
-        <div class="stat"><div class="n">32</div><div class="label">Módulos sin Spec</div><div class="hint">Aún hay módulos huérfanos; Specs sí están ligadas.</div></div>
-      </div>
-    </section>
-
-    <section class="slide" data-appendix="1" data-title="g10">
-      <p class="eyebrow">Anexo A10/13 · detalle</p>
-      <h2>api-legacy-j</h2>
-      <p class="lede">339 símbolos · ¿por qué dead (61) &gt; endpoints (60)?</p>
-      <div class="stat-grid">
-        <div class="stat"><div class="n warn-n">61</div><div class="label">Candidatos a dead</div><div class="hint">Símbolos sin callers entre los 339. Helpers, utils, métodos internos.</div></div>
-        <div class="stat"><div class="n">60</div><div class="label">Endpoints HTTP</div><div class="hint">Rutas. No es un subconjunto del dead: un endpoint puede tener callers y un helper no.</div></div>
-        <div class="stat"><div class="n warn-n">2 / 9</div><div class="label">Specs con código</div><div class="hint">7 Specs sin impl. API ancha, Specs flojas.</div></div>
-        <div class="stat"><div class="n">23</div><div class="label">Módulos sin Spec</div><div class="hint">Dead y Specs sin código conviven — dos problemas distintos.</div></div>
-      </div>
-    </section>
-
-    <section class="slide" data-appendix="1" data-title="g11">
-      <p class="eyebrow">Anexo A11/13 · detalle</p>
-      <h2>results (SPA)</h2>
-      <p class="lede">Front · 2330 símbolos · 6047 edges</p>
-      <div class="stat-grid">
-        <div class="stat"><div class="n warn-n">44</div><div class="label">Candidatos a dead</div><div class="hint">Poco % del total; el ruido fuerte es otra métrica.</div></div>
-        <div class="stat"><div class="n">143</div><div class="label">Entry points UI</div><div class="hint">framework=angular. Default HTTP ≈ 0–1.</div></div>
-        <div class="stat"><div class="n">9 / 10</div><div class="label">Specs con código</div><div class="hint">Casi todas ligadas — buen ancla Spec↔código.</div></div>
-        <div class="stat"><div class="n warn-n">222</div><div class="label">Tests huérfanos</div><div class="hint">El hallazgo dominante: tests sin símbolo de prod claro.</div></div>
-      </div>
-    </section>
-
-    <section class="slide" data-appendix="1" data-title="g12">
-      <p class="eyebrow">Anexo A12/13 · detalle</p>
-      <h2>sa-transport-l</h2>
-      <p class="lede">SA Java · 1233 símbolos · Specs flojas, dead bajo</p>
-      <div class="stat-grid">
-        <div class="stat"><div class="n">4</div><div class="label">Candidatos a dead</div><div class="hint">Prod; tests excluidos por defecto.</div></div>
-        <div class="stat"><div class="n">13</div><div class="label">Endpoints HTTP</div><div class="hint">Mappings Spring (sin @Bean/@Config).</div></div>
-        <div class="stat"><div class="n warn-n">2 / 9</div><div class="label">Specs con código</div><div class="hint">7 Specs sin impl.</div></div>
-        <div class="stat"><div class="n warn-n">17</div><div class="label">Tests huérfanos</div><div class="hint">También hay tests sin ancla clara.</div></div>
-      </div>
-    </section>
-
-    <section class="slide" data-appendix="1" data-title="g13">
-      <p class="eyebrow">Anexo A13/13 · detalle</p>
-      <h2>sm-composer-m</h2>
-      <p class="lede">Home del smoke cross-repo · 234 símbolos</p>
-      <div class="stat-grid">
-        <div class="stat"><div class="n warn-n">46</div><div class="label">Candidatos a dead</div><div class="hint">~20% del repo sin callers en grafo.</div></div>
-        <div class="stat"><div class="n">7</div><div class="label">Endpoints HTTP</div><div class="hint">Pocas rutas; desde acá sale el hop a HotelSvc.</div></div>
-        <div class="stat"><div class="n warn-n">4 / 11</div><div class="label">Specs con código</div><div class="hint">7 sin impl (incluye probe de audit). Specs flojas.</div></div>
-        <div class="stat"><div class="n">2</div><div class="label">Clientes → HotelSvc</div><div class="hint">listByChunk* llaman getHotelList en api-search-hotel-h.</div></div>
-      </div>
-    </section>
-
-
   </div>
 
   <div class="nav" aria-label="Navigation">
@@ -1278,10 +1233,19 @@ get_spec_implementation(
     <button type="button" id="next" aria-label="Siguiente">→</button>
   </div>
 
+  <div id="lightbox" class="lightbox" role="dialog" aria-modal="true" aria-label="Vista ampliada" hidden>
+    <span class="lb-hint">Esc / click para cerrar</span>
+    <img alt="" />
+    <div class="lb-cap"></div>
+  </div>
+
   <script>
     const slides = [...document.querySelectorAll(".slide")];
     let i = 0;
     const pos = document.getElementById("pos");
+    const lightbox = document.getElementById("lightbox");
+    const lbImg = lightbox.querySelector("img");
+    const lbCap = lightbox.querySelector(".lb-cap");
 
     function show(n) {
       i = Math.max(0, Math.min(slides.length - 1, n));
@@ -1290,10 +1254,43 @@ get_spec_implementation(
       history.replaceState(null, "", `#${i + 1}`);
     }
 
+    function openLightbox(img) {
+      lbImg.src = img.currentSrc || img.src;
+      lbImg.alt = img.alt || "";
+      const cap = img.closest("figure")?.querySelector("figcaption");
+      lbCap.textContent = cap ? cap.textContent.trim() : (img.alt || "");
+      lightbox.hidden = false;
+      lightbox.classList.add("open");
+    }
+
+    function closeLightbox() {
+      lightbox.classList.remove("open");
+      lightbox.hidden = true;
+      lbImg.removeAttribute("src");
+    }
+
+    document.querySelectorAll(".shot-grid img").forEach((img) => {
+      img.addEventListener("click", (e) => {
+        e.stopPropagation();
+        openLightbox(img);
+      });
+    });
+    lightbox.addEventListener("click", (e) => {
+      if (e.target === lbImg) return;
+      closeLightbox();
+    });
+
     document.getElementById("prev").onclick = () => show(i - 1);
     document.getElementById("next").onclick = () => show(i + 1);
 
     window.addEventListener("keydown", (e) => {
+      if (lightbox.classList.contains("open")) {
+        if (e.key === "Escape" || e.key === "ArrowLeft" || e.key === "ArrowRight" || e.key === " ") {
+          e.preventDefault();
+          closeLightbox();
+        }
+        return;
+      }
       if (e.key === "ArrowRight" || e.key === " " || e.key === "PageDown") {
         e.preventDefault(); show(i + 1);
       } else if (e.key === "ArrowLeft" || e.key === "PageUp") {
@@ -1301,7 +1298,7 @@ get_spec_implementation(
       } else if (e.key === "Home") {
         show(0);
       } else if (e.key === "End") {
-        // Talk ends at Cierre (before anexo). Shift+End → última ficha.
+        // Talk ends at Cierre. Shift+End → última diapo.
         if (e.shiftKey) show(slides.length - 1);
         else {
           const cierre = slides.findIndex((s) => (s.dataset.title || "") === "Cierre");

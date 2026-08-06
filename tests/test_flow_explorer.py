@@ -127,8 +127,18 @@ async def test_export_flow_explorer_group(tmp_path: Path):
         endpoint["method"] and endpoint["path"].startswith("/")
         for endpoint in bundle["endpoints"]
     )
+    html_text = html.read_text(encoding="utf-8")
+    assert "function safeId" in html_text
+    assert "function mermaidLabel" in html_text
+    assert "flowPalette" in html_text
+    assert "linkStyle" in html_text
+    assert "node_project" in html_text
+    # Colon must not survive in safeId charset (breaks Mermaid node ids).
+    assert "a-zA-Z0-9_:" not in html_text
+    # Quoted edge labels: JS builds -->|"label"|
+    assert '|\\"' in html_text or '|"' in html_text
     if shutil.which("node"):
-        text = html.read_text(encoding="utf-8")
+        text = html_text
         js = (
             text.split('<script id="flow-data" type="application/json">', 1)[1]
             .split("</script>", 1)[1]

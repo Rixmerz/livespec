@@ -25,7 +25,11 @@ mcp = FastMCP(
         "get_project_overview(workspace=<same repo>). "
         "Speaks OpenSpec (Fission-AI): if the repo has an `openspec/` dir, call "
         "sync_openspec to ingest specs+changes, export_openspec to write them "
-        "back, validate_openspec to check; fetch prompt `openspec_workflow`."
+        "back, validate_openspec to check; fetch prompt `openspec_workflow`. "
+        "Cross-repo (polyrepo): set [workspace] group_db in .livespec.toml; "
+        "mirror Spec ids as xrepo-* in each repo; fetch prompt "
+        "`cross_repo_workflow` or read resources guide://cross-repo and "
+        "project://group."
     ),
 )
 
