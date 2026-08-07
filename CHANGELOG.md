@@ -6,6 +6,8 @@ follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.31.2] - 2026-08-07
+
 ### Added — Cross-repo Spec discovery for agents
 
 Agents often missed that Specs can span sibling repos. New surfaces:
