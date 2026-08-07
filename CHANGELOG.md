@@ -33,6 +33,12 @@ repo's Spec Explorer at `/repos/<name>/explorer/` (iframe from Repos /
 Implementation — no `file://` copy-path dead ends). Cross-repo Specs use a
 master–detail layout.
 
+### Fixed — wheel build duplicate templates
+
+`docs/*.md` force-include into `livespec_mcp/templates/` collided with the
+same files already shipped under `src/livespec_mcp/templates/`. Dropped the
+force-include; templates in the package tree are the wheel source of truth.
+
 ## [0.31.1] - 2026-08-04
 
 ### Fixed — sdist no longer bundles internal docs
