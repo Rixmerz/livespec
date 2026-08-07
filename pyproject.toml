@@ -50,15 +50,10 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/livespec_mcp"]
-# NOTE: templates/ ships automatically via `packages` (hatchling includes
-# non-Python files under the package dir). Do NOT force-include it again —
-# duplicate archive paths hard-fail the wheel build.
-
-[tool.hatch.build.targets.wheel.force-include]
-# The agent_playbook MCP prompt serves this file; docs/ is the single source
-# of truth and wheels get a packaged copy readable via importlib.resources.
-"docs/AGENT_PLAYBOOK.md" = "livespec_mcp/templates/AGENT_PLAYBOOK.md"
-"docs/CROSS_REPO.md" = "livespec_mcp/templates/CROSS_REPO.md"
+# `src/livespec_mcp/templates/` ships via `packages` (hatchling includes
+# non-Python files under the package dir). Keep copies of docs/AGENT_PLAYBOOK.md
+# and docs/CROSS_REPO.md there for wheel/editable prompts — do NOT also
+# force-include them from docs/ (duplicate archive paths hard-fail the build).
 
 [tool.hatch.build.targets.sdist]
 # HANDOFF.md/CLAUDE.md are internal session-resume notes, not user docs, and
