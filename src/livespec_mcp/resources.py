@@ -7,11 +7,12 @@ Canonical URI scheme (v0.20+):
 | ``project://overview`` | JSON | Project overview (PageRank spine) |
 | ``project://index/status`` | JSON | Index stats |
 | ``project://group`` | JSON | Polyrepo group_db + ``xrepo-*`` Specs |
+| ``project://cross-repo`` | markdown | How to use group_db + xrepo Specs |
 | ``project://specs`` | JSON | All Specs |
 | ``project://specs/{spec_id}`` | JSON | Spec + implementations |
 | ``project://files/{path}`` | JSON | Indexed file + symbols |
 | ``project://symbols/{qname}`` | JSON | Symbol metadata |
-| ``guide://cross-repo`` | markdown | How to use group_db + xrepo Specs |
+| ``guide://cross-repo`` | markdown | Alias of ``project://cross-repo`` |
 | ``doc://symbol/{qname}`` | markdown | Generated symbol doc |
 | ``doc://spec/{spec_id}`` | markdown | Generated Spec doc |
 | ``code://symbol/{qname}`` | plain | Raw symbol source slice |
@@ -25,8 +26,8 @@ Workspace resolution (v0.14): resource URIs have no ``workspace`` parameter
 channel, so resources bind to the **most recently used** workspace (the one
 the last tool call touched). Before any tool call there is nothing to bind
 to — JSON resources then return an `mcp_error`-shaped payload with a hint,
-text resources a one-line explanation. ``guide://cross-repo`` is static and
-does not need a workspace.
+text resources a one-line explanation. ``project://cross-repo`` /
+``guide://cross-repo`` are static and do not need a workspace.
 
 Error shape (v0.14, closes the v0.6 P4 contract gap): JSON resources use
 ``tools._errors.mcp_error`` for every error payload. Text resources
@@ -156,17 +157,25 @@ def compute_group_view(st: AppState) -> dict[str, Any]:
                 "This workspace is not using group_db. Set "
                 "[workspace] group_db in .livespec.toml on each sibling repo, "
                 "mirror Spec ids as xrepo-*, then re-index. "
-                "Read guide://cross-repo or fetch prompt cross_repo_workflow."
+                "Read project://cross-repo (or guide://cross-repo) or call "
+                "get_cross_repo_guide / fetch prompt cross_repo_workflow."
             )
         ),
-        "how_to": "guide://cross-repo",
+        "how_to": "project://cross-repo",
+        "how_to_aliases": ["guide://cross-repo"],
+        "tool": "get_cross_repo_guide",
     }
 
 
 def register(mcp: FastMCP) -> None:
+    @mcp.resource("project://cross-repo", mime_type="text/markdown")
+    def project_cross_repo_guide() -> str:
+        """Static how-to: group_db, mirrored xrepo-* Specs, Flow Explorer."""
+        return _load_cross_repo_guide()
+
     @mcp.resource("guide://cross-repo", mime_type="text/markdown")
     def cross_repo_guide() -> str:
-        """Static how-to: group_db, mirrored xrepo-* Specs, Flow Explorer."""
+        """Alias of project://cross-repo (kept for 0.31.2 docs/prompts)."""
         return _load_cross_repo_guide()
 
     @mcp.resource("project://group", mime_type="application/json")

@@ -117,8 +117,9 @@ Then `find_legacy_flows`, `route_callers`, and `invokes_endpoints` span the grou
 
 **Cross-repo Specs:** mirror the same Spec id with prefix `xrepo-` in each
 participating repo (OpenSpec + `sync_openspec`, or `create_spec`), then
-`@spec:xrepo-…` on implementing symbols. Fetch prompt `cross_repo_workflow`,
-or read `guide://cross-repo` / `project://group`. Full guide: `docs/CROSS_REPO.md`.
+`@spec:xrepo-…` on implementing symbols. Call `get_cross_repo_guide`, fetch
+prompt `cross_repo_workflow`, or read `project://cross-repo` /
+`project://group`. Full guide: `docs/CROSS_REPO.md`.
 
 ---
 

@@ -16,10 +16,24 @@ from livespec_mcp.state import reset_state
 async def test_guide_cross_repo_no_workspace():
     reset_state()
     async with Client(mcp) as c:
-        res = await c.read_resource("guide://cross-repo")
-        text = res[0].text if isinstance(res, list) else res.contents[0].text
-        assert "group_db" in text
-        assert "xrepo-" in text
+        for uri in ("project://cross-repo", "guide://cross-repo"):
+            res = await c.read_resource(uri)
+            text = res[0].text if isinstance(res, list) else res.contents[0].text
+            assert "group_db" in text
+            assert "xrepo-" in text
+
+
+@pytest.mark.asyncio
+async def test_get_cross_repo_guide_tool(tmp_path: Path):
+    reset_state()
+    (tmp_path / "app.py").write_text("def hello():\n    return 1\n")
+    async with Client(mcp) as c:
+        await c.call_tool("index_project", {"workspace": str(tmp_path)})
+        out = (await c.call_tool("get_cross_repo_guide", {"workspace": str(tmp_path)})).data
+        assert "xrepo-" in out["guide"]
+        assert out["group"]["grouped"] is False
+        assert "project://cross-repo" in out["resources"]
+        assert out["prompt"] == "cross_repo_workflow"
 
 
 @pytest.mark.asyncio
@@ -33,8 +47,9 @@ async def test_project_group_ungrouped_hint(tmp_path: Path):
         data = json.loads(raw)
         assert data["grouped"] is False
         assert data["group_db"] is None
-        assert data["how_to"] == "guide://cross-repo"
+        assert data["how_to"] == "project://cross-repo"
         assert "group_db" in (data.get("hint") or "")
+        assert data["tool"] == "get_cross_repo_guide"
 
 
 @pytest.mark.asyncio

@@ -15,9 +15,9 @@
   era la máquina macOS anterior — referencias viejas en este doc pueden
   mencionarlo)
 - **Demo project:** `<demo-repo>` (4 archivos Python con `@rf:` annotations en docstrings, ya tiene RFs persistidas en su `.mcp-docs/docs.db`)
-- **MCP server:** Claude Code plugin `livespec@livespec-dev` **0.31.2**
+- **MCP server:** Claude Code plugin `livespec@livespec-dev` **0.31.3**
   (marketplace `livespec-dev` = `Rixmerz/livespec`; also installable as
-  `livespec@rixmerz`). Pin `uvx livespec@0.31.2` and/or Cursor `user-livespec`
+  `livespec@rixmerz`). Pin `uvx livespec@0.31.3` and/or Cursor `user-livespec`
   pointing at a local checkout. **Every tool requires `workspace=/abs/repo`**
   — there is no `LIVESPEC_WORKSPACE` env fallback (removed).
 - **Git user:** Juan Pablo Díaz S.
@@ -44,14 +44,19 @@ Todo el stack es local-first: 0 servicios externos, 0 API keys obligatorias, 0 D
 
 ## 3. Estado actual
 
-**HEAD: release `v0.31.2`. Tests 671.**
-Pin PyPI / plugin / `uvx livespec@0.31.2`.
+**HEAD: release `v0.31.3`. Tests 672.**
+Pin PyPI / plugin / `uvx livespec@0.31.3`.
+
+### v0.31.3 (2026-08-07)
+
+Tool `get_cross_repo_guide` + resource `project://cross-repo` so hosts that
+cache a stale `resources/list` still discover polyrepo/`xrepo-*` Specs.
+(0.31.2 added the guide/resources; some clients never listed them.)
 
 ### v0.31.2 (2026-08-07)
 
-Cross-repo Spec discovery for agents (`cross_repo_workflow`,
-`guide://cross-repo`, `project://group`) + Flow Explorer Mermaid/embed fixes.
-Commit `d46616e` + release bump.
+Cross-repo Spec discovery (`cross_repo_workflow`, `guide://cross-repo`,
+`project://group`) + Flow Explorer Mermaid/embed fixes.
 
 ### Nota (2026-08-04) — historial reescrito
 
@@ -66,7 +71,7 @@ origin/main`. Mantener los nombres genéricos en cualquier ejemplo nuevo.
   sesión y el deck de la charla, no solo código de usuario.
   `[tool.hatch.build.targets.sdist].exclude` ahora las excluye por nombre;
   `tests/test_plugin_pin_sync.py` fuerza que el pin del plugin siga a
-  `pyproject.toml`. Reinstalar desde **0.31.2** (o al menos 0.31.1+).
+  `pyproject.toml`. Reinstalar desde **0.31.3** (o al menos 0.31.1+).
 
 Qué landeó en 0.31.0 (además del hard-cut OpenSpec ya en `main`):
 

@@ -39,9 +39,10 @@ Several sibling repos can share one SQLite via `.livespec.toml`:
 group_db = "../.livespec-group/flow-group.db"
 ```
 
-**Discover how:** fetch prompt `cross_repo_workflow`, or read resources
-`guide://cross-repo` (static how-to) and `project://group` (live membership +
-`xrepo-*` rollup after any `workspace=` tool call).
+**Discover how:** call tool `get_cross_repo_guide`, fetch prompt
+`cross_repo_workflow`, or read resources `project://cross-repo` /
+`project://group` (`guide://cross-repo` is an alias). Some hosts cache
+`resources/list` — prefer the tool if resources look missing.
 
 Call tools from **any** member workspace (usually the hub/composer). Then:
 
@@ -50,7 +51,7 @@ Call tools from **any** member workspace (usually the hub/composer). Then:
 | Client → server hops | `who_does_this_call` → `invokes_endpoints` |
 | Server → client hops | `who_calls` → `route_callers` |
 | Symbol in another repo | `find_symbol` / `get_symbol_source` / `quick_orient` (group-wide lookup) |
-| Shared Specs across repos | Mirror Spec ids as `xrepo-*` in **each** repo + `@spec:xrepo-…`; `list_specs` / `get_spec_implementation`; `project://group` |
+| Shared Specs across repos | Mirror Spec ids as `xrepo-*` in **each** repo + `@spec:xrepo-…`; `get_cross_repo_guide` / `list_specs` / `get_spec_implementation`; `project://group` |
 | Likely-unused HTTP flows | `find_legacy_flows(summary_only=True)` — then full list |
 | Flow UI bundle | `export_flow_explorer` (docs plugin) |
 

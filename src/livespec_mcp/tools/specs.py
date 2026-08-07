@@ -403,6 +403,29 @@ def register(
             "truncated": next_cursor is not None,
         }
 
+    @agentic_tool(annotations={"readOnlyHint": True, "idempotentHint": True})
+    def get_cross_repo_guide(workspace: Workspace | None = None) -> dict[str, Any]:
+        """How to use polyrepo ``group_db`` + mirrored ``xrepo-*`` Specs.
+
+        Prefer this tool when MCP resource lists look incomplete (some hosts
+        cache ``resources/list`` and miss ``project://group`` /
+        ``project://cross-repo``). Returns the guide markdown plus a live
+        ``group`` snapshot for the given workspace.""" + WORKSPACE_DOCSTRING_NOTE
+        from livespec_mcp.prompts import _load_cross_repo_guide
+        from livespec_mcp.resources import compute_group_view
+
+        st = get_state(workspace)
+        return {
+            "guide": _load_cross_repo_guide(),
+            "group": compute_group_view(st),
+            "prompt": "cross_repo_workflow",
+            "resources": [
+                "project://cross-repo",
+                "project://group",
+                "guide://cross-repo",
+            ],
+        }
+
     def _do_link_spec_symbol(
         spec_id: str,
         symbol_qname: str,

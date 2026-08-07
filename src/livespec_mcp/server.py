@@ -27,9 +27,10 @@ mcp = FastMCP(
         "sync_openspec to ingest specs+changes, export_openspec to write them "
         "back, validate_openspec to check; fetch prompt `openspec_workflow`. "
         "Cross-repo (polyrepo): set [workspace] group_db in .livespec.toml; "
-        "mirror Spec ids as xrepo-* in each repo; fetch prompt "
-        "`cross_repo_workflow` or read resources guide://cross-repo and "
-        "project://group."
+        "mirror Spec ids as xrepo-* in each repo; call tool "
+        "`get_cross_repo_guide`, fetch prompt `cross_repo_workflow`, or read "
+        "resources project://cross-repo and project://group "
+        "(guide://cross-repo is an alias)."
     ),
 )
 

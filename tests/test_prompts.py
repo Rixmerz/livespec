@@ -46,7 +46,13 @@ async def test_cross_repo_workflow_prompt_registered():
         assert "cross_repo_workflow" in names
         result = await c.get_prompt("cross_repo_workflow")
         text = result.messages[0].content.text
-        for needle in ("group_db", "xrepo-", "export_flow_explorer", "guide://cross-repo"):
+        for needle in (
+            "group_db",
+            "xrepo-",
+            "export_flow_explorer",
+            "get_cross_repo_guide",
+            "project://cross-repo",
+        ):
             assert needle in text, f"{needle} missing from cross_repo_workflow"
 
 

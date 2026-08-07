@@ -6,6 +6,19 @@ follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.31.3] - 2026-08-07
+
+### Fixed — Cross-repo discovery when hosts cache resources/list
+
+Some clients (Claude Code) advertise server instructions from 0.31.2 but still
+list only the pre-0.31.2 resources, and refuse reads for URIs not in that
+cache. Agents then see "guide://cross-repo / project://group do not exist".
+
+- New always-on tool `get_cross_repo_guide` (guide markdown + live `group` snapshot)
+- Canonical resource `project://cross-repo` (same scheme as overview/specs);
+  `guide://cross-repo` remains an alias
+- Skill / instructions / playbook prefer the **tool** first
+
 ## [0.31.2] - 2026-08-07
 
 ### Added — Cross-repo Spec discovery for agents

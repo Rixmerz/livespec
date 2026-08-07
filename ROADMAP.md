@@ -23,7 +23,7 @@
 native `SPEC-NNN` dialect (slugs under `openspec/` only). Default
 `find_endpoints` is HTTP-ish (Spring DI / Angular UI / Click / FastMCP /
 Celery opt-in; Go routes; Next.js pages heuristic fixed). `find_dead_code`
-excludes test paths by default. Still public beta — pin `uvx livespec@0.31.2`.
+excludes test paths by default. Still public beta — pin `uvx livespec@0.31.3`.
 Next toward 1.0 remains adopters + trust, not more tools.
 
 **Addendum v0.30.0 — Explorer playground + honest Spec gaps.** Spec Explorer

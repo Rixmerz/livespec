@@ -3,8 +3,10 @@
 **Audience:** AI agents with the livespec MCP. Read this when the user has
 several sibling repos, asks about end-to-end flows, or mentions `xrepo-*`.
 
-Also exposed as MCP prompt `cross_repo_workflow` and resource `guide://cross-repo`.
-Live membership for the MRU workspace: resource `project://group`.
+Also exposed as MCP tool `get_cross_repo_guide`, prompt `cross_repo_workflow`,
+and resources `project://cross-repo` / `project://group` (alias
+`guide://cross-repo`). Prefer the **tool** if a host's resource list looks
+incomplete.
 
 ---
 
@@ -109,7 +111,7 @@ From **any** member workspace (same `group_db`):
 ## 5. Cold-open checklist (polyrepo session)
 
 ```
-1. Read guide://cross-repo (or prompt cross_repo_workflow)
+1. Call get_cross_repo_guide (or read project://cross-repo / prompt cross_repo_workflow)
 2. index_project on each member (or at least hub + SAs you care about)
 3. Read project://group — confirm grouped + xrepo_* counts
 4. list_specs / get_spec_implementation for the flow under discussion
