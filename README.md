@@ -540,6 +540,14 @@ an individual scenario with `link_scenario_symbol` (Spec plugin).
 - `list_spec_changes(status?)` / `get_spec_change(name)` — inspect change
   proposals (proposal/design/tasks prose + ADD/MODIFY/REMOVE/RENAME deltas).
 
+#### Annotation hygiene (1)
+- `scan_annotation_verbs(sample_per_group=10)` — surfaces `@word:`
+  annotation-shaped comments the matcher will **not** link, so they stop being
+  silently invisible to every other Spec tool. Two failure modes reported
+  separately: `unrecognized_verb` (the `@word` isn't in the recognized
+  vocabulary — `did_you_mean` suggests the nearest by edit distance) and
+  `token_shape` (verb is fine, the payload isn't a linkable Spec id).
+
 #### Cross-repo discovery (1, v0.31.3)
 - `get_cross_repo_guide()` — the polyrepo how-to (group_db, mirrored `xrepo-*`
   Specs, Flow Explorer, traps) plus a live `group` snapshot, as a **tool** so

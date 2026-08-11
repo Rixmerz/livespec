@@ -31,6 +31,22 @@ steady-state repo produced a large payload whose every row said "no-op".
 - The explicit `bulk_link_spec_symbols` tool keeps reporting every row — the
   caller chose those mappings and wants each outcome
 
+### Fixed — advertised tool counts were stale, and now a test enforces them
+
+`get_cross_repo_guide` landed in 0.31.3 as a 28th core tool, but every doc that
+leads with a count kept saying 27 core / 44 total — including a beta-checklist
+item titled "everywhere that counts tools". `scan_annotation_verbs` was
+registered but absent from the README tool list entirely.
+
+- Counts corrected to **45 total (28 core + 12 Spec + 5 docs)** in README,
+  `CLAUDE.md`, `docs/BETA_CHECKLIST.md` and `docs/AGENT_QUICKSTART.md`
+- `get_cross_repo_guide` and `scan_annotation_verbs` documented in the README
+  tool list; `get_cross_repo_guide` added to the core tier list in `CLAUDE.md`
+- New `tests/test_tool_count_sync.py` asserts the advertised counts against the
+  live registry and that every core tool appears in the README, so the next
+  added tool fails the suite instead of drifting. Historical changelog/roadmap
+  rows are exempt — they record a past release, not today's surface
+
 ### Fixed — Flow Explorer host skipped repos whose bundle post-dated the export
 
 `local_explorer` in `data.json` records disk state at export time, and the

@@ -112,7 +112,7 @@ candidates with humanized title + description + suggested_symbols.
 To accept a proposal you need the **`livespec-spec` plugin** visible in your
 tool list. After `index_project(workspace=...)`, mutation tools appear when the
 DB has Specs; on a **fresh** repo use `LIVESPEC_PLUGINS=spec` (or `=all`) or
-reconnect MCP if the host cached the 27 core tools only.
+reconnect MCP if the host cached the 28 core tools only.
 
 ```
 create_spec(title=..., description=..., spec_id=...)             # plugin

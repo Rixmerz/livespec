@@ -44,15 +44,15 @@ Todo el stack es local-first: 0 servicios externos, 0 API keys obligatorias, 0 D
 
 ## 3. Estado actual
 
-**HEAD: `v0.31.3` + batch de ergonomía sin taggear. Tests 681.**
+**HEAD: `v0.31.3` + batch de ergonomía sin taggear. Tests 688.**
 Pin PyPI / plugin / `uvx livespec@0.31.3`.
 
 ### Unreleased — ergonomía de payloads (dogfood polyrepo)
 
 Batch salido de usar livespec como agente sobre un grupo polyrepo real (13
-repos en un `group_db` + varios sueltos). Tres hallazgos, ninguno en el
-motor: los tres viven en la capa de payload. Tests 672 → **681**
-(`tests/test_payload_ergonomics.py`).
+repos en un `group_db` + varios sueltos). Cuatro hallazgos, ninguno en el
+motor: viven en la capa de payload y en los docs. Tests 672 → **688**
+(`tests/test_payload_ergonomics.py`, `tests/test_tool_count_sync.py`).
 
 1. **`find_dead_code` no decía qué filtros produjeron el número.** Dos
    corridas legítimas sobre el mismo repo daban 6 y 24 sin nada en el payload
@@ -77,8 +77,17 @@ motor: los tres viven en la capa de payload. Tests 672 → **681**
    fallback derivado del root del proyecto; un repo sin bundle real sigue sin
    montarse.
 
-Docs: README corregido de 44 → **45** tools (28 core) — `get_cross_repo_guide`
-entró en 0.31.3 y no se había agregado ni al conteo ni a la lista.
+4. **Los conteos de tools que anuncian los docs estaban viejos, y nada lo
+   chequeaba.** `get_cross_repo_guide` entró en 0.31.3 como 28º tool core y
+   todos los docs que abren con un número seguían diciendo 27 core / 44 total
+   — incluido un ítem del beta-checklist titulado *"everywhere that counts
+   tools"*. `scan_annotation_verbs` estaba registrado y no figuraba en la
+   lista del README. Corregido a **45 total (28 core + 12 Spec + 5 docs)** en
+   README, `CLAUDE.md`, `docs/BETA_CHECKLIST.md` y `docs/AGENT_QUICKSTART.md`,
+   y nuevo `tests/test_tool_count_sync.py` que assertea los conteos contra el
+   registry vivo + que todo tool core aparezca en el README. El próximo tool
+   que se agregue rompe la suite en vez de driftear. (El test encontró el
+   segundo faltante solo.)
 
 ### v0.31.3 (2026-08-07)
 
