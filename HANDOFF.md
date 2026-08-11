@@ -44,7 +44,7 @@ Todo el stack es local-first: 0 servicios externos, 0 API keys obligatorias, 0 D
 
 ## 3. Estado actual
 
-**HEAD: `v0.31.4` + corroboración con Graphify sin taggear. Tests 702.**
+**HEAD: `v0.31.4` + integración Graphify sin taggear. Tests 706.**
 Pin PyPI / plugin / `uvx livespec@0.31.4`.
 
 ### Unreleased — consumir Graphify en vez de solo coexistir
@@ -74,9 +74,22 @@ ilegible o grafo de otro repo devuelven `mcp_error` en vez de un "0 descartados"
 que se leería como visto bueno; y cualquier arista sin `_origin: ast` levanta un
 `warning` para que la promesa zero-LLM no se erosione en silencio.
 
-Diferido a propósito: ingerir aristas en `symbol_edge`, y usar `community` para
-agrupar las propuestas de `propose_specs_from_codebase`. Ambas atractivas, ambas
-necesitan resolver la pregunta de provenance de forma deliberada.
+**Segunda pieza (comunidades → propuestas de Spec).**
+`propose_specs_from_codebase(community_graph=…)` agrupa por comunidad detectada
+en vez de por prefijo de qname. El prefijo sigue el layout de carpetas, no la
+capacidad: una feature partida entre `services/` y `routes/` se lee como dos.
+Sobre el mismo servicio TS consolidó **20 propuestas en 12** (177 de 189
+símbolos agrupados por comunidad). Solo se consume la *membresía* (Leiden,
+determinista), nunca las etiquetas LLM de Graphify — los títulos se derivan de
+los símbolos. Y los spec_id nunca se siembran del número de comunidad: los ids
+de Leiden dependen de la corrida, así que `community-4-checkout` se volvería
+`community-7-checkout` en el próximo build. Ese bug lo cazó un test.
+
+Diferido a propósito: ingerir aristas en `symbol_edge` (medido: **133** aristas
+que livespec no tiene en su propio repo) y la capa documental (**316** aristas
+`rationale_for` + **409** nodos de prosa) — esta última es lo más parecido que
+Graphify tiene a nuestro wedge Spec↔código, y la única pieza que necesitaría un
+LLM. Ambas requieren resolver la pregunta de provenance de forma deliberada.
 
 ### v0.31.4 (2026-08-11) — ergonomía de payloads (dogfood polyrepo)
 

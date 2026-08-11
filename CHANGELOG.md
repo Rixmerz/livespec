@@ -6,6 +6,27 @@ follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Added — group Spec proposals by external communities
+
+`propose_specs_from_codebase(community_graph=<path to a Graphify graph.json>)`
+groups by the external graph's detected communities instead of by qname prefix.
+
+Module prefix is a proxy for capability and a poor one: it follows the folder
+layout, so a feature split across `services/` and `routes/` becomes two
+proposals while a grab-bag `utils/` becomes one. Communities come from how the
+code actually connects. On a real TypeScript service this consolidated **20
+proposals into 12**, with 177 of 189 symbols grouped by community.
+
+- Symbols the external graph doesn't cover fall back to module grouping, so
+  this only ever adds signal
+- Only community *membership* is used (Leiden, deterministic) — never
+  Graphify's LLM-written community labels. Titles stay derived from the
+  symbols themselves
+- Spec ids are never seeded from a community number: Leiden ids depend on the
+  clustering run, so `community-4-checkout` would silently become
+  `community-7-checkout` on the next graph build
+- Payload reports `grouping` (source, how many symbols came from each path)
+
 ### Added — corroborate dead code against an external graph
 
 `find_dead_code(corroborate_with=<path to a Graphify graph.json>)` drops

@@ -92,8 +92,24 @@ cross-validates both. livespec still found more edges overall (2481 vs 1855).
 - **Zero-LLM stays honest.** Any edge not marked `_origin: ast` raises a
   `warning` in the payload rather than passing silently.
 
+### Communities → Spec proposals (landed)
+
+`propose_specs_from_codebase(community_graph=…)` groups by detected community
+instead of qname prefix. Module prefix follows the folder layout, not the
+capability: a feature split across `services/` and `routes/` reads as two
+features. On the same TypeScript service this consolidated **20 proposals into
+12** (177 of 189 symbols grouped by community).
+
+Only community *membership* is consumed. Graphify's community *labels* are
+LLM-written, so importing them would put a model in a deterministic path;
+titles are derived from the member symbols instead. Spec ids are never seeded
+from the community number either — Leiden ids depend on the clustering run, so
+that id would change under the user on the next graph build.
+
 ### Still deferred
 
-Ingesting edges into `symbol_edge`, and using `community` to group
-`propose_specs_from_codebase` proposals. Both are attractive; both need the
+Ingesting edges into `symbol_edge` (measured: **133** edges livespec lacks on
+its own repo), and the documentation layer (**316** `rationale_for` edges +
+**409** prose nodes) — the latter is the closest thing Graphify has to our
+Spec↔code wedge, and the only piece that would need an LLM. Both need the
 provenance question above answered deliberately rather than in passing.

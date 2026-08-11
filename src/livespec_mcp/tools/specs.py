@@ -16,6 +16,7 @@ import re
 import sqlite3
 from collections import deque
 from collections.abc import Container
+from pathlib import Path
 from typing import Any, Literal
 from uuid import uuid4
 
@@ -724,6 +725,7 @@ def register(
         min_symbols_per_group: int = 3,
         max_proposals: int = 30,
         skip_already_covered: bool = True,
+        community_graph: str | None = None,
         workspace: Workspace | None = None,
     ) -> dict[str, Any]:
         """Heuristic Spec discovery for brownfield projects (v0.7 B2).
@@ -759,6 +761,17 @@ def register(
         - Infrastructure / dunders / decorated handlers: excluded from
           symbol counts (same heuristic as find_dead_code).
 
+        Unreleased: ``community_graph=<path to a Graphify graph.json>`` groups
+        by the external graph's detected communities instead of by qname
+        prefix. Module prefix is a proxy for capability and a poor one — it
+        follows the folder layout, so a feature split across ``services/`` and
+        ``routes/`` becomes two proposals and a grab-bag ``utils/`` becomes
+        one. Communities are derived from how the code actually connects.
+        Symbols the external graph doesn't cover fall back to module grouping,
+        so this only ever adds signal. Only community *membership* is used
+        (Leiden, deterministic) — never the LLM-written community labels;
+        titles stay derived from the symbols themselves.
+
         Output is sorted by group score descending. Pair with
         bulk_link_spec_symbols + create_spec to land accepted
         proposals in two calls per spec: create the spec, then bulk-link its
@@ -769,6 +782,50 @@ def register(
         pid = st.project_id
         view = load_graph(st.conn, pid)
         ranks = graph_pagerank(view)
+
+        # Optional external communities. Loaded up front so a bad path fails
+        # before any work, and so the error is about the file rather than
+        # surfacing later as mysteriously module-shaped groups.
+        ext_graph = None
+        if community_graph:
+            from livespec_mcp.domain.external_graph import (
+                load_external_graph,
+                overlap_ratio,
+            )
+
+            ext_path = Path(community_graph)
+            if not ext_path.is_absolute():
+                ext_path = st.settings.workspace / ext_path
+            try:
+                ext_graph = load_external_graph(ext_path)
+            except FileNotFoundError:
+                return mcp_error(
+                    f"External graph not found: {ext_path}",
+                    hint=(
+                        "Generate one with `/graphify <repo>` (writes "
+                        "graphify-out/graph.json), or pass an absolute path."
+                    ),
+                )
+            except (ValueError, OSError, UnicodeDecodeError) as exc:
+                return mcp_error(
+                    f"Could not read external graph {ext_path}: {exc}",
+                    hint="Expected Graphify's NetworkX node-link graph.json.",
+                )
+            indexed_files = {
+                r["path"]
+                for r in st.conn.execute(
+                    "SELECT path FROM file WHERE project_id=?", (pid,)
+                )
+            }
+            if overlap_ratio(ext_graph, indexed_files) < 0.1:
+                return mcp_error(
+                    f"External graph {ext_path} shares almost no files with "
+                    "this index.",
+                    hint=(
+                        "It probably describes a different repo, or was built "
+                        "from a different root so its paths do not line up."
+                    ),
+                )
 
         # Already-linked symbol IDs (for skip_already_covered)
         linked_sids = {
@@ -798,8 +855,11 @@ def register(
                 or "/fixtures/" in p
             )
 
-        # Group symbols by qname prefix at module_depth
+        # Group symbols by qname prefix at module_depth — or, when an external
+        # graph is supplied, by its detected community.
         groups: dict[str, list[tuple[int, float, dict]]] = {}
+        community_grouped = 0
+        module_grouped = 0
         for sid, score in ranks.items():
             meta = view.sym_meta.get(sid)
             if meta is None:
@@ -812,9 +872,24 @@ def register(
                 continue
             qn = meta.get("qualified_name") or ""
             parts = qn.split(".")
-            if len(parts) <= module_depth:
-                continue
-            group_key = ".".join(parts[:module_depth])
+
+            group_key: str | None = None
+            if ext_graph is not None:
+                node = ext_graph.lookup(
+                    meta.get("file_path") or "",
+                    int(meta.get("start_line") or 0),
+                    meta.get("name") or (parts[-1] if parts else ""),
+                )
+                if node is not None and node.community is not None:
+                    group_key = f"community:{node.community}"
+                    community_grouped += 1
+            if group_key is None:
+                # Fallback: a symbol the external graph does not cover still
+                # deserves a proposal, so external grouping only ever adds.
+                if len(parts) <= module_depth:
+                    continue
+                group_key = ".".join(parts[:module_depth])
+                module_grouped += 1
             groups.setdefault(group_key, []).append((sid, score, meta))
 
         # Build proposals
@@ -845,13 +920,31 @@ def register(
             syms.sort(key=lambda x: x[1], reverse=True)
             top = syms[:10]
 
-            # Title: humanize the deepest non-generic segment of group_key
-            segments = group_key.split(".")
-            title_seg = segments[-1]
-            for seg in reversed(segments):
-                if seg.lower() not in _GENERIC_MODULE_NAMES:
-                    title_seg = seg
-                    break
+            # Title: humanize the deepest non-generic segment of group_key.
+            # A community key carries no name of its own — and Graphify's own
+            # community labels are LLM-written, so importing them would quietly
+            # put a model in a deterministic path. Derive the title from the
+            # members instead: the most common non-generic module segment among
+            # the highest-ranked symbols.
+            if group_key.startswith("community:"):
+                seg_counts: dict[str, int] = {}
+                for _, _, m in syms:
+                    for seg in (m.get("qualified_name") or "").split(".")[:-1]:
+                        if seg and seg.lower() not in _GENERIC_MODULE_NAMES:
+                            seg_counts[seg] = seg_counts.get(seg, 0) + 1
+                if seg_counts:
+                    title_seg = max(seg_counts.items(), key=lambda kv: (kv[1], kv[0]))[0]
+                else:
+                    title_seg = (
+                        (syms[0][2].get("qualified_name") or "group").split(".")[-1]
+                    )
+            else:
+                segments = group_key.split(".")
+                title_seg = segments[-1]
+                for seg in reversed(segments):
+                    if seg.lower() not in _GENERIC_MODULE_NAMES:
+                        title_seg = seg
+                        break
             title = _humanize_module_segment(title_seg)
 
             # Description: first sentence of top symbol's docstring
@@ -892,20 +985,41 @@ def register(
 
         # OpenSpec-shaped ids in score order, numbered when two titles collide.
         for p in proposals:
-            module_hint = (p["module_key"] or "").split(".")[-1] or None
+            key = p["module_key"] or ""
+            # Never seed a Spec id from a community number. Leiden ids depend
+            # on the clustering run, so `community-4-checkout` would become
+            # `community-7-checkout` on the next graph build — a Spec id that
+            # changes under you is worse than a slightly less specific one.
+            module_hint = (
+                None if key.startswith("community:") else (key.split(".")[-1] or None)
+            )
             sid = disambiguated_slug_id(
                 _ospec_spec_id(p["title"], module_hint), existing_ids | used_ids
             )
             p["proposed_spec_id"] = sid
             used_ids.add(sid)
 
-        return {
+        payload: dict[str, Any] = {
             "proposals": proposals,
             "total_modules_examined": len(groups),
             "module_depth": module_depth,
             "skipped_covered_count": skipped_covered_count,
             "skip_already_covered": skip_already_covered,
         }
+        if ext_graph is not None:
+            payload["grouping"] = {
+                "source": ext_graph.path,
+                "external_nodes": ext_graph.node_count,
+                "symbols_grouped_by_community": community_grouped,
+                "symbols_grouped_by_module": module_grouped,
+                "hint": (
+                    "Groups keyed `community:N` come from the external graph's "
+                    "detected communities; the rest fell back to module prefix. "
+                    "Only community membership is used — titles are derived "
+                    "from the symbols, never from LLM-written community labels."
+                ),
+            }
+        return payload
 
     @mutation_tool(annotations={"readOnlyHint": True, "idempotentHint": True})
     def scan_docstrings_for_spec_hints(

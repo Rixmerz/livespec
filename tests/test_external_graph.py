@@ -284,6 +284,187 @@ async def test_graph_of_a_different_repo_is_refused(workspace: Path):
         assert "shares almost no files" in out["error"]
 
 
+# --------------------------------------------------------------------------
+# propose_specs_from_codebase grouping
+# --------------------------------------------------------------------------
+
+
+def _two_module_repo(workspace: Path) -> None:
+    """One capability deliberately split across two modules.
+
+    Module-prefix grouping sees two features here. They are one.
+    """
+    for mod in ("services", "routes"):
+        d = workspace / "src" / mod
+        d.mkdir(parents=True)
+        (d / "checkout.py").write_text(
+            "\n\n".join(
+                f"def {mod}_step{i}():\n    return {i}" for i in range(1, 5)
+            )
+            + "\n"
+        )
+    (workspace / "src" / "__init__.py").write_text("")
+
+
+def _community_graph_for(workspace: Path, community: int = 4) -> str:
+    """Put every indexed symbol in one community."""
+    import sqlite3
+
+    db = sqlite3.connect(workspace / ".mcp-docs" / "docs.db")
+    db.row_factory = sqlite3.Row
+    nodes = [
+        {
+            "id": f"n{i}",
+            "label": r["name"],
+            "source_file": r["path"],
+            "source_location": f"L{r['start_line']}",
+            "community": community,
+            "_origin": "ast",
+        }
+        for i, r in enumerate(
+            db.execute(
+                "SELECT s.name, s.start_line, f.path FROM symbol s "
+                "JOIN file f ON f.id=s.file_id"
+            )
+        )
+    ]
+    db.close()
+    p = workspace / "communities.json"
+    p.write_text(json.dumps({"directed": True, "nodes": nodes, "links": []}))
+    return str(p)
+
+
+@pytest.mark.asyncio
+async def test_communities_merge_a_capability_split_across_modules(workspace: Path):
+    _two_module_repo(workspace)
+    async with Client(mcp) as c:
+        await c.call_tool("index_project", {})
+        by_module = (
+            await c.call_tool(
+                "propose_specs_from_codebase",
+                {"module_depth": 2, "skip_already_covered": False},
+            )
+        ).data
+        by_community = (
+            await c.call_tool(
+                "propose_specs_from_codebase",
+                {
+                    "module_depth": 2,
+                    "skip_already_covered": False,
+                    "community_graph": _community_graph_for(workspace),
+                },
+            )
+        ).data
+
+        # The split capability collapses into a single proposal.
+        assert len(by_community["proposals"]) < len(by_module["proposals"])
+        keys = [p["module_key"] for p in by_community["proposals"]]
+        assert any(k.startswith("community:") for k in keys)
+        assert by_community["grouping"]["symbols_grouped_by_community"] > 0
+
+
+@pytest.mark.asyncio
+async def test_title_never_leaks_the_community_id(workspace: Path):
+    """Graphify's own community labels are LLM-written, so we derive titles
+    from the members instead — but a raw `community:4` title would be worse
+    than either."""
+    _two_module_repo(workspace)
+    async with Client(mcp) as c:
+        await c.call_tool("index_project", {})
+        out = (
+            await c.call_tool(
+                "propose_specs_from_codebase",
+                {
+                    "module_depth": 2,
+                    "skip_already_covered": False,
+                    "community_graph": _community_graph_for(workspace),
+                },
+            )
+        ).data
+        for p in out["proposals"]:
+            assert "community" not in p["title"].lower()
+            assert p["title"].strip()
+            assert not p["proposed_spec_id"].startswith("community")
+
+
+@pytest.mark.asyncio
+async def test_symbols_outside_the_external_graph_fall_back_to_modules(
+    workspace: Path,
+):
+    """External grouping must only ever add signal — a symbol the graph does
+    not cover still deserves a proposal."""
+    _two_module_repo(workspace)
+    async with Client(mcp) as c:
+        await c.call_tool("index_project", {})
+        # A graph that covers nothing in this repo would be refused by the
+        # overlap guard, so cover exactly one file and leave the other out.
+        empty = workspace / "partial.json"
+        empty.write_text(
+            json.dumps(
+                {
+                    "directed": True,
+                    "nodes": [
+                        {
+                            "id": "n0",
+                            "label": "services_step1",
+                            "source_file": "src/services/checkout.py",
+                            "source_location": "L1",
+                            "community": 9,
+                            "_origin": "ast",
+                        }
+                    ],
+                    "links": [],
+                }
+            )
+        )
+        out = (
+            await c.call_tool(
+                "propose_specs_from_codebase",
+                {
+                    "module_depth": 2,
+                    "skip_already_covered": False,
+                    "community_graph": str(empty),
+                },
+            )
+        ).data
+        grouping = out["grouping"]
+        assert grouping["symbols_grouped_by_module"] > 0
+        keys = [p["module_key"] for p in out["proposals"]]
+        assert any(not k.startswith("community:") for k in keys)
+
+
+@pytest.mark.asyncio
+async def test_proposals_refuse_a_graph_of_a_different_repo(workspace: Path):
+    _two_module_repo(workspace)
+    async with Client(mcp) as c:
+        await c.call_tool("index_project", {})
+        p = workspace / "other.json"
+        p.write_text(
+            json.dumps(
+                {
+                    "directed": True,
+                    "nodes": [
+                        {
+                            "id": "n0",
+                            "label": "Whatever",
+                            "source_file": "some/other/repo/x.py",
+                            "source_location": "L1",
+                            "community": 1,
+                        }
+                    ],
+                    "links": [],
+                }
+            )
+        )
+        out = (
+            await c.call_tool(
+                "propose_specs_from_codebase", {"community_graph": str(p)}
+            )
+        ).data
+        assert out["isError"] is True
+        assert "shares almost no files" in out["error"]
+
+
 @pytest.mark.asyncio
 async def test_non_ast_origin_is_surfaced_as_a_warning(workspace: Path):
     """Graphify's code pass is LLM-free; its semantic pass is not. A graph

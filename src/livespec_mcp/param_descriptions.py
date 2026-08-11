@@ -65,6 +65,13 @@ PARAM_DESCRIPTIONS: dict[str, str] = {
         "Include symbols under test paths (``tests/``, ``src/test/``, ``*.test.ts``, "
         "``*Test.java``, …) that are excluded from dead-code candidates by default."
     ),
+    "community_graph": (
+        "Path to an external code graph (Graphify ``graphify-out/graph.json``). "
+        "Groups Spec proposals by the graph's detected communities instead of "
+        "by qname prefix — module layout is a poor proxy for capability. "
+        "Symbols the graph does not cover fall back to module grouping. "
+        "Relative paths resolve against the workspace root."
+    ),
     "corroborate_with": (
         "Path to an external code graph (Graphify ``graphify-out/graph.json``). "
         "Dead-code candidates that a second extractor still sees referenced "
