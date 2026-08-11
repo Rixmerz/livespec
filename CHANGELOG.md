@@ -6,6 +6,32 @@ follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Added — corroborate dead code against an external graph
+
+`find_dead_code(corroborate_with=<path to a Graphify graph.json>)` drops
+candidates that a second, independent extractor still sees referenced.
+
+livespec's dead-code errors are systematic, not random: they track what the
+extractor cannot see. Measured on a real TypeScript composer, **46 candidates
+became 27**. Of the 19 dropped, three were verified by hand and all three were
+genuine misses — a cross-file call the resolver lost, a base class kept alive
+only by `extends`, and an interface used purely as a type annotation. Graphify's
+code pass is tree-sitter with no LLM and no API key (`_origin: "ast"`,
+`input_tokens: 0`), so this costs nothing in determinism.
+
+- New `domain/external_graph.py` — tolerant reader for NetworkX node-link JSON.
+  Unknown keys ignored, malformed rows skipped; an external file can never
+  break an index
+- Corroboration **never adds symbols or edges** — the call graph stays
+  livespec's own; the external graph only removes candidates
+- `contains` / `rationale_for` are structural and never count as evidence of use
+- Fails loudly: missing file, unparseable JSON, or a graph whose paths don't
+  overlap this index return a shaped `mcp_error` rather than a misleading
+  "0 dropped"
+- Any edge not marked `_origin: ast` raises a `warning`, so a graph carrying
+  LLM-derived semantic edges cannot quietly erode the zero-LLM claim
+- Strategy note rewritten: `docs/COMPETITIVE_GRAPHIFY.md`
+
 ## [0.31.4] - 2026-08-11
 
 Payload ergonomics + doc-truth batch, from using livespec as an agent on a real

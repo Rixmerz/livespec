@@ -44,8 +44,39 @@ Todo el stack es local-first: 0 servicios externos, 0 API keys obligatorias, 0 D
 
 ## 3. Estado actual
 
-**HEAD: release `v0.31.4`. Tests 688.**
+**HEAD: `v0.31.4` + corroboración con Graphify sin taggear. Tests 702.**
 Pin PyPI / plugin / `uvx livespec@0.31.4`.
+
+### Unreleased — consumir Graphify en vez de solo coexistir
+
+`find_dead_code(corroborate_with=<graph.json>)` lee un grafo de Graphify como
+evidencia corroborante. **No revierte** la decisión de julio de no portar sus
+features — es su forma más fuerte: importar es cómo obtenés aristas de herencia
+y alcance de 36 lenguajes sin construir ninguna de las dos.
+
+Verificado contra un `graph.json` real (no contra la doc): es node-link de
+NetworkX, `source_file` es relativo al repo (mismo shape que `file.path`) y
+`source_location` es `"L53"`, así que el match por posición es directo. Un
+corpus solo-código **no gasta LLM ni API key** — extracción sobre `src/` dio
+`input_tokens: 0` y todas las aristas `_origin: "ast"`.
+
+**Evidencia dura:** sobre un composer TS real, 46 candidatos a dead → **27**.
+De los 19 descartados verifiqué 3 a mano y los 3 eran fallos genuinos de
+livespec: una llamada cross-file que el resolver perdió, una clase base viva
+solo por `extends` (no modelamos herencia), y una interface usada solo como
+anotación de tipo. Los dos tools coincidieron en 385/434 aristas `calls` (89%),
+lo que valida a ambos; livespec sigue encontrando más en total (2481 vs 1855).
+
+Límites que se sostienen: la corroboración **nunca agrega símbolos ni aristas**
+(el call graph sigue siendo nuestro, el archivo externo solo quita candidatos);
+`contains`/`rationale_for` no cuentan como evidencia; archivo faltante, JSON
+ilegible o grafo de otro repo devuelven `mcp_error` en vez de un "0 descartados"
+que se leería como visto bueno; y cualquier arista sin `_origin: ast` levanta un
+`warning` para que la promesa zero-LLM no se erosione en silencio.
+
+Diferido a propósito: ingerir aristas en `symbol_edge`, y usar `community` para
+agrupar las propuestas de `propose_specs_from_codebase`. Ambas atractivas, ambas
+necesitan resolver la pregunta de provenance de forma deliberada.
 
 ### v0.31.4 (2026-08-11) — ergonomía de payloads (dogfood polyrepo)
 

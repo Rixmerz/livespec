@@ -47,3 +47,6 @@ Thumbs.db
 # Playwright MCP debug output
 .playwright-mcp/
 .vise/
+
+# Graphify artifacts (external tool output, machine-specific paths)
+graphify-out/

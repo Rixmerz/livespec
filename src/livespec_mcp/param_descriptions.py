@@ -65,6 +65,13 @@ PARAM_DESCRIPTIONS: dict[str, str] = {
         "Include symbols under test paths (``tests/``, ``src/test/``, ``*.test.ts``, "
         "``*Test.java``, …) that are excluded from dead-code candidates by default."
     ),
+    "corroborate_with": (
+        "Path to an external code graph (Graphify ``graphify-out/graph.json``). "
+        "Dead-code candidates that a second extractor still sees referenced "
+        "(inheritance, type position, cross-file calls livespec's resolver "
+        "lost) are dropped, and the payload reports what went and why. "
+        "Relative paths resolve against the workspace root."
+    ),
     "include_infra_routes": (
         "Include infra/docs/UI *routes* (``/health``, ``/metrics``, swagger, …) "
         "that are filtered by default. For symbols see ``include_infrastructure``."

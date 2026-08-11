@@ -3,7 +3,7 @@
 [![PyPI](https://img.shields.io/pypi/v/livespec.svg)](https://pypi.org/project/livespec/)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/downloads/)
 [![License: AGPL v3](https://img.shields.io/badge/license-AGPL--3.0--only-blue.svg)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-688%20passed-brightgreen.svg)](https://github.com/Rixmerz/livespec/actions)
+[![Tests](https://img.shields.io/badge/tests-702%20passed-brightgreen.svg)](https://github.com/Rixmerz/livespec/actions)
 
 > **Public beta (v0.31).** Local-first code intelligence for AI agents.
 > Call graph, impact analysis, and Spec ↔ code traceability. Search is
@@ -467,9 +467,21 @@ Always registered (including markdown Spec import + OpenSpec sync).
 - `git_diff_impact(base_ref='HEAD~1', head_ref='HEAD', max_depth=5)` —
   changed files → impacted callers → affected Specs → suggested test files.
   PR-review entry point.
-- `find_dead_code(include_infrastructure=False)` — symbols with zero
-  callers and zero Spec links. Skips entry-point paths, framework
-  decorators, `__main__` guards, list-stored callbacks.
+- `find_dead_code(include_infrastructure=False, corroborate_with=None)` —
+  symbols with zero callers and zero Spec links. Skips entry-point paths,
+  framework decorators, `__main__` guards, list-stored callbacks.
+  `filtered_out` reports what each default filter excluded, keyed by the flag
+  that would include it — two runs on the same repo can differ several-fold
+  purely by flags.
+  **Corroboration:** point `corroborate_with` at a
+  [Graphify](https://github.com/Graphify-Labs/graphify) `graph.json` and
+  candidates a second extractor still sees referenced are dropped. livespec's
+  blind spots are systematic — no inheritance edge, no type-position usage,
+  some cross-file calls lost by the resolver — and each manufactures a false
+  "dead". On a real TypeScript service this cut 46 candidates to 27, and the
+  three spot-checked drops were all genuine misses. Graphify's code pass is
+  tree-sitter with no LLM, so this costs nothing in determinism; see
+  [`docs/COMPETITIVE_GRAPHIFY.md`](docs/COMPETITIVE_GRAPHIFY.md).
 - `find_legacy_flows(project?, include_infra_routes=False)` — likely-unused HTTP
   flows (`route_ref` + `invokes_route`, best with `group_db`): servers with
   no indexed client hop + clients with no matched server. Graph only —

@@ -1,0 +1,111 @@
+{
+ "directed": true,
+ "multigraph": false,
+ "graph": {},
+ "nodes": [
+  {
+   "label": "DomainError",
+   "file_type": "code",
+   "source_file": "src/util/error.ts",
+   "source_location": "L26",
+   "_callable": true,
+   "_callable_class": true,
+   "_origin": "ast",
+   "id": "src_util_error_domainerror",
+   "community": 3,
+   "norm_label": "domainerror"
+  },
+  {
+   "label": "BadRequestError",
+   "file_type": "code",
+   "source_file": "src/util/error.ts",
+   "source_location": "L54",
+   "_callable": true,
+   "_callable_class": true,
+   "_origin": "ast",
+   "id": "src_util_error_badrequesterror",
+   "community": 3,
+   "norm_label": "badrequesterror"
+  },
+  {
+   "label": "assertMaxContentLength",
+   "file_type": "code",
+   "source_file": "src/common/httpResponse.ts",
+   "source_location": "L73",
+   "_callable": true,
+   "_origin": "ast",
+   "id": "src_common_httpresponse_assertmaxcontentlength",
+   "community": 1,
+   "norm_label": "assertmaxcontentlength"
+  },
+  {
+   "label": "axiosCall",
+   "file_type": "code",
+   "source_file": "src/common/axiosCommon.ts",
+   "source_location": "L40",
+   "_callable": true,
+   "_origin": "ast",
+   "id": "src_common_axioscommon_axioscall",
+   "community": 1,
+   "norm_label": "axioscall"
+  },
+  {
+   "label": "trulyUnused",
+   "file_type": "code",
+   "source_file": "src/util/orphan.ts",
+   "source_location": "L5",
+   "_callable": true,
+   "_origin": "ast",
+   "id": "src_util_orphan_trulyunused",
+   "community": 7,
+   "norm_label": "trulyunused"
+  },
+  {
+   "label": "error.ts",
+   "file_type": "code",
+   "source_file": "src/util/error.ts",
+   "source_location": "L1",
+   "_origin": "ast",
+   "id": "file_src_util_error",
+   "community": 3,
+   "norm_label": "error.ts"
+  }
+ ],
+ "links": [
+  {
+   "relation": "inherits",
+   "confidence": "EXTRACTED",
+   "source_file": "src/util/error.ts",
+   "source_location": "L54",
+   "weight": 1.0,
+   "_origin": "ast",
+   "source": "src_util_error_badrequesterror",
+   "target": "src_util_error_domainerror",
+   "confidence_score": 1.0
+  },
+  {
+   "relation": "calls",
+   "context": "call",
+   "confidence": "EXTRACTED",
+   "source_file": "src/common/axiosCommon.ts",
+   "source_location": "L43",
+   "weight": 1.0,
+   "_origin": "ast",
+   "source": "src_common_axioscommon_axioscall",
+   "target": "src_common_httpresponse_assertmaxcontentlength",
+   "confidence_score": 1.0
+  },
+  {
+   "relation": "contains",
+   "confidence": "EXTRACTED",
+   "source_file": "src/util/error.ts",
+   "source_location": "L1",
+   "weight": 1.0,
+   "_origin": "ast",
+   "source": "file_src_util_error",
+   "target": "src_util_orphan_trulyunused",
+   "confidence_score": 1.0
+  }
+ ],
+ "hyperedges": []
+}

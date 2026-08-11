@@ -3000,6 +3000,120 @@ def _package_marker_is_emptyish(ws: Path, rel_path: str) -> bool:
     return not body.strip()
 
 
+def _corroborate_dead_code(
+    candidates: list[dict[str, Any]],
+    *,
+    st: AppState,
+    graph_path: str,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Drop candidates a second extractor still sees referenced.
+
+    Returns ``(surviving_candidates, report)``. On any failure the report is a
+    shaped ``mcp_error`` and the caller returns it untouched — an unreadable or
+    mismatched external file must never be reported as "nothing to corroborate",
+    which would read as a clean bill of health.
+    """
+    from livespec_mcp.domain.external_graph import (
+        load_external_graph,
+        overlap_ratio,
+    )
+
+    resolved = Path(graph_path)
+    if not resolved.is_absolute():
+        resolved = st.settings.workspace / resolved
+
+    try:
+        graph = load_external_graph(resolved)
+    except FileNotFoundError:
+        return candidates, mcp_error(
+            f"External graph not found: {resolved}",
+            hint=(
+                "Generate one with `/graphify <repo>` (writes "
+                "graphify-out/graph.json), or pass an absolute path."
+            ),
+        )
+    except (ValueError, OSError, UnicodeDecodeError) as exc:
+        return candidates, mcp_error(
+            f"Could not read external graph {resolved}: {exc}",
+            hint="Expected Graphify's NetworkX node-link graph.json.",
+        )
+
+    indexed_files = {
+        r["path"]
+        for r in st.conn.execute(
+            "SELECT path FROM file WHERE project_id=?", (st.project_id,)
+        )
+    }
+    overlap = overlap_ratio(graph, indexed_files)
+    if overlap < 0.1:
+        return candidates, mcp_error(
+            f"External graph {resolved} shares almost no files with this index "
+            f"({overlap:.0%} of its files are indexed here).",
+            hint=(
+                "It probably describes a different repo, or was built from a "
+                "different root so its paths do not line up. Corroborating "
+                "against it would vouch for nothing."
+            ),
+        )
+
+    survivors: list[dict[str, Any]] = []
+    dropped: list[dict[str, Any]] = []
+    matched = 0
+    by_relation: dict[str, int] = {}
+
+    for meta in candidates:
+        node = graph.lookup(
+            meta["file_path"], int(meta["start_line"]), meta.get("name") or ""
+        )
+        if node is None:
+            survivors.append(meta)
+            continue
+        matched += 1
+        evidence = graph.evidence_for(node)
+        if not evidence:
+            survivors.append(meta)
+            continue
+        for rel in set(evidence):
+            by_relation[rel] = by_relation.get(rel, 0) + 1
+        dropped.append(
+            {
+                "qualified_name": meta["qualified_name"],
+                "file_path": meta["file_path"],
+                "start_line": meta["start_line"],
+                "relations": sorted(set(evidence)),
+            }
+        )
+
+    report: dict[str, Any] = {
+        "source": str(resolved),
+        "external_nodes": graph.node_count,
+        "external_edges": graph.edge_count,
+        "file_overlap": round(overlap, 3),
+        "candidates_before": len(candidates),
+        "candidates_matched": matched,
+        "dropped_as_referenced": len(dropped),
+        "dropped_by_relation": dict(sorted(by_relation.items())),
+        "dropped_sample": dropped[:20],
+        "hint": (
+            "Dropped candidates are referenced in the external graph by a "
+            "relation livespec does not model (inheritance, type position, "
+            "unresolved cross-file call). This is corroborating evidence, not "
+            "proof of production traffic — still confirm with APM before "
+            "deleting."
+        ),
+    }
+    if graph.has_non_ast_origin:
+        # Graphify's code pass is pure tree-sitter; its semantic pass over
+        # docs/media can involve an LLM. Say so rather than let a
+        # zero-LLM guarantee quietly become a zero-LLM-ish one.
+        report["warning"] = (
+            "Some external edges are not marked `_origin: ast` — this graph "
+            "may include LLM-derived (semantic) edges, unlike a code-only "
+            "Graphify run."
+        )
+    return survivors, report
+
+
 def _attach_dead_code_not_swept(
     payload: dict[str, Any],
     *,
@@ -3752,6 +3866,7 @@ def register(mcp: FastMCP) -> None:
         include_ts_framework_routes: bool = False,
         include_tests: bool = False,
         min_weight: float = 0.0,
+        corroborate_with: str | None = None,
         limit: int = 200,
         cursor: int = 0,
         summary_only: bool = False,
@@ -3806,6 +3921,16 @@ def register(mcp: FastMCP) -> None:
         Two runs on the same repo can differ several-fold purely by flags;
         this field says which run you are looking at. Counts only, so it is
         safe in `summary_only` mode (where it is also returned).
+
+        Unreleased: `corroborate_with=<path to a Graphify graph.json>` drops
+        candidates that a second, independent extractor still sees referenced.
+        livespec's blind spots are systematic — no inheritance edge, no
+        type-position usage, some cross-file calls lost by the resolver — and
+        each one manufactures a false "dead". Graphify's code pass is
+        tree-sitter with no LLM, so this costs nothing in determinism. Results
+        report `corroboration` (source, match rate, what was dropped and by
+        which relation). Evidence, not proof: still confirm with APM before
+        deleting.
         """ + WORKSPACE_DOCSTRING_NOTE
         st = get_state(workspace)
         pid = st.project_id
@@ -4089,6 +4214,14 @@ def register(mcp: FastMCP) -> None:
 
             filtered.append(meta)
 
+        corroboration: dict[str, Any] | None = None
+        if corroborate_with:
+            filtered, corroboration = _corroborate_dead_code(
+                filtered, st=st, graph_path=corroborate_with
+            )
+            if corroboration.get("isError"):
+                return corroboration
+
         total = len(filtered)
         # by_kind / by_dir breakdowns (cheap; useful for summary mode)
         by_kind: dict[str, int] = {}
@@ -4105,6 +4238,8 @@ def register(mcp: FastMCP) -> None:
         }
         if auto_enabled:
             payload["auto_enabled"] = auto_enabled
+        if corroboration is not None:
+            payload["corroboration"] = corroboration
         if filtered_out:
             # Present in summary_only too: this is precisely the field that
             # explains a surprising count, so stripping it in the cheap mode
