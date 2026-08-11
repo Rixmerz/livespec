@@ -6,6 +6,12 @@ follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.31.4] - 2026-08-11
+
+Payload ergonomics + doc-truth batch, from using livespec as an agent on a real
+13-repo polyrepo group. Nothing in the engine changed: every finding lived in
+what the tools *report*, or in what the docs *claim*.
+
 ### Added — `find_dead_code` says which filters produced the count
 
 Two legitimate runs on the same repo could differ several-fold purely by
@@ -58,6 +64,17 @@ re-exported.
 - The bundle on disk is now the authority; `local_explorer` is a hint, with a
   fallback derived from the project root
 - A repo with genuinely no bundle is still skipped (no invented mounts)
+
+### Fixed — CI had been red since 0.31.2
+
+The `ruff + package build` job failed on every push to `main` since 2026-08-07,
+so nothing between 0.31.2 and this release was landing on a green pipeline.
+
+- Two `RUF001` ambiguous-character errors introduced in 0.31.2 (an en dash in a
+  CSS comment and a typographic apostrophe in Flow Explorer HTML copy) — both
+  generated display text, now ASCII
+- Dead `noqa` directives and an unused import under `scripts/` (outside the CI
+  gate, which runs `ruff check src tests`, but noise for anyone linting the repo)
 
 ## [0.31.3] - 2026-08-07
 

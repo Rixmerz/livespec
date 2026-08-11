@@ -15,9 +15,9 @@
   era la máquina macOS anterior — referencias viejas en este doc pueden
   mencionarlo)
 - **Demo project:** `<demo-repo>` (4 archivos Python con `@rf:` annotations en docstrings, ya tiene RFs persistidas en su `.mcp-docs/docs.db`)
-- **MCP server:** Claude Code plugin `livespec@livespec-dev` **0.31.3**
+- **MCP server:** Claude Code plugin `livespec@livespec-dev` **0.31.4**
   (marketplace `livespec-dev` = `Rixmerz/livespec`; also installable as
-  `livespec@rixmerz`). Pin `uvx livespec@0.31.3` and/or Cursor `user-livespec`
+  `livespec@rixmerz`). Pin `uvx livespec@0.31.4` and/or Cursor `user-livespec`
   pointing at a local checkout. **Every tool requires `workspace=/abs/repo`**
   — there is no `LIVESPEC_WORKSPACE` env fallback (removed).
 - **Git user:** Juan Pablo Díaz S.
@@ -44,10 +44,10 @@ Todo el stack es local-first: 0 servicios externos, 0 API keys obligatorias, 0 D
 
 ## 3. Estado actual
 
-**HEAD: `v0.31.3` + batch de ergonomía sin taggear. Tests 688.**
-Pin PyPI / plugin / `uvx livespec@0.31.3`.
+**HEAD: release `v0.31.4`. Tests 688.**
+Pin PyPI / plugin / `uvx livespec@0.31.4`.
 
-### Unreleased — ergonomía de payloads (dogfood polyrepo)
+### v0.31.4 (2026-08-11) — ergonomía de payloads (dogfood polyrepo)
 
 Batch salido de usar livespec como agente sobre un grupo polyrepo real (13
 repos en un `group_db` + varios sueltos). Cuatro hallazgos, ninguno en el
@@ -88,6 +88,14 @@ motor: viven en la capa de payload y en los docs. Tests 672 → **688**
    registry vivo + que todo tool core aparezca en el README. El próximo tool
    que se agregue rompe la suite en vez de driftear. (El test encontró el
    segundo faltante solo.)
+5. **El CI estaba en rojo desde el 2026-08-07 y nadie lo había notado.** No
+   eran los tests: el job `ruff + package build` fallaba con dos `RUF001`
+   que entraron en `d46616e` (0.31.2) — un guion largo en un comentario CSS
+   y una comilla tipográfica en copy HTML del Flow Explorer, ambos texto
+   generado. O sea que nada entre 0.31.2 y 0.31.4 aterrizó con pipeline
+   verde. **Ojo:** el `commit-guard` local no corre ruff, así que un commit
+   puede pasar el hook y romper el CI igual — correr `ruff check src tests`
+   a mano antes de pushear.
 
 ### v0.31.3 (2026-08-07)
 
