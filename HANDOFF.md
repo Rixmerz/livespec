@@ -44,7 +44,7 @@ Todo el stack es local-first: 0 servicios externos, 0 API keys obligatorias, 0 D
 
 ## 3. Estado actual
 
-**HEAD: `v0.31.4` + integración Graphify sin taggear. Tests 706.**
+**HEAD: `v0.31.4` + integración Graphify sin taggear. Tests 709.**
 Pin PyPI / plugin / `uvx livespec@0.31.4`.
 
 ### Unreleased — consumir Graphify en vez de solo coexistir
@@ -84,6 +84,21 @@ determinista), nunca las etiquetas LLM de Graphify — los títulos se derivan d
 los símbolos. Y los spec_id nunca se siembran del número de comunidad: los ids
 de Leiden dependen de la corrida, así que `community-4-checkout` se volvería
 `community-7-checkout` en el próximo build. Ese bug lo cazó un test.
+
+**Tercera pieza (tests huérfanos) + el hallazgo negativo que importa.**
+`find_orphan_tests(corroborate_with=…)` hace la pregunta espejo: no "¿algo
+referencia esto?" sino "¿esto alcanza algo fuera de los tests?". Sobre un
+servicio Java: 17 huérfanos → **9** (JUnit `setUp` haciendo
+`new RepositoryImpl()`, verificado a mano). Sobre livespec mismo: 26 → **26**,
+cero. El harness in-process `Client(mcp)` despacha por nombre string y es un
+punto ciego que **ambos** extractores comparten.
+
+Esa es la lección general de toda esta línea de trabajo y conviene no
+olvidarla: **la corroboración solo ayuda donde los puntos ciegos difieren.** No
+es que Graphify sea más exhaustivo — livespec encuentra más aristas en total —
+es que falla distinto. Donde fallan igual (dispatch dinámico, harnesses por
+string, reflection) no se recupera nada, y el payload reporta cero en vez de
+fingir.
 
 Diferido a propósito: ingerir aristas en `symbol_edge` (medido: **133** aristas
 que livespec no tiene en su propio repo) y la capa documental (**316** aristas

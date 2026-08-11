@@ -106,6 +106,25 @@ titles are derived from the member symbols instead. Spec ids are never seeded
 from the community number either — Leiden ids depend on the clustering run, so
 that id would change under the user on the next graph build.
 
+### Orphan tests → corroboration also lands, but not everywhere
+
+`find_orphan_tests(corroborate_with=…)` asks the mirror question: not "does
+anything refer to this?" but "does this reach anything outside the tests?".
+
+Two repos, two different answers, and the second is the useful one:
+
+| Repo | Orphans | After | Why |
+|---|---:|---:|---|
+| Java service | 17 | **9** | JUnit `setUp` doing `new RepositoryImpl()` — direct instantiation livespec missed; verified by hand |
+| livespec itself | 26 | 26 | in-process FastMCP `Client(mcp)` harness dispatches by string name — a blind spot **both** extractors share |
+
+**Corroboration only helps where blind spots differ.** That is the general
+lesson from this whole line of work, and it bounds how much a second extractor
+can ever be worth: not "Graphify is more thorough" (livespec still finds more
+edges overall) but "Graphify fails differently". Where the two fail the same
+way — dynamic dispatch, string-keyed harnesses, reflection — nothing is
+recovered, and the payload reports zero rather than pretending.
+
 ### Still deferred
 
 Ingesting edges into `symbol_edge` (measured: **133** edges livespec lacks on

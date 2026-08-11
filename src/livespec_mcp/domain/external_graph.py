@@ -39,6 +39,7 @@ external file must never be able to break an index.
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -94,10 +95,20 @@ class ExternalGraph:
     )
     #: node id -> inbound relations, structural ones already dropped.
     inbound: dict[str, list[str]] = field(default_factory=dict)
+    #: node id -> (relation, target node id), structural ones already dropped.
+    #: Needed for the opposite question from dead code: not "does anything
+    #: refer to this?" but "does this reach anything?" — which is what an
+    #: orphan test is really about.
+    outbound: dict[str, list[tuple[str, str]]] = field(default_factory=dict)
+    #: node id -> node, for resolving outbound targets.
+    by_id: dict[str, ExternalNode] = field(default_factory=dict)
     #: Relation histogram over all links, for reporting.
     relation_counts: dict[str, int] = field(default_factory=dict)
     #: True when any link carries an origin other than deterministic AST.
     has_non_ast_origin: bool = False
+    #: Share of this graph's files that the consuming index also has. Set by
+    #: the caller's sanity gate; 0.0 until then.
+    file_overlap: float = 0.0
 
     def lookup(self, file_path: str, line: int, name: str) -> ExternalNode | None:
         """Position first, then bare name within the same file.
@@ -116,6 +127,25 @@ class ExternalGraph:
     def evidence_for(self, node: ExternalNode) -> list[str]:
         """Relations pointing *at* this node that suggest it is reachable."""
         return [r for r in self.inbound.get(node.node_id, []) if r in EVIDENCE_RELATIONS]
+
+    def reaches(
+        self, node: ExternalNode, predicate: Callable[[ExternalNode], bool]
+    ) -> list[tuple[str, ExternalNode]]:
+        """Outbound edges from this node landing on a node matching `predicate`.
+
+        Depth 1 on purpose. A test that reaches production through five hops of
+        test helpers is still a test that reaches production, but the deeper the
+        walk the more a single bad external edge can vouch for anything. One hop
+        keeps each rescue individually checkable.
+        """
+        out: list[tuple[str, ExternalNode]] = []
+        for relation, target_id in self.outbound.get(node.node_id, []):
+            if relation not in EVIDENCE_RELATIONS:
+                continue
+            target = self.by_id.get(target_id)
+            if target is not None and predicate(target):
+                out.append((relation, target))
+        return out
 
 
 def _bare(name: str) -> str:
@@ -183,6 +213,7 @@ def load_external_graph(path: str | Path) -> ExternalGraph:
             origin=entry.get("_origin") if isinstance(entry.get("_origin"), str) else None,
         )
         ids[node_id] = node
+        graph.by_id[node_id] = node
         graph.node_count += 1
         if source_file and node.line is not None:
             graph.by_position.setdefault((source_file, node.line), node)
@@ -193,6 +224,7 @@ def load_external_graph(path: str | Path) -> ExternalGraph:
         if not isinstance(link, dict):
             continue
         target = link.get("target")
+        source = link.get("source")
         relation = link.get("relation") or link.get("type") or link.get("rel")
         if not isinstance(target, str) or not isinstance(relation, str):
             continue
@@ -204,6 +236,8 @@ def load_external_graph(path: str | Path) -> ExternalGraph:
         if relation in STRUCTURAL_RELATIONS:
             continue
         graph.inbound.setdefault(target, []).append(relation)
+        if isinstance(source, str):
+            graph.outbound.setdefault(source, []).append((relation, target))
 
     return graph
 

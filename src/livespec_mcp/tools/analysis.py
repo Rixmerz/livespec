@@ -3000,18 +3000,15 @@ def _package_marker_is_emptyish(ws: Path, rel_path: str) -> bool:
     return not body.strip()
 
 
-def _corroborate_dead_code(
-    candidates: list[dict[str, Any]],
-    *,
-    st: AppState,
-    graph_path: str,
-) -> tuple[list[dict[str, Any]], dict[str, Any]]:
-    """Drop candidates a second extractor still sees referenced.
+def _load_corroborating_graph(
+    st: AppState, graph_path: str
+) -> tuple[Any, dict[str, Any] | None]:
+    """Shared load + sanity gate for both corroboration paths.
 
-    Returns ``(surviving_candidates, report)``. On any failure the report is a
-    shaped ``mcp_error`` and the caller returns it untouched — an unreadable or
-    mismatched external file must never be reported as "nothing to corroborate",
-    which would read as a clean bill of health.
+    Returns ``(graph, None)`` or ``(None, mcp_error)``. The overlap guard is the
+    important half: a graph whose paths don't line up matches nothing, and
+    "nothing matched" would otherwise be reported as "nothing to drop", which
+    reads as a clean bill of health for candidates nobody actually checked.
     """
     from livespec_mcp.domain.external_graph import (
         load_external_graph,
@@ -3025,7 +3022,7 @@ def _corroborate_dead_code(
     try:
         graph = load_external_graph(resolved)
     except FileNotFoundError:
-        return candidates, mcp_error(
+        return None, mcp_error(
             f"External graph not found: {resolved}",
             hint=(
                 "Generate one with `/graphify <repo>` (writes "
@@ -3033,7 +3030,7 @@ def _corroborate_dead_code(
             ),
         )
     except (ValueError, OSError, UnicodeDecodeError) as exc:
-        return candidates, mcp_error(
+        return None, mcp_error(
             f"Could not read external graph {resolved}: {exc}",
             hint="Expected Graphify's NetworkX node-link graph.json.",
         )
@@ -3046,7 +3043,7 @@ def _corroborate_dead_code(
     }
     overlap = overlap_ratio(graph, indexed_files)
     if overlap < 0.1:
-        return candidates, mcp_error(
+        return None, mcp_error(
             f"External graph {resolved} shares almost no files with this index "
             f"({overlap:.0%} of its files are indexed here).",
             hint=(
@@ -3055,6 +3052,103 @@ def _corroborate_dead_code(
                 "against it would vouch for nothing."
             ),
         )
+    graph.file_overlap = overlap
+    return graph, None
+
+
+def _corroborate_orphan_tests(
+    candidates: list[dict[str, Any]],
+    *,
+    st: AppState,
+    graph_path: str,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Drop tests a second extractor sees reaching production code.
+
+    The mirror image of dead-code corroboration. There the question is "does
+    anything refer to this?" (inbound). Here it is "does this reach anything
+    outside the tests?" (outbound) — which is exactly the claim
+    ``find_orphan_tests`` makes and exactly what an in-process harness or a
+    string-dispatched call breaks.
+    """
+    graph, err = _load_corroborating_graph(st, graph_path)
+    if err is not None:
+        return candidates, err
+
+    def _is_production(node: Any) -> bool:
+        path = node.source_file or ""
+        return bool(path) and not _is_test_file_path(path)
+
+    survivors: list[dict[str, Any]] = []
+    dropped: list[dict[str, Any]] = []
+    matched = 0
+    by_relation: dict[str, int] = {}
+
+    for meta in candidates:
+        name = (meta.get("qualified_name") or "").split(".")[-1]
+        node = graph.lookup(meta["file_path"], int(meta.get("start_line") or 0), name)
+        if node is None:
+            # Position is unreliable for tests (decorators, parametrize), so
+            # fall back to a name lookup anywhere in the same file.
+            node = graph.lookup(meta["file_path"], -1, name)
+        if node is None:
+            survivors.append(meta)
+            continue
+        matched += 1
+        reached = graph.reaches(node, _is_production)
+        if not reached:
+            survivors.append(meta)
+            continue
+        for relation, _ in reached:
+            by_relation[relation] = by_relation.get(relation, 0) + 1
+        dropped.append(
+            {
+                "qualified_name": meta["qualified_name"],
+                "file_path": meta["file_path"],
+                "reaches": sorted(
+                    {f"{rel} -> {tgt.source_file}" for rel, tgt in reached}
+                )[:5],
+            }
+        )
+
+    report: dict[str, Any] = {
+        "source": graph.path,
+        "external_nodes": graph.node_count,
+        "file_overlap": round(graph.file_overlap, 3),
+        "candidates_before": len(candidates),
+        "candidates_matched": matched,
+        "dropped_as_reaching_production": len(dropped),
+        "dropped_by_relation": dict(sorted(by_relation.items())),
+        "dropped_sample": dropped[:20],
+        "hint": (
+            "Dropped tests reach a non-test file in the external graph via an "
+            "edge livespec's cone did not follow. Depth 1 only, so each rescue "
+            "is individually checkable."
+        ),
+    }
+    if graph.has_non_ast_origin:
+        report["warning"] = (
+            "Some external edges are not marked `_origin: ast` — this graph "
+            "may include LLM-derived (semantic) edges."
+        )
+    return survivors, report
+
+
+def _corroborate_dead_code(
+    candidates: list[dict[str, Any]],
+    *,
+    st: AppState,
+    graph_path: str,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Drop candidates a second extractor still sees referenced.
+
+    Returns ``(surviving_candidates, report)``. On any failure the report is a
+    shaped ``mcp_error`` and the caller returns it untouched — an unreadable or
+    mismatched external file must never be reported as "nothing to corroborate",
+    which would read as a clean bill of health.
+    """
+    graph, err = _load_corroborating_graph(st, graph_path)
+    if err is not None:
+        return candidates, err
 
     survivors: list[dict[str, Any]] = []
     dropped: list[dict[str, Any]] = []
@@ -3085,10 +3179,10 @@ def _corroborate_dead_code(
         )
 
     report: dict[str, Any] = {
-        "source": str(resolved),
+        "source": graph.path,
         "external_nodes": graph.node_count,
         "external_edges": graph.edge_count,
-        "file_overlap": round(overlap, 3),
+        "file_overlap": round(graph.file_overlap, 3),
         "candidates_before": len(candidates),
         "candidates_matched": matched,
         "dropped_as_referenced": len(dropped),
@@ -4580,6 +4674,7 @@ def register(mcp: FastMCP) -> None:
         min_weight: float = 0.0,
         include_harness: bool = False,
         include_fixtures: bool = False,
+        corroborate_with: str | None = None,
         limit: int = 200,
         cursor: int = 0,
         summary_only: bool = False,
@@ -4599,6 +4694,12 @@ def register(mcp: FastMCP) -> None:
         Each row carries ``confidence`` (0-1) and ``reasons``.
 
         v0.7 (B3): paginated. Payload always includes ``caveat``.
+
+        Unreleased: ``corroborate_with=<path to a Graphify graph.json>`` drops
+        candidates that a second extractor sees reaching production code. The
+        caveat above names the exact failure this addresses — a test that
+        exercises production through an indirection this call graph can't
+        follow. A different extractor often can.
         """ + WORKSPACE_DOCSTRING_NOTE
         st = get_state(workspace)
         pid = st.project_id
@@ -4702,6 +4803,14 @@ def register(mcp: FastMCP) -> None:
                 "reasons": reasons,
                 "confidence": confidence,
             })
+        corroboration: dict[str, Any] | None = None
+        if corroborate_with:
+            orphans, corroboration = _corroborate_orphan_tests(
+                orphans, st=st, graph_path=corroborate_with
+            )
+            if corroboration.get("isError"):
+                return corroboration
+
         total = len(orphans)
         payload: dict[str, Any] = {
             "count": total,
@@ -4713,6 +4822,8 @@ def register(mcp: FastMCP) -> None:
             "test_files_without_symbols": len(blind_test_files),
             "test_files_without_symbols_sample": sorted(blind_test_files)[:10],
         }
+        if corroboration is not None:
+            payload["corroboration"] = corroboration
         if blind_test_files:
             payload["hint"] = (
                 f"{len(blind_test_files)} of {test_files_count} indexed test "

@@ -6,6 +6,33 @@ follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Added — corroborate orphan tests against an external graph
+
+`find_orphan_tests(corroborate_with=<path to a Graphify graph.json>)` drops
+tests a second extractor sees reaching production code. The mirror image of
+dead-code corroboration: there the question is "does anything refer to this?",
+here it is "does this reach anything outside the tests?".
+
+The tool's own caveat already named this failure — a test that exercises
+production through an indirection the static cone can't follow. Sometimes a
+different extractor can.
+
+**It does not always help, and the payload says so.** Measured on two repos:
+
+| Repo | Orphans | After | Why |
+|---|---:|---:|---|
+| Java service (JUnit `setUp` doing `new RepositoryImpl()`) | 17 | **9** | direct instantiation livespec missed; verified by hand |
+| livespec itself (in-process FastMCP `Client(mcp)` harness) | 26 | 26 | string-dispatched harness is a blind spot **both** extractors share |
+
+Corroboration only helps where blind spots differ. Finding nothing is a real
+answer, not a failure.
+
+- Only landing on a **non-test** file counts — a test calling a test helper is
+  still an orphan, which is the definition
+- Depth 1 only, so each rescue stays individually checkable
+- Shares the load + overlap guard with dead-code corroboration (one loader, one
+  set of failure modes)
+
 ### Added — group Spec proposals by external communities
 
 `propose_specs_from_codebase(community_graph=<path to a Graphify graph.json>)`

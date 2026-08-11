@@ -3,7 +3,7 @@
 [![PyPI](https://img.shields.io/pypi/v/livespec.svg)](https://pypi.org/project/livespec/)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/downloads/)
 [![License: AGPL v3](https://img.shields.io/badge/license-AGPL--3.0--only-blue.svg)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-706%20passed-brightgreen.svg)](https://github.com/Rixmerz/livespec/actions)
+[![Tests](https://img.shields.io/badge/tests-709%20passed-brightgreen.svg)](https://github.com/Rixmerz/livespec/actions)
 
 > **Public beta (v0.31).** Local-first code intelligence for AI agents.
 > Call graph, impact analysis, and Spec ↔ code traceability. Search is
@@ -486,8 +486,12 @@ Always registered (including markdown Spec import + OpenSpec sync).
   flows (`route_ref` + `invokes_route`, best with `group_db`): servers with
   no indexed client hop + clients with no matched server. Graph only —
   confirm with traffic before deleting.
-- `find_orphan_tests(max_depth=10)` — test functions whose forward cone
-  never reaches a non-test symbol.
+- `find_orphan_tests(max_depth=10, corroborate_with=None)` — test functions
+  whose forward cone never reaches a non-test symbol. `corroborate_with` drops
+  tests a Graphify graph sees reaching production (a Java service went 17 → 9;
+  livespec's own suite went 26 → 26, because its in-process harness is a blind
+  spot **both** extractors share — corroboration only helps where blind spots
+  differ).
 - `find_endpoints(framework=None)` — framework entry points. Decorator
   markers (`framework` ∈ {flask, fastapi, click, pytest, fastmcp, celery,
   django, spring, angular}), filesystem routing ({nextjs, fresh, sveltekit,

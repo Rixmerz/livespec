@@ -285,6 +285,162 @@ async def test_graph_of_a_different_repo_is_refused(workspace: Path):
 
 
 # --------------------------------------------------------------------------
+# find_orphan_tests corroboration
+# --------------------------------------------------------------------------
+#
+# The mirror image of dead code. There the question is "does anything refer to
+# this?" (inbound); here it is "does this reach anything outside the tests?"
+# (outbound) — the exact claim find_orphan_tests makes.
+#
+# Measured, and worth recording because it did NOT generalise:
+#   sa-holiday-taxis (Java, JUnit `setUp` doing `new BookingRepositoryImpl()`)
+#     17 orphans -> 9. All 8 drops via `calls` into production. Verified by hand.
+#   livespec itself (Python, in-process FastMCP `Client(mcp)` harness)
+#     26 orphans -> 26. Zero drops.
+# The second is not a bug. A harness that dispatches by string name is a blind
+# spot BOTH extractors share, and corroboration only helps where blind spots
+# differ. The feature is honest about finding nothing.
+
+
+def _orphan_graph(workspace: Path, test_sym: dict, target_file: str) -> str:
+    """Graph where the orphan test has an outbound `calls` edge to target_file."""
+    p = workspace / "orphan-graph.json"
+    p.write_text(
+        json.dumps(
+            {
+                "directed": True,
+                "nodes": [
+                    {
+                        "id": "t0",
+                        "label": test_sym["qualified_name"].split(".")[-1],
+                        "source_file": test_sym["file_path"],
+                        "source_location": "L1",
+                        "_origin": "ast",
+                    },
+                    {
+                        "id": "p0",
+                        "label": "target",
+                        "source_file": target_file,
+                        "source_location": "L1",
+                        "_origin": "ast",
+                    },
+                ],
+                "links": [
+                    {
+                        "source": "t0",
+                        "target": "p0",
+                        "relation": "calls",
+                        "confidence": "EXTRACTED",
+                        "_origin": "ast",
+                    }
+                ],
+            }
+        )
+    )
+    return str(p)
+
+
+def _repo_with_an_orphan_test(workspace: Path) -> None:
+    (workspace / "src").mkdir()
+    (workspace / "src" / "__init__.py").write_text("")
+    (workspace / "src" / "prod.py").write_text("def real_work():\n    return 1\n")
+    tests = workspace / "tests"
+    tests.mkdir()
+    (tests / "__init__.py").write_text("")
+    # Reaches production only through a name the static cone cannot follow.
+    (tests / "test_thing.py").write_text(
+        "def test_via_indirection():\n"
+        "    fn = globals().get('missing')\n"
+        "    assert fn is None\n"
+    )
+
+
+@pytest.mark.asyncio
+async def test_orphan_dropped_when_external_graph_shows_it_reaching_production(
+    workspace: Path,
+):
+    _repo_with_an_orphan_test(workspace)
+    async with Client(mcp) as c:
+        await c.call_tool("index_project", {})
+        base = (await c.call_tool("find_orphan_tests", {})).data
+        assert base["count"] >= 1
+        target = base["orphan_tests"][0]
+
+        out = (
+            await c.call_tool(
+                "find_orphan_tests",
+                {
+                    "summary_only": True,
+                    "corroborate_with": _orphan_graph(
+                        workspace, target, "src/prod.py"
+                    ),
+                },
+            )
+        ).data
+        assert out["count"] == base["count"] - 1
+        report = out["corroboration"]
+        assert report["dropped_as_reaching_production"] == 1
+        assert report["dropped_by_relation"] == {"calls": 1}
+
+
+@pytest.mark.asyncio
+async def test_reaching_only_another_test_file_is_not_a_rescue(workspace: Path):
+    """A test calling a test helper is still an orphan — that is the whole
+    definition. Only landing on production counts."""
+    _repo_with_an_orphan_test(workspace)
+    (workspace / "tests" / "helpers.py").write_text("def helper():\n    return 2\n")
+    async with Client(mcp) as c:
+        await c.call_tool("index_project", {})
+        base = (await c.call_tool("find_orphan_tests", {})).data
+        target = base["orphan_tests"][0]
+        out = (
+            await c.call_tool(
+                "find_orphan_tests",
+                {
+                    "summary_only": True,
+                    "corroborate_with": _orphan_graph(
+                        workspace, target, "tests/helpers.py"
+                    ),
+                },
+            )
+        ).data
+        assert out["count"] == base["count"]
+        assert out["corroboration"]["dropped_as_reaching_production"] == 0
+
+
+@pytest.mark.asyncio
+async def test_orphan_corroboration_refuses_a_foreign_graph(workspace: Path):
+    _repo_with_an_orphan_test(workspace)
+    async with Client(mcp) as c:
+        await c.call_tool("index_project", {})
+        p = workspace / "foreign.json"
+        p.write_text(
+            json.dumps(
+                {
+                    "directed": True,
+                    "nodes": [
+                        {
+                            "id": "n0",
+                            "label": "X",
+                            "source_file": "elsewhere/x.py",
+                            "source_location": "L1",
+                        }
+                    ],
+                    "links": [],
+                }
+            )
+        )
+        out = (
+            await c.call_tool(
+                "find_orphan_tests",
+                {"summary_only": True, "corroborate_with": str(p)},
+            )
+        ).data
+        assert out["isError"] is True
+        assert "shares almost no files" in out["error"]
+
+
+# --------------------------------------------------------------------------
 # propose_specs_from_codebase grouping
 # --------------------------------------------------------------------------
 
