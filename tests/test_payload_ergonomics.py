@@ -1,4 +1,4 @@
-"""v0.31.4 payload-ergonomics batch — three findings from a dogfood pass on a
+"""Unreleased payload-ergonomics batch — three findings from a dogfood pass on a
 real 13-repo polyrepo group.
 
 1. `find_dead_code` reported wildly different counts for the same repo depending
@@ -28,7 +28,6 @@ from fastmcp import Client
 
 from livespec_mcp.server import mcp
 from livespec_mcp.tools.flow_explorer import create_flow_host_app
-
 
 # --------------------------------------------------------------------------
 # 1. find_dead_code: filter attribution

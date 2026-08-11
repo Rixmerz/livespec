@@ -190,13 +190,12 @@ async def main() -> int:
     from starlette.testclient import TestClient
 
     from livespec_mcp.explorer.asgi import mount_explorer
-    from livespec_mcp.explorer.fastapi import enable_explorer
 
     app = Starlette(routes=[Route("/", lambda r: PlainTextResponse("api"))])
     mount_explorer(app, workspace=WS)
     client = TestClient(app)
     r = client.get("/explorer/endpoints")
-    if r.status_code == 200 and "swagger" in r.text.lower() or "Spec Explorer" in r.text:
+    if (r.status_code == 200 and "swagger" in r.text.lower()) or "Spec Explorer" in r.text:
         ok("mount_explorer /explorer/endpoints", f"status={r.status_code}")
     elif r.status_code == 200:
         ok("mount_explorer /explorer/endpoints", f"status={r.status_code} len={len(r.text)}")

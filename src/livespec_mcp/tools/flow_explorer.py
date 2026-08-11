@@ -668,7 +668,7 @@ th { font-size:12px; color:var(--muted); text-transform:uppercase; letter-spacin
 .frame-bar .title { font-weight:600; flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .frame-overlay iframe { flex:1; width:100%; border:0; background:var(--surface); }
 
-/* Cross-repo Specs: master–detail */
+/* Cross-repo Specs: master-detail */
 .specs-layout {
   display:grid; grid-template-columns:minmax(260px,340px) 1fr; gap:16px; align-items:start;
 }
@@ -756,7 +756,7 @@ a { color:var(--accent); }
     </div>
   </section>
   <section class="panel" data-panel="repos">
-    <div class="note">Open each repo’s Spec Explorer <strong>inside</strong> Flow (full UI). Served at <code>/repos/&lt;name&gt;/explorer/</code>.</div>
+    <div class="note">Open each repo's Spec Explorer <strong>inside</strong> Flow (full UI). Served at <code>/repos/&lt;name&gt;/explorer/</code>.</div>
     <div class="grid" id="repo-grid"></div>
   </section>
   <section class="panel" data-panel="api">

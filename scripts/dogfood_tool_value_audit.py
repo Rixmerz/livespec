@@ -120,7 +120,7 @@ async def _call(client: Client, name: str, args: dict[str, Any]) -> dict[str, An
             "args_keys": sorted(k for k in args if k != "workspace"),
             "signal": _signal(payload),
         }
-    except Exception as e:  # noqa: BLE001 — audit must never abort mid-matrix
+    except Exception as e:
         ms = int((time.perf_counter() - t0) * 1000)
         return {
             "tool": name,
@@ -179,7 +179,7 @@ async def _seed(client: Client, workspace: str) -> dict[str, Any]:
                 seed["endpoint_qname"] = qn
                 seed["endpoint_path"] = ep.get("http_path") or ep.get("path")
                 break
-    except Exception:  # noqa: BLE001
+    except Exception:
         pass
     ls = await client.call_tool(
         "list_specs",
@@ -200,7 +200,7 @@ async def _seed(client: Client, workspace: str) -> dict[str, Any]:
                         {"workspace": workspace, "spec_id": sid},
                     )
                 )
-            except Exception:  # noqa: BLE001
+            except Exception:
                 continue
             scens = impl.get("scenarios") or []
             if scens and scens[0].get("name"):
@@ -218,7 +218,7 @@ async def _seed(client: Client, workspace: str) -> dict[str, Any]:
                 scens = impl.get("scenarios") or []
                 if scens and scens[0].get("name"):
                     seed["scenario_name"] = scens[0]["name"]
-            except Exception:  # noqa: BLE001
+            except Exception:
                 pass
     lsc = await client.call_tool("list_spec_changes", {"workspace": workspace})
     changes = (_data(lsc).get("changes") or _data(lsc).get("spec_changes") or [])
