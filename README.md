@@ -384,7 +384,7 @@ gates it, you build with live links; *brownfield* → `/livespec-onboard` orient
 `propose_specs_from_codebase` reconstructs intent, **author OpenSpec first**
 (export only as a bootstrap dump).
 
-## Tools (44 total: 27 core + 12 Spec plugin + 5 docs plugin)
+## Tools (45 total: 28 core + 12 Spec plugin + 5 docs plugin)
 
 Every tool requires `workspace` (absolute project root). Pass it on each call;
 omitting it is an error (no env fallback). LRU cache (8 workspaces) — one MCP
@@ -396,9 +396,9 @@ until the workspace has `spec` rows, a `.mcp-docs/explorer/` bundle, or you
 set `LIVESPEC_PLUGINS`. **`import_specs_from_markdown`** and
 **`sync_openspec`** stay always visible (brownfield bootstrap). After the
 first `workspace=` call on a repo with Specs + explorer, the menu grows to
-**44** tools. Reconnect the MCP host if your client cached an old tool list.
+**45** tools. Reconnect the MCP host if your client cached an old tool list.
 
-### Default surface — code intel + Spec agentic (27)
+### Default surface — code intel + Spec agentic (28)
 
 These tools answer the questions an agent ASKS on an unfamiliar codebase.
 Always registered (including markdown Spec import + OpenSpec sync).
@@ -539,6 +539,13 @@ an individual scenario with `link_scenario_symbol` (Spec plugin).
   the load-bearing check is *every requirement MUST have ≥1 scenario*.
 - `list_spec_changes(status?)` / `get_spec_change(name)` — inspect change
   proposals (proposal/design/tasks prose + ADD/MODIFY/REMOVE/RENAME deltas).
+
+#### Cross-repo discovery (1, v0.31.3)
+- `get_cross_repo_guide()` — the polyrepo how-to (group_db, mirrored `xrepo-*`
+  Specs, Flow Explorer, traps) plus a live `group` snapshot, as a **tool** so
+  it works on hosts that cache a stale `resources/list` and refuse reads for
+  URIs missing from that cache. Same content as the `project://cross-repo`
+  resource.
 
 #### Spec Explorer (docs plugin — not always-visible)
 - `export_explorer(base?, head?, generated_at?)` — writes

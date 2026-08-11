@@ -44,8 +44,41 @@ Todo el stack es local-first: 0 servicios externos, 0 API keys obligatorias, 0 D
 
 ## 3. Estado actual
 
-**HEAD: release `v0.31.3`. Tests 672.**
+**HEAD: `v0.31.3` + batch de ergonomía sin taggear. Tests 681.**
 Pin PyPI / plugin / `uvx livespec@0.31.3`.
+
+### Unreleased — ergonomía de payloads (dogfood polyrepo)
+
+Batch salido de usar livespec como agente sobre un grupo polyrepo real (13
+repos en un `group_db` + varios sueltos). Tres hallazgos, ninguno en el
+motor: los tres viven en la capa de payload. Tests 672 → **681**
+(`tests/test_payload_ergonomics.py`).
+
+1. **`find_dead_code` no decía qué filtros produjeron el número.** Dos
+   corridas legítimas sobre el mismo repo daban 6 y 24 sin nada en el payload
+   que dijera cuál era cuál; la explicación `not_swept` que ya existía sólo
+   disparaba con count exactamente 0. Nuevo `filtered_out` (+
+   `filtered_out_hint`) atribuye cada descarte al flag que lo incluiría, con
+   contadores y sin listas de nombres, así que también viaja en
+   `summary_only` — que es el modo donde la pregunta se hace. Validado: el
+   mismo repo pasa de 6 a 24 con `include_tests=True`, y ahora el payload lo
+   dice solo.
+2. **El replay automático de `links_seed` era ruido.** Emitía una fila por
+   mapping en cada `index_project`, así que un repo en estado estable
+   devolvía decenas de filas diciendo "no-op". Ahora elide las no-op y
+   reporta `results_omitted`; los contadores no cambian y el tool explícito
+   `bulk_link_spec_symbols` sigue itemizando todo (el caller eligió esos
+   mappings).
+3. **El host del Flow Explorer se saltaba repos cuyo bundle era posterior al
+   export.** `local_explorer` en `data.json` graba el estado del disco al
+   momento del export y el host lo trataba como única verdad: un repo cuyo
+   Spec Explorer se generó después quedaba sin montar y su
+   `/repos/<name>/explorer/` daba 404. Ahora el disco es la autoridad, con
+   fallback derivado del root del proyecto; un repo sin bundle real sigue sin
+   montarse.
+
+Docs: README corregido de 44 → **45** tools (28 core) — `get_cross_repo_guide`
+entró en 0.31.3 y no se había agregado ni al conteo ni a la lista.
 
 ### v0.31.3 (2026-08-07)
 

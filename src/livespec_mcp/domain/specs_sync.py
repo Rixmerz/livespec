@@ -290,13 +290,26 @@ def import_specs_from_markdown_file(
     return out
 
 
-def bulk_link_spec_symbols_impl(st: Any, mappings: list[dict[str, Any]]) -> dict[str, Any]:
-    """Core bulk-link loop (shared with MCP tool)."""
+def bulk_link_spec_symbols_impl(
+    st: Any,
+    mappings: list[dict[str, Any]],
+    *,
+    quiet_noop_results: bool = False,
+) -> dict[str, Any]:
+    """Core bulk-link loop (shared with MCP tool).
+
+    ``quiet_noop_results=True`` omits per-row entries for links that already
+    existed (``linked=False`` with no error). Errors and newly-created links
+    are always reported, and the counts are unaffected. Used by the automatic
+    ``links_seed`` replay, where every row is a no-op on a steady-state repo
+    and the full list is a large payload that says nothing happened.
+    """
     pid = st.project_id
     results: list[dict[str, Any]] = []
     n_linked = 0
     n_skipped = 0
     n_failed = 0
+    n_omitted = 0
     for m in mappings:
         spec_id = m.get("spec_id")
         symbol_qname = m.get("symbol_qname")
@@ -390,23 +403,29 @@ def bulk_link_spec_symbols_impl(st: Any, mappings: list[dict[str, Any]]) -> dict
             n_linked += 1
         else:
             n_skipped += 1
-        results.append(
-            {
-                "spec_id": spec_id,
-                "symbol_qname": symbol_qname,
-                "ok": True,
-                "linked": linked,
-                "error": None,
-            }
-        )
+        if quiet_noop_results and not linked:
+            n_omitted += 1
+        else:
+            results.append(
+                {
+                    "spec_id": spec_id,
+                    "symbol_qname": symbol_qname,
+                    "ok": True,
+                    "linked": linked,
+                    "error": None,
+                }
+            )
     st.conn.commit()
-    return {
+    payload: dict[str, Any] = {
         "linked": n_linked,
         "skipped": n_skipped,
         "failed": n_failed,
         "total": len(mappings),
         "results": results,
     }
+    if n_omitted:
+        payload["results_omitted"] = n_omitted
+    return payload
 
 
 def apply_links_seed(st: Any, seed_path: str | Path) -> dict[str, Any]:
@@ -436,7 +455,8 @@ def apply_links_seed(st: Any, seed_path: str | Path) -> dict[str, Any]:
         if "confidence" in entry:
             mapping["confidence"] = entry["confidence"]
         mappings.append(mapping)
-    return bulk_link_spec_symbols_impl(st, mappings)
+    # Automatic replay on every index_project: report only what changed.
+    return bulk_link_spec_symbols_impl(st, mappings, quiet_noop_results=True)
 
 
 def sync_specs_from_config(st: Any) -> dict[str, Any] | None:

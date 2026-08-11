@@ -6,6 +6,43 @@ follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Added — `find_dead_code` says which filters produced the count
+
+Two legitimate runs on the same repo could differ several-fold purely by
+flags, with nothing in the payload saying which run you were looking at. The
+existing `not_swept` explanation only fired on an exact zero, so a
+non-zero-but-surprising count stayed unexplained.
+
+- New `filtered_out` — candidates excluded per default filter, keyed by the
+  flag that would include them (`tests`, `non_python`, `public`,
+  `infrastructure`, `fs_routing`), plus `filtered_out_hint`
+- Counts only (never name lists), so it is returned in `summary_only` mode
+  too — the cheap mode is where the question usually gets asked
+- Absent entirely when no default filter fired, so the field signals
+  something rather than decorating every payload
+
+### Changed — automatic `links_seed` replay reports only what changed
+
+`index_project` emitted one result row per mapping on every run, so a
+steady-state repo produced a large payload whose every row said "no-op".
+
+- The automatic replay now elides no-op rows and reports `results_omitted`
+- Errors and newly-created links are still itemised; counts are unchanged
+- The explicit `bulk_link_spec_symbols` tool keeps reporting every row — the
+  caller chose those mappings and wants each outcome
+
+### Fixed — Flow Explorer host skipped repos whose bundle post-dated the export
+
+`local_explorer` in `data.json` records disk state at export time, and the
+host treated it as the only source of truth. A repo whose Spec Explorer was
+generated after the last flow export stayed unmountable — its
+`/repos/<name>/explorer/` returned 404 — until the flow bundle was
+re-exported.
+
+- The bundle on disk is now the authority; `local_explorer` is a hint, with a
+  fallback derived from the project root
+- A repo with genuinely no bundle is still skipped (no invented mounts)
+
 ## [0.31.3] - 2026-08-07
 
 ### Fixed — Cross-repo discovery when hosts cache resources/list

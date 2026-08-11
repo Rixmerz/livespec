@@ -497,13 +497,29 @@ def create_flow_host_app(flow_dir: Path, projects: list[dict[str, Any]] | None =
     mounted: list[str] = []
     for p in projects:
         name = str(p.get("name") or "").strip()
-        local = p.get("local_explorer")
-        if not name or not local:
+        if not name:
             continue
-        bundle = Path(str(local)).resolve()
-        if bundle.is_file():
-            bundle = bundle.parent
-        if not bundle.is_dir() or not (bundle / "index.html").is_file():
+        # Unreleased: the bundle on disk is the authority, `local_explorer` only a
+        # hint. It records whether a bundle existed at *export* time, so a repo
+        # whose Spec Explorer was generated after the last flow export used to
+        # stay unmountable until the flow bundle was re-exported.
+        candidates: list[Path] = []
+        local = p.get("local_explorer")
+        if local:
+            candidates.append(Path(str(local)))
+        root = p.get("root")
+        if root:
+            candidates.append(Path(str(root)) / ".mcp-docs" / "explorer" / "index.html")
+
+        bundle: Path | None = None
+        for candidate in candidates:
+            resolved = candidate.resolve()
+            if resolved.is_file():
+                resolved = resolved.parent
+            if resolved.is_dir() and (resolved / "index.html").is_file():
+                bundle = resolved
+                break
+        if bundle is None:
             continue
         prefix = f"/repos/{name}/explorer"
 

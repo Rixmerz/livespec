@@ -3799,6 +3799,13 @@ def register(mcp: FastMCP) -> None:
         call; `cursor` resumes from a previous call's `next_cursor`;
         `summary_only=True` returns just the count + breakdown without the
         list. The total count is always exact, regardless of pagination.
+
+        Unreleased: `filtered_out` reports how many candidates each default
+        filter excluded, keyed by the flag that would include them
+        (`tests`, `non_python`, `public`, `infrastructure`, `fs_routing`).
+        Two runs on the same repo can differ several-fold purely by flags;
+        this field says which run you are looking at. Counts only, so it is
+        safe in `summary_only` mode (where it is also returned).
         """ + WORKSPACE_DOCSTRING_NOTE
         st = get_state(workspace)
         pid = st.project_id
@@ -3983,8 +3990,24 @@ def register(mcp: FastMCP) -> None:
         alias_lastsegs = frozenset(decorator_aliases)
         filtered: list[dict[str, Any]] = []
         fs_routing_skipped = 0
+        # Unreleased: attribute every flag-flippable skip to the flag that would
+        # include it. Two legitimate runs of this tool on the same repo can
+        # differ several-fold purely by flags; without this the caller cannot
+        # tell which number it is looking at. Counts only (never name lists) so
+        # the payload stays bounded.
+        filtered_out: dict[str, int] = {}
+
+        def _drop(reason: str) -> None:
+            filtered_out[reason] = filtered_out.get(reason, 0) + 1
+
         for r in rows:
             meta = dict(r)
+            # Pulled ahead of is_entry_point_path (which also returns True for
+            # test paths when include_tests is False) purely to attribute the
+            # skip; the set of skipped symbols is unchanged.
+            if not include_tests and _is_test_file_path(meta["file_path"]):
+                _drop("tests")
+                continue
             if is_entry_point_path(meta["file_path"]):
                 continue
             if _is_bundler_output_path(meta["file_path"]):
@@ -3992,20 +4015,26 @@ def register(mcp: FastMCP) -> None:
             # v0.11 P1 (bug #19): TS framework filesystem-routing entry points.
             if not include_ts_framework_routes and _is_ts_framework_entry_point(meta):
                 fs_routing_skipped += 1
+                _drop("fs_routing")
                 continue
             if not include_non_python and not meta["file_path"].endswith(".py"):
+                _drop("non_python")
                 continue
             if not include_infrastructure and _is_implicit_entry_point(meta):
+                _drop("infrastructure")
                 continue
             if not include_infrastructure and _has_entry_point_decorator(
                 meta.get("decorators"), alias_lastsegs
             ):
+                _drop("infrastructure")
                 continue
             # v0.13 P0: the symbol itself is decorator machinery (an alias
             # target or an IfExp branch like `_noop_decorator`).
             if not include_infrastructure and meta["name"].lower() in alias_lastsegs:
+                _drop("infrastructure")
                 continue
             if not include_public and (meta.get("visibility") in _PUBLIC_VIS):
+                _drop("public")
                 continue
             if meta["qualified_name"] in call_style_qnames:
                 continue
@@ -4021,6 +4050,7 @@ def register(mcp: FastMCP) -> None:
             if not include_infrastructure:
                 qname_parts = meta["qualified_name"].split(".")
                 if meta["name"] in global_module_refs:
+                    _drop("infrastructure")
                     continue
                 # v0.8 P2 fix #11: nested-fn closure callback. A function
                 # defined inside another function whose name is referenced
@@ -4029,25 +4059,32 @@ def register(mcp: FastMCP) -> None:
                 # Per-file lookup so nested names don't cross-collide.
                 file_nested = nested_uses_by_file.get(meta["file_path"])
                 if file_nested and meta["name"] in file_nested:
+                    _drop("infrastructure")
                     continue
                 if meta["kind"] == "method" and len(qname_parts) >= 2:
                     parent_class_short = qname_parts[-2]
                     if parent_class_short in global_module_refs:
+                        _drop("infrastructure")
                         continue
                     parent_class_qname = ".".join(qname_parts[:-1])
                     if parent_class_qname in protected_class_qnames:
+                        _drop("infrastructure")
                         continue
                     # v0.13 P2: Angular template reachability + lifecycle.
                     if parent_class_qname in ng_template_classes:
+                        _drop("infrastructure")
                         continue
                     if parent_class_qname in ng_di_classes:
+                        _drop("infrastructure")
                         continue
                     if parent_class_qname in spring_stereotype_classes:
+                        _drop("infrastructure")
                         continue
                     if (
                         meta["name"] in _NG_LIFECYCLE_HOOKS
                         and parent_class_qname in ng_any_classes
                     ):
+                        _drop("infrastructure")
                         continue
 
             filtered.append(meta)
@@ -4068,6 +4105,20 @@ def register(mcp: FastMCP) -> None:
         }
         if auto_enabled:
             payload["auto_enabled"] = auto_enabled
+        if filtered_out:
+            # Present in summary_only too: this is precisely the field that
+            # explains a surprising count, so stripping it in the cheap mode
+            # would hide the answer from the caller who needs it most.
+            payload["filtered_out"] = dict(sorted(filtered_out.items()))
+            payload["filtered_out_hint"] = (
+                "Candidates excluded by default filters, per flag that would "
+                "include them: tests=include_tests, non_python="
+                "include_non_python, public=include_public, infrastructure="
+                "include_infrastructure, fs_routing="
+                "include_ts_framework_routes. Counts are not mutually "
+                "exclusive across runs — a symbol is attributed to the first "
+                "filter that excluded it."
+            )
         _attach_dead_code_not_swept(
             payload,
             st=st,
