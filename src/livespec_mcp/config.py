@@ -73,6 +73,11 @@ class RepoConfig:
     # [specs] openspec_dir — an OpenSpec tree re-synced (specs + changes) after
     # each index_project. Relative paths resolve against the workspace root.
     specs_openspec_dir: str | None = None
+    # [graph] — an external code graph (Graphify graph.json) used as
+    # corroborating evidence by find_dead_code / find_orphan_tests when they
+    # are called without an explicit ``corroborate_with``. Never a source of
+    # symbols or edges. Relative paths resolve against the workspace root.
+    external_graph: str | None = None
     # [workspace] — cross-project grouping: a shared DB path lets several repo
     # roots live in one database (each its own project_id) so a Spec can link
     # symbols across repos. Relative paths resolve against the workspace root.
@@ -96,6 +101,9 @@ class RepoConfig:
                 "sync_from": list(self.specs_sync_from),
                 "links_seed": self.specs_links_seed,
                 "openspec_dir": self.specs_openspec_dir,
+            },
+            "graph": {
+                "external": self.external_graph,
             },
             "workspace": {
                 "group_db": self.group_db,
@@ -260,6 +268,11 @@ def load_repo_config(workspace: Path) -> RepoConfig:
         # sync_from = ["docs/extra-requirements.md"]
         links_seed = "docs/requirements/spec-links.json"  # optional bulk_link replay
 
+        [graph]
+        # External code graph (Graphify) used as corroborating evidence by
+        # find_dead_code / find_orphan_tests. Never a source of symbols/edges.
+        external = "graphify-out/graph.json"
+
         [agent]
         log_calls = false          # append tool-call lines to .mcp-docs/agent_log.jsonl
 
@@ -375,6 +388,20 @@ def load_repo_config(workspace: Path) -> RepoConfig:
     ):
         raise _config_error("[specs].openspec_dir must be a non-empty string path")
 
+    graph_tbl = data.get("graph", {})
+    if not isinstance(graph_tbl, dict):
+        raise _config_error("[graph] must be a table")
+    unknown_graph = set(graph_tbl) - {"external"}
+    if unknown_graph:
+        raise _config_error(
+            f"unknown [graph] keys: {sorted(unknown_graph)} (valid: external)"
+        )
+    external_graph = graph_tbl.get("external")
+    if external_graph is not None and (
+        not isinstance(external_graph, str) or not external_graph.strip()
+    ):
+        raise _config_error("[graph].external must be a non-empty string path")
+
     workspace_tbl = data.get("workspace", {})
     if not isinstance(workspace_tbl, dict):
         raise _config_error("[workspace] must be a table")
@@ -399,5 +426,6 @@ def load_repo_config(workspace: Path) -> RepoConfig:
         specs_sync_from=tuple(sync_from),
         specs_links_seed=links_seed,
         specs_openspec_dir=openspec_dir,
+        external_graph=external_graph,
         group_db=group_db,
     )

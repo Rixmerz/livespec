@@ -786,7 +786,12 @@ def register(
         # Optional external communities. Loaded up front so a bad path fails
         # before any work, and so the error is about the file rather than
         # surfacing later as mysteriously module-shaped groups.
+        from livespec_mcp.tools.analysis import _resolve_corroboration_source
+
         ext_graph = None
+        community_graph, community_graph_hint = _resolve_corroboration_source(
+            st, community_graph
+        )
         if community_graph:
             from livespec_mcp.domain.external_graph import (
                 load_external_graph,
@@ -1006,6 +1011,8 @@ def register(
             "skipped_covered_count": skipped_covered_count,
             "skip_already_covered": skip_already_covered,
         }
+        if ext_graph is None and community_graph_hint:
+            payload["grouping_available"] = community_graph_hint
         if ext_graph is not None:
             payload["grouping"] = {
                 "source": ext_graph.path,

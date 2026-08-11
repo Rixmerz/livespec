@@ -3000,6 +3000,44 @@ def _package_marker_is_emptyish(ws: Path, rel_path: str) -> bool:
     return not body.strip()
 
 
+#: Where Graphify writes by default. Used only to *tell* the caller a graph is
+#: sitting there — never to silently consume it. An index that quietly changed
+#: its answers because a file appeared on disk would be worse than one that
+#: needs asking.
+_DEFAULT_EXTERNAL_GRAPH = "graphify-out/graph.json"
+
+
+def _resolve_corroboration_source(
+    st: AppState, explicit: str | None
+) -> tuple[str | None, str | None]:
+    """Pick the external graph to use, and a hint when one is merely available.
+
+    Returns ``(path_or_None, hint_or_None)``. Precedence: the explicit argument,
+    then ``[graph] external`` in ``.livespec.toml``. A graph sitting at
+    Graphify's default output path is reported as a hint only — corroboration
+    changes what the tool reports, so it stays opt-in.
+    """
+    if explicit:
+        return explicit, None
+
+    from livespec_mcp.config import load_repo_config
+
+    configured = load_repo_config(st.settings.workspace).external_graph
+    if configured:
+        return configured, None
+
+    default_path = st.settings.workspace / _DEFAULT_EXTERNAL_GRAPH
+    if default_path.is_file():
+        return None, (
+            f"An external code graph is available at {_DEFAULT_EXTERNAL_GRAPH}. "
+            "Pass corroborate_with to drop candidates a second extractor still "
+            'sees referenced, or set `[graph] external = '
+            f'"{_DEFAULT_EXTERNAL_GRAPH}"` in .livespec.toml to use it by '
+            "default."
+        )
+    return None, None
+
+
 def _load_corroborating_graph(
     st: AppState, graph_path: str
 ) -> tuple[Any, dict[str, Any] | None]:
@@ -4309,9 +4347,12 @@ def register(mcp: FastMCP) -> None:
             filtered.append(meta)
 
         corroboration: dict[str, Any] | None = None
-        if corroborate_with:
+        graph_path, corroboration_hint = _resolve_corroboration_source(
+            st, corroborate_with
+        )
+        if graph_path:
             filtered, corroboration = _corroborate_dead_code(
-                filtered, st=st, graph_path=corroborate_with
+                filtered, st=st, graph_path=graph_path
             )
             if corroboration.get("isError"):
                 return corroboration
@@ -4334,6 +4375,8 @@ def register(mcp: FastMCP) -> None:
             payload["auto_enabled"] = auto_enabled
         if corroboration is not None:
             payload["corroboration"] = corroboration
+        elif corroboration_hint:
+            payload["corroboration_available"] = corroboration_hint
         if filtered_out:
             # Present in summary_only too: this is precisely the field that
             # explains a surprising count, so stripping it in the cheap mode
@@ -4804,9 +4847,12 @@ def register(mcp: FastMCP) -> None:
                 "confidence": confidence,
             })
         corroboration: dict[str, Any] | None = None
-        if corroborate_with:
+        graph_path, corroboration_hint = _resolve_corroboration_source(
+            st, corroborate_with
+        )
+        if graph_path:
             orphans, corroboration = _corroborate_orphan_tests(
-                orphans, st=st, graph_path=corroborate_with
+                orphans, st=st, graph_path=graph_path
             )
             if corroboration.get("isError"):
                 return corroboration
@@ -4824,6 +4870,8 @@ def register(mcp: FastMCP) -> None:
         }
         if corroboration is not None:
             payload["corroboration"] = corroboration
+        elif corroboration_hint:
+            payload["corroboration_available"] = corroboration_hint
         if blind_test_files:
             payload["hint"] = (
                 f"{len(blind_test_files)} of {test_files_count} indexed test "

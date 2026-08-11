@@ -44,7 +44,7 @@ Todo el stack es local-first: 0 servicios externos, 0 API keys obligatorias, 0 D
 
 ## 3. Estado actual
 
-**HEAD: `v0.31.4` + integración Graphify sin taggear. Tests 709.**
+**HEAD: `v0.31.4` + integración Graphify sin taggear. Tests 714.**
 Pin PyPI / plugin / `uvx livespec@0.31.4`.
 
 ### Unreleased — consumir Graphify en vez de solo coexistir
@@ -99,6 +99,16 @@ es que Graphify sea más exhaustivo — livespec encuentra más aristas en total
 es que falla distinto. Donde fallan igual (dispatch dinámico, harnesses por
 string, reflection) no se recupera nada, y el payload reporta cero en vez de
 fingir.
+
+**Cuarta pieza (descubribilidad).** Todo lo anterior era inalcanzable en la
+práctica: ningún agente va a pasar `corroborate_with` para un archivo que no
+sabe que existe — el mismo fallo de descubrimiento que motivó
+`get_cross_repo_guide` en 0.31.3. Nueva tabla `[graph] external` en
+`.livespec.toml`, y un grafo en la ruta por defecto de Graphify se **anuncia**
+en el payload (`corroboration_available`) pero **nunca se consume solo**: un
+índice que cambia sus respuestas porque apareció un archivo en disco sería peor
+que uno al que hay que pedírselo. Precedencia: argumento explícito → config →
+solo hint.
 
 Diferido a propósito: ingerir aristas en `symbol_edge` (medido: **133** aristas
 que livespec no tiene en su propio repo) y la capa documental (**316** aristas

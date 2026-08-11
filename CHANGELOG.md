@@ -6,6 +6,23 @@ follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Added — `[graph] external` config, and external graphs announce themselves
+
+The corroboration work above was unreachable in practice: an agent will never
+pass `corroborate_with` for a file it has no way to know exists. Same discovery
+failure `get_cross_repo_guide` was added for in 0.31.3.
+
+- New `.livespec.toml` table: `[graph] external = "graphify-out/graph.json"`.
+  When set, `find_dead_code`, `find_orphan_tests` and
+  `propose_specs_from_codebase` use it without being asked
+- A graph sitting at Graphify's default output path is reported as
+  `corroboration_available` / `grouping_available` — **announced, never
+  consumed**. An index that quietly changed its answers because a file appeared
+  on disk would be worse than one that has to be asked
+- Precedence: explicit argument → `[graph] external` → hint only
+- Unknown `[graph]` keys are rejected, like every other config table — a typoed
+  key must fail rather than be silently ignored
+
 ### Added — corroborate orphan tests against an external graph
 
 `find_orphan_tests(corroborate_with=<path to a Graphify graph.json>)` drops

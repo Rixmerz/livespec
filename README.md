@@ -3,7 +3,7 @@
 [![PyPI](https://img.shields.io/pypi/v/livespec.svg)](https://pypi.org/project/livespec/)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/downloads/)
 [![License: AGPL v3](https://img.shields.io/badge/license-AGPL--3.0--only-blue.svg)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-709%20passed-brightgreen.svg)](https://github.com/Rixmerz/livespec/actions)
+[![Tests](https://img.shields.io/badge/tests-714%20passed-brightgreen.svg)](https://github.com/Rixmerz/livespec/actions)
 
 > **Public beta (v0.31).** Local-first code intelligence for AI agents.
 > Call graph, impact analysis, and Spec ↔ code traceability. Search is
@@ -428,6 +428,13 @@ Always registered (including markdown Spec import + OpenSpec sync).
   # Optional extra OpenSpec markdown (### Requirement: only):
   # sync_from = ["docs/extra-requirements.md"]
   links_seed = "docs/requirements/livespec-spec-links.json"  # optional bulk_link seed
+
+  [graph]
+  # External code graph (Graphify) used as corroborating evidence by
+  # find_dead_code / find_orphan_tests and to group Spec proposals.
+  # Never a source of symbols or edges. A graph at the default path
+  # announces itself but is not used until you point at it here.
+  external = "graphify-out/graph.json"
 
   [workspace]
   group_db = "../.livespec-group/docs.db"  # cross-project: several repo roots

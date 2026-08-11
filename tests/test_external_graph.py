@@ -285,6 +285,113 @@ async def test_graph_of_a_different_repo_is_refused(workspace: Path):
 
 
 # --------------------------------------------------------------------------
+# Discovery: config + availability hint
+# --------------------------------------------------------------------------
+#
+# The integration was unreachable in practice before this. An agent will never
+# pass `corroborate_with` for a file it has no way to know exists — the same
+# discovery failure that `get_cross_repo_guide` was added for in 0.31.3. So:
+# `[graph] external` makes it the default for a repo, and a graph sitting at
+# Graphify's own output path announces itself. It never auto-consumes: an index
+# that quietly changed its answers because a file appeared on disk would be
+# worse than one that has to be asked.
+
+
+def _min_repo(workspace: Path) -> None:
+    (workspace / "pkg").mkdir()
+    (workspace / "pkg" / "__init__.py").write_text("")
+    (workspace / "pkg" / "core.py").write_text("def _unused():\n    return 1\n")
+
+
+def _graph_covering(workspace: Path, at: Path) -> None:
+    """A graph that matches this repo (so the overlap guard passes)."""
+    at.parent.mkdir(parents=True, exist_ok=True)
+    at.write_text(
+        json.dumps(
+            {
+                "directed": True,
+                "nodes": [
+                    {
+                        "id": "n0",
+                        "label": "_unused",
+                        "source_file": "pkg/core.py",
+                        "source_location": "L1",
+                        "community": 0,
+                        "_origin": "ast",
+                    }
+                ],
+                "links": [],
+            }
+        )
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_graph_at_the_default_path_announces_itself(workspace: Path):
+    _min_repo(workspace)
+    _graph_covering(workspace, workspace / "graphify-out" / "graph.json")
+    async with Client(mcp) as c:
+        await c.call_tool("index_project", {})
+        out = (await c.call_tool("find_dead_code", {"summary_only": True})).data
+        assert "graphify-out/graph.json" in out["corroboration_available"]
+        # Announced, NOT used: no corroboration ran.
+        assert "corroboration" not in out
+
+
+@pytest.mark.asyncio
+async def test_config_makes_corroboration_the_default_for_a_repo(workspace: Path):
+    _min_repo(workspace)
+    _graph_covering(workspace, workspace / "graphify-out" / "graph.json")
+    (workspace / ".livespec.toml").write_text(
+        '[graph]\nexternal = "graphify-out/graph.json"\n'
+    )
+    async with Client(mcp) as c:
+        await c.call_tool("index_project", {})
+        out = (await c.call_tool("find_dead_code", {"summary_only": True})).data
+        assert "corroboration" in out
+        assert "corroboration_available" not in out
+
+
+@pytest.mark.asyncio
+async def test_no_graph_anywhere_means_no_noise(workspace: Path):
+    _min_repo(workspace)
+    async with Client(mcp) as c:
+        await c.call_tool("index_project", {})
+        out = (await c.call_tool("find_dead_code", {"summary_only": True})).data
+        assert "corroboration" not in out
+        assert "corroboration_available" not in out
+
+
+@pytest.mark.asyncio
+async def test_explicit_argument_beats_config(workspace: Path):
+    _min_repo(workspace)
+    _graph_covering(workspace, workspace / "graphify-out" / "graph.json")
+    _graph_covering(workspace, workspace / "other.json")
+    (workspace / ".livespec.toml").write_text(
+        '[graph]\nexternal = "graphify-out/graph.json"\n'
+    )
+    async with Client(mcp) as c:
+        await c.call_tool("index_project", {})
+        out = (
+            await c.call_tool(
+                "find_dead_code",
+                {"summary_only": True, "corroborate_with": "other.json"},
+            )
+        ).data
+        assert out["corroboration"]["source"].endswith("other.json")
+
+
+def test_unknown_graph_keys_are_rejected(tmp_path: Path):
+    """A typoed config key must fail, not be silently ignored."""
+    from livespec_mcp.config import load_repo_config
+
+    (tmp_path / ".livespec.toml").write_text('[graph]\nexternl = "x.json"\n')
+    with pytest.raises(ValueError) as exc:
+        load_repo_config(tmp_path)
+    assert "unknown [graph] keys" in str(exc.value)
+
+
+# --------------------------------------------------------------------------
 # find_orphan_tests corroboration
 # --------------------------------------------------------------------------
 #
