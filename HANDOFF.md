@@ -44,7 +44,7 @@ Todo el stack es local-first: 0 servicios externos, 0 API keys obligatorias, 0 D
 
 ## 3. Estado actual
 
-**HEAD: `v0.31.4` + integración Graphify sin taggear. Tests 714.**
+**HEAD: `v0.31.4` + integración Graphify sin taggear. Tests 715.**
 Pin PyPI / plugin / `uvx livespec@0.31.4`.
 
 ### Unreleased — consumir Graphify en vez de solo coexistir
@@ -109,6 +109,24 @@ en el payload (`corroboration_available`) pero **nunca se consume solo**: un
 índice que cambia sus respuestas porque apareció un archivo en disco sería peor
 que uno al que hay que pedírselo. Precedencia: argumento explícito → config →
 solo hint.
+
+**Quinta pieza (barrido de 14 repos) — y el bug que encontró.** La afirmación
+"la corroboración ayuda" se apoyaba en 2 repos verificados a mano. El barrido
+(`scripts/dogfood_corroboration.py`, rutas por env y repos etiquetados
+posicionalmente) la convirtió en número: `find_dead_code` **382 → 264** (ayudó
+en 11 de 13, mediana 50%); `find_orphan_tests` **273 → 260** (ayudó en 3 de 7).
+O sea: corroborar dead code sirve ampliamente, corroborar tests huérfanos
+sirve poco.
+
+Y la primera corrida decía 382 → 167 (56%), con `method` como la relación de
+evidencia más grande (98 de 223 descartes). **Estaba mal.** Graphify emite
+`method` como `Clase -> .metodo()`: mismo archivo, desde la clase que lo
+declara, y lo tiene todo método. Es contención, igual que `contains`, y
+contarlo como evidencia volvía inmatable a todo método de toda clase. Pasarlo a
+`STRUCTURAL_RELATIONS` cortó el beneficio medido casi a la mitad. **Dos repos
+verificados a mano no lo revelaron; trece sí.** Hay test de regresión
+(`test_method_is_structural_not_evidence`) y los números publicados quedaron
+corregidos en README, CHANGELOG y COMPETITIVE_GRAPHIFY.
 
 Diferido a propósito: ingerir aristas en `symbol_edge` (medido: **133** aristas
 que livespec no tiene en su propio repo) y la capa documental (**316** aristas

@@ -5,9 +5,8 @@ systematic rather than random: they track what the extractor cannot see. A
 symbol kept alive only by `class X extends Base`, by a type annotation, or by a
 cross-file call the resolver lost, has no inbound edge here and reads as dead.
 
-Measured on a real TypeScript composer (2026-08-11): 46 candidates, 19 dropped
-once a Graphify graph of the same tree was consulted. Three were checked by hand
-and all three were genuine livespec misses. The fixture in
+Measured across 13 repos (2026-08-11): 382 candidates → 264, helped in 11 of
+them. Spot-checked drops were genuine livespec misses. The fixture in
 `tests/fixtures/external_graph/` is a trimmed copy of that real `graph.json` —
 same keys, same `relation`/`confidence` vocabulary, same node-link shape — so
 these tests break if Graphify's format moves under us.
@@ -64,6 +63,19 @@ def test_structural_relations_are_not_evidence_of_use():
     assert g.evidence_for(orphan) == []
     assert "contains" in STRUCTURAL_RELATIONS
     assert "contains" not in EVIDENCE_RELATIONS
+
+
+def test_method_is_structural_not_evidence():
+    """Regression on the costliest mistake in this integration.
+
+    Graphify emits `method` as `Class -> .method()` — always within one file,
+    always from the declaring class, and every method has one. Treating it as
+    evidence made every method of every class un-killable. A 14-repo sweep
+    found it was responsible for 98 of 223 dead-code rescues: nearly half the
+    measured benefit was this bug. Two hand-checked repos had not revealed it.
+    """
+    assert "method" in STRUCTURAL_RELATIONS
+    assert "method" not in EVIDENCE_RELATIONS
 
 
 def test_inheritance_counts_as_evidence():

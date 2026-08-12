@@ -61,17 +61,29 @@ JSON. Nodes carry `source_file` (repo-relative — same shape as `file.path`),
 repo reported `input_tokens: 0, output_tokens: 0`, and every edge came back
 `_origin: "ast"`. The semantic (LLM) pass only exists for docs/media.
 
-### Why consuming beats coexisting
+### Why consuming beats coexisting — measured across 13 repos
 
-Measured on a real TypeScript composer: **46 dead-code candidates → 27** once
-corroborated. Of the 19 dropped, the relations were `indirect_call` (9),
-`method` (6), `imports` (3), `inherits` (1), `calls` (1). Three were verified by
-hand and all three were genuine livespec misses:
+A 14-repo sweep (`scripts/dogfood_corroboration.py`), not two anecdotes:
+
+| Tool | Before | After | Helped in | Median where it helped |
+|---|---:|---:|---:|---:|
+| `find_dead_code` | 382 | **264** | 11 / 13 | 50% |
+| `find_orphan_tests` | 273 | **260** | 3 / 7 | 47% |
+
+Dead-code corroboration is broadly effective; orphan-test corroboration is
+narrowly effective. Both are honest about finding nothing.
+
+Drops came from `imports` (68), `indirect_call` (49), `calls` (4) and
+`inherits` (4) — that is, overwhelmingly from *reference* relations livespec
+does not model, not from disagreement about calls.
+
+Spot-checked drops on one TypeScript service (46 → 33), all genuine livespec
+misses:
 
 | Candidate | Why livespec was wrong |
 |---|---|
 | `assertMaxContentLength` | imported *and* called one file over — resolver lost it |
-| `DomainError` (+4 methods) | alive only via `class BadRequestError extends DomainError`; we have no inheritance edge |
+| `DomainError` | alive only via `class BadRequestError extends DomainError`; we have no inheritance edge |
 | `AppMetadata` | an interface used purely as a type annotation; we don't track type-position usage |
 
 Every one of those is a livespec blind spot, not Graphify cleverness. That is
@@ -79,6 +91,18 @@ exactly why a second extractor is worth more as a **filter** than as a source.
 
 On the same repo the two tools agreed on 385 of 434 `calls` edges (89%), which
 cross-validates both. livespec still found more edges overall (2481 vs 1855).
+
+### The sweep paid for itself immediately
+
+The first run reported 382 → 167 (56%), with `method` as the single largest
+evidence relation (98 of 223 drops). It was wrong. Graphify emits `method` as
+`Class -> .method()` — always same-file, always from the declaring class, and
+every method has one. It is containment, exactly like `contains`, and counting
+it as evidence had quietly made every method of every class un-killable.
+
+Moving it to `STRUCTURAL_RELATIONS` cut the measured benefit almost in half, to
+the 31% above. **Two hand-checked repos had not revealed this; thirteen did.**
+Worth remembering the next time a corroboration signal looks unusually strong.
 
 ### Boundaries held
 

@@ -6,6 +6,25 @@ follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed — `method` was counted as evidence, inflating corroboration by ~2x
+
+Graphify emits `method` as `Class -> .method()`: always same-file, always from
+the declaring class, and every method has one. It is containment, exactly like
+`contains`. Counting it as evidence of use had quietly made every method of
+every class un-killable.
+
+A 14-repo sweep caught it — two hand-checked repos had not. `method` was the
+single largest evidence relation (98 of 223 dead-code rescues), so nearly half
+the measured benefit was an artifact. Corrected figures across 13 repos:
+**382 → 264** (31%), not 382 → 167 (56%).
+
+- `method` moved to `STRUCTURAL_RELATIONS`
+- New `scripts/dogfood_corroboration.py` reproduces the sweep. Repo paths come
+  from the environment and the report labels repos positionally, so private
+  trees never land in this repo (same pattern as `dogfood_tool_value_audit.py`)
+- Published figures in README / CHANGELOG / `docs/COMPETITIVE_GRAPHIFY.md`
+  corrected to the measured 13-repo numbers
+
 ### Added — `[graph] external` config, and external graphs announce themselves
 
 The corroboration work above was unreachable in practice: an agent will never
@@ -77,8 +96,8 @@ proposals into 12**, with 177 of 189 symbols grouped by community.
 candidates that a second, independent extractor still sees referenced.
 
 livespec's dead-code errors are systematic, not random: they track what the
-extractor cannot see. Measured on a real TypeScript composer, **46 candidates
-became 27**. Of the 19 dropped, three were verified by hand and all three were
+extractor cannot see. Measured across **13 repos: 382 candidates → 264**
+(helped in 11, median 50% reduction where it helped). Spot-checked drops were
 genuine misses — a cross-file call the resolver lost, a base class kept alive
 only by `extends`, and an interface used purely as a type annotation. Graphify's
 code pass is tree-sitter with no LLM and no API key (`_origin: "ast"`,

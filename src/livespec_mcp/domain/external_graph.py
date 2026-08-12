@@ -47,7 +47,14 @@ from typing import Any
 # Relations that describe graph structure or prose attachment rather than one
 # symbol depending on another. An inbound `contains` edge only says "this lives
 # in that file", which every symbol has and which proves nothing about use.
-STRUCTURAL_RELATIONS = frozenset({"contains", "rationale_for"})
+#
+# `method` belongs here for the same reason, and it took a 14-repo sweep to
+# notice: it is emitted as `Class -> .method()`, always within one file, from
+# the declaring class. Every method has one. Counting it as evidence quietly
+# made every method of every class un-killable and was responsible for 98 of
+# 223 dead-code rescues across that sweep — nearly half the measured effect was
+# an artifact of this line.
+STRUCTURAL_RELATIONS = frozenset({"contains", "rationale_for", "method"})
 
 # Relations accepted as evidence that a symbol is reachable. `imports` and
 # `imports_from` are weaker than `calls` (importing a name is not calling it)
@@ -57,7 +64,6 @@ EVIDENCE_RELATIONS = frozenset(
     {
         "calls",
         "indirect_call",
-        "method",
         "inherits",
         "mixes_in",
         "uses",
