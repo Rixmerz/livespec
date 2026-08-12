@@ -85,6 +85,46 @@ def test_inheritance_counts_as_evidence():
     assert g.evidence_for(base) == ["inherits"]
 
 
+def test_a_file_node_never_satisfies_a_symbol_lookup(tmp_path: Path):
+    """Position is not identity.
+
+    Graphify emits one node per file, labelled with its basename and placed at
+    `L1` — exactly where livespec records a module symbol, and where a function
+    declared on the first line also lives. Since `by_position` keeps the first
+    node seen, the file node can win that slot and then lend its inbound
+    `imports_from` edges to whatever livespec asked about.
+
+    Measured on one TypeScript repo: 28 of 44 raw rescues were this collision.
+    It did not move the published figure, because livespec's own filters keep
+    module symbols out of dead-code candidates — but the matching layer was
+    wrong regardless, and a first-line function is a real way to reach it.
+    """
+    p = tmp_path / "graph.json"
+    p.write_text(
+        json.dumps(
+            {
+                "directed": True,
+                "nodes": [
+                    # File node first, so it claims (a.ts, 1) in by_position.
+                    {"id": "f", "label": "a.ts", "source_file": "src/a.ts",
+                     "source_location": "L1"},
+                    {"id": "s", "label": "handler", "source_file": "src/a.ts",
+                     "source_location": "L1", "_callable": True},
+                ],
+                "links": [
+                    {"source": "other", "target": "f", "relation": "imports_from"}
+                ],
+            }
+        )
+    )
+    g = load_external_graph(p)
+    found = g.lookup("src/a.ts", 1, "handler")
+    assert found is not None
+    assert found.node_id == "s", "the file node must not answer for the symbol"
+    # And the symbol does not inherit the file's inbound edges.
+    assert g.evidence_for(found) == []
+
+
 def test_lookup_falls_back_to_name_within_the_same_file():
     """Decorated symbols can be recorded at the decorator line by one extractor
     and the `def` line by the other, so an exact-position miss is not a miss."""

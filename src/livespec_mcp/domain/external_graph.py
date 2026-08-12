@@ -83,6 +83,25 @@ class ExternalNode:
     line: int | None
     community: int | None
     origin: str | None
+    #: Graphify marks functions/classes callable. File and prose nodes are not.
+    is_callable: bool = False
+
+    @property
+    def is_file_node(self) -> bool:
+        """True for the node representing the file itself, not a symbol in it.
+
+        Graphify emits one node per file, labelled with its basename and
+        positioned at ``L1`` — exactly where livespec records a module symbol.
+        Left unchecked those two match each other, and the file's inbound
+        `imports_from` edges then vouch for a module livespec called dead.
+        Measured: 28 of 44 rescues on one TypeScript repo were this collision.
+        """
+        if not self.source_file:
+            return False
+        return self.label.strip() in (
+            self.source_file,
+            self.source_file.rsplit("/", 1)[-1],
+        )
 
 
 @dataclass
@@ -125,10 +144,23 @@ class ExternalGraph:
         single file so unrelated same-named symbols cannot collide.
         """
         hit = self.by_position.get((file_path, line))
-        if hit is not None:
+        if hit is not None and self._plausibly(hit, name):
             return hit
         candidates = self.by_file_name.get((file_path, _bare(name)), [])
         return candidates[0] if len(candidates) == 1 else None
+
+    @staticmethod
+    def _plausibly(node: ExternalNode, name: str) -> bool:
+        """Guard a positional hit against file and prose nodes.
+
+        Position alone is not identity: a file node and a module symbol both
+        live at line 1, and a docstring node can sit on any line. Accept a
+        positional match only when the node is a callable symbol or its label
+        actually is the name we asked for.
+        """
+        if node.is_file_node:
+            return False
+        return node.is_callable or (bool(name) and _bare(node.label) == _bare(name))
 
     def evidence_for(self, node: ExternalNode) -> list[str]:
         """Relations pointing *at* this node that suggest it is reachable."""
@@ -217,6 +249,7 @@ def load_external_graph(path: str | Path) -> ExternalGraph:
             line=_parse_line(entry.get("source_location")),
             community=community,
             origin=entry.get("_origin") if isinstance(entry.get("_origin"), str) else None,
+            is_callable=bool(entry.get("_callable") or entry.get("_callable_class")),
         )
         ids[node_id] = node
         graph.by_id[node_id] = node

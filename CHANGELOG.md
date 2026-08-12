@@ -6,6 +6,23 @@ follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed — a file node could answer a symbol lookup
+
+Graphify emits one node per file, labelled with its basename and placed at
+`L1` — exactly where livespec records a module symbol, and where a function
+declared on the first line also lives. Since positional indexing keeps the
+first node seen, the file node could claim that slot and lend its inbound
+`imports_from` edges to whatever was being checked.
+
+A positional match is now accepted only from a callable node, or one whose
+label is the name being looked up; file nodes never qualify.
+
+**Honest scope: this did not move the published figures.** livespec's own
+filters keep module symbols out of dead-code candidates, so the collision was
+masked on the measured corpus (28 of 44 *raw* rescues on one repo, 0 after the
+tool's filters). It is a correctness fix in the matching layer, not a
+recovered number.
+
 ### Fixed — `method` was counted as evidence, inflating corroboration by ~2x
 
 Graphify emits `method` as `Class -> .method()`: always same-file, always from

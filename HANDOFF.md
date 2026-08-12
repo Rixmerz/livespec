@@ -44,7 +44,7 @@ Todo el stack es local-first: 0 servicios externos, 0 API keys obligatorias, 0 D
 
 ## 3. Estado actual
 
-**HEAD: `v0.31.4` + integración Graphify sin taggear. Tests 715.**
+**HEAD: `v0.31.4` + integración Graphify sin taggear. Tests 716.**
 Pin PyPI / plugin / `uvx livespec@0.31.4`.
 
 ### Unreleased — consumir Graphify en vez de solo coexistir
@@ -127,6 +127,25 @@ contarlo como evidencia volvía inmatable a todo método de toda clase. Pasarlo 
 verificados a mano no lo revelaron; trece sí.** Hay test de regresión
 (`test_method_is_structural_not_evidence`) y los números publicados quedaron
 corregidos en README, CHANGELOG y COMPETITIVE_GRAPHIFY.
+
+**Sexta pieza (auditoría de las relaciones restantes).** Tras corregir
+`method`, `imports` (68) e `indirect_call` (49) pasaron a dominar el número
+publicado, así que los audité con la misma sospecha. Los dos son legítimos:
+`imports` es archivo→símbolo importado (cross-file real) e `indirect_call` es
+referencia a nivel módulo, que es justo lo que livespec cubre con
+`_module_level_referenced_names`. Pero apareció otra cosa: **los nodos-archivo
+de Graphify viven en `L1`, igual que los símbolos de módulo de livespec**, y
+como `by_position` guarda el primero que ve, el archivo podía quedarse con el
+slot y prestarle sus aristas `imports_from` a lo que se consultara. Ahora un
+match posicional solo se acepta de un nodo callable o cuyo label sea el nombre
+buscado.
+
+**Alcance honesto: esto NO movió las cifras publicadas** (382 → 264 antes y
+después). Los filtros propios de livespec dejan los símbolos de módulo fuera
+de los candidatos a dead, así que la colisión estaba enmascarada — 28 de 44
+rescates *crudos* en un repo, 0 después de los filtros del tool. Es un fix de
+correctitud en la capa de matching, no un número recuperado. Vale distinguirlo
+del caso `method`, que sí infló el resultado.
 
 Diferido a propósito: ingerir aristas en `symbol_edge` (medido: **133** aristas
 que livespec no tiene en su propio repo) y la capa documental (**316** aristas
