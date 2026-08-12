@@ -115,7 +115,11 @@ def main() -> int:
     from livespec_mcp.tools.analysis import compute_diff_spec_impact
     from livespec_mcp.tools.indexing import run_index_pipeline
 
-    st = get_state(str(workspace))
+    # `create=True`: this script IS the bootstrap path — a fresh CI checkout
+    # has no `.mcp-docs/docs.db` yet, and the next line builds it. Without
+    # this, `get_state` refuses the un-indexed workspace before the index
+    # pipeline ever runs.
+    st = get_state(str(workspace), create=True)
     run_index_pipeline(st, force=False)
 
     impact = compute_diff_spec_impact(st, base, head)
