@@ -208,8 +208,7 @@ TOOLS: list[tuple[str, str, list[tuple[str, str]]]] = [
             ),
             (
                 "list_spec_changes(status=None)",
-                "Lista las propuestas de cambio con su estado "
-                "(proposed / archived).",
+                "Lista las propuestas de cambio con su estado (proposed / archived).",
             ),
             (
                 "get_spec_change(name)",
@@ -245,8 +244,7 @@ TOOLS: list[tuple[str, str, list[tuple[str, str]]]] = [
             ("create_spec(title, ...)", "Crea una Spec nueva en el store."),
             (
                 "update_spec(spec_id, ...)",
-                "Modifica campos de una Spec existente (estado, prioridad, "
-                "kind, módulo, texto).",
+                "Modifica campos de una Spec existente (estado, prioridad, kind, módulo, texto).",
             ),
             (
                 "delete_spec(spec_id)",
@@ -254,8 +252,7 @@ TOOLS: list[tuple[str, str, list[tuple[str, str]]]] = [
             ),
             (
                 "link_spec_symbol(spec_id, symbol_qname, relation, ...)",
-                "Enlaza o desenlaza un par Spec↔símbolo, con relación, "
-                "confianza y origen.",
+                "Enlaza o desenlaza un par Spec↔símbolo, con relación, confianza y origen.",
             ),
             (
                 "link_scenario_symbol(spec_id, scenario_name, symbol_qname, ...)",
@@ -273,8 +270,7 @@ TOOLS: list[tuple[str, str, list[tuple[str, str]]]] = [
             ),
             (
                 "get_spec_dependency_graph(spec_id, ...)",
-                "Camina el grafo Spec→Spec: qué depende de esto, "
-                "transitivamente.",
+                "Camina el grafo Spec→Spec: qué depende de esto, transitivamente.",
             ),
             (
                 "scan_spec_annotations()",
@@ -367,41 +363,73 @@ def _styles() -> dict[str, ParagraphStyle]:
     base = getSampleStyleSheet()
     return {
         "title": ParagraphStyle(
-            "title", parent=base["Title"], fontName="Helvetica-Bold",
-            fontSize=26, leading=30, textColor=INK, spaceAfter=4, alignment=TA_LEFT,
+            "title",
+            parent=base["Title"],
+            fontName="Helvetica-Bold",
+            fontSize=26,
+            leading=30,
+            textColor=INK,
+            spaceAfter=4,
+            alignment=TA_LEFT,
         ),
         "subtitle": ParagraphStyle(
-            "subtitle", parent=base["Normal"], fontName="Helvetica",
-            fontSize=10.5, leading=15, textColor=MUTED, spaceAfter=14,
+            "subtitle",
+            parent=base["Normal"],
+            fontName="Helvetica",
+            fontSize=10.5,
+            leading=15,
+            textColor=MUTED,
+            spaceAfter=14,
         ),
         "h2": ParagraphStyle(
-            "h2", parent=base["Heading2"], fontName="Helvetica-Bold",
-            fontSize=13.5, leading=17, textColor=ACCENT, spaceBefore=14, spaceAfter=3,
+            "h2",
+            parent=base["Heading2"],
+            fontName="Helvetica-Bold",
+            fontSize=13.5,
+            leading=17,
+            textColor=ACCENT,
+            spaceBefore=14,
+            spaceAfter=3,
         ),
         "blurb": ParagraphStyle(
-            "blurb", parent=base["Normal"], fontName="Helvetica-Oblique",
-            fontSize=9, leading=12.5, textColor=MUTED, spaceAfter=7,
+            "blurb",
+            parent=base["Normal"],
+            fontName="Helvetica-Oblique",
+            fontSize=9,
+            leading=12.5,
+            textColor=MUTED,
+            spaceAfter=7,
         ),
         "sig": ParagraphStyle(
-            "sig", parent=base["Normal"], fontName="Courier-Bold",
-            fontSize=8.4, leading=11, textColor=INK,
+            "sig",
+            parent=base["Normal"],
+            fontName="Courier-Bold",
+            fontSize=8.4,
+            leading=11,
+            textColor=INK,
         ),
         "purpose": ParagraphStyle(
-            "purpose", parent=base["Normal"], fontName="Helvetica",
-            fontSize=9.2, leading=13, textColor=INK,
+            "purpose",
+            parent=base["Normal"],
+            fontName="Helvetica",
+            fontSize=9.2,
+            leading=13,
+            textColor=INK,
         ),
         "extra": ParagraphStyle(
-            "extra", parent=base["Normal"], fontName="Helvetica",
-            fontSize=8.8, leading=12.5, textColor=INK, spaceAfter=6,
+            "extra",
+            parent=base["Normal"],
+            fontName="Helvetica",
+            fontSize=8.8,
+            leading=12.5,
+            textColor=INK,
+            spaceAfter=6,
         ),
     }
 
 
 def _tool_table(rows: list[tuple[str, str]], st: dict) -> Table:
-    data = [
-        [Paragraph(sig, st["sig"]), Paragraph(purpose, st["purpose"])]
-        for sig, purpose in rows
-    ]
+    data = [[Paragraph(sig, st["sig"]), Paragraph(purpose, st["purpose"])] for sig, purpose in rows]
     table = Table(data, colWidths=[66 * mm, 100 * mm], hAlign="LEFT")
     table.setStyle(
         TableStyle(
@@ -444,8 +472,12 @@ def build(out_path: Path) -> Path:
         bottomMargin=20 * mm,
     )
     frame = Frame(
-        doc.leftMargin, doc.bottomMargin,
-        doc.width, doc.height, id="body", showBoundary=0,
+        doc.leftMargin,
+        doc.bottomMargin,
+        doc.width,
+        doc.height,
+        id="body",
+        showBoundary=0,
     )
     doc.addPageTemplates([PageTemplate(id="main", frames=[frame], onPage=_footer)])
 
@@ -479,9 +511,7 @@ def build(out_path: Path) -> Path:
 
     story.append(Spacer(1, 10))
     for title, body in EXTRAS:
-        story.append(
-            KeepTogether([Paragraph(title, st["h2"]), Paragraph(body, st["extra"])])
-        )
+        story.append(KeepTogether([Paragraph(title, st["h2"]), Paragraph(body, st["extra"])]))
 
     doc.build(story)
     return out_path
