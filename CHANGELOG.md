@@ -6,6 +6,27 @@ follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- **Los alias de tipo a nivel de módulo son símbolos** (`kind='type_alias'`).
+  Una firma está escrita en un vocabulario y ese vocabulario no existía en el
+  índice: `get_symbol(qname: QName, limit: Limit)` no le dice nada a un
+  consumidor que no puede buscar `QName`, y no podía — el extractor emitía solo
+  function/class/method. Medido sobre este repo, de los tipos nombrados en las
+  firmas de 20 clausuras reales **45 de 79 no resolvían**, y los más frecuentes
+  eran `Workspace` x7, `Limit`, `QName`, `MaxDepth`, `SummaryOnly`,
+  `SymbolQuery` — todos `Annotated[...]` en `tool_params.py` /
+  `workspace_param.py`.
+
+  La regla es deliberadamente angosta: solo nivel de módulo, solo nombres
+  CapWords, y solo ligados a una expresión de tipo (subscript, unión, nombre o
+  atributo). PEP 695 (`type X = ...`) entra sin más porque es inequívoco.
+  `MAX_ENTRIES = 500`, `_CACHE = {}` y `Registry = dict()` quedan fuera — el
+  radio de impacto que importa es dead code, y meter constantes ahí sería
+  fabricar falsos positivos. En este repo entran 11 alias y ni un test cambia
+  de resultado.
+
+
 ### Fixed
 
 - **El resolver de llamadas dejó de abanicar sobre nombres homónimos.** Medido

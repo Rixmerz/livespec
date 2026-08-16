@@ -44,6 +44,17 @@ Todo el stack es local-first: 0 servicios externos, 0 API keys obligatorias, 0 D
 
 ## 3. Estado actual
 
+### Unreleased — alias de tipo como símbolos
+
+`kind='type_alias'`. Una firma está escrita en un vocabulario que el índice no
+tenía: de los tipos nombrados en 20 clausuras reales, **45 de 79 no resolvían**,
+casi todos `Annotated[...]` de `tool_params.py` / `workspace_param.py`
+(`Workspace` x7, `Limit`, `QName`, `MaxDepth`, `SummaryOnly`, `SymbolQuery`).
+
+Regla angosta a propósito: nivel de módulo, CapWords, ligado a expresión de
+tipo. Constantes fuera — el radio de impacto real es dead code. 11 alias en este
+repo, cero tests cambiados (111 failed / 605 passed antes y después; las 111 son
+el download de parsers bloqueado por el proxy).
 ### Unreleased — el resolver dejó de abanicar sobre homónimos
 
 **501 de 2523 aristas `calls` (20%) eran ruido**: el mismo nombre corto resuelto
