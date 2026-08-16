@@ -6,6 +6,102 @@ follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- **Los alias de tipo a nivel de módulo son símbolos** (`kind='type_alias'`).
+  Una firma está escrita en un vocabulario y ese vocabulario no existía en el
+  índice: `get_symbol(qname: QName, limit: Limit)` no le dice nada a un
+  consumidor que no puede buscar `QName`, y no podía — el extractor emitía solo
+  function/class/method. Medido sobre este repo, de los tipos nombrados en las
+  firmas de 20 clausuras reales **45 de 79 no resolvían**, y los más frecuentes
+  eran `Workspace` x7, `Limit`, `QName`, `MaxDepth`, `SummaryOnly`,
+  `SymbolQuery` — todos `Annotated[...]` en `tool_params.py` /
+  `workspace_param.py`.
+
+  La regla es deliberadamente angosta: solo nivel de módulo, solo nombres
+  CapWords, y solo ligados a una expresión de tipo (subscript, unión, nombre o
+  atributo). PEP 695 (`type X = ...`) entra sin más porque es inequívoco.
+  `MAX_ENTRIES = 500`, `_CACHE = {}` y `Registry = dict()` quedan fuera — el
+  radio de impacto que importa es dead code, y meter constantes ahí sería
+  fabricar falsos positivos. En este repo entran 11 alias y ni un test cambia
+  de resultado.
+
+
+### Fixed
+
+- **El resolver de llamadas dejó de abanicar sobre nombres homónimos.** Medido
+  sobre este repo: **501 de 2523 aristas `calls` (20%) eran el mismo nombre
+  corto resuelto contra cada definición homónima**. Tres reglas nuevas, en
+  orden de precedencia, bajan eso a 95 de 2112 (4%):
+
+  1. **Scope léxico** (peso 0.8). La regla de "mismo archivo" no puede ayudar
+     cuando los duplicados están todos en UN archivo, que es la forma normal de
+     un helper anidado: `extractors.py` define un closure `text` dentro de doce
+     funciones distintas, así que una llamada a `text` desde cualquiera de ellas
+     producía doce aristas. Ahora se recorre la cadena de ámbitos del llamador
+     de adentro hacia afuera y gana el primero que define un candidato — lo
+     mismo que hace el lenguaje. El sombreado funciona: un `helper` interno gana
+     al del módulo.
+
+  2. **Parámetro del llamador** (sin arista). `_ts_http_call_uses_param(call_node,
+     param, text)` llamando `text(n)`: `text` es un ARGUMENTO, el callee es lo
+     que le hayan pasado. Emitir una arista por cada definición homónima no es
+     una respuesta imprecisa, es una equivocada.
+
+  3. **Import que apunta fuera del proyecto** (sin arista). El extractor guarda
+     solo el último nombre de la llamada, así que `os.walk` llega como `walk` y
+     abanicaba contra las seis funciones `walk` del repo — pero el ref conserva
+     `scope_module='os'`, y ese import es la evidencia de que ninguna es el
+     destino. Solo aplica cuando el scope no corresponde a NINGÚN módulo del
+     proyecto: un import propio que no logró casar sigue siendo ambigüedad
+     marcada, no se borra.
+
+  Efecto en una clausura real: los callees de `indexer._iter_files` pasan de 15
+  a 4, y esos 4 son exactamente los que llama.
+
+  La ambigüedad genuina entre archivos se conserva a peso 0.5 — `register`
+  definido en nueve módulos de plugin sigue emitiendo las nueve, porque sin un
+  import que lo discrimine elegir una sería inventar.
+
+
+### Fixed
+
+- **Python signatures keep their type annotations.** `_py_signature` built the
+  signature from `arg.arg` alone and never read `node.returns`, so every Python
+  symbol in the index stored an untyped signature — `_cmd_index(path, force)`
+  instead of `_cmd_index(path: str, *, force: bool) -> dict[str, Any]`. The
+  annotations were present in the AST and discarded.
+
+  This is the most load-bearing part of a signature for any consumer that is
+  **not** opening the file: `get_spec_implementation`, the Explorer symbol
+  payload, and any agent reading a symbol without its source all showed
+  parameter names with no types. Measured on this repo: 0/1332 Python
+  signatures carried a type before, 812/1332 (61%) after — the remainder being
+  genuinely unannotated source.
+
+  Also fixed while here: defaults now mark the parameter optional (`x=...`
+  rather than rendering an arbitrary default expression into every stored
+  signature), positional-only `/` and keyword-only `*` separators are emitted,
+  and `*args`/`**kwargs` carry their annotations. The default-offset is computed
+  against `posonlyargs + args` combined — computing it against `args` alone puts
+  every default on the wrong parameter in any function using `/`.
+
+  Signature payload shape changes for Python symbols, hence Unreleased rather
+  than a silent internal fix. `signature_hash` changes with it, so the first
+  index after upgrading reports signature drift on annotated Python symbols
+  once; it settles on the next run.
+
+- **The Spec-diff PR job could never run.** `scripts/pr_diff_impact.py` called
+  `get_state(workspace)` and then `run_index_pipeline(st)` — but `get_state`
+  defaults to `create=False` and raises `WorkspaceNotIndexedError` ("run
+  index_project first") when no DB exists yet. On a CI runner nothing has ever
+  indexed, so the job died one line before the step that would have built the
+  index it was demanding. Every PR run failed the same way, on a step named
+  "Index workspace and render markdown" that never reached the indexing.
+  Fixed with `create=True`, which gates first creation only and returns the
+  same state the pipeline then populates.
+
+
 ### Fixed — a file node could answer a symbol lookup
 
 Graphify emits one node per file, labelled with its basename and placed at

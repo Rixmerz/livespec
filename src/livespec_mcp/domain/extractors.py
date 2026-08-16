@@ -86,21 +86,71 @@ if hasattr(ast, "TryStar"):  # py3.11+
 # ---------- Python via ast ----------
 
 
+def _py_annotation(node: ast.AST | None) -> str:
+    """Render an annotation back to source, or "" when there is none.
+
+    ``ast.unparse`` can raise on a node this module did not build (it is only
+    guaranteed for trees produced by ``ast.parse``, which is all we feed it) —
+    an unparseable annotation must degrade to an unannotated parameter, never
+    lose the whole symbol.
+    """
+    if node is None:
+        return ""
+    try:
+        return ast.unparse(node)
+    except Exception:
+        return ""
+
+
 def _py_signature(node: ast.FunctionDef | ast.AsyncFunctionDef) -> str:
-    args = []
+    """Full signature INCLUDING annotations and return type.
+
+    The annotations were previously dropped — only ``arg.arg`` was kept — which
+    made every Python signature in the index untyped: `_cmd_index(path, force)`
+    instead of `_cmd_index(path: str, force: bool) -> int`. That is the single
+    most load-bearing part of a signature for a reader who is not opening the
+    file, and `node.returns` was never read at all.
+
+    Defaults are rendered as a bare `=...` marker rather than their literal:
+    what a caller needs to know is *that* the parameter is optional, and a
+    default can be an arbitrary expression that would bloat every signature in
+    the store for no added meaning.
+    """
     a = node.args
     posonly = list(getattr(a, "posonlyargs", []))
     regular = list(a.args)
-    for arg in posonly + regular:
-        args.append(arg.arg)
+
+    # Defaults bind to the TAIL of posonly+regular, so the offset has to be
+    # computed against the combined list or every default lands on the wrong
+    # parameter.
+    positional = posonly + regular
+    first_default = len(positional) - len(a.defaults)
+
+    def render(arg: ast.arg, optional: bool) -> str:
+        ann = _py_annotation(arg.annotation)
+        out = f"{arg.arg}: {ann}" if ann else arg.arg
+        return f"{out}=..." if optional else out
+
+    args = [render(arg, i >= first_default) for i, arg in enumerate(positional)]
+    if posonly:
+        args.insert(len(posonly), "/")
     if a.vararg:
-        args.append("*" + a.vararg.arg)
-    for arg in a.kwonlyargs:
-        args.append(arg.arg)
+        ann = _py_annotation(a.vararg.annotation)
+        args.append(f"*{a.vararg.arg}: {ann}" if ann else f"*{a.vararg.arg}")
+    elif a.kwonlyargs:
+        args.append("*")
+    # strict=True: the AST guarantees these two are the same length (kw_defaults
+    # holds None for kwonly args without a default), so a mismatch is a bug worth
+    # hearing about rather than silently truncating the parameter list.
+    for arg, default in zip(a.kwonlyargs, a.kw_defaults, strict=True):
+        args.append(render(arg, default is not None))
     if a.kwarg:
-        args.append("**" + a.kwarg.arg)
-    name = node.name
-    return f"{name}({', '.join(args)})"
+        ann = _py_annotation(a.kwarg.annotation)
+        args.append(f"**{a.kwarg.arg}: {ann}" if ann else f"**{a.kwarg.arg}")
+
+    returns = _py_annotation(node.returns)
+    tail = f" -> {returns}" if returns else ""
+    return f"{node.name}({', '.join(args)}){tail}"
 
 
 def _py_extract(source: str, module_name: str) -> ExtractResult:
@@ -186,8 +236,75 @@ def _py_extract(source: str, module_name: str) -> ExtractResult:
         )
         return qname
 
+    def add_type_alias(child: ast.AST, parent_qname: str | None) -> None:
+        """Emit a module-level type alias as a `type_alias` symbol.
+
+        `QName = Annotated[str, Field(...)]`, `Workspace = Annotated[...]`,
+        `type UserId = int` (3.12+). These are the vocabulary a signature is
+        written in — `get_symbol(qname: QName, limit: Limit)` says nothing to a
+        reader who cannot look up `QName`, and until now nothing could: the
+        extractor emitted only function/class/method, so a consumer resolving
+        the types named in a signature found no symbol at all.
+
+        Deliberately NARROW. Only names that look like types by convention
+        (CapWords) bound to a subscripted/annotated expression, so ordinary
+        module constants (`MAX_ENTRIES = 500`, `_CACHE = {}`) stay out of the
+        symbol table and out of dead-code reports.
+        """
+        targets: list[str] = []
+        value: ast.AST | None = None
+
+        if isinstance(child, ast.AnnAssign) and isinstance(child.target, ast.Name):
+            targets = [child.target.id]
+            value = child.value
+        elif isinstance(child, ast.Assign):
+            targets = [tg.id for tg in child.targets if isinstance(tg, ast.Name)]
+            value = child.value
+        elif hasattr(ast, "TypeAlias") and isinstance(child, ast.TypeAlias):
+            # PEP 695 `type X = ...`, unambiguous by construction.
+            if isinstance(child.name, ast.Name):
+                targets = [child.name.id]
+                value = child.value
+        if not targets or value is None:
+            return
+
+        pep695 = hasattr(ast, "TypeAlias") and isinstance(child, ast.TypeAlias)
+        # A subscript (`Annotated[...]`, `Union[...]`, `dict[str, int]`) or a
+        # bare name/attribute alias. A call, literal, or comprehension is a
+        # value, not a type.
+        looks_typish = isinstance(value, (ast.Subscript, ast.Name, ast.Attribute, ast.BinOp))
+
+        for name in targets:
+            if not pep695:
+                if not (name[:1].isupper() and not name.isupper()):
+                    continue  # not CapWords -> a constant, not a type alias
+                if not looks_typish:
+                    continue
+            qname = f"{module_name}.{name}" if module_name else name
+            start = getattr(child, "lineno", 1)
+            end = getattr(child, "end_lineno", start) or start
+            try:
+                rendered = ast.unparse(value)
+            except Exception:
+                rendered = ""
+            out.symbols.append(
+                ExtractedSymbol(
+                    name=name,
+                    qualified_name=qname,
+                    kind="type_alias",
+                    signature=f"{name} = {rendered}" if rendered else name,
+                    docstring=None,
+                    body_hash_seed=rendered,
+                    start_line=start,
+                    end_line=end,
+                    parent_qname=parent_qname,
+                )
+            )
+
     def visit(node: ast.AST, parent_qname: str | None, in_class: bool) -> None:
         for child in ast.iter_child_nodes(node):
+            if parent_qname is None and not in_class:
+                add_type_alias(child, parent_qname)
             if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 kind = "method" if in_class else "function"
                 qn = add_func(child, parent_qname, kind)

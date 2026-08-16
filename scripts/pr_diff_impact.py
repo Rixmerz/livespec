@@ -115,10 +115,12 @@ def main() -> int:
     from livespec_mcp.tools.analysis import compute_diff_spec_impact
     from livespec_mcp.tools.indexing import run_index_pipeline
 
-    # `create=True`: this script IS the bootstrap path — a fresh CI checkout
-    # has no `.mcp-docs/docs.db` yet, and the next line builds it. Without
-    # this, `get_state` refuses the un-indexed workspace before the index
-    # pipeline ever runs.
+    # create=True because the very next line IS the indexing step. Without it
+    # `get_state` raises WorkspaceNotIndexedError telling the caller to index
+    # first — on a CI runner that has never indexed, which is every PR run, so
+    # this job could not reach `run_index_pipeline` to build the index that
+    # `get_state` was demanding. `create` gates first creation only; the state
+    # it returns is the same one the pipeline then populates.
     st = get_state(str(workspace), create=True)
     run_index_pipeline(st, force=False)
 

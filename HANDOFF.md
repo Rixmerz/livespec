@@ -44,8 +44,70 @@ Todo el stack es local-first: 0 servicios externos, 0 API keys obligatorias, 0 D
 
 ## 3. Estado actual
 
-**HEAD: `v0.31.4` + integración Graphify sin taggear. Tests 716.**
+### Unreleased — alias de tipo como símbolos
+
+`kind='type_alias'`. Una firma está escrita en un vocabulario que el índice no
+tenía: de los tipos nombrados en 20 clausuras reales, **45 de 79 no resolvían**,
+casi todos `Annotated[...]` de `tool_params.py` / `workspace_param.py`
+(`Workspace` x7, `Limit`, `QName`, `MaxDepth`, `SummaryOnly`, `SymbolQuery`).
+
+Regla angosta a propósito: nivel de módulo, CapWords, ligado a expresión de
+tipo. Constantes fuera — el radio de impacto real es dead code. 11 alias en este
+repo, cero tests cambiados (111 failed / 605 passed antes y después; las 111 son
+el download de parsers bloqueado por el proxy).
+### Unreleased — el resolver dejó de abanicar sobre homónimos
+
+**501 de 2523 aristas `calls` (20%) eran ruido**: el mismo nombre corto resuelto
+contra cada definición homónima. Tres reglas nuevas lo bajan a **95 de 2112 (4%)**.
+
+1. **Scope léxico** (0.8) — la regla de mismo-archivo no sirve cuando los doce
+   `text` están en un solo archivo, cada uno dentro de un padre distinto. Se
+   recorre la cadena de ámbitos del llamador de adentro hacia afuera.
+2. **Parámetro del llamador** (sin arista) — `f(..., text)` llamando `text(n)`
+   llama a lo que le pasaron, no al closure homónimo de otra función.
+3. **Import externo** (sin arista) — `os.walk` llega como `walk`; el
+   `scope_module='os'` es la prueba de que ningún `walk` propio es el destino.
+   Solo cuando el scope no es de ningún módulo del proyecto.
+
+Callees de `indexer._iter_files`: **15 → 4**, y esos 4 son los reales.
+
+Suite: 615 passed con el cambio, 605 sin él — los 10 de diferencia son los tests
+nuevos, cero regresión. Las 111 fallas de este entorno siguen siendo el download
+de parsers de tree-sitter-language-pack bloqueado por el proxy TLS del sandbox.
+
+
+**HEAD: `v0.31.4` + integración Graphify + firmas Python tipadas, sin taggear.
+Tests 716.**
 Pin PyPI / plugin / `uvx livespec@0.31.4`.
+
+### Unreleased — `_py_signature` conserva las anotaciones
+
+`_py_signature` construía la firma solo con `arg.arg` y nunca leía
+`node.returns`. Cada símbolo Python del índice guardaba una firma sin tipos
+(`_cmd_index(path, force)`); las anotaciones estaban en el AST y se
+descartaban. Medido sobre este repo: **0/1332 → 812/1332 (61%)** de firmas
+Python con tipo, el resto es fuente genuinamente sin anotar.
+
+Importa porque la firma es lo único que ve un consumidor que **no** abre el
+archivo — `get_spec_implementation`, el payload de símbolos del Explorer, y
+cualquier agente leyendo un símbolo sin su fuente.
+
+De paso: separadores `/` y `*`, `*args`/`**kwargs` con anotación, y defaults
+marcados como `x=...` en vez de volcar la expresión al store. El offset de
+defaults se calcula contra `posonlyargs + args` juntos — hacerlo solo contra
+`args` corre todos los defaults un lugar en cualquier función con `/`.
+
+`signature_hash` cambia, así que el primer índice tras actualizar reporta
+drift una vez sobre los símbolos Python anotados y se estabiliza al siguiente.
+
+**Verificación en este entorno:** la suite queda igual con y sin el cambio
+(111 failed / 605 passed, y 23/66 en el subconjunto `-k
+"python or extract or index or signature or drift"`). Las 111 fallas son
+ambientales, no de `main`: `tree-sitter-language-pack` 1.6.2 descarga los
+parsers en runtime desde GitHub releases y el proxy TLS del sandbox lo rechaza
+(`invalid peer certificate: UnknownIssuer`), así que todo test de lenguaje
+no-Python falla aquí. El cambio es Python-puro (`ast`), de modo que su radio
+de impacto cae entero dentro de lo que sí se puede verificar en este entorno.
 
 ### Unreleased — consumir Graphify en vez de solo coexistir
 
