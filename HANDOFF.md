@@ -44,6 +44,27 @@ Todo el stack es local-first: 0 servicios externos, 0 API keys obligatorias, 0 D
 
 ## 3. Estado actual
 
+### Unreleased — el resolver dejó de abanicar sobre homónimos
+
+**501 de 2523 aristas `calls` (20%) eran ruido**: el mismo nombre corto resuelto
+contra cada definición homónima. Tres reglas nuevas lo bajan a **95 de 2112 (4%)**.
+
+1. **Scope léxico** (0.8) — la regla de mismo-archivo no sirve cuando los doce
+   `text` están en un solo archivo, cada uno dentro de un padre distinto. Se
+   recorre la cadena de ámbitos del llamador de adentro hacia afuera.
+2. **Parámetro del llamador** (sin arista) — `f(..., text)` llamando `text(n)`
+   llama a lo que le pasaron, no al closure homónimo de otra función.
+3. **Import externo** (sin arista) — `os.walk` llega como `walk`; el
+   `scope_module='os'` es la prueba de que ningún `walk` propio es el destino.
+   Solo cuando el scope no es de ningún módulo del proyecto.
+
+Callees de `indexer._iter_files`: **15 → 4**, y esos 4 son los reales.
+
+Suite: 615 passed con el cambio, 605 sin él — los 10 de diferencia son los tests
+nuevos, cero regresión. Las 111 fallas de este entorno siguen siendo el download
+de parsers de tree-sitter-language-pack bloqueado por el proxy TLS del sandbox.
+
+
 **HEAD: `v0.31.4` + integración Graphify + firmas Python tipadas, sin taggear.
 Tests 716.**
 Pin PyPI / plugin / `uvx livespec@0.31.4`.
