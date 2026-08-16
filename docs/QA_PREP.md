@@ -1,8 +1,9 @@
 # livespec — preparación Q&A
 
 Set de preguntas probables (técnicas, de producto y de riesgo) con respuestas
-listas para usar. Estado de referencia: **v0.31.4 + trabajo Graphify sin
-taggear**, 716 tests, 45 tools (28 core + 12 plugin Spec + 5 plugin docs).
+listas para usar. Estado de referencia: **v0.31.4 + Graphify + las tres
+correcciones del resolver (v0.32) sin taggear**, 733 tests, 45 tools (28 core +
+12 plugin Spec + 5 plugin docs).
 
 Regla de honestidad para todas las respuestas: **hallazgos del grafo ≠ tráfico
 de producción**. Si una respuesta suena a garantía, está mal contada.
@@ -265,10 +266,31 @@ evidencia antes/después de un repo real. Y *borrar* un tool que la evidencia no
 justifica es una contribución de primera clase. Está en `CONTRIBUTING.md`.
 
 ### ¿Cuántos tests hay y de qué tipo?
-716 en la suite por defecto. Son integration-style: la mayoría usa
+733 en la suite por defecto. Son integration-style: la mayoría usa
 `Client(mcp)` de FastMCP para llamadas MCP in-process, sin subprocess ni red.
 Hay además property tests con Hypothesis para los contratos que no se pueden
 romper (resolver, migraciones, estabilidad de `body_hash`).
+
+### v0.32 cambió el resolver. ¿Invalida los números de dead code de arriba?
+
+No, y está medido, no supuesto. Las tres reglas nuevas (scope léxico, parámetro
+del llamador, import externo) sacaron **501 → 95 aristas duplicadas**, de 2565 a
+2137 en este repo. Pero los candidatos a dead code se movieron de **807 a 806**.
+
+La razón es la forma del ruido que se eliminó: eran *duplicados* — un llamador
+apuntando a las doce funciones homónimas de un archivo. Quitar once de esas doce
+no deja a ninguna sin su único llamador, porque la que importaba conservó su
+arista y las otras once tenían las suyas propias. El fan-out inflaba el conteo
+de aristas sin ocultar código muerto.
+
+Dicho al revés, y es la lectura honesta: **la precisión del grafo mejoró mucho
+para leerlo, y casi nada para `find_dead_code`.** Las dos cosas se miden
+distinto y conviene no venderlas juntas.
+
+La serie Django y el barrido de 13 repos se midieron antes de v0.32 y no se
+re-corrieron sobre esos corpus — la medición de arriba es sobre livespec mismo.
+Si alguien pregunta por el número exacto de Django post-v0.32, la respuesta es
+que hay que volver a correrlo, no estimarlo.
 
 ### ¿Cuál es el mayor riesgo técnico del proyecto?
 Que la extracción es una heurística sobre tipos de nodo tree-sitter hardcodeados
