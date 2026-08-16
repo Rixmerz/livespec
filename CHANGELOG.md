@@ -8,6 +8,43 @@ follows [SemVer](https://semver.org/).
 
 ### Fixed
 
+- **El resolver de llamadas dejó de abanicar sobre nombres homónimos.** Medido
+  sobre este repo: **501 de 2523 aristas `calls` (20%) eran el mismo nombre
+  corto resuelto contra cada definición homónima**. Tres reglas nuevas, en
+  orden de precedencia, bajan eso a 95 de 2112 (4%):
+
+  1. **Scope léxico** (peso 0.8). La regla de "mismo archivo" no puede ayudar
+     cuando los duplicados están todos en UN archivo, que es la forma normal de
+     un helper anidado: `extractors.py` define un closure `text` dentro de doce
+     funciones distintas, así que una llamada a `text` desde cualquiera de ellas
+     producía doce aristas. Ahora se recorre la cadena de ámbitos del llamador
+     de adentro hacia afuera y gana el primero que define un candidato — lo
+     mismo que hace el lenguaje. El sombreado funciona: un `helper` interno gana
+     al del módulo.
+
+  2. **Parámetro del llamador** (sin arista). `_ts_http_call_uses_param(call_node,
+     param, text)` llamando `text(n)`: `text` es un ARGUMENTO, el callee es lo
+     que le hayan pasado. Emitir una arista por cada definición homónima no es
+     una respuesta imprecisa, es una equivocada.
+
+  3. **Import que apunta fuera del proyecto** (sin arista). El extractor guarda
+     solo el último nombre de la llamada, así que `os.walk` llega como `walk` y
+     abanicaba contra las seis funciones `walk` del repo — pero el ref conserva
+     `scope_module='os'`, y ese import es la evidencia de que ninguna es el
+     destino. Solo aplica cuando el scope no corresponde a NINGÚN módulo del
+     proyecto: un import propio que no logró casar sigue siendo ambigüedad
+     marcada, no se borra.
+
+  Efecto en una clausura real: los callees de `indexer._iter_files` pasan de 15
+  a 4, y esos 4 son exactamente los que llama.
+
+  La ambigüedad genuina entre archivos se conserva a peso 0.5 — `register`
+  definido en nueve módulos de plugin sigue emitiendo las nueve, porque sin un
+  import que lo discrimine elegir una sería inventar.
+
+
+### Fixed
+
 - **Python signatures keep their type annotations.** `_py_signature` built the
   signature from `arg.arg` alone and never read `node.returns`, so every Python
   symbol in the index stored an untyped signature — `_cmd_index(path, force)`

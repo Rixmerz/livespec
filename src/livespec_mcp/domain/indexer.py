@@ -565,6 +565,43 @@ def _resolve_routes(conn: sqlite3.Connection) -> int:
     return edge_count
 
 
+def _is_caller_parameter(signature: str | None, target_name: str) -> bool:
+    """True when *target_name* is a parameter of the calling symbol.
+
+    Parsed off the stored signature rather than re-reading source: the
+    signature is already on the row being walked, and this runs once per ref.
+    Handles the annotated form (`text: Callable`), the default form (`text=...`)
+    and the bare form, plus `*args` / `**kw` / `/` / `*` separators. Splits on
+    TOP-LEVEL commas only, so `x: dict[str, int]` stays one parameter.
+    """
+    if not signature or "(" not in signature:
+        return False
+    inner = signature[signature.index("(") + 1 : signature.rfind(")")]
+    if not inner.strip():
+        return False
+
+    params: list[str] = []
+    current: list[str] = []
+    depth = 0
+    for ch in inner:
+        if ch in "([{":
+            depth += 1
+        elif ch in ")]}":
+            depth -= 1
+        if ch == "," and depth == 0:
+            params.append("".join(current))
+            current = []
+        else:
+            current.append(ch)
+    params.append("".join(current))
+
+    for raw in params:
+        name = raw.strip().lstrip("*").split(":")[0].split("=")[0].strip()
+        if name and name == target_name:
+            return True
+    return False
+
+
 def _resolve_refs(
     conn: sqlite3.Connection,
     *,
@@ -592,11 +629,15 @@ def _resolve_refs(
 
     Disambiguation precedence when target_name has multiple candidates:
     1. scope_module match (Python imports captured by extractor) → weight 0.9.
-    2. same source file as the call site → weight 0.7. Closes the v0.8 P2
+    2. nearest enclosing lexical scope → weight 0.8. A nested helper binds to
+       the definition in the closest enclosing scope, the way the language
+       resolves it. Handles the case rule 3 cannot: twelve closures named
+       ``text`` in ONE file, each inside a different parent.
+    3. same source file as the call site → weight 0.7. Closes the v0.8 P2
        session-01 bug where short names like ``list_tools`` (defined in
        3 different modules) created edges to all 3 from a single in-module
        call site.
-    3. otherwise: keep all candidates at weight 0.5 (legacy behavior). True
+    4. otherwise: keep all candidates at weight 0.5 (legacy behavior). True
        cross-file ambiguous call where the extractor missed the import.
     Single-candidate matches are always weight 1.0.
     """
@@ -611,7 +652,8 @@ def _resolve_refs(
         }
         params: list[Any] = [project_id, *changed_file_ids]
         sql = (
-            f"SELECT u.src_symbol_id, u.target_name, u.scope_module, s.file_id AS src_file_id "
+            f"SELECT u.src_symbol_id, u.target_name, u.scope_module, s.file_id AS src_file_id, "
+            f"       s.qualified_name AS src_qname, s.signature AS src_signature "
             f"FROM symbol_ref u "
             f"JOIN symbol s ON s.id = u.src_symbol_id "
             f"JOIN file f ON f.id = s.file_id "
@@ -626,7 +668,8 @@ def _resolve_refs(
         rows = conn.execute(sql, params).fetchall()
     else:
         rows = conn.execute(
-            """SELECT u.src_symbol_id, u.target_name, u.scope_module, s.file_id AS src_file_id
+            """SELECT u.src_symbol_id, u.target_name, u.scope_module, s.file_id AS src_file_id,
+                      s.qualified_name AS src_qname, s.signature AS src_signature
                FROM symbol_ref u
                JOIN symbol s ON s.id = u.src_symbol_id
                JOIN file f ON f.id = s.file_id
@@ -645,11 +688,31 @@ def _resolve_refs(
             (int(r["id"]), r["qualified_name"], int(r["file_id"]))
         )
 
+    # Every module prefix this project defines. Used to tell "the import names
+    # a project module and we failed to match the symbol" (ambiguous — keep the
+    # old fan-out) apart from "the import names something OUTSIDE the project"
+    # (certain — emit nothing).
+    project_scopes: set[str] = set()
+    for _sid, qname, _fid in (c for cands in name_index.values() for c in cands):
+        parts = qname.split(".")
+        for i in range(1, len(parts)):
+            project_scopes.add(".".join(parts[:i]))
+            project_scopes.add(parts[i - 1])
+
     edge_count = 0
     seen_pairs: set[tuple[int, int]] = set()
     for u in rows:
         candidates = name_index.get(u["target_name"], [])
         if not candidates:
+            continue
+
+        # A call to one of the caller's OWN PARAMETERS is a call through a
+        # value, not to any project symbol — the callee is whatever the caller
+        # was handed. `_ts_http_call_uses_param(call_node, param, text)` calling
+        # `text(n)` was resolving to all twelve closures named `text` elsewhere
+        # in the file, none of which it can possibly reach. Emitting an edge per
+        # same-named definition is not an imprecise answer, it is a wrong one.
+        if _is_caller_parameter(u["src_signature"], u["target_name"]):
             continue
 
         # P0.4: if the ref carries a scope_module (Python imports), prefer
@@ -666,6 +729,44 @@ def _resolve_refs(
                     scoped.append((sid, qname, fid))
             if scoped:
                 candidates = scoped
+            elif scope not in project_scopes:
+                # The ref carries an import and that import points OUTSIDE this
+                # project — `os.walk`, `pathlib.Path`, `json.loads`. The
+                # extractor stores only the call's last name, so `os.walk`
+                # arrives as `walk` and used to fan out to every project
+                # function named `walk` (six of them here). The scope is the
+                # evidence that none of them is the target.
+                #
+                # Only when the scope matches NO project module at all: an
+                # import of a real project module that simply failed to match
+                # the symbol stays ambiguous rather than being dropped.
+                continue
+
+        # v0.32: lexical scope. The same-file rule below cannot help when the
+        # duplicates are all in ONE file, which is the common shape for nested
+        # helpers: `extractors.py` defines a closure named `text` inside twelve
+        # different parent functions, so a call to `text` from any one of them
+        # resolved to all twelve. 20% of this repo's call edges were that.
+        #
+        # Lexical scoping is what the language itself does: the name binds to
+        # the nearest ENCLOSING definition. Walk the caller's scope chain from
+        # innermost outward and take the first scope that defines a candidate.
+        lexical: list[tuple[int, str, int]] = []
+        if not scoped and len(candidates) > 1:
+            parts = str(u["src_qname"]).split(".")
+            # Innermost first: the caller's own scope, then each parent. A
+            # candidate defined *inside* the caller wins over a sibling's.
+            by_scope: dict[str, list[tuple[int, str, int]]] = {}
+            for cand in candidates:
+                owner = cand[1].rsplit(".", 1)[0] if "." in cand[1] else ""
+                by_scope.setdefault(owner, []).append(cand)
+            for depth in range(len(parts), 0, -1):
+                enclosing = ".".join(parts[:depth])
+                if enclosing in by_scope:
+                    lexical = by_scope[enclosing]
+                    break
+            if lexical:
+                candidates = lexical
 
         # v0.8 P2 fix: when scope didn't disambiguate AND there are still
         # multiple candidates, prefer same-file candidates. An in-module
@@ -673,7 +774,7 @@ def _resolve_refs(
         # the resolver fans out to every same-named symbol across the repo
         # (battle-test session 01: list_tools x3, _cosine x2).
         same_file: list[tuple[int, str, int]] = []
-        if not scoped and len(candidates) > 1:
+        if not scoped and not lexical and len(candidates) > 1:
             src_file_id = int(u["src_file_id"])
             same_file = [c for c in candidates if c[2] == src_file_id]
             if same_file:
@@ -683,6 +784,10 @@ def _resolve_refs(
             weight = 1.0
         elif scoped:
             weight = 0.9
+        elif lexical:
+            # Below an explicit import (0.9) — that is stated evidence — and
+            # above same-file (0.7), which only says "somewhere in this file".
+            weight = 0.8
         elif same_file:
             weight = 0.7
         else:
