@@ -236,8 +236,75 @@ def _py_extract(source: str, module_name: str) -> ExtractResult:
         )
         return qname
 
+    def add_type_alias(child: ast.AST, parent_qname: str | None) -> None:
+        """Emit a module-level type alias as a `type_alias` symbol.
+
+        `QName = Annotated[str, Field(...)]`, `Workspace = Annotated[...]`,
+        `type UserId = int` (3.12+). These are the vocabulary a signature is
+        written in — `get_symbol(qname: QName, limit: Limit)` says nothing to a
+        reader who cannot look up `QName`, and until now nothing could: the
+        extractor emitted only function/class/method, so a consumer resolving
+        the types named in a signature found no symbol at all.
+
+        Deliberately NARROW. Only names that look like types by convention
+        (CapWords) bound to a subscripted/annotated expression, so ordinary
+        module constants (`MAX_ENTRIES = 500`, `_CACHE = {}`) stay out of the
+        symbol table and out of dead-code reports.
+        """
+        targets: list[str] = []
+        value: ast.AST | None = None
+
+        if isinstance(child, ast.AnnAssign) and isinstance(child.target, ast.Name):
+            targets = [child.target.id]
+            value = child.value
+        elif isinstance(child, ast.Assign):
+            targets = [tg.id for tg in child.targets if isinstance(tg, ast.Name)]
+            value = child.value
+        elif hasattr(ast, "TypeAlias") and isinstance(child, ast.TypeAlias):
+            # PEP 695 `type X = ...`, unambiguous by construction.
+            if isinstance(child.name, ast.Name):
+                targets = [child.name.id]
+                value = child.value
+        if not targets or value is None:
+            return
+
+        pep695 = hasattr(ast, "TypeAlias") and isinstance(child, ast.TypeAlias)
+        # A subscript (`Annotated[...]`, `Union[...]`, `dict[str, int]`) or a
+        # bare name/attribute alias. A call, literal, or comprehension is a
+        # value, not a type.
+        looks_typish = isinstance(value, (ast.Subscript, ast.Name, ast.Attribute, ast.BinOp))
+
+        for name in targets:
+            if not pep695:
+                if not (name[:1].isupper() and not name.isupper()):
+                    continue  # not CapWords -> a constant, not a type alias
+                if not looks_typish:
+                    continue
+            qname = f"{module_name}.{name}" if module_name else name
+            start = getattr(child, "lineno", 1)
+            end = getattr(child, "end_lineno", start) or start
+            try:
+                rendered = ast.unparse(value)
+            except Exception:
+                rendered = ""
+            out.symbols.append(
+                ExtractedSymbol(
+                    name=name,
+                    qualified_name=qname,
+                    kind="type_alias",
+                    signature=f"{name} = {rendered}" if rendered else name,
+                    docstring=None,
+                    body_hash_seed=rendered,
+                    start_line=start,
+                    end_line=end,
+                    parent_qname=parent_qname,
+                )
+            )
+
     def visit(node: ast.AST, parent_qname: str | None, in_class: bool) -> None:
         for child in ast.iter_child_nodes(node):
+            if parent_qname is None and not in_class:
+                add_type_alias(child, parent_qname)
             if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 kind = "method" if in_class else "function"
                 qn = add_func(child, parent_qname, kind)
