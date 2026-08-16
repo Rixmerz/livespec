@@ -6,6 +6,44 @@ follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **Python signatures keep their type annotations.** `_py_signature` built the
+  signature from `arg.arg` alone and never read `node.returns`, so every Python
+  symbol in the index stored an untyped signature — `_cmd_index(path, force)`
+  instead of `_cmd_index(path: str, *, force: bool) -> dict[str, Any]`. The
+  annotations were present in the AST and discarded.
+
+  This is the most load-bearing part of a signature for any consumer that is
+  **not** opening the file: `get_spec_implementation`, the Explorer symbol
+  payload, and any agent reading a symbol without its source all showed
+  parameter names with no types. Measured on this repo: 0/1332 Python
+  signatures carried a type before, 812/1332 (61%) after — the remainder being
+  genuinely unannotated source.
+
+  Also fixed while here: defaults now mark the parameter optional (`x=...`
+  rather than rendering an arbitrary default expression into every stored
+  signature), positional-only `/` and keyword-only `*` separators are emitted,
+  and `*args`/`**kwargs` carry their annotations. The default-offset is computed
+  against `posonlyargs + args` combined — computing it against `args` alone puts
+  every default on the wrong parameter in any function using `/`.
+
+  Signature payload shape changes for Python symbols, hence Unreleased rather
+  than a silent internal fix. `signature_hash` changes with it, so the first
+  index after upgrading reports signature drift on annotated Python symbols
+  once; it settles on the next run.
+
+- **The Spec-diff PR job could never run.** `scripts/pr_diff_impact.py` called
+  `get_state(workspace)` and then `run_index_pipeline(st)` — but `get_state`
+  defaults to `create=False` and raises `WorkspaceNotIndexedError` ("run
+  index_project first") when no DB exists yet. On a CI runner nothing has ever
+  indexed, so the job died one line before the step that would have built the
+  index it was demanding. Every PR run failed the same way, on a step named
+  "Index workspace and render markdown" that never reached the indexing.
+  Fixed with `create=True`, which gates first creation only and returns the
+  same state the pipeline then populates.
+
+
 ### Fixed — a file node could answer a symbol lookup
 
 Graphify emits one node per file, labelled with its basename and placed at

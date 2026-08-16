@@ -115,7 +115,13 @@ def main() -> int:
     from livespec_mcp.tools.analysis import compute_diff_spec_impact
     from livespec_mcp.tools.indexing import run_index_pipeline
 
-    st = get_state(str(workspace))
+    # create=True because the very next line IS the indexing step. Without it
+    # `get_state` raises WorkspaceNotIndexedError telling the caller to index
+    # first — on a CI runner that has never indexed, which is every PR run, so
+    # this job could not reach `run_index_pipeline` to build the index that
+    # `get_state` was demanding. `create` gates first creation only; the state
+    # it returns is the same one the pipeline then populates.
+    st = get_state(str(workspace), create=True)
     run_index_pipeline(st, force=False)
 
     impact = compute_diff_spec_impact(st, base, head)
