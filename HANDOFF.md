@@ -44,8 +44,38 @@ Todo el stack es local-first: 0 servicios externos, 0 API keys obligatorias, 0 D
 
 ## 3. Estado actual
 
-**HEAD: `v0.31.4` + integración Graphify sin taggear. Tests 716.**
+**HEAD: `v0.31.4` + integración Graphify + firmas Python tipadas, sin taggear.
+Tests 716.**
 Pin PyPI / plugin / `uvx livespec@0.31.4`.
+
+### Unreleased — `_py_signature` conserva las anotaciones
+
+`_py_signature` construía la firma solo con `arg.arg` y nunca leía
+`node.returns`. Cada símbolo Python del índice guardaba una firma sin tipos
+(`_cmd_index(path, force)`); las anotaciones estaban en el AST y se
+descartaban. Medido sobre este repo: **0/1332 → 812/1332 (61%)** de firmas
+Python con tipo, el resto es fuente genuinamente sin anotar.
+
+Importa porque la firma es lo único que ve un consumidor que **no** abre el
+archivo — `get_spec_implementation`, el payload de símbolos del Explorer, y
+cualquier agente leyendo un símbolo sin su fuente.
+
+De paso: separadores `/` y `*`, `*args`/`**kwargs` con anotación, y defaults
+marcados como `x=...` en vez de volcar la expresión al store. El offset de
+defaults se calcula contra `posonlyargs + args` juntos — hacerlo solo contra
+`args` corre todos los defaults un lugar en cualquier función con `/`.
+
+`signature_hash` cambia, así que el primer índice tras actualizar reporta
+drift una vez sobre los símbolos Python anotados y se estabiliza al siguiente.
+
+**Verificación en este entorno:** la suite queda igual con y sin el cambio
+(111 failed / 605 passed, y 23/66 en el subconjunto `-k
+"python or extract or index or signature or drift"`). Las 111 fallas son
+ambientales, no de `main`: `tree-sitter-language-pack` 1.6.2 descarga los
+parsers en runtime desde GitHub releases y el proxy TLS del sandbox lo rechaza
+(`invalid peer certificate: UnknownIssuer`), así que todo test de lenguaje
+no-Python falla aquí. El cambio es Python-puro (`ast`), de modo que su radio
+de impacto cae entero dentro de lo que sí se puede verificar en este entorno.
 
 ### Unreleased — consumir Graphify en vez de solo coexistir
 

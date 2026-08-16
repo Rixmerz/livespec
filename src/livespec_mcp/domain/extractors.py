@@ -86,21 +86,68 @@ if hasattr(ast, "TryStar"):  # py3.11+
 # ---------- Python via ast ----------
 
 
+def _py_annotation(node: ast.AST | None) -> str:
+    """Render an annotation back to source, or "" when there is none.
+
+    ``ast.unparse`` can raise on a node this module did not build (it is only
+    guaranteed for trees produced by ``ast.parse``, which is all we feed it) —
+    an unparseable annotation must degrade to an unannotated parameter, never
+    lose the whole symbol.
+    """
+    if node is None:
+        return ""
+    try:
+        return ast.unparse(node)
+    except Exception:
+        return ""
+
+
 def _py_signature(node: ast.FunctionDef | ast.AsyncFunctionDef) -> str:
-    args = []
+    """Full signature INCLUDING annotations and return type.
+
+    The annotations were previously dropped — only ``arg.arg`` was kept — which
+    made every Python signature in the index untyped: `_cmd_index(path, force)`
+    instead of `_cmd_index(path: str, force: bool) -> int`. That is the single
+    most load-bearing part of a signature for a reader who is not opening the
+    file, and `node.returns` was never read at all.
+
+    Defaults are rendered as a bare `=...` marker rather than their literal:
+    what a caller needs to know is *that* the parameter is optional, and a
+    default can be an arbitrary expression that would bloat every signature in
+    the store for no added meaning.
+    """
     a = node.args
     posonly = list(getattr(a, "posonlyargs", []))
     regular = list(a.args)
-    for arg in posonly + regular:
-        args.append(arg.arg)
+
+    # Defaults bind to the TAIL of posonly+regular, so the offset has to be
+    # computed against the combined list or every default lands on the wrong
+    # parameter.
+    positional = posonly + regular
+    first_default = len(positional) - len(a.defaults)
+
+    def render(arg: ast.arg, optional: bool) -> str:
+        ann = _py_annotation(arg.annotation)
+        out = f"{arg.arg}: {ann}" if ann else arg.arg
+        return f"{out}=..." if optional else out
+
+    args = [render(arg, i >= first_default) for i, arg in enumerate(positional)]
+    if posonly:
+        args.insert(len(posonly), "/")
     if a.vararg:
-        args.append("*" + a.vararg.arg)
-    for arg in a.kwonlyargs:
-        args.append(arg.arg)
+        ann = _py_annotation(a.vararg.annotation)
+        args.append(f"*{a.vararg.arg}: {ann}" if ann else f"*{a.vararg.arg}")
+    elif a.kwonlyargs:
+        args.append("*")
+    for arg, default in zip(a.kwonlyargs, a.kw_defaults):
+        args.append(render(arg, default is not None))
     if a.kwarg:
-        args.append("**" + a.kwarg.arg)
-    name = node.name
-    return f"{name}({', '.join(args)})"
+        ann = _py_annotation(a.kwarg.annotation)
+        args.append(f"**{a.kwarg.arg}: {ann}" if ann else f"**{a.kwarg.arg}")
+
+    returns = _py_annotation(node.returns)
+    tail = f" -> {returns}" if returns else ""
+    return f"{node.name}({', '.join(args)}){tail}"
 
 
 def _py_extract(source: str, module_name: str) -> ExtractResult:
