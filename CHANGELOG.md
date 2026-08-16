@@ -33,6 +33,16 @@ follows [SemVer](https://semver.org/).
   index after upgrading reports signature drift on annotated Python symbols
   once; it settles on the next run.
 
+- **The Spec-diff PR job could never run.** `scripts/pr_diff_impact.py` called
+  `get_state(workspace)` and then `run_index_pipeline(st)` — but `get_state`
+  defaults to `create=False` and raises `WorkspaceNotIndexedError` ("run
+  index_project first") when no DB exists yet. On a CI runner nothing has ever
+  indexed, so the job died one line before the step that would have built the
+  index it was demanding. Every PR run failed the same way, on a step named
+  "Index workspace and render markdown" that never reached the indexing.
+  Fixed with `create=True`, which gates first creation only and returns the
+  same state the pipeline then populates.
+
 
 ### Fixed — a file node could answer a symbol lookup
 

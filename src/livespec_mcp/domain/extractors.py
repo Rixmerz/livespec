@@ -139,7 +139,10 @@ def _py_signature(node: ast.FunctionDef | ast.AsyncFunctionDef) -> str:
         args.append(f"*{a.vararg.arg}: {ann}" if ann else f"*{a.vararg.arg}")
     elif a.kwonlyargs:
         args.append("*")
-    for arg, default in zip(a.kwonlyargs, a.kw_defaults):
+    # strict=True: the AST guarantees these two are the same length (kw_defaults
+    # holds None for kwonly args without a default), so a mismatch is a bug worth
+    # hearing about rather than silently truncating the parameter list.
+    for arg, default in zip(a.kwonlyargs, a.kw_defaults, strict=True):
         args.append(render(arg, default is not None))
     if a.kwarg:
         ann = _py_annotation(a.kwarg.annotation)
