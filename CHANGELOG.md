@@ -8,6 +8,37 @@ follows [SemVer](https://semver.org/).
 
 ### Added
 
+- **`search_similar` — ¿esto ya existe?** Un agente reescribe un helper que ya
+  está porque no tiene forma barata de preguntar. Grep responde sobre nombres,
+  y todo el asunto es que el duplicado tiene un nombre *distinto* — por eso se
+  escribió.
+
+  Dos niveles, los dos lo bastante rápidos para correr delante de un write:
+  **nivel 0** hashea la estructura del cuerpo con los identificadores
+  reemplazados por su posición de ligadura, así que una copia con todo
+  renombrado sigue matcheando; **nivel 1** compara huellas winnowed de k-gramas
+  y atrapa la copia que después se editó, reordenó o rellenó.
+
+  Calibrado para ser callado a propósito. Un duplicado que se escapa cuesta algo
+  de redundancia; un "esto ya existe" equivocado bloquea trabajo que estaba bien,
+  y dos de esos enseñan a apagar el check — después de lo cual no atrapa nada.
+  Los cuerpos cortos quedan fuera del nivel 1: toda guard clause de dos líneas
+  se parece a las demás.
+
+  La duplicación semántica (misma intención, código distinto) queda
+  deliberadamente afuera: cuesta segundos, y segundos delante de un write es
+  una función que se desactiva.
+
+- **`symbol_fingerprint` (migración 21) — huellas cacheadas por hash de cuerpo.**
+  Calcular las huellas on-demand significaba cortar de disco cada cuerpo del
+  repo en cada llamada: medido en **764 ms sobre 1443 símbolos**, que no es una
+  función lenta sino una que nadie deja prendida. Con cache: **19 ms**.
+
+  Va indexada por `body_hash` y no por id de símbolo, así que la huella
+  sobrevive a un rename, a un move entre archivos y a un reindex. Un cuerpo que
+  cambió tiene hash nuevo y simplemente no acierta — esa es toda la lógica de
+  invalidación, sin barridos.
+
 - **`read_unit` — la clausura de contrato.** Leer código por archivo es una
   comodidad humana. Un agente al que le piden cambiar `charge_card` no
   necesita el archivo donde vive: necesita el cuerpo, las *firmas* de lo que

@@ -44,6 +44,28 @@ Todo el stack es local-first: 0 servicios externos, 0 API keys obligatorias, 0 D
 
 ## 3. Estado actual
 
+### Unreleased — `search_similar` + huellas cacheadas
+
+Nivel 0 (hash de AST normalizado) y nivel 1 (winnowing de k-gramas) delante de
+un write. El nivel 2 (embedding semántico) queda deliberadamente afuera: cuesta
+segundos, y segundos delante de un write es una función que se desactiva.
+
+Dos cosas que salieron de correrlo contra este repo y no de leerlo:
+
+1. **764 ms sobre 1443 símbolos.** Calcular huellas on-demand corta de disco
+   cada cuerpo del repo en cada llamada. No es una función lenta: es una que
+   nadie deja prendida. Migración 21 (`symbol_fingerprint`) la cachea por
+   `body_hash` → **19 ms**. Clave por hash de cuerpo y no por id de símbolo:
+   sobrevive rename, move y reindex; un cuerpo que cambió simplemente no
+   acierta, y esa es toda la invalidación.
+
+2. **El primer intento no encontró nada** y el algoritmo estaba perfecto (hash
+   idéntico, similitud 1.0 al compararlo a mano). El corpus era el problema: el
+   archivo era nuevo y no estaba indexado. Confirma que el chequeo de índice
+   viejo en SessionStart (§6.5 del plan de CodeLayer) no es paranoia.
+
+28 tests. 48 tools MCP.
+
 ### Unreleased — `read_unit`: la clausura de contrato
 
 La tool que faltaba para que el índice sirva a un agente, no solo a un reporte.

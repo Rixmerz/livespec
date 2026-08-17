@@ -3521,6 +3521,72 @@ def register(mcp: FastMCP) -> None:
         return out
 
     @mcp.tool(annotations={"readOnlyHint": True, "idempotentHint": True})
+    def search_similar(
+        code: str,
+        threshold: float = 0.80,
+        limit: int = 5,
+        workspace: Workspace | None = None,
+    ) -> dict[str, Any]:
+        """Does this already exist? Ask before writing a helper.
+
+        An agent rewrites a helper that already exists because it has no cheap
+        way to ask. Grep answers on names, and the whole point is that the
+        duplicate has a *different* name — that is why it got written.
+
+        Two levels run here, both fast enough to sit in front of a write:
+
+        - **level 0** hashes the body's structure with identifiers replaced by
+          their binding position, so a literal copy with everything renamed
+          still matches. Reported at similarity 1.0.
+        - **level 1** compares winnowed k-gram fingerprints, catching a copy
+          that was edited, reordered or padded after being pasted.
+
+        Tuned to be quiet on purpose. A missed duplicate costs some redundancy;
+        a wrong "this already exists" blocks work that was right, and two of
+        those teach a user to switch the check off — after which it catches
+        nothing. Short bodies are excluded from level 1 entirely, because every
+        two-line guard clause has the same shape as every other.
+
+        Semantic duplication (same intent, unrelated code) is deliberately not
+        here: it costs seconds, and seconds in front of a write is a feature
+        that gets disabled.
+        """ + WORKSPACE_DOCSTRING_NOTE
+        from livespec_mcp.domain.duplication import find_duplicates as _find
+        from livespec_mcp.domain.duplication import fingerprint as _fp
+        from livespec_mcp.domain.duplication import load_corpus as _load_corpus
+
+        if not code or not code.strip():
+            return mcp_error("code is empty", hint="pass the body you are about to write")
+        if not 0.0 < threshold <= 1.0:
+            return mcp_error("threshold must be in (0, 1]", hint="0.80 is the default")
+
+        st = get_state(workspace)
+        candidate = _fp(code, language="python")
+        corpus = _load_corpus(
+            st.conn, tuple(st.group_project_ids()), st.settings.workspace
+        )
+
+        matches = _find(candidate, corpus, threshold=threshold, limit=limit)
+        return {
+            "matches": [
+                {
+                    "qualified_name": m.qualified_name,
+                    "file_path": m.file_path,
+                    "level": m.level,
+                    "similarity": round(m.similarity, 3),
+                    "reason": m.reason,
+                    "next": f'read_unit(qname="{m.qualified_name}")',
+                }
+                for m in matches
+            ],
+            "searched": len(corpus),
+            "verdict": (
+                "already exists — import it instead of rewriting"
+                if matches else "nothing structurally similar in the index"
+            ),
+        }
+
+    @mcp.tool(annotations={"readOnlyHint": True, "idempotentHint": True})
     def resolve_location(
         path: str,
         line: int,

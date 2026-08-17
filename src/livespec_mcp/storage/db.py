@@ -531,6 +531,36 @@ def _m020_spec_source(conn: sqlite3.Connection) -> None:
     _try_add_column(conn, "spec", "source", "TEXT")
 
 
+def _m021_symbol_fingerprint(conn: sqlite3.Connection) -> None:
+    """v0.33: cached duplication fingerprints, keyed by body hash.
+
+    `search_similar` has to answer before a write, inside a hook budget of
+    ~150 ms. Computing fingerprints on demand meant slicing every function body
+    in the repo off disk on every call: measured at **764 ms over 1443 symbols**
+    on this repo, which is not a slow feature — it is a feature nobody keeps
+    enabled.
+
+    Keyed by `body_hash`, not by symbol id, so the cache survives a rename, a
+    move between files, and a re-index: the same body computed once stays
+    computed. A body that changes gets a new hash and simply misses, which is
+    the correct invalidation and needs no sweep.
+
+    Additive and lazily filled — no re-extract, and an empty table just means
+    the first query pays what it used to."""
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS symbol_fingerprint (
+            body_hash TEXT PRIMARY KEY,
+            structural_hash TEXT NOT NULL,
+            minhashes TEXT NOT NULL,
+            token_count INTEGER NOT NULL
+        )"""
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_symbol_fingerprint_structural "
+        "ON symbol_fingerprint(structural_hash)"
+    )
+
+
 # Ordered registry. Append-only — never reuse a version number.
 MIGRATIONS: list[Migration] = [
     (1, "drop_dead_tables", _m001_drop_dead_tables),
@@ -553,6 +583,7 @@ MIGRATIONS: list[Migration] = [
     (18, "change_delta_rename_from", _m018_change_delta_rename_from),
     (19, "drop_vector_search", _m019_drop_vector_search),
     (20, "spec_source", _m020_spec_source),
+    (21, "symbol_fingerprint", _m021_symbol_fingerprint),
 ]
 
 

@@ -167,6 +167,15 @@ PARAM_DESCRIPTIONS: dict[str, str] = {
 
 # Disambiguate params whose meaning depends on the tool.
 TOOL_PARAM_DESCRIPTIONS: dict[tuple[str, str], str] = {
+    ("search_similar", "code"): (
+        "The body you are about to write. Compared structurally, so a helper "
+        "that already exists under a different name still matches."
+    ),
+    ("search_similar", "threshold"): (
+        "Minimum structural overlap for a near-duplicate (level 1). Default "
+        "0.80 is deliberately high — a wrong \"this already exists\" blocks "
+        "work that was right, and gets the check switched off."
+    ),
     ("read_unit", "depth"): (
         "How far to follow types named inside other type definitions. "
         "``0`` returns the body and callee signatures with no type bodies."

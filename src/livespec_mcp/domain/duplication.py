@@ -135,7 +135,7 @@ _KEYWORDS = frozenset({
     "import", "from", "export", "public", "private", "static", "void", "int",
     "string", "bool", "true", "false", "null", "nil", "None", "async", "await",
     "match", "case", "switch", "break", "continue", "in", "is", "not", "and",
-    "or", "fn", "let", "mut", "pub", "impl", "struct", "enum", "type",
+    "or", "fn", "mut", "pub", "impl", "struct", "enum", "type",
 })
 
 
@@ -295,3 +295,92 @@ def find_duplicates(
 
     near.sort(key=lambda m: m.similarity, reverse=True)
     return (exact + near)[:limit]
+
+
+# ---------------------------------------------------------------------------
+# the cached corpus — what makes this affordable in front of a write
+# ---------------------------------------------------------------------------
+
+
+def _encode(fp: Fingerprint) -> tuple[str, str, int]:
+    return (fp.structural_hash, ",".join(str(h) for h in fp.minhashes), fp.token_count)
+
+
+def _decode(structural: str, minhashes: str, count: int) -> Fingerprint:
+    return Fingerprint(
+        structural_hash=structural,
+        minhashes=tuple(int(x) for x in minhashes.split(",") if x),
+        token_count=count,
+    )
+
+
+def load_corpus(
+    conn, project_ids: tuple[int, ...], root
+) -> list[tuple[str, str, Fingerprint]]:
+    """Every function/method in the index, fingerprinted, reading as little as possible.
+
+    Fingerprints are cached in `symbol_fingerprint` keyed by the symbol's
+    `body_hash`. Only bodies whose hash is not already cached get read off
+    disk, so the first call after an index pays and the ones that matter — the
+    ones in front of a write — do not.
+
+    Keyed by body hash rather than symbol id on purpose: a rename or a move
+    between files does not change the body, so the cached fingerprint stays
+    valid across both. A body that actually changed gets a new hash and misses,
+    which is the whole of the invalidation logic.
+    """
+    placeholders = ",".join("?" * len(project_ids))
+    rows = conn.execute(
+        f"SELECT s.qualified_name, s.body_hash, s.start_line, s.end_line, "
+        f"       f.path, f.language "
+        f"FROM symbol s JOIN file f ON f.id = s.file_id "
+        f"WHERE f.project_id IN ({placeholders}) "
+        f"  AND s.kind IN ('function', 'method') AND s.body_hash IS NOT NULL",
+        tuple(project_ids),
+    ).fetchall()
+
+    cached = {
+        r[0]: _decode(r[1], r[2], r[3])
+        for r in conn.execute(
+            "SELECT body_hash, structural_hash, minhashes, token_count "
+            "FROM symbol_fingerprint"
+        )
+    }
+
+    corpus: list[tuple[str, str, Fingerprint]] = []
+    fresh: dict[str, Fingerprint] = {}
+    # One read per file, not one per symbol: a module with 40 functions was
+    # being opened 40 times.
+    file_lines: dict[str, list[str]] = {}
+
+    for r in rows:
+        bh = r["body_hash"]
+        fp = cached.get(bh) or fresh.get(bh)
+        if fp is None:
+            path = r["path"]
+            if path not in file_lines:
+                try:
+                    file_lines[path] = (root / path).read_text(
+                        encoding="utf-8", errors="replace"
+                    ).splitlines()
+                except OSError:
+                    file_lines[path] = []
+            lines = file_lines[path]
+            body = "\n".join(
+                lines[max(r["start_line"] - 1, 0):min(r["end_line"], len(lines))]
+            )
+            if not body.strip():
+                continue
+            fp = fingerprint(body, language=r["language"] or "python")
+            fresh[bh] = fp
+        corpus.append((r["qualified_name"], r["path"], fp))
+
+    if fresh:
+        conn.executemany(
+            "INSERT OR REPLACE INTO symbol_fingerprint "
+            "(body_hash, structural_hash, minhashes, token_count) VALUES (?, ?, ?, ?)",
+            [(bh, *_encode(fp)) for bh, fp in fresh.items()],
+        )
+        conn.commit()
+
+    return corpus

@@ -384,7 +384,7 @@ gates it, you build with live links; *brownfield* → `/livespec-onboard` orient
 `propose_specs_from_codebase` reconstructs intent, **author OpenSpec first**
 (export only as a bootstrap dump).
 
-## Tools (47 total: 30 core + 12 Spec plugin + 5 docs plugin)
+## Tools (48 total: 31 core + 12 Spec plugin + 5 docs plugin)
 
 Every tool requires `workspace` (absolute project root). Pass it on each call;
 omitting it is an error (no env fallback). LRU cache (8 workspaces) — one MCP
@@ -462,6 +462,10 @@ Always registered (including markdown Spec import + OpenSpec sync).
   paying for the file layout around it. Reports `unresolved_types` (real gaps)
   separately from `external_types` (things a dependency owns), and declares
   `budget.degraded` when callees were dropped to fit.
+- `search_similar(code, threshold=0.80)` — "does this already exist?" before
+  writing a helper. Level 0 matches a structural copy with every identifier
+  renamed; level 1 matches a near-duplicate that was edited after pasting.
+  Fingerprints are cached by body hash (764 ms → 19 ms on this repo).
 - `resolve_location(path, line)` — inverse lookup: which symbol owns a
   stack-trace line. Returns the innermost symbol, its enclosing scopes, and the
   `read_unit` call to make next.
