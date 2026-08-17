@@ -44,6 +44,81 @@ Todo el stack es local-first: 0 servicios externos, 0 API keys obligatorias, 0 D
 
 ## 3. Estado actual
 
+### Unreleased — baseline de deuda + 22 tools que no tenían descripción
+
+**Baseline (§8 del plan CodeLayer).** Lo que se congela es una *violación*, no
+un símbolo. Congelar símbolos fue el primer intento y dejaba muda la situación
+principal: después de capturar, escribir una copia nueva de `format_currency`
+no reportaba nada porque el símbolo duplicado estaba congelado. Un test lo
+destapó. Ahora: dos o más cuerpos que ya compartían forma al capturar son deuda
+aceptada; un símbolo único no es violación, así que una copia posterior sí
+reporta. La regla del boy scout es la única forma en que la deuda congelada
+vuelve a hablar, y viene apagada.
+
+**El hallazgo que no buscaba.** 22 de 48 tools no tenían descripción en
+`tools/list` — `find_symbol`, `search`, `quick_orient`, `create_spec`,
+`list_specs` entre ellas. Un literal triple-comillas seguido de
+`+ WORKSPACE_DOCSTRING_NOTE` no es un docstring: Python solo trata un literal
+pelado como tal, así que `__doc__` quedaba en `None`. El patrón se lee bien, y
+por eso sobrevivió. Decorador `_workspace_note` + un test que falla si vuelve a
+pasar.
+
+50 tools MCP (33 core). 76 tests entre los cuatro archivos nuevos.
+
+### Unreleased — `search_similar` + huellas cacheadas
+
+Nivel 0 (hash de AST normalizado) y nivel 1 (winnowing de k-gramas) delante de
+un write. El nivel 2 (embedding semántico) queda deliberadamente afuera: cuesta
+segundos, y segundos delante de un write es una función que se desactiva.
+
+Dos cosas que salieron de correrlo contra este repo y no de leerlo:
+
+1. **764 ms sobre 1443 símbolos.** Calcular huellas on-demand corta de disco
+   cada cuerpo del repo en cada llamada. No es una función lenta: es una que
+   nadie deja prendida. Migración 21 (`symbol_fingerprint`) la cachea por
+   `body_hash` → **19 ms**. Clave por hash de cuerpo y no por id de símbolo:
+   sobrevive rename, move y reindex; un cuerpo que cambió simplemente no
+   acierta, y esa es toda la invalidación.
+
+2. **El primer intento no encontró nada** y el algoritmo estaba perfecto (hash
+   idéntico, similitud 1.0 al compararlo a mano). El corpus era el problema: el
+   archivo era nuevo y no estaba indexado. Confirma que el chequeo de índice
+   viejo en SessionStart (§6.5 del plan de CodeLayer) no es paranoia.
+
+28 tests. 48 tools MCP.
+
+### Unreleased — `read_unit`: la clausura de contrato
+
+La tool que faltaba para que el índice sirva a un agente, no solo a un reporte.
+`read_unit(qname, depth=1, token_budget=2000)` devuelve cuerpo + firmas de
+callees + definiciones de los tipos de esas firmas + lo que lanza + tests que
+lo cubren. `resolve_location(path, line)` es la inversa, para stack traces.
+
+Medido sobre este repo, 20 símbolos por orden alfabético (muestra reproducible;
+el spike previo ordenaba por fan-out y cambiaba entre corridas):
+
+    tokens   mediana 469   p90 721   max 1559
+    bajo el presupuesto de 2k:  20/20
+    tipos DEL PROYECTO resueltos: 100%   gaps reales: ninguno
+
+Dos decisiones que costaron una medición equivocada antes de encontrarlas:
+
+1. **`external_types` va separado de `unresolved_types`.** Mezclados, la
+   métrica daba 23% cuando cada miss era un import de terceros (`DiGraph`,
+   `Table`, `Response`). La separación se hace mirando las líneas de import de
+   los archivos involucrados, no agrandando una lista de nombres conocidos.
+2. **El presupuesto se aplica AL FINAL.** La primera versión recortaba callees
+   antes de resolver tipos, o sea medía una clausura que todavía no existía: el
+   payload podía quedar muy por encima del presupuesto reportando
+   `degraded: False`.
+
+Un bug de render salió de leer la salida, no de aserciones sobre el dict:
+`gateway.authorizeauthorize(...)` y `billing.DeclinedErrorclass DeclinedError`
+— el índice guarda firmas en la forma que produjo cada extractor y concatenar
+el qualified_name encima duplicaba el nombre.
+
+19 tests nuevos en `tests/test_contract_closure.py`. 47 tools MCP (eran 45).
+
 ### Unreleased — alias de tipo como símbolos
 
 `kind='type_alias'`. Una firma está escrita en un vocabulario que el índice no

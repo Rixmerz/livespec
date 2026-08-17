@@ -384,7 +384,7 @@ gates it, you build with live links; *brownfield* → `/livespec-onboard` orient
 `propose_specs_from_codebase` reconstructs intent, **author OpenSpec first**
 (export only as a bootstrap dump).
 
-## Tools (45 total: 28 core + 12 Spec plugin + 5 docs plugin)
+## Tools (50 total: 33 core + 12 Spec plugin + 5 docs plugin)
 
 Every tool requires `workspace` (absolute project root). Pass it on each call;
 omitting it is an error (no env fallback). LRU cache (8 workspaces) — one MCP
@@ -456,6 +456,23 @@ Always registered (including markdown Spec import + OpenSpec sync).
 
 #### Code intelligence (14)
 - `find_symbol(query, kind, limit)` — separator-agnostic name lookup.
+- `read_unit(qname, depth=1, token_budget=2000)` — **contract closure**: body +
+  callee *signatures* + the *definitions* of the types in them + what it raises
+  + which tests cover it. The unit an agent needs to change one symbol, without
+  paying for the file layout around it. Reports `unresolved_types` (real gaps)
+  separately from `external_types` (things a dependency owns), and declares
+  `budget.degraded` when callees were dropped to fit.
+- `debt_baseline_capture(reset=False)` / `debt_baseline_status()` — freeze
+  today's duplication as accepted debt so `search_similar` reports only what is
+  new. Run once at install; without it, a legacy repo lights up everywhere and
+  the check gets switched off before it ever catches a fresh duplicate.
+- `search_similar(code, threshold=0.80)` — "does this already exist?" before
+  writing a helper. Level 0 matches a structural copy with every identifier
+  renamed; level 1 matches a near-duplicate that was edited after pasting.
+  Fingerprints are cached by body hash (764 ms → 19 ms on this repo).
+- `resolve_location(path, line)` — inverse lookup: which symbol owns a
+  stack-trace line. Returns the innermost symbol, its enclosing scopes, and the
+  `read_unit` call to make next.
 - `get_symbol_source(qname)` — body slice only (lighter than full info).
 - `who_calls(qname, max_depth=1)` — backward cone, slim agentic alias. Adds
   `route_callers` when the symbol is an HTTP endpoint that a frontend calls

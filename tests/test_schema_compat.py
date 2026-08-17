@@ -90,3 +90,24 @@ async def test_all_listed_tool_params_have_descriptions(monkeypatch) -> None:
             if not (isinstance(desc, str) and desc.strip()):
                 missing.append(f"{tool.name}.{name}")
     assert missing == [], f"params without description: {missing}"
+
+
+def test_every_tool_has_a_description():
+    """Una tool sin descripción es invisible para el agente que elige cuál llamar.
+
+    `\"\"\"texto\"\"\" + WORKSPACE_DOCSTRING_NOTE` NO es un docstring: Python solo
+    trata un literal pelado como tal, así que la concatenación quedaba como
+    expresión descartada y `__doc__` en None. **22 de 48 tools** estaban así,
+    entre ellas `find_symbol`, `search` y `quick_orient` — casi la mitad de la
+    superficie sin una línea que diga qué hace.
+
+    El patrón se lee bien, que es por qué sobrevivió tanto. El decorador
+    `_workspace_note` conserva la intención y la hace efectiva.
+    """
+    import asyncio
+
+    from livespec_mcp.server import mcp
+
+    tools = asyncio.run(mcp._list_tools())
+    sin = sorted(t.name for t in tools if not (t.description or "").strip())
+    assert not sin, f"tools sin description en tools/list: {sin}"

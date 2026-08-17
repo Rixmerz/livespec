@@ -167,6 +167,45 @@ PARAM_DESCRIPTIONS: dict[str, str] = {
 
 # Disambiguate params whose meaning depends on the tool.
 TOOL_PARAM_DESCRIPTIONS: dict[tuple[str, str], str] = {
+    ("debt_baseline_capture", "reset"): (
+        "Drop the previous snapshot before capturing. Say it deliberately — "
+        "re-capturing without it quietly accepts whatever duplication landed "
+        "since the last capture."
+    ),
+    ("search_similar", "touched_files"): (
+        "Files this session already edited. Only meaningful with "
+        "``boy_scout``; ignored otherwise."
+    ),
+    ("search_similar", "boy_scout"): (
+        "Also report frozen debt when it lives in a file this session already "
+        "opened. Off by default: it means editing a messy file makes the mess "
+        "your problem, which is a team decision, not a default."
+    ),
+    ("search_similar", "code"): (
+        "The body you are about to write. Compared structurally, so a helper "
+        "that already exists under a different name still matches."
+    ),
+    ("search_similar", "threshold"): (
+        "Minimum structural overlap for a near-duplicate (level 1). Default "
+        "0.80 is deliberately high — a wrong \"this already exists\" blocks "
+        "work that was right, and gets the check switched off."
+    ),
+    ("read_unit", "depth"): (
+        "How far to follow types named inside other type definitions. "
+        "``0`` returns the body and callee signatures with no type bodies."
+    ),
+    ("read_unit", "token_budget"): (
+        "Cap on the rendered closure. Over budget the farthest callees are "
+        "dropped first and ``budget.degraded`` says so; body, types and "
+        "``unresolved_types`` are never trimmed."
+    ),
+    ("resolve_location", "path"): (
+        "Source file path as it appears in a stack trace or linter output; "
+        "relative to the workspace, or any suffix of an indexed path."
+    ),
+    ("resolve_location", "line"): (
+        "1-indexed line number. The innermost symbol spanning it is returned."
+    ),
     ("find_symbol", "query"): (
         "Substring or qualified name to search. Separators ``::``, ``.``, and ``#`` "
         "are normalized."

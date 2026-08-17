@@ -8,6 +8,113 @@ follows [SemVer](https://semver.org/).
 
 ### Added
 
+- **Baseline de deuda (`debt_baseline_capture` / `debt_baseline_status`).**
+  Prender la detección de duplicación en un repo existente lo ilumina entero:
+  cientos de casi-duplicados legítimos, deliberados o simplemente no prioridad
+  de esta semana. Todos ciertos, ninguno accionable — y ese ruido es lo que
+  hace que la función se apague antes de atrapar el duplicado escrito hace
+  cinco minutos.
+
+  Lo que se congela es una **violación**, no un símbolo, y esa distinción es la
+  función entera. Congelar símbolos fue el primer intento y dejaba muda
+  justamente la situación principal: después de capturar, un agente que
+  escribía una copia nueva de `format_currency` no oía nada, porque el símbolo
+  que duplicaba estaba congelado. Ahora: dos o más cuerpos que YA compartían
+  forma al capturar son deuda aceptada y callan; un `format_currency` único no
+  es violación, así que una copia escrita después sí reporta.
+
+  La única forma en que la deuda congelada vuelve a hablar es la regla del boy
+  scout — la sesión ya abrió ese archivo, así que el desprolijo es problema de
+  este cambio por elección y no por accidente. Apagada por defecto.
+
+### Fixed
+
+- **22 de 48 tools no tenían descripción en `tools/list`**, entre ellas
+  `find_symbol`, `search`, `quick_orient`, `create_spec` y `list_specs` — casi
+  la mitad de la superficie invisible para un agente que elige qué llamar.
+
+  Un literal triple-comillas seguido de `+ WORKSPACE_DOCSTRING_NOTE` no es un
+  docstring: Python solo trata un literal *pelado* como tal, así que la
+  concatenación quedaba como expresión descartada y `__doc__` en `None`. El
+  patrón se lee bien, que es por qué sobrevivió tanto. Ahora un decorador
+  `_workspace_note` conserva la intención y la hace efectiva, y un test nuevo
+  falla si alguna tool vuelve a quedarse sin descripción.
+
+- **`search_similar` — ¿esto ya existe?** Un agente reescribe un helper que ya
+  está porque no tiene forma barata de preguntar. Grep responde sobre nombres,
+  y todo el asunto es que el duplicado tiene un nombre *distinto* — por eso se
+  escribió.
+
+  Dos niveles, los dos lo bastante rápidos para correr delante de un write:
+  **nivel 0** hashea la estructura del cuerpo con los identificadores
+  reemplazados por su posición de ligadura, así que una copia con todo
+  renombrado sigue matcheando; **nivel 1** compara huellas winnowed de k-gramas
+  y atrapa la copia que después se editó, reordenó o rellenó.
+
+  Calibrado para ser callado a propósito. Un duplicado que se escapa cuesta algo
+  de redundancia; un "esto ya existe" equivocado bloquea trabajo que estaba bien,
+  y dos de esos enseñan a apagar el check — después de lo cual no atrapa nada.
+  Los cuerpos cortos quedan fuera del nivel 1: toda guard clause de dos líneas
+  se parece a las demás.
+
+  La duplicación semántica (misma intención, código distinto) queda
+  deliberadamente afuera: cuesta segundos, y segundos delante de un write es
+  una función que se desactiva.
+
+- **`symbol_fingerprint` (migración 21) — huellas cacheadas por hash de cuerpo.**
+  Calcular las huellas on-demand significaba cortar de disco cada cuerpo del
+  repo en cada llamada: medido en **764 ms sobre 1443 símbolos**, que no es una
+  función lenta sino una que nadie deja prendida. Con cache: **19 ms**.
+
+  Va indexada por `body_hash` y no por id de símbolo, así que la huella
+  sobrevive a un rename, a un move entre archivos y a un reindex. Un cuerpo que
+  cambió tiene hash nuevo y simplemente no acierta — esa es toda la lógica de
+  invalidación, sin barridos.
+
+- **`read_unit` — la clausura de contrato.** Leer código por archivo es una
+  comodidad humana. Un agente al que le piden cambiar `charge_card` no
+  necesita el archivo donde vive: necesita el cuerpo, las *firmas* de lo que
+  llama, las *definiciones* de los tipos de esas firmas, lo que puede lanzar y
+  qué tests lo cubren. `read_unit(qname, depth, token_budget)` devuelve
+  exactamente ese conjunto.
+
+  El punto no es comprimir. Un repo bien factorizado es *más* caro de leer
+  para un agente que uno mal factorizado — más archivos, más saltos, más
+  contexto quemado — así que estructura y navegabilidad tiran en contra. La
+  clausura elimina esa tensión: el agente paga por la unidad, no por el
+  layout.
+
+  Medido sobre este repo, 20 símbolos reales elegidos por orden alfabético
+  (muestra reproducible entre corridas, a diferencia del spike previo que
+  ordenaba por fan-out): mediana **469 tokens**, p90 721, máximo 1559, **20/20
+  bajo el presupuesto de 2k**, y **100% de los tipos del proyecto resueltos,
+  cero gaps reales**.
+
+  Dos propiedades que el payload sostiene explícitamente:
+
+  - **Un tipo que falta se reporta, nunca se descarta.** `unresolved_types` es
+    parte de la respuesta. Una clausura que omite `Money` sin decirlo es peor
+    que no tener clausura: el agente escribe contra un tipo que nunca vio.
+  - **"No es de este proyecto" ≠ "no lo pude resolver".** `DiGraph` (networkx),
+    `Table` (reportlab) y `Response` (framework web) faltan del índice porque
+    son de dependencias. Mezclados con los gaps reales, la métrica daba 23% de
+    resolución cuando cada miss era un import de terceros — un número que
+    habría condenado un diseño que funciona. Van separados en
+    `external_types`.
+
+  Sobre presupuesto se recortan los callees más lejanos primero (una llamada
+  del mismo archivo importa más al cambio que una de otro paquete) y
+  `budget.degraded` lo declara. El cuerpo, los tipos y la lista de no
+  resueltos nunca se recortan: una clausura sin parte del cuerpo que pediste
+  no es una respuesta más chica, es una equivocada.
+
+- **`resolve_location(path, line)` — la inversa.** Stack traces, salida de
+  linters, logs de CI y reportes de cobertura hablan archivo-y-línea. Sin
+  esto, un agente que trabaja por símbolos vuelve a abrir el archivo apenas
+  algo falla, que es justo el hábito que leer-por-símbolos viene a reemplazar.
+  Devuelve el símbolo más interno que contiene la línea, los que lo encierran
+  hacia afuera, y la llamada a `read_unit` ya formada.
+
 - **Los alias de tipo a nivel de módulo son símbolos** (`kind='type_alias'`).
   Una firma está escrita en un vocabulario y ese vocabulario no existía en el
   índice: `get_symbol(qname: QName, limit: Limit)` no le dice nada a un
