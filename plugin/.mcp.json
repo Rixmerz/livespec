@@ -3,7 +3,7 @@
     "livespec": {
       "command": "uvx",
       "args": [
-        "livespec@0.31.4"
+        "livespec@0.32.0"
       ],
       "env": {}
     }

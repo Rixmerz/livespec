@@ -15,9 +15,9 @@
   era la máquina macOS anterior — referencias viejas en este doc pueden
   mencionarlo)
 - **Demo project:** `<demo-repo>` (4 archivos Python con `@rf:` annotations en docstrings, ya tiene RFs persistidas en su `.mcp-docs/docs.db`)
-- **MCP server:** Claude Code plugin `livespec@livespec-dev` **0.31.4**
+- **MCP server:** Claude Code plugin `livespec@livespec-dev` **0.32.0**
   (marketplace `livespec-dev` = `Rixmerz/livespec`; also installable as
-  `livespec@rixmerz`). Pin `uvx livespec@0.31.4` and/or Cursor `user-livespec`
+  `livespec@rixmerz`). Pin `uvx livespec@0.32.0` and/or Cursor `user-livespec`
   pointing at a local checkout. **Every tool requires `workspace=/abs/repo`**
   — there is no `LIVESPEC_WORKSPACE` env fallback (removed).
 - **Git user:** Juan Pablo Díaz S.
@@ -44,7 +44,7 @@ Todo el stack es local-first: 0 servicios externos, 0 API keys obligatorias, 0 D
 
 ## 3. Estado actual
 
-### Unreleased — baseline de deuda + 22 tools que no tenían descripción
+### v0.32.0 — baseline de deuda + 22 tools que no tenían descripción
 
 **Baseline (§8 del plan CodeLayer).** Lo que se congela es una *violación*, no
 un símbolo. Congelar símbolos fue el primer intento y dejaba muda la situación
@@ -65,7 +65,7 @@ pasar.
 
 50 tools MCP (33 core). 76 tests entre los cuatro archivos nuevos.
 
-### Unreleased — `search_similar` + huellas cacheadas
+### v0.32.0 — `search_similar` + huellas cacheadas
 
 Nivel 0 (hash de AST normalizado) y nivel 1 (winnowing de k-gramas) delante de
 un write. El nivel 2 (embedding semántico) queda deliberadamente afuera: cuesta
@@ -87,7 +87,7 @@ Dos cosas que salieron de correrlo contra este repo y no de leerlo:
 
 28 tests. 48 tools MCP.
 
-### Unreleased — `read_unit`: la clausura de contrato
+### v0.32.0 — `read_unit`: la clausura de contrato
 
 La tool que faltaba para que el índice sirva a un agente, no solo a un reporte.
 `read_unit(qname, depth=1, token_budget=2000)` devuelve cuerpo + firmas de
@@ -119,7 +119,7 @@ el qualified_name encima duplicaba el nombre.
 
 19 tests nuevos en `tests/test_contract_closure.py`. 47 tools MCP (eran 45).
 
-### Unreleased — alias de tipo como símbolos
+### v0.32.0 — alias de tipo como símbolos
 
 `kind='type_alias'`. Una firma está escrita en un vocabulario que el índice no
 tenía: de los tipos nombrados en 20 clausuras reales, **45 de 79 no resolvían**,
@@ -130,7 +130,7 @@ Regla angosta a propósito: nivel de módulo, CapWords, ligado a expresión de
 tipo. Constantes fuera — el radio de impacto real es dead code. 11 alias en este
 repo, cero tests cambiados (111 failed / 605 passed antes y después; las 111 son
 el download de parsers bloqueado por el proxy).
-### Unreleased — el resolver dejó de abanicar sobre homónimos
+### v0.32.0 — el resolver dejó de abanicar sobre homónimos
 
 **501 de 2523 aristas `calls` (20%) eran ruido**: el mismo nombre corto resuelto
 contra cada definición homónima. Tres reglas nuevas lo bajan a **95 de 2112 (4%)**.
@@ -151,11 +151,10 @@ nuevos, cero regresión. Las 111 fallas de este entorno siguen siendo el downloa
 de parsers de tree-sitter-language-pack bloqueado por el proxy TLS del sandbox.
 
 
-**HEAD: `v0.31.4` + integración Graphify + firmas Python tipadas, sin taggear.
-Tests 716.**
-Pin PyPI / plugin / `uvx livespec@0.31.4`.
+**HEAD: `v0.32.0`, taggeado y liberado 2026-08-17.**
+Pin PyPI / plugin / `uvx livespec@0.32.0`.
 
-### Unreleased — `_py_signature` conserva las anotaciones
+### v0.32.0 — `_py_signature` conserva las anotaciones
 
 `_py_signature` construía la firma solo con `arg.arg` y nunca leía
 `node.returns`. Cada símbolo Python del índice guardaba una firma sin tipos
@@ -184,7 +183,7 @@ parsers en runtime desde GitHub releases y el proxy TLS del sandbox lo rechaza
 no-Python falla aquí. El cambio es Python-puro (`ast`), de modo que su radio
 de impacto cae entero dentro de lo que sí se puede verificar en este entorno.
 
-### Unreleased — consumir Graphify en vez de solo coexistir
+### v0.32.0 — consumir Graphify en vez de solo coexistir
 
 `find_dead_code(corroborate_with=<graph.json>)` lee un grafo de Graphify como
 evidencia corroborante. **No revierte** la decisión de julio de no portar sus
@@ -290,7 +289,7 @@ que livespec no tiene en su propio repo) y la capa documental (**316** aristas
 Graphify tiene a nuestro wedge Spec↔código, y la única pieza que necesitaría un
 LLM. Ambas requieren resolver la pregunta de provenance de forma deliberada.
 
-### v0.31.4 (2026-08-11) — ergonomía de payloads (dogfood polyrepo)
+### v0.32.0 (2026-08-11) — ergonomía de payloads (dogfood polyrepo)
 
 Batch salido de usar livespec como agente sobre un grupo polyrepo real (13
 repos en un `group_db` + varios sueltos). Cuatro hallazgos, ninguno en el
@@ -335,7 +334,7 @@ motor: viven en la capa de payload y en los docs. Tests 672 → **688**
    eran los tests: el job `ruff + package build` fallaba con dos `RUF001`
    que entraron en `d46616e` (0.31.2) — un guion largo en un comentario CSS
    y una comilla tipográfica en copy HTML del Flow Explorer, ambos texto
-   generado. O sea que nada entre 0.31.2 y 0.31.4 aterrizó con pipeline
+   generado. O sea que nada entre 0.31.2 y 0.32.0 aterrizó con pipeline
    verde. **Ojo:** el `commit-guard` local no corre ruff, así que un commit
    puede pasar el hook y romper el CI igual — correr `ruff check src tests`
    a mano antes de pushear.
