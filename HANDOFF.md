@@ -44,6 +44,27 @@ Todo el stack es local-first: 0 servicios externos, 0 API keys obligatorias, 0 D
 
 ## 3. Estado actual
 
+### Unreleased — baseline de deuda + 22 tools que no tenían descripción
+
+**Baseline (§8 del plan CodeLayer).** Lo que se congela es una *violación*, no
+un símbolo. Congelar símbolos fue el primer intento y dejaba muda la situación
+principal: después de capturar, escribir una copia nueva de `format_currency`
+no reportaba nada porque el símbolo duplicado estaba congelado. Un test lo
+destapó. Ahora: dos o más cuerpos que ya compartían forma al capturar son deuda
+aceptada; un símbolo único no es violación, así que una copia posterior sí
+reporta. La regla del boy scout es la única forma en que la deuda congelada
+vuelve a hablar, y viene apagada.
+
+**El hallazgo que no buscaba.** 22 de 48 tools no tenían descripción en
+`tools/list` — `find_symbol`, `search`, `quick_orient`, `create_spec`,
+`list_specs` entre ellas. Un literal triple-comillas seguido de
+`+ WORKSPACE_DOCSTRING_NOTE` no es un docstring: Python solo trata un literal
+pelado como tal, así que `__doc__` quedaba en `None`. El patrón se lee bien, y
+por eso sobrevivió. Decorador `_workspace_note` + un test que falla si vuelve a
+pasar.
+
+50 tools MCP (33 core). 76 tests entre los cuatro archivos nuevos.
+
 ### Unreleased — `search_similar` + huellas cacheadas
 
 Nivel 0 (hash de AST normalizado) y nivel 1 (winnowing de k-gramas) delante de

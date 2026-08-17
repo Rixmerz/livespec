@@ -8,6 +8,38 @@ follows [SemVer](https://semver.org/).
 
 ### Added
 
+- **Baseline de deuda (`debt_baseline_capture` / `debt_baseline_status`).**
+  Prender la detección de duplicación en un repo existente lo ilumina entero:
+  cientos de casi-duplicados legítimos, deliberados o simplemente no prioridad
+  de esta semana. Todos ciertos, ninguno accionable — y ese ruido es lo que
+  hace que la función se apague antes de atrapar el duplicado escrito hace
+  cinco minutos.
+
+  Lo que se congela es una **violación**, no un símbolo, y esa distinción es la
+  función entera. Congelar símbolos fue el primer intento y dejaba muda
+  justamente la situación principal: después de capturar, un agente que
+  escribía una copia nueva de `format_currency` no oía nada, porque el símbolo
+  que duplicaba estaba congelado. Ahora: dos o más cuerpos que YA compartían
+  forma al capturar son deuda aceptada y callan; un `format_currency` único no
+  es violación, así que una copia escrita después sí reporta.
+
+  La única forma en que la deuda congelada vuelve a hablar es la regla del boy
+  scout — la sesión ya abrió ese archivo, así que el desprolijo es problema de
+  este cambio por elección y no por accidente. Apagada por defecto.
+
+### Fixed
+
+- **22 de 48 tools no tenían descripción en `tools/list`**, entre ellas
+  `find_symbol`, `search`, `quick_orient`, `create_spec` y `list_specs` — casi
+  la mitad de la superficie invisible para un agente que elige qué llamar.
+
+  Un literal triple-comillas seguido de `+ WORKSPACE_DOCSTRING_NOTE` no es un
+  docstring: Python solo trata un literal *pelado* como tal, así que la
+  concatenación quedaba como expresión descartada y `__doc__` en `None`. El
+  patrón se lee bien, que es por qué sobrevivió tanto. Ahora un decorador
+  `_workspace_note` conserva la intención y la hace efectiva, y un test nuevo
+  falla si alguna tool vuelve a quedarse sin descripción.
+
 - **`search_similar` — ¿esto ya existe?** Un agente reescribe un helper que ya
   está porque no tiene forma barata de preguntar. Grep responde sobre nombres,
   y todo el asunto es que el duplicado tiene un nombre *distinto* — por eso se

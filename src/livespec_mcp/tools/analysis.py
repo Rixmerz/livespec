@@ -3324,8 +3324,27 @@ def _attach_endpoints_not_swept(payload: dict[str, Any], *, st: AppState, framew
     del payload, st, framework, total
 
 
+
+def _workspace_note(fn):
+    """Append the shared workspace note to a tool's docstring.
+
+    A triple-quoted literal followed by ``+ WORKSPACE_DOCSTRING_NOTE`` is not
+    a docstring. Python only treats a bare string *literal* as one, so the
+    concatenation evaluated to a discarded expression and left ``__doc__`` at
+    ``None`` — the tool shipped with no description at all in ``tools/list``.
+    22 of 48 tools were in that state, ``find_symbol``, ``search`` and
+    ``quick_orient`` among them: almost half the surface invisible to an agent
+    choosing what to call.
+
+    The pattern reads correctly, which is why it survived a long time. This
+    decorator keeps the intent and makes it actually happen.
+    """
+    fn.__doc__ = (fn.__doc__ or "") + WORKSPACE_DOCSTRING_NOTE
+    return fn
+
 def register(mcp: FastMCP) -> None:
     @mcp.tool(annotations={"readOnlyHint": True, "idempotentHint": True})
+    @_workspace_note
     def find_symbol(
         query: SymbolQuery,
         kind: str | None = None,
@@ -3351,7 +3370,7 @@ def register(mcp: FastMCP) -> None:
         are both normalized so that `Type::method`, `Type.method`, and
         `module/Type::method` all match the same symbols. Useful in Rust
         repos where qnames mix `.` (file path) and `::` (impl method)
-        separators.""" + WORKSPACE_DOCSTRING_NOTE
+        separators."""
         st = get_state(workspace)
         pids = st.group_project_ids()
         # Clamp limit: a negative value becomes SQLite `LIMIT -1` (unbounded).
@@ -3459,6 +3478,7 @@ def register(mcp: FastMCP) -> None:
         return out
 
     @mcp.tool(annotations={"readOnlyHint": True, "idempotentHint": True})
+    @_workspace_note
     def read_unit(
         qname: str,
         depth: int = 1,
@@ -3486,7 +3506,7 @@ def register(mcp: FastMCP) -> None:
         have resolved and did not are listed in `unresolved_types` — read them
         before relying on their shape rather than assuming the closure is
         complete.
-        """ + WORKSPACE_DOCSTRING_NOTE
+        """
         from livespec_mcp.domain.contract_closure import build_closure
 
         st = get_state(workspace)
@@ -3520,11 +3540,81 @@ def register(mcp: FastMCP) -> None:
             out["project_root"] = sym["project_root"]
         return out
 
+    @mcp.tool(annotations={"idempotentHint": False})
+    @_workspace_note
+    def debt_baseline_capture(
+        reset: bool = False,
+        workspace: Workspace | None = None,
+    ) -> dict[str, Any]:
+        """Freeze today's duplication as accepted debt.
+
+        Turn duplication detection on in an existing repo and it lights up
+        everywhere: hundreds of near-duplicates that are legitimate,
+        deliberate, or simply nobody's priority this week. All true, none
+        actionable — and that noise is what gets the feature switched off
+        before it ever catches the duplicate written five minutes ago.
+
+        Raising the threshold does not fix it: a threshold high enough to
+        silence a legacy repo is high enough to miss new code. Freezing what
+        exists does fix it, and leaves the check sharp for what comes next.
+
+        Run once at install. `reset=True` drops the old snapshot first — say it
+        deliberately, usually after a large merge, because re-capturing without
+        it quietly accepts whatever duplication landed since.
+        """
+        from livespec_mcp.domain import debt_baseline as _debt
+        from livespec_mcp.domain.duplication import load_corpus as _load_corpus
+
+        st = get_state(workspace)
+        dropped = _debt.clear(st.conn) if reset else 0
+        corpus = _load_corpus(
+            st.conn, tuple(st.group_project_ids()), st.settings.workspace
+        )
+        stats = _debt.capture(st.conn, corpus)
+        return {
+            **stats,
+            "dropped": dropped,
+            "next": (
+                "search_similar now reports only new duplication; pass "
+                "boy_scout=true with touched_files to also gate regressions "
+                "in files this session already opened"
+            ),
+        }
+
     @mcp.tool(annotations={"readOnlyHint": True, "idempotentHint": True})
+    @_workspace_note
+    def debt_baseline_status(
+        workspace: Workspace | None = None,
+    ) -> dict[str, Any]:
+        """How much debt is frozen, and when it was frozen."""
+        from livespec_mcp.domain import debt_baseline as _debt
+
+        st = get_state(workspace)
+        _debt.ensure_table(st.conn)
+        row = st.conn.execute(
+            "SELECT COUNT(*), MIN(captured_at), MAX(captured_at) FROM debt_baseline"
+        ).fetchone()
+        return {
+            "captured": bool(row[0]),
+            "frozen": row[0],
+            "first_captured_at": row[1],
+            "last_captured_at": row[2],
+            "hint": (
+                "nothing frozen — search_similar reports every match, including "
+                "pre-existing debt. Run debt_baseline_capture once."
+                if not row[0] else
+                "search_similar reports only duplication newer than this snapshot"
+            ),
+        }
+
+    @mcp.tool(annotations={"readOnlyHint": True, "idempotentHint": True})
+    @_workspace_note
     def search_similar(
         code: str,
         threshold: float = 0.80,
         limit: int = 5,
+        touched_files: list[str] | None = None,
+        boy_scout: bool = False,
         workspace: Workspace | None = None,
     ) -> dict[str, Any]:
         """Does this already exist? Ask before writing a helper.
@@ -3550,7 +3640,7 @@ def register(mcp: FastMCP) -> None:
         Semantic duplication (same intent, unrelated code) is deliberately not
         here: it costs seconds, and seconds in front of a write is a feature
         that gets disabled.
-        """ + WORKSPACE_DOCSTRING_NOTE
+        """
         from livespec_mcp.domain.duplication import find_duplicates as _find
         from livespec_mcp.domain.duplication import fingerprint as _fp
         from livespec_mcp.domain.duplication import load_corpus as _load_corpus
@@ -3567,7 +3657,22 @@ def register(mcp: FastMCP) -> None:
         )
 
         matches = _find(candidate, corpus, threshold=threshold, limit=limit)
+
+        from livespec_mcp.domain import debt_baseline as _debt
+
+        verdict = _debt.judge(
+            st.conn, candidate.structural_hash, matches,
+            touched_files=frozenset(touched_files or []),
+            boy_scout=boy_scout,
+        )
+        if not verdict.gated:
+            matches = [m for m in matches if m.qualified_name in verdict.matches]
+
         return {
+            "baseline": {
+                "captured": _debt.has_baseline(st.conn),
+                "verdict": verdict.reason,
+            },
             "matches": [
                 {
                     "qualified_name": m.qualified_name,
@@ -3587,6 +3692,7 @@ def register(mcp: FastMCP) -> None:
         }
 
     @mcp.tool(annotations={"readOnlyHint": True, "idempotentHint": True})
+    @_workspace_note
     def resolve_location(
         path: str,
         line: int,
@@ -3602,7 +3708,7 @@ def register(mcp: FastMCP) -> None:
         Returns the innermost symbol containing the line (a method rather than
         its class), plus the enclosing symbols outward, so a line inside a
         nested function still resolves to something callable.
-        """ + WORKSPACE_DOCSTRING_NOTE
+        """
         st = get_state(workspace)
         pids = st.group_project_ids()
         if line < 1:
@@ -3782,6 +3888,7 @@ def register(mcp: FastMCP) -> None:
         return payload
 
     @mcp.tool(annotations={"readOnlyHint": True, "idempotentHint": True})
+    @_workspace_note
     def quick_orient(
         qname: str,
         workspace: Workspace | None = None,
@@ -3796,7 +3903,7 @@ def register(mcp: FastMCP) -> None:
         so a `callers_count: 0` result is not misread as dead code.
         Designed for an agent's first contact with an unfamiliar symbol:
         instead of `find_symbol` -> `get_symbol_info` -> `analyze_impact`
-        -> `get_spec_implementation`, run this once.""" + WORKSPACE_DOCSTRING_NOTE
+        -> `get_spec_implementation`, run this once."""
         st = get_state(workspace)
         pids = st.group_project_ids()
         sym = _resolve_symbol(st.conn, pids, qname)
@@ -4156,6 +4263,7 @@ def register(mcp: FastMCP) -> None:
         )
 
     @mcp.tool(annotations={"readOnlyHint": True, "idempotentHint": True})
+    @_workspace_note
     def get_project_overview(
         include_infrastructure: bool = False,
         include_structural_patterns: bool = False,
@@ -4177,7 +4285,7 @@ def register(mcp: FastMCP) -> None:
           `fakeAuthMiddleware`, …). Test scaffolding ranks high by PageRank
           but is the opposite of "what is this repo's core". No opt-out;
           the ones that outranked the returned top-N are listed by
-          qualified name in `test_symbols_filtered`.""" + WORKSPACE_DOCSTRING_NOTE
+          qualified name in `test_symbols_filtered`."""
         return compute_project_overview(
             get_state(workspace),
             include_infrastructure,
@@ -4185,6 +4293,7 @@ def register(mcp: FastMCP) -> None:
         )
 
     @mcp.tool(annotations={"readOnlyHint": True, "idempotentHint": True})
+    @_workspace_note
     def find_dead_code(
         include_infrastructure: bool = False,
         include_public: bool = False,
@@ -4257,7 +4366,7 @@ def register(mcp: FastMCP) -> None:
         report `corroboration` (source, match rate, what was dropped and by
         which relation). Evidence, not proof: still confirm with APM before
         deleting.
-        """ + WORKSPACE_DOCSTRING_NOTE
+        """
         st = get_state(workspace)
         pid = st.project_id
         auto_enabled: list[str] = []
@@ -4716,6 +4825,7 @@ def register(mcp: FastMCP) -> None:
         return payload
 
     @mcp.tool(annotations={"readOnlyHint": True, "idempotentHint": True})
+    @_workspace_note
     def find_legacy_flows(
         project: str | None = None,
         include_infra_routes: bool = False,
@@ -4739,7 +4849,7 @@ def register(mcp: FastMCP) -> None:
         ``project`` filters by project name/basename. Infra paths
         (``/health``, …) are dropped unless ``include_infra_routes=True``.
         Paginated like other aggregators (`limit`/`cursor`/`summary_only`).
-        """ + WORKSPACE_DOCSTRING_NOTE
+        """
         st = get_state(workspace)
         raw = compute_legacy_flows(
             st.conn,
@@ -4776,6 +4886,7 @@ def register(mcp: FastMCP) -> None:
         return payload
 
     @mcp.tool(annotations={"readOnlyHint": True, "idempotentHint": True})
+    @_workspace_note
     def audit_coverage(
         limit: int = 200,
         cursor: int = 0,
@@ -4832,7 +4943,7 @@ def register(mcp: FastMCP) -> None:
         Legacy ``cursor`` applies the same offset to every list when
         ``cursors`` is omitted. ``summary_only=True`` returns counts plus a
         sample of up to 10 ``modules_truly_orphan`` paths.
-        """ + WORKSPACE_DOCSTRING_NOTE
+        """
         st = get_state(workspace)
 
         # v0.7 B3: pagination over the shared compute helper. v0.20 M19: only
@@ -4906,6 +5017,7 @@ def register(mcp: FastMCP) -> None:
         return payload
 
     @mcp.tool(annotations={"readOnlyHint": True, "idempotentHint": True})
+    @_workspace_note
     def find_orphan_tests(
         max_depth: int = 10,
         min_weight: float = 0.0,
@@ -4937,7 +5049,7 @@ def register(mcp: FastMCP) -> None:
         caveat above names the exact failure this addresses — a test that
         exercises production through an indirection this call graph can't
         follow. A different extractor often can.
-        """ + WORKSPACE_DOCSTRING_NOTE
+        """
         st = get_state(workspace)
         pid = st.project_id
         view = load_graph(st.conn, pid)
@@ -5284,6 +5396,7 @@ def register(mcp: FastMCP) -> None:
         )
 
     @mcp.tool(annotations={"readOnlyHint": True, "idempotentHint": True})
+    @_workspace_note
     def grep_in_indexed_files(
         pattern: str,
         path_glob: str | None = None,
@@ -5311,7 +5424,7 @@ def register(mcp: FastMCP) -> None:
         was indexed AND no unindexed file falls in scope — an empty ``matches``
         really means "no matches". ``False`` adds ``stale_files`` /
         ``unindexed_files`` (+ ``_count``) and a ``hint``.
-        """ + WORKSPACE_DOCSTRING_NOTE
+        """
         st = get_state(workspace)
         return _grep_indexed_files_core(
             st,

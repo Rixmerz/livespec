@@ -112,7 +112,7 @@ populates new fields.
 ### Layered stack
 
 ```
-tools/          MCP-exposed surface (48 tools: 31 core + 12 Spec + 5 docs)
+tools/          MCP-exposed surface (50 tools: 33 core + 12 Spec + 5 docs)
   analysis.py     find_symbol, quick_orient, get_symbol_source, who_calls,
                   who_does_this_call, analyze_impact, audit_coverage,
                   find_dead_code, find_legacy_flows, find_orphan_tests,
@@ -199,7 +199,7 @@ produce duplicate symbols at the same line. Keep the first occurrence
 The v0.8 curation pass shipped: battle-test data (3 sessions, 40 calls,
 11 bug fixes) drove the tier split. Current state:
 
-- **31 core tools** always registered: code intel (find_symbol,
+- **33 core tools** always registered: code intel (find_symbol,
   quick_orient, get_symbol_source, who_calls, who_does_this_call,
   analyze_impact, git_diff_impact, find_dead_code, find_legacy_flows,
   find_orphan_tests, find_endpoints, get_project_overview, index_project,

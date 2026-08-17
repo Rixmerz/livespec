@@ -20,8 +20,26 @@ from livespec_mcp.tools._errors import mcp_error
 from livespec_mcp.workspace_param import WORKSPACE_DOCSTRING_NOTE, Workspace
 
 
+def _workspace_note(fn):
+    """Append the shared workspace note to a tool's docstring.
+
+    A triple-quoted literal followed by ``+ WORKSPACE_DOCSTRING_NOTE`` is not
+    a docstring. Python only treats a bare string *literal* as one, so the
+    concatenation evaluated to a discarded expression and left ``__doc__`` at
+    ``None`` — the tool shipped with no description at all in ``tools/list``.
+    22 of 48 tools were in that state, ``find_symbol``, ``search`` and
+    ``quick_orient`` among them: almost half the surface invisible to an agent
+    choosing what to call.
+
+    The pattern reads correctly, which is why it survived a long time. This
+    decorator keeps the intent and makes it actually happen.
+    """
+    fn.__doc__ = (fn.__doc__ or "") + WORKSPACE_DOCSTRING_NOTE
+    return fn
+
 def register(mcp: FastMCP) -> None:
     @mcp.tool(annotations={"readOnlyHint": True, "idempotentHint": True})
+    @_workspace_note
     def search(
         query: str,
         scope: Literal["all", "code", "specs"] = "all",
@@ -37,7 +55,7 @@ def register(mcp: FastMCP) -> None:
 
         Response includes ``query_mode`` (tokens|phrase|mixed) and
         ``index_fresh`` (chunk source files vs indexed content hashes).
-        """ + WORKSPACE_DOCSTRING_NOTE
+        """
         if not query or not query.strip():
             return mcp_error("query is required", hint="pass a non-empty query string")
         if limit < 1 or limit > 200:

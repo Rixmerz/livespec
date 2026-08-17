@@ -167,6 +167,20 @@ PARAM_DESCRIPTIONS: dict[str, str] = {
 
 # Disambiguate params whose meaning depends on the tool.
 TOOL_PARAM_DESCRIPTIONS: dict[tuple[str, str], str] = {
+    ("debt_baseline_capture", "reset"): (
+        "Drop the previous snapshot before capturing. Say it deliberately — "
+        "re-capturing without it quietly accepts whatever duplication landed "
+        "since the last capture."
+    ),
+    ("search_similar", "touched_files"): (
+        "Files this session already edited. Only meaningful with "
+        "``boy_scout``; ignored otherwise."
+    ),
+    ("search_similar", "boy_scout"): (
+        "Also report frozen debt when it lives in a file this session already "
+        "opened. Off by default: it means editing a messy file makes the mess "
+        "your problem, which is a team decision, not a default."
+    ),
     ("search_similar", "code"): (
         "The body you are about to write. Compared structurally, so a helper "
         "that already exists under a different name still matches."

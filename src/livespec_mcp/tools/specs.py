@@ -176,6 +176,24 @@ def _noop_decorator(**_kwargs: Any):
     return _wrap
 
 
+
+def _workspace_note(fn):
+    """Append the shared workspace note to a tool's docstring.
+
+    A triple-quoted literal followed by ``+ WORKSPACE_DOCSTRING_NOTE`` is not
+    a docstring. Python only treats a bare string *literal* as one, so the
+    concatenation evaluated to a discarded expression and left ``__doc__`` at
+    ``None`` — the tool shipped with no description at all in ``tools/list``.
+    22 of 48 tools were in that state, ``find_symbol``, ``search`` and
+    ``quick_orient`` among them: almost half the surface invisible to an agent
+    choosing what to call.
+
+    The pattern reads correctly, which is why it survived a long time. This
+    decorator keeps the intent and makes it actually happen.
+    """
+    fn.__doc__ = (fn.__doc__ or "") + WORKSPACE_DOCSTRING_NOTE
+    return fn
+
 def register(
     mcp: FastMCP,
     agentic: bool = True,
@@ -200,6 +218,7 @@ def register(
     mutation_tool = mcp.tool if mutation else _noop_decorator
 
     @mutation_tool(annotations={"readOnlyHint": False, "idempotentHint": False})
+    @_workspace_note
     def create_spec(
         title: str,
         description: str | None = None,
@@ -218,7 +237,7 @@ def register(
         another slug — ``SPEC-001``-shaped ids are rejected.
         `kind` classifies the spec — see SpecKind for the documented values
         (free-text column, not DB-enforced, so custom kinds also work). Not
-        idempotent — use `update_spec` for changes.""" + WORKSPACE_DOCSTRING_NOTE
+        idempotent — use `update_spec` for changes."""
         st = get_state(workspace)
         pid = st.project_id
         if spec_id is not None and is_legacy_numeric_spec_id(spec_id):
@@ -304,6 +323,7 @@ def register(
         return {"spec_id": spec_id, "updated": True}
 
     @agentic_tool(annotations={"readOnlyHint": True, "idempotentHint": True})
+    @_workspace_note
     def list_specs(
         status: str | None = None,
         module: str | None = None,
@@ -330,7 +350,7 @@ def register(
         page (``total`` is its long-standing alias, kept for existing callers).
         ``summary_only=True`` returns just the count
         and the list of ``spec_id``s (no title/description bodies) — use this
-        first to size a project before paging bodies.""" + WORKSPACE_DOCSTRING_NOTE
+        first to size a project before paging bodies."""
         st = get_state(workspace)
         pid = st.project_id
         # OpenSpec capability == livespec module. Accept either arg name.
@@ -405,13 +425,14 @@ def register(
         }
 
     @agentic_tool(annotations={"readOnlyHint": True, "idempotentHint": True})
+    @_workspace_note
     def get_cross_repo_guide(workspace: Workspace | None = None) -> dict[str, Any]:
         """How to use polyrepo ``group_db`` + mirrored ``xrepo-*`` Specs.
 
         Prefer this tool when MCP resource lists look incomplete (some hosts
         cache ``resources/list`` and miss ``project://group`` /
         ``project://cross-repo``). Returns the guide markdown plus a live
-        ``group`` snapshot for the given workspace.""" + WORKSPACE_DOCSTRING_NOTE
+        ``group`` snapshot for the given workspace."""
         from livespec_mcp.prompts import _load_cross_repo_guide
         from livespec_mcp.resources import compute_group_view
 
@@ -1545,6 +1566,7 @@ def register(
     # ---------- v0.22: OpenSpec (Fission-AI) round-trip + change lifecycle ----------
 
     @agentic_tool(annotations={"readOnlyHint": True, "idempotentHint": True})
+    @_workspace_note
     def export_openspec(
         out_dir: str = "openspec",
         include_changes: bool = True,
@@ -1559,7 +1581,7 @@ def register(
         `module`; module-less specs land under a `general` capability. Only
         non-deprecated specs are emitted as canonical requirements. `out_dir` is
         resolved inside the workspace root.
-        """ + WORKSPACE_DOCSTRING_NOTE
+        """
         st = get_state(workspace)
         from livespec_mcp.domain.openspec_export import export_openspec as _export
 
@@ -1570,6 +1592,7 @@ def register(
         return _export(st.conn, st.project_id, root, include_changes=include_changes)
 
     @agentic_tool(annotations={"readOnlyHint": True, "idempotentHint": True})
+    @_workspace_note
     def validate_openspec(
         strict: bool = False,
         workspace: Workspace | None = None,
@@ -1587,13 +1610,14 @@ def register(
         description length). Missing-scenario and missing-normative-keyword
         findings are `warning` severity normally, `error` under `strict`
         (which is what gates `valid`); missing-title is always an error.
-        """ + WORKSPACE_DOCSTRING_NOTE
+        """
         st = get_state(workspace)
         from livespec_mcp.domain.openspec_validate import validate_openspec as _validate
 
         return _validate(st.conn, st.project_id, strict=strict)
 
     @mutation_tool(annotations={"readOnlyHint": False, "idempotentHint": True})
+    @_workspace_note
     def sync_openspec(
         openspec_dir: str | None = None,
         workspace: Workspace | None = None,
@@ -1605,7 +1629,7 @@ def register(
         requirements from `specs/` and ingests every change under `changes/`
         (proposed) and `archive/` (archived). Idempotent: re-run to re-sync.
         For a single spec file use `import_specs_from_markdown` instead.
-        """ + WORKSPACE_DOCSTRING_NOTE
+        """
         st = get_state(workspace)
         from livespec_mcp.domain.openspec_discover import (
             discover_openspec_root,
@@ -1624,6 +1648,7 @@ def register(
         return sync_openspec_tree(st, root)
 
     @agentic_tool(annotations={"readOnlyHint": True, "idempotentHint": True})
+    @_workspace_note
     def list_spec_changes(
         status: str | None = None,
         workspace: Workspace | None = None,
@@ -1631,7 +1656,7 @@ def register(
         """List OpenSpec change proposals. Filter by status (proposed|applied|archived).
 
         Returns each change's name, status, delta count, and timestamps.
-        """ + WORKSPACE_DOCSTRING_NOTE
+        """
         st = get_state(workspace)
         pid = st.project_id
         sql = [
@@ -1680,6 +1705,7 @@ def register(
         return out
 
     @mutation_tool(annotations={"readOnlyHint": False, "idempotentHint": True})
+    @_workspace_note
     def apply_spec_change(
         name: str,
         dry_run: bool = False,
@@ -1696,7 +1722,7 @@ def register(
         `warnings` (e.g. MODIFIED/REMOVED targeting a spec that doesn't exist, or
         ADDED that would overwrite an existing one) WITHOUT mutating — preview
         before committing. A normal apply returns the same `warnings`.
-        """ + WORKSPACE_DOCSTRING_NOTE
+        """
         st = get_state(workspace)
         from livespec_mcp.domain.openspec_changes import apply_change
 
