@@ -8,6 +8,50 @@ follows [SemVer](https://semver.org/).
 
 ### Added
 
+- **`read_unit` — la clausura de contrato.** Leer código por archivo es una
+  comodidad humana. Un agente al que le piden cambiar `charge_card` no
+  necesita el archivo donde vive: necesita el cuerpo, las *firmas* de lo que
+  llama, las *definiciones* de los tipos de esas firmas, lo que puede lanzar y
+  qué tests lo cubren. `read_unit(qname, depth, token_budget)` devuelve
+  exactamente ese conjunto.
+
+  El punto no es comprimir. Un repo bien factorizado es *más* caro de leer
+  para un agente que uno mal factorizado — más archivos, más saltos, más
+  contexto quemado — así que estructura y navegabilidad tiran en contra. La
+  clausura elimina esa tensión: el agente paga por la unidad, no por el
+  layout.
+
+  Medido sobre este repo, 20 símbolos reales elegidos por orden alfabético
+  (muestra reproducible entre corridas, a diferencia del spike previo que
+  ordenaba por fan-out): mediana **469 tokens**, p90 721, máximo 1559, **20/20
+  bajo el presupuesto de 2k**, y **100% de los tipos del proyecto resueltos,
+  cero gaps reales**.
+
+  Dos propiedades que el payload sostiene explícitamente:
+
+  - **Un tipo que falta se reporta, nunca se descarta.** `unresolved_types` es
+    parte de la respuesta. Una clausura que omite `Money` sin decirlo es peor
+    que no tener clausura: el agente escribe contra un tipo que nunca vio.
+  - **"No es de este proyecto" ≠ "no lo pude resolver".** `DiGraph` (networkx),
+    `Table` (reportlab) y `Response` (framework web) faltan del índice porque
+    son de dependencias. Mezclados con los gaps reales, la métrica daba 23% de
+    resolución cuando cada miss era un import de terceros — un número que
+    habría condenado un diseño que funciona. Van separados en
+    `external_types`.
+
+  Sobre presupuesto se recortan los callees más lejanos primero (una llamada
+  del mismo archivo importa más al cambio que una de otro paquete) y
+  `budget.degraded` lo declara. El cuerpo, los tipos y la lista de no
+  resueltos nunca se recortan: una clausura sin parte del cuerpo que pediste
+  no es una respuesta más chica, es una equivocada.
+
+- **`resolve_location(path, line)` — la inversa.** Stack traces, salida de
+  linters, logs de CI y reportes de cobertura hablan archivo-y-línea. Sin
+  esto, un agente que trabaja por símbolos vuelve a abrir el archivo apenas
+  algo falla, que es justo el hábito que leer-por-símbolos viene a reemplazar.
+  Devuelve el símbolo más interno que contiene la línea, los que lo encierran
+  hacia afuera, y la llamada a `read_unit` ya formada.
+
 - **Los alias de tipo a nivel de módulo son símbolos** (`kind='type_alias'`).
   Una firma está escrita en un vocabulario y ese vocabulario no existía en el
   índice: `get_symbol(qname: QName, limit: Limit)` no le dice nada a un

@@ -44,6 +44,38 @@ Todo el stack es local-first: 0 servicios externos, 0 API keys obligatorias, 0 D
 
 ## 3. Estado actual
 
+### Unreleased — `read_unit`: la clausura de contrato
+
+La tool que faltaba para que el índice sirva a un agente, no solo a un reporte.
+`read_unit(qname, depth=1, token_budget=2000)` devuelve cuerpo + firmas de
+callees + definiciones de los tipos de esas firmas + lo que lanza + tests que
+lo cubren. `resolve_location(path, line)` es la inversa, para stack traces.
+
+Medido sobre este repo, 20 símbolos por orden alfabético (muestra reproducible;
+el spike previo ordenaba por fan-out y cambiaba entre corridas):
+
+    tokens   mediana 469   p90 721   max 1559
+    bajo el presupuesto de 2k:  20/20
+    tipos DEL PROYECTO resueltos: 100%   gaps reales: ninguno
+
+Dos decisiones que costaron una medición equivocada antes de encontrarlas:
+
+1. **`external_types` va separado de `unresolved_types`.** Mezclados, la
+   métrica daba 23% cuando cada miss era un import de terceros (`DiGraph`,
+   `Table`, `Response`). La separación se hace mirando las líneas de import de
+   los archivos involucrados, no agrandando una lista de nombres conocidos.
+2. **El presupuesto se aplica AL FINAL.** La primera versión recortaba callees
+   antes de resolver tipos, o sea medía una clausura que todavía no existía: el
+   payload podía quedar muy por encima del presupuesto reportando
+   `degraded: False`.
+
+Un bug de render salió de leer la salida, no de aserciones sobre el dict:
+`gateway.authorizeauthorize(...)` y `billing.DeclinedErrorclass DeclinedError`
+— el índice guarda firmas en la forma que produjo cada extractor y concatenar
+el qualified_name encima duplicaba el nombre.
+
+19 tests nuevos en `tests/test_contract_closure.py`. 47 tools MCP (eran 45).
+
 ### Unreleased — alias de tipo como símbolos
 
 `kind='type_alias'`. Una firma está escrita en un vocabulario que el índice no

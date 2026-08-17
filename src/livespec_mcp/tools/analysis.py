@@ -3459,6 +3459,134 @@ def register(mcp: FastMCP) -> None:
         return out
 
     @mcp.tool(annotations={"readOnlyHint": True, "idempotentHint": True})
+    def read_unit(
+        qname: str,
+        depth: int = 1,
+        token_budget: int = 2000,
+        workspace: Workspace | None = None,
+    ) -> dict[str, Any]:
+        """The contract closure for a symbol — what it takes to change it.
+
+        Reading code by file is a human affordance. An agent asked to change
+        one function needs its body, the *signatures* of what it calls, the
+        *definitions* of the types in those signatures, what it can raise, and
+        which tests cover it. This returns exactly that set and nothing else,
+        so a well-factored repo stops costing more to read than a badly-
+        factored one.
+
+        `depth` bounds how far type resolution follows types named inside
+        other type definitions; `depth=0` skips type bodies entirely.
+        `token_budget` caps the rendered size — over budget, the farthest
+        callees are dropped first (a call in the same file is likelier to
+        matter to the edit than one in another package) and `budget.degraded`
+        says it happened.
+
+        Types this project does not define (`str`, `Promise`, `Path`) are
+        reported under `external_types`, not as misses. Types that *should*
+        have resolved and did not are listed in `unresolved_types` — read them
+        before relying on their shape rather than assuming the closure is
+        complete.
+        """ + WORKSPACE_DOCSTRING_NOTE
+        from livespec_mcp.domain.contract_closure import build_closure
+
+        st = get_state(workspace)
+        pids = st.group_project_ids()
+        sym = _resolve_symbol(st.conn, pids, qname)
+        if not sym:
+            return symbol_not_found_error(st.conn, pids, qname)
+        if depth < 0:
+            return mcp_error("depth must be >= 0", hint="use depth=0 to skip type bodies")
+        if token_budget < 200:
+            return mcp_error(
+                "token_budget must be >= 200",
+                hint="the body alone rarely fits under 200 tokens",
+            )
+
+        # Same rule as `_symbol_source_path`: the owning project root when the
+        # symbol carries one, else the workspace. Derived directly rather than
+        # by walking back up from the file path, which breaks the moment a
+        # path has a different depth than the walk assumes.
+        root = (
+            Path(sym["project_root"]) if sym.get("project_root")
+            else st.settings.workspace
+        )
+
+        closure = build_closure(
+            st.conn, tuple(pids), sym, root,
+            depth=depth, token_budget=token_budget,
+        )
+        out = closure.as_dict()
+        if st.settings.grouped and sym.get("project_root"):
+            out["project_root"] = sym["project_root"]
+        return out
+
+    @mcp.tool(annotations={"readOnlyHint": True, "idempotentHint": True})
+    def resolve_location(
+        path: str,
+        line: int,
+        workspace: Workspace | None = None,
+    ) -> dict[str, Any]:
+        """Which symbol owns `path:line` — the inverse of every other lookup.
+
+        Stack traces, linter output, CI logs and coverage reports all speak
+        file-and-line. Without this, an agent working through symbols has to
+        fall back to opening the file the moment anything goes wrong, which is
+        the one habit reading-by-symbol is meant to replace.
+
+        Returns the innermost symbol containing the line (a method rather than
+        its class), plus the enclosing symbols outward, so a line inside a
+        nested function still resolves to something callable.
+        """ + WORKSPACE_DOCSTRING_NOTE
+        st = get_state(workspace)
+        pids = st.group_project_ids()
+        if line < 1:
+            return mcp_error("line must be >= 1", hint="lines are 1-indexed")
+
+        needle = path.strip().lstrip("./")
+        placeholders = ",".join("?" * len(pids))
+        rows = st.conn.execute(
+            f"SELECT s.qualified_name, s.name, s.kind, s.signature, "
+            f"       s.start_line, s.end_line, f.path "
+            f"FROM symbol s JOIN file f ON f.id = s.file_id "
+            f"WHERE f.project_id IN ({placeholders}) "
+            f"  AND (f.path = ? OR f.path LIKE ?) "
+            f"  AND s.start_line <= ? AND s.end_line >= ? "
+            f"ORDER BY (s.end_line - s.start_line) ASC",
+            (*pids, needle, f"%{needle}", line, line),
+        ).fetchall()
+
+        if not rows:
+            return {
+                "found": False,
+                "path": path,
+                "line": line,
+                "hint": (
+                    "no indexed symbol spans that line — the file may be "
+                    "outside the indexed scope, or the index may be stale "
+                    "(run index_project)"
+                ),
+            }
+
+        innermost = rows[0]
+        return {
+            "found": True,
+            "path": innermost["path"],
+            "line": line,
+            "symbol": {
+                "qualified_name": innermost["qualified_name"],
+                "kind": innermost["kind"],
+                "signature": innermost["signature"] or "",
+                "start_line": innermost["start_line"],
+                "end_line": innermost["end_line"],
+            },
+            "enclosing": [
+                {"qualified_name": r["qualified_name"], "kind": r["kind"]}
+                for r in rows[1:]
+            ],
+            "next": f'read_unit(qname="{innermost["qualified_name"]}")',
+        }
+
+    @mcp.tool(annotations={"readOnlyHint": True, "idempotentHint": True})
     def who_calls(
         qname: QName,
         max_depth: MaxDepth = 1,

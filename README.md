@@ -456,6 +456,15 @@ Always registered (including markdown Spec import + OpenSpec sync).
 
 #### Code intelligence (14)
 - `find_symbol(query, kind, limit)` — separator-agnostic name lookup.
+- `read_unit(qname, depth=1, token_budget=2000)` — **contract closure**: body +
+  callee *signatures* + the *definitions* of the types in them + what it raises
+  + which tests cover it. The unit an agent needs to change one symbol, without
+  paying for the file layout around it. Reports `unresolved_types` (real gaps)
+  separately from `external_types` (things a dependency owns), and declares
+  `budget.degraded` when callees were dropped to fit.
+- `resolve_location(path, line)` — inverse lookup: which symbol owns a
+  stack-trace line. Returns the innermost symbol, its enclosing scopes, and the
+  `read_unit` call to make next.
 - `get_symbol_source(qname)` — body slice only (lighter than full info).
 - `who_calls(qname, max_depth=1)` — backward cone, slim agentic alias. Adds
   `route_callers` when the symbol is an HTTP endpoint that a frontend calls
