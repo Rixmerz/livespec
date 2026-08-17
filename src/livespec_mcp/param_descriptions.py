@@ -167,6 +167,22 @@ PARAM_DESCRIPTIONS: dict[str, str] = {
 
 # Disambiguate params whose meaning depends on the tool.
 TOOL_PARAM_DESCRIPTIONS: dict[tuple[str, str], str] = {
+    ("read_unit", "depth"): (
+        "How far to follow types named inside other type definitions. "
+        "``0`` returns the body and callee signatures with no type bodies."
+    ),
+    ("read_unit", "token_budget"): (
+        "Cap on the rendered closure. Over budget the farthest callees are "
+        "dropped first and ``budget.degraded`` says so; body, types and "
+        "``unresolved_types`` are never trimmed."
+    ),
+    ("resolve_location", "path"): (
+        "Source file path as it appears in a stack trace or linter output; "
+        "relative to the workspace, or any suffix of an indexed path."
+    ),
+    ("resolve_location", "line"): (
+        "1-indexed line number. The innermost symbol spanning it is returned."
+    ),
     ("find_symbol", "query"): (
         "Substring or qualified name to search. Separators ``::``, ``.``, and ``#`` "
         "are normalized."
