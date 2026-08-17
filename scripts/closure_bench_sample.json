@@ -1,0 +1,24 @@
+{
+  "symbols": [
+    "bench.agent_log_analyze._list_known_tools",
+    "bench.agent_log_analyze.aggregate",
+    "bench.agent_log_analyze.main",
+    "bench.run._bench_repo",
+    "bench.run.main",
+    "scripts.apply_spec_links.main",
+    "scripts.build_tools_pdf.build",
+    "scripts.dogfood_corroboration.main",
+    "scripts.dogfood_corroboration.measure",
+    "scripts.dogfood_corroboration.summarise",
+    "scripts.dogfood_tool_value_audit._call",
+    "scripts.dogfood_tool_value_audit._run_mode",
+    "scripts.dogfood_tool_value_audit._seed",
+    "scripts.dogfood_tool_value_audit.main",
+    "scripts.pr_diff_impact.main",
+    "scripts.pr_diff_impact.render_markdown",
+    "scripts.sync_livespec_specs.main",
+    "scripts.validate_mcp.main",
+    "src.livespec_mcp.config._ecosystem_ignore_patterns",
+    "src.livespec_mcp.domain.contract_closure.Closure.as_dict"
+  ]
+}

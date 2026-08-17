@@ -8,6 +8,29 @@ follows [SemVer](https://semver.org/).
 
 ### Added
 
+- **`scripts/closure_bench.py` — la mitad medible de F1.** El plan pide
+  "-30% de tokens por tarea sin caída en tasa de éxito". La tasa de éxito
+  necesita a alguien corriendo tareas reales; los tokens se miden exacto.
+
+  Medido sobre este repo, muestra **congelada** en
+  `scripts/closure_bench_sample.json`:
+
+      closure tokens   mediana 497   p90 1020   max 1546
+      bajo el presupuesto de 2k:  20/20
+      vs. leer los archivos que un agente abriría:
+          mediana 86% menos tokens   (peor caso 42%)
+
+  La muestra está congelada y ése es el punto: la primera versión de esta
+  comparación elegía los 20 símbolos por fan-out de llamadas, así que cambiaba
+  apenas cambiaba el resolver y dos corridas no eran comparables — la falla de
+  método exacta que el §11 del plan advierte. Ahora va ordenada por nombre y
+  fijada a un archivo; dos corridas dan idéntico.
+
+  La línea base es lo que un agente **hace de verdad**, no un espantapájaros:
+  el archivo del símbolo más los archivos donde viven sus callees, porque
+  necesita sus firmas. Por eso los números son más chicos que lo que sugeriría
+  una razón de cantidad de archivos.
+
 - **Baseline de deuda (`debt_baseline_capture` / `debt_baseline_status`).**
   Prender la detección de duplicación en un repo existente lo ilumina entero:
   cientos de casi-duplicados legítimos, deliberados o simplemente no prioridad
