@@ -28,7 +28,7 @@ from reportlab.platypus import (
     TableStyle,
 )
 
-VERSION = "0.31.4"
+VERSION = "0.32.0"
 
 INK = colors.HexColor("#16181d")
 MUTED = colors.HexColor("#5c6370")
