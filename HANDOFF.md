@@ -44,6 +44,72 @@ Todo el stack es local-first: 0 servicios externos, 0 API keys obligatorias, 0 D
 
 ## 3. Estado actual
 
+### Unreleased — el grafo externo también contesta hacia atrás
+
+Consumir Graphify había cubierto solo la mitad **barata**: `find_dead_code` y
+`find_orphan_tests`, donde un caller que el resolver perdió produce un falso
+"dead" y el payload ya te dice que confirmes antes de borrar. La cara cara es
+la otra: ese mismo edge faltante también falta en `who_calls` y
+`analyze_impact`, y ahí el radio de impacto se lee completo igual — no hay
+nada que avise.
+
+`who_calls(corroborate_with=…)` y `analyze_impact(corroborate_with=…)` (los
+tres `target_type`) devuelven ahora un carril `external_callers` + bloque
+`external_evidence`. **Nunca** se mezcla con `callers` / `impacted_callers` y
+los conteos siguen siendo los de livespec: el archivo externo anota el grafo,
+no se vuelve el grafo. Ingerir aristas en `symbol_edge` sigue diferido a
+propósito — este carril pone las mismas aristas delante del agente sin darles
+lugar en el índice, que es todo el argumento de leer un segundo extractor en
+vez de fusionarse con él.
+
+**Medido sobre dos repos reales** (`scripts/dogfood_caller_gap.py`), grafos
+solo-código, `input_tokens: 0`:
+
+| | livespec (Python, 1651 símbolos) | hono (TypeScript, 2015) |
+|---|---:|---:|
+| pares de caller en los que ambos coinciden | 1235 | 500 |
+| pares que **solo** tiene el grafo externo | **139** | **138** |
+| de ésos, sin *ningún* camino en livespec | 123 | 133 |
+| relación dominante | `calls` 67, `uses` 56 | `inherits` 62, `calls` 40 |
+
+Los dos perfiles fallan **distinto**, que es exactamente por qué dos repos
+valen más que dos veces uno:
+
+- Python: uso en posición de tipo. `AppState` reporta **2 callers**, el carril
+  suma **34**, y hay 38 anotaciones `: AppState` en el propio fuente.
+- TypeScript: herencia. `HTMLAttributes` reporta **0 callers**, el carril suma
+  **48**, que es exacto el número de `extends HTMLAttributes` en `hono/src`.
+  Sin el carril, la interfaz base de la que cuelga medio JSX se lee como si no
+  la usara nadie.
+
+**Bug encontrado por el camino: los ids de nodo de Graphify son lossy.**
+Nombrar callers necesita la dirección inversa (nodo externo → símbolo de
+livespec) y ahí se filtra su modelo de identidad: el id es un slug
+case-insensitive del nombre calificado, así que `class Fingerprint` y `def
+fingerprint()` en un módulo caen en el mismo nodo y **juntan sus aristas**.
+Preguntes por el que preguntes te devuelve la unión — así apareció
+`Fingerprint` llamando a `tokenize` cuando quien lo llama es `fingerprint()`.
+El propio Graphify lo reporta al extraer (`extracted twice under different
+labels`; 28 nodos deduplicados en hono). `build_claim_index` ahora rechaza un
+nodo que reclaman dos símbolos. Medido: 7 de 1417 acá (0.4%), 23 de 962 en
+hono. **No mueve ninguna cifra publicada** — corrección de matching, misma
+forma que la colisión de nodos-archivo, distinta del caso `method` que sí
+inflaba el resultado.
+
+Suite **812 passed** (eran 798), `tests/test_external_graph_callers.py`, 14
+tests nuevos. 50 tools MCP, sin tools nuevas: `corroborate_with` es un
+parámetro en dos que ya existían.
+
+**Nota de entorno (resuelta).** Las 111 fallas "ambientales" que este HANDOFF
+arrastraba desde v0.31 eran `tree-sitter-language-pack` 1.6.2 bajando parsers
+en runtime con un cliente rustls que no lee el trust store del sistema, contra
+el proxy TLS del sandbox. Se arregla precargando el cache a mano — bajar
+`parsers-linux-x86_64.tar.zst` del release v1.6.2 con `curl` (que sí confía en
+el bundle) y descomprimirlo en `~/.cache/tree-sitter-language-pack/v1.6.2/libs/`.
+Con eso la suite corre entera y verde en el sandbox; no hay que asumir más que
+los tests no-Python son inverificables acá.
+
+
 ### v0.32.0 — baseline de deuda + 22 tools que no tenían descripción
 
 **Baseline (§8 del plan CodeLayer).** Lo que se congela es una *violación*, no

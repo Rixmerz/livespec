@@ -474,18 +474,29 @@ Always registered (including markdown Spec import + OpenSpec sync).
   stack-trace line. Returns the innermost symbol, its enclosing scopes, and the
   `read_unit` call to make next.
 - `get_symbol_source(qname)` — body slice only (lighter than full info).
-- `who_calls(qname, max_depth=1)` — backward cone, slim agentic alias. Adds
-  `route_callers` when the symbol is an HTTP endpoint that a frontend calls
-  over a route (cross-repo via `group_db`) — *"I changed this endpoint, what
-  frontend breaks?"*.
+- `who_calls(qname, max_depth=1, corroborate_with=None)` — backward cone, slim
+  agentic alias. Adds `route_callers` when the symbol is an HTTP endpoint that
+  a frontend calls over a route (cross-repo via `group_db`) — *"I changed this
+  endpoint, what frontend breaks?"*.
+  **Corroboration:** `corroborate_with` adds an `external_callers` lane —
+  callers a [Graphify](https://github.com/Graphify-Labs/graphify) graph sees
+  and this cone does not. Never merged into `callers`; the counts stay
+  livespec's. Measured on two repos: 139 such caller pairs on livespec itself
+  (`AppState`: 2 callers → +34, all type-position usage) and 138 on Hono
+  (`HTMLAttributes`: 0 callers → +48, exactly the count of `extends
+  HTMLAttributes` in its source).
 - `who_does_this_call(qname, max_depth=1)` — forward-direction counterpart.
   Adds `invokes_endpoints`: backend routes this symbol hits via
   `fetch`/`axios`/`requests`.
 - `quick_orient(qname)` — composite snapshot: metadata + docstring lead +
   top-5 callers/callees by PageRank + linked Specs + entry-point flag.
   Replaces 3-4 calls with one when an agent first lands on a symbol.
-- `analyze_impact(target_type, target, max_depth)` — symbol/file/Spec blast
-  radius. `max_depth=1` covers the old "find references" use case.
+- `analyze_impact(target_type, target, max_depth, corroborate_with=None)` —
+  symbol/file/Spec blast radius. `max_depth=1` covers the old "find
+  references" use case. Same `external_callers` lane as `who_calls`, on all
+  three target types: a caller the resolver lost is a false "dead" in
+  `find_dead_code`, which warns you — here it is a caller you did not know you
+  were about to break, and nothing warns you.
 - `get_project_overview(include_infrastructure=False)` — top symbols by
   PageRank; infra noise filtered by default.
 - `git_diff_impact(base_ref='HEAD~1', head_ref='HEAD', max_depth=5)` —

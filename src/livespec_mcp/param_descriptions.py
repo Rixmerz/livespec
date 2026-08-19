@@ -73,11 +73,14 @@ PARAM_DESCRIPTIONS: dict[str, str] = {
         "Relative paths resolve against the workspace root."
     ),
     "corroborate_with": (
-        "Path to an external code graph (Graphify ``graphify-out/graph.json``). "
-        "Dead-code candidates that a second extractor still sees referenced "
-        "(inheritance, type position, cross-file calls livespec's resolver "
-        "lost) are dropped, and the payload reports what went and why. "
-        "Relative paths resolve against the workspace root."
+        "Path to an external code graph (Graphify ``graphify-out/graph.json``) "
+        "used to cross-check this answer against a second extractor. On "
+        "``find_dead_code`` / ``find_orphan_tests`` it drops candidates that "
+        "graph still sees referenced; on ``who_calls`` / ``analyze_impact`` it "
+        "adds an ``external_callers`` lane beside the cone. Both directions "
+        "cover the same livespec blind spots — inheritance, type position, "
+        "cross-file calls the resolver lost — and the payload reports what "
+        "came from where. Relative paths resolve against the workspace root."
     ),
     "include_infra_routes": (
         "Include infra/docs/UI *routes* (``/health``, ``/metrics``, swagger, …) "

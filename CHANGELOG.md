@@ -4,6 +4,68 @@ All notable changes to this project are documented here. Format loosely
 follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), versioning
 follows [SemVer](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- **`who_calls` / `analyze_impact` ganan `corroborate_with`: el grafo externo
+  también contesta hacia atrás.** Consumir Graphify empezó por
+  `find_dead_code`, que es la mitad **barata**: un caller que el resolver
+  perdió produce un falso "dead", y el payload ya te dice que confirmes antes
+  de borrar. La cara cara es la otra. Ese mismo edge faltante es un caller que
+  no sabías que ibas a romper, y ahí nada te avisa: el radio de impacto se lee
+  completo igual.
+
+  Nuevo carril `external_callers` + bloque `external_evidence`, en los tres
+  `target_type` de `analyze_impact` y en `who_calls`. **Nunca** se mezcla con
+  `callers` / `impacted_callers`, y los conteos siguen siendo los de livespec:
+  el archivo externo anota el grafo, no se vuelve el grafo. Ingerir aristas en
+  `symbol_edge` sigue diferido.
+
+  Medido sobre dos repos reales con grafos solo-código (`input_tokens: 0`):
+
+  | | livespec (Python, 1651 símbolos) | hono (TypeScript, 2015) |
+  |---|---:|---:|
+  | pares de caller en los que ambos coinciden | 1235 | 500 |
+  | pares que **solo** tiene el grafo externo | **139** | **138** |
+  | de ésos, sin *ningún* camino en livespec | 123 | 133 |
+  | relación dominante | `calls` 67, `uses` 56 | `inherits` 62, `calls` 40 |
+
+  Los dos perfiles fallan distinto y por eso el barrido vale más que un repo.
+  En Python el grueso es uso en posición de tipo (`uses` / `references`), que
+  livespec no modela: `AppState` reporta **2 callers** y el carril externo suma
+  **34** — y hay 38 anotaciones `: AppState` en el propio fuente. En TypeScript
+  el grueso es herencia: `HTMLAttributes` reporta **0 callers** y el carril
+  suma **48**, que es exactamente la cantidad de `extends HTMLAttributes` en
+  `hono/src`. Sin este carril, la clase base de la que cuelga medio JSX se lee
+  como si no la usara nadie.
+
+- **`scripts/dogfood_caller_gap.py`** — el barrido que produce esa tabla, con
+  las mismas convenciones que `dogfood_corroboration.py` (rutas por env,
+  repos etiquetados posicionalmente) y un `who_calls` real por repo, para que
+  el agregado nunca sea lo único verificado.
+
+### Fixed
+
+- **Un nodo externo que reclaman dos símbolos no avala a ninguno**
+  (`build_claim_index`). Nombrar callers necesita la dirección inversa — nodo
+  externo → símbolo de livespec — y ahí se filtra el modelo de identidad del
+  grafo externo: Graphify deriva el id del nodo de un slug case-insensitive
+  del nombre calificado, así que `class Fingerprint` y `def fingerprint()` en
+  un mismo módulo caen en el mismo nodo y **juntan sus aristas**. Preguntes
+  por el que preguntes, te devuelve la unión: así fue como `Fingerprint`
+  apareció llamando a `tokenize`, cuando quien lo llama es `fingerprint()`.
+
+  El propio Graphify lo reporta al extraer (`node ... was extracted twice
+  under different labels`; 28 nodos deduplicados en hono). Medido: 7 de 1417
+  nodos emparejados en este repo (0.4%) y 23 de 962 en hono. **No mueve
+  ninguna cifra publicada** — es corrección en la capa de matching, misma
+  forma que la colisión de nodos-archivo, y vale distinguirlo del caso
+  `method`, que sí inflaba el resultado.
+
+- El hint de `corroboration_available` describía solo el uso de dead code.
+  Ahora nombra las dos direcciones.
+
 ## [0.32.0] - 2026-08-17
 
 ### Added
