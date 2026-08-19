@@ -39,7 +39,7 @@ external file must never be able to break an index.
 from __future__ import annotations
 
 import json
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -118,8 +118,12 @@ class ExternalGraph:
     by_file_name: dict[tuple[str, str], list[ExternalNode]] = field(
         default_factory=dict
     )
-    #: node id -> inbound relations, structural ones already dropped.
-    inbound: dict[str, list[str]] = field(default_factory=dict)
+    #: node id -> inbound ``(relation, source node id)``, structural ones
+    #: already dropped. The source is kept, not just the relation, because the
+    #: backward question has two shapes: `find_dead_code` only asks *whether*
+    #: anything points here, while `who_calls` / `analyze_impact` need to say
+    #: *what* does.
+    inbound: dict[str, list[tuple[str, str]]] = field(default_factory=dict)
     #: node id -> (relation, target node id), structural ones already dropped.
     #: Needed for the opposite question from dead code: not "does anything
     #: refer to this?" but "does this reach anything?" — which is what an
@@ -164,7 +168,32 @@ class ExternalGraph:
 
     def evidence_for(self, node: ExternalNode) -> list[str]:
         """Relations pointing *at* this node that suggest it is reachable."""
-        return [r for r in self.inbound.get(node.node_id, []) if r in EVIDENCE_RELATIONS]
+        return [
+            relation
+            for relation, _ in self.inbound.get(node.node_id, [])
+            if relation in EVIDENCE_RELATIONS
+        ]
+
+    def callers_of(self, node: ExternalNode) -> list[tuple[str, ExternalNode]]:
+        """Inbound evidence edges *with their source node*.
+
+        The mirror of `reaches`, and the piece `evidence_for` deliberately does
+        not carry. `find_dead_code` makes a negative claim ("nothing refers to
+        this"), so a bare relation is enough to contradict it. `who_calls` and
+        `analyze_impact` make a positive one ("these are the callers"), and a
+        positive claim has to name the caller or an agent cannot check it.
+
+        Depth 1, for the same reason `reaches` is: one hop keeps every entry
+        individually verifiable against the source.
+        """
+        out: list[tuple[str, ExternalNode]] = []
+        for relation, source_id in self.inbound.get(node.node_id, []):
+            if relation not in EVIDENCE_RELATIONS:
+                continue
+            source = self.by_id.get(source_id)
+            if source is not None and not source.is_file_node:
+                out.append((relation, source))
+        return out
 
     def reaches(
         self, node: ExternalNode, predicate: Callable[[ExternalNode], bool]
@@ -274,7 +303,12 @@ def load_external_graph(path: str | Path) -> ExternalGraph:
             graph.has_non_ast_origin = True
         if relation in STRUCTURAL_RELATIONS:
             continue
-        graph.inbound.setdefault(target, []).append(relation)
+        # A link with no usable source is still evidence that *something*
+        # points here, which is all `evidence_for` needs; it just cannot name
+        # the caller, so `callers_of` drops it when the id resolves to nothing.
+        graph.inbound.setdefault(target, []).append(
+            (relation, source if isinstance(source, str) else "")
+        )
         if isinstance(source, str):
             graph.outbound.setdefault(source, []).append((relation, target))
 
@@ -294,3 +328,58 @@ def overlap_ratio(graph: ExternalGraph, indexed_files: set[str]) -> float:
     if not external_files:
         return 0.0
     return len(external_files & indexed_files) / len(external_files)
+
+
+@dataclass
+class ClaimIndex:
+    """Which livespec symbol owns each external node, where the answer is one.
+
+    Corroborating a *negative* claim only needs to look one symbol up at a time.
+    Naming callers needs the opposite direction — external node back to livespec
+    symbol — and that direction is where the external graph's identity model
+    leaks.
+
+    Graphify derives a node id from a case-insensitive slug of the qualified
+    name, so a `class Fingerprint` and a `def fingerprint()` in one module land
+    on the same node and their edges pool. Whichever of the two you ask about,
+    you get the union. Measured on this repo: 6 of 1418 matched nodes (0.4%),
+    and the pooled edge would have reported `Fingerprint` as calling `tokenize`
+    when it is `fingerprint()` that does.
+
+    So a node two symbols both claim vouches for neither. 0.4% is small enough
+    that it moves no published total and large enough that a hand-checked
+    example is wrong, which is the same shape as the file-node collision fixed
+    before it.
+    """
+
+    #: external node id -> livespec symbol id, ambiguous ones already removed.
+    by_node: dict[str, int] = field(default_factory=dict)
+    #: node ids two or more livespec symbols both matched.
+    ambiguous: set[str] = field(default_factory=set)
+    #: livespec symbols that matched some node, before the ambiguity cut.
+    matched: int = 0
+
+    def symbol_for(self, node_id: str) -> int | None:
+        return self.by_node.get(node_id)
+
+
+def build_claim_index(
+    graph: ExternalGraph, symbols: Iterable[tuple[int, str, int, str]]
+) -> ClaimIndex:
+    """Map external nodes back to livespec symbols, dropping contested ones.
+
+    `symbols` yields ``(symbol_id, file_path, start_line, name)`` — the same
+    four fields `lookup` takes, in index order.
+    """
+    claims: dict[str, list[int]] = {}
+    for symbol_id, file_path, start_line, name in symbols:
+        node = graph.lookup(file_path, start_line, name)
+        if node is not None:
+            claims.setdefault(node.node_id, []).append(symbol_id)
+    index = ClaimIndex(matched=sum(len(v) for v in claims.values()))
+    for node_id, owners in claims.items():
+        if len(owners) > 1:
+            index.ambiguous.add(node_id)
+        else:
+            index.by_node[node_id] = owners[0]
+    return index

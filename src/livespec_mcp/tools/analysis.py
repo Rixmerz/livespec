@@ -3030,10 +3030,11 @@ def _resolve_corroboration_source(
     if default_path.is_file():
         return None, (
             f"An external code graph is available at {_DEFAULT_EXTERNAL_GRAPH}. "
-            "Pass corroborate_with to drop candidates a second extractor still "
-            'sees referenced, or set `[graph] external = '
-            f'"{_DEFAULT_EXTERNAL_GRAPH}"` in .livespec.toml to use it by '
-            "default."
+            "Pass corroborate_with to cross-check this answer against a second "
+            "extractor — it drops dead-code candidates that graph still sees "
+            "referenced, and surfaces callers livespec's resolver missed — or "
+            f'set `[graph] external = "{_DEFAULT_EXTERNAL_GRAPH}"` in '
+            ".livespec.toml to use it by default."
         )
     return None, None
 
@@ -3244,6 +3245,168 @@ def _corroborate_dead_code(
             "Graphify run."
         )
     return survivors, report
+
+
+def _corroborate_callers(
+    *,
+    st: AppState,
+    graph_path: str,
+    view: GraphView,
+    roots: set[int],
+    known: set[int],
+    limit: int,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Callers a second extractor sees that livespec's cone does not contain.
+
+    The same external file that makes `find_dead_code` less wrong makes
+    `who_calls` and `analyze_impact` less wrong, and it matters more here. A
+    caller livespec's resolver lost costs `find_dead_code` a false "dead" —
+    annoying, and the tool already warns you to confirm before deleting. The
+    *same* missing edge costs `analyze_impact` a caller you did not know you
+    were about to break, and nothing warns you at all: the payload reads as a
+    complete blast radius either way.
+
+    Measured on this repo against a code-only Graphify graph (2736 nodes, 5172
+    edges): livespec and the external extractor agree on 1235 caller pairs, and
+    the external graph carries **141** more whose two endpoints both resolve to
+    livespec symbols. 125 of those 141 have *no path at all* in livespec's
+    graph — they are not a longer route to the same place, they are invisible.
+    They concentrate exactly where livespec's blind spots are documented to be:
+    64 `calls` the resolver lost, 43 `uses` and 16 `references` that are
+    type-position usage (`graph_pagerank(view: GraphView)`,
+    `lookup(...) -> ExternalNode`), which livespec does not model at all.
+
+    Returned as a **separate lane**, never merged into `callers` /
+    `impacted_callers`, and the counts stay livespec's own. Ingesting these into
+    `symbol_edge` is still deferred: the boundary that makes this safe is that
+    the call graph remains ours and the external file only annotates it.
+    """
+    from livespec_mcp.domain.external_graph import build_claim_index
+
+    graph, err = _load_corroborating_graph(st, graph_path)
+    if err is not None:
+        return [], err
+
+    claims = build_claim_index(
+        graph,
+        (
+            (
+                sid,
+                meta.get("file_path") or "",
+                int(meta.get("start_line") or 0),
+                meta.get("name") or "",
+            )
+            for sid, meta in view.sym_meta.items()
+        ),
+    )
+
+    multi_root = len(roots) > 1
+    found: dict[int, dict[str, Any]] = {}
+    by_relation: dict[str, int] = {}
+    roots_matched = 0
+
+    for root in roots:
+        meta = view.sym_meta.get(root)
+        if meta is None:
+            continue
+        node = graph.lookup(
+            meta.get("file_path") or "",
+            int(meta.get("start_line") or 0),
+            meta.get("name") or "",
+        )
+        if node is None or node.node_id in claims.ambiguous:
+            continue
+        roots_matched += 1
+        for relation, source in graph.callers_of(node):
+            caller = claims.symbol_for(source.node_id)
+            if caller is None or caller in known or caller in roots:
+                continue
+            caller_meta = view.sym_meta.get(caller)
+            if caller_meta is None:
+                continue
+            entry = found.setdefault(
+                caller, {**caller_meta, "relations": set(), "targets": set()}
+            )
+            entry["relations"].add(relation)
+            entry["targets"].add(meta.get("qualified_name") or "")
+            by_relation[relation] = by_relation.get(relation, 0) + 1
+
+    external: list[dict[str, Any]] = []
+    for entry in found.values():
+        row = {k: v for k, v in entry.items() if k not in ("relations", "targets")}
+        row["relations"] = sorted(entry["relations"])
+        if multi_root:
+            row["targets"] = sorted(entry["targets"])[:5]
+        external.append(row)
+    external.sort(key=lambda m: (m.get("file_path") or "", m.get("start_line") or 0))
+
+    report: dict[str, Any] = {
+        "source": graph.path,
+        "external_nodes": graph.node_count,
+        "external_edges": graph.edge_count,
+        "file_overlap": round(graph.file_overlap, 3),
+        "roots": len(roots),
+        "roots_matched": roots_matched,
+        "count": len(external),
+        "by_relation": dict(sorted(by_relation.items())),
+        "hint": (
+            "Callers the external graph sees and livespec's cone does not — "
+            "type-position usage, inheritance, and cross-file calls the "
+            "resolver lost. Depth 1 from the root only, so each entry is "
+            "individually checkable. Reported beside the cone, never merged "
+            "into it: the counts above are still livespec's own."
+        ),
+    }
+    if claims.ambiguous:
+        # Same class of finding as the file-node collision: a node two symbols
+        # both claim would lend its pooled edges to whichever you asked about.
+        report["ambiguous_nodes_skipped"] = len(claims.ambiguous)
+    if graph.has_non_ast_origin:
+        report["warning"] = (
+            "Some external edges are not marked `_origin: ast` — this graph "
+            "may include LLM-derived (semantic) edges, unlike a code-only "
+            "Graphify run."
+        )
+    return external[:limit], report
+
+
+def _attach_external_callers(
+    payload: dict[str, Any],
+    *,
+    st: AppState,
+    view: GraphView,
+    corroborate_with: str | None,
+    roots: set[int],
+    known: set[int],
+    limit: int,
+) -> dict[str, Any]:
+    """Wire the external caller lane (or its availability hint) into a payload.
+
+    Precedence is the one the rest of the corroboration surface uses: explicit
+    argument, then `[graph] external` in `.livespec.toml`, then a hint only. A
+    graph that appeared on disk never changes an answer on its own.
+    """
+    resolved, hint = _resolve_corroboration_source(st, corroborate_with)
+    if resolved is None:
+        if hint:
+            payload["corroboration_available"] = hint
+        return payload
+    external, report = _corroborate_callers(
+        st=st,
+        graph_path=resolved,
+        view=view,
+        roots=roots,
+        known=known,
+        limit=limit,
+    )
+    if report.get("isError"):
+        return report
+    # `limit=0` is the summary caller: it wants the exact count, not the list.
+    # Counts stay exact under pagination, so the two modes agree.
+    if limit:
+        payload["external_callers"] = external
+    payload["external_evidence"] = report
+    return payload
 
 
 def _attach_dead_code_not_swept(
@@ -3766,6 +3929,7 @@ def register(mcp: FastMCP) -> None:
         cursor: Cursor = 0,
         summary_only: SummaryOnly = False,
         min_weight: MinWeight = 0.6,
+        corroborate_with: str | None = None,
         workspace: Workspace | None = None,
     ) -> dict[str, Any]:
         """Symbols that call `qname` (transitive backward cone up to max_depth).
@@ -3786,6 +3950,13 @@ def register(mcp: FastMCP) -> None:
         fan-out edges that the static analyzer couldn't disambiguate
         (weight 0.5 — multiple short-name candidates, no scope match).
         Pass ``min_weight=0.0`` to see the unfiltered cone (legacy).
+
+        Unreleased: ``corroborate_with=<path to a Graphify graph.json>``
+        adds an ``external_callers`` lane — callers a second extractor sees
+        and this cone does not (type-position usage, inheritance, cross-file
+        calls the resolver lost). Never merged into ``callers``; ``count``
+        stays livespec's own. Measured on this repo: 141 such caller pairs,
+        125 of them with no path at all in livespec's graph.
         """
         st = get_state(workspace)
         pids = st.group_project_ids()
@@ -3802,11 +3973,19 @@ def register(mcp: FastMCP) -> None:
         )
         total = len(callers)
         if summary_only:
-            return {
-                "root": sym["qualified_name"],
-                "max_depth": max_depth,
-                "count": total,
-            }
+            return _attach_external_callers(
+                {
+                    "root": sym["qualified_name"],
+                    "max_depth": max_depth,
+                    "count": total,
+                },
+                st=st,
+                view=view,
+                corroborate_with=corroborate_with,
+                roots={sid},
+                known=callers,
+                limit=0,
+            )
         meta_sorted = sorted(
             (view.sym_meta[n] for n in callers if n in view.sym_meta),
             key=lambda m: (m.get("file_path", ""), m.get("start_line", 0)),
@@ -3826,6 +4005,17 @@ def register(mcp: FastMCP) -> None:
         route_callers = _route_edge_peers(st.conn, sid, incoming=True)
         if route_callers:
             payload["route_callers"] = route_callers
+        payload = _attach_external_callers(
+            payload,
+            st=st,
+            view=view,
+            corroborate_with=corroborate_with,
+            roots={sid},
+            known=callers,
+            limit=limit,
+        )
+        if payload.get("isError"):
+            return payload
         return _attach_payload_warning(
             payload,
             _payload_warning(total, limit=limit, summary_only=summary_only),
@@ -4004,6 +4194,7 @@ def register(mcp: FastMCP) -> None:
         cursor: Cursor = 0,
         summary_only: SummaryOnly = False,
         min_weight: MinWeight = 0.6,
+        corroborate_with: str | None = None,
         workspace: Workspace | None = None,
     ) -> dict[str, Any]:
         """Topological impact analysis: what changes if `target` changes.
@@ -4025,6 +4216,14 @@ def register(mcp: FastMCP) -> None:
         scope match). Surfaced by Django battle-test where
         ``calls_into`` reported ~70 symbols vs ~10 actual. Pass
         ``min_weight=0.0`` for legacy unfiltered behavior.
+
+        Unreleased: ``corroborate_with=<path to a Graphify graph.json>``
+        adds an ``external_callers`` lane for all three target types —
+        callers a second extractor sees and this backward cone does not.
+        A caller the resolver lost is a false "dead" in `find_dead_code`,
+        which warns you; here it is a caller you did not know you were
+        about to break, and nothing warns you. Never merged into
+        ``impacted_callers``; the counts stay livespec's own.
         """
         st = get_state(workspace)
         pid = st.project_id
@@ -4074,14 +4273,24 @@ def register(mcp: FastMCP) -> None:
                 else set()
             )
             if summary_only:
-                return {
-                    "root": sym["qualified_name"],
-                    "counts": {
-                        "impacted_callers": len(impacted),
-                        "calls_into": len(forward),
-                        "affected_specs": len(specs_for_symbols(impacted | {sid})),
+                return _attach_external_callers(
+                    {
+                        "root": sym["qualified_name"],
+                        "counts": {
+                            "impacted_callers": len(impacted),
+                            "calls_into": len(forward),
+                            "affected_specs": len(
+                                specs_for_symbols(impacted | {sid})
+                            ),
+                        },
                     },
-                }
+                    st=st,
+                    view=view,
+                    corroborate_with=corroborate_with,
+                    roots={sid},
+                    known=impacted,
+                    limit=0,
+                )
             callers_page, callers_total, callers_next = _paginate_meta(impacted, view)
             calls_page, calls_total, calls_next = _paginate_meta(forward, view)
             warn = _payload_warning(
@@ -4089,7 +4298,7 @@ def register(mcp: FastMCP) -> None:
                 limit=limit,
                 summary_only=summary_only,
             )
-            return _attach_payload_warning(
+            payload = _attach_external_callers(
                 {
                     "root": sym["qualified_name"],
                     "impacted_callers": callers_page,
@@ -4101,8 +4310,16 @@ def register(mcp: FastMCP) -> None:
                     },
                     "next_cursor": callers_next if callers_next is not None else calls_next,
                 },
-                warn,
+                st=st,
+                view=view,
+                corroborate_with=corroborate_with,
+                roots={sid},
+                known=impacted,
+                limit=limit,
             )
+            if payload.get("isError"):
+                return payload
+            return _attach_payload_warning(payload, warn)
         if target_type == "file":
             sids = [
                 int(r["id"])
@@ -4125,18 +4342,26 @@ def register(mcp: FastMCP) -> None:
                     )
             impacted -= set(sids)
             if summary_only:
-                return {
-                    "file": target,
-                    "symbols_in_file": len(sids),
-                    "counts": {
-                        "impacted_callers": len(impacted),
-                        "affected_specs": len(
-                            specs_for_symbols(impacted | set(sids))
-                        ),
+                return _attach_external_callers(
+                    {
+                        "file": target,
+                        "symbols_in_file": len(sids),
+                        "counts": {
+                            "impacted_callers": len(impacted),
+                            "affected_specs": len(
+                                specs_for_symbols(impacted | set(sids))
+                            ),
+                        },
                     },
-                }
+                    st=st,
+                    view=view,
+                    corroborate_with=corroborate_with,
+                    roots=set(sids),
+                    known=impacted,
+                    limit=0,
+                )
             callers_page, callers_total, callers_next = _paginate_meta(impacted, view)
-            return _attach_payload_warning(
+            payload = _attach_external_callers(
                 {
                     "file": target,
                     "symbols_in_file": len(sids),
@@ -4145,6 +4370,17 @@ def register(mcp: FastMCP) -> None:
                     "counts": {"impacted_callers": callers_total},
                     "next_cursor": callers_next,
                 },
+                st=st,
+                view=view,
+                corroborate_with=corroborate_with,
+                roots=set(sids),
+                known=impacted,
+                limit=limit,
+            )
+            if payload.get("isError"):
+                return payload
+            return _attach_payload_warning(
+                payload,
                 _payload_warning(
                     callers_total, limit=limit, summary_only=summary_only
                 ),
@@ -4221,15 +4457,27 @@ def register(mcp: FastMCP) -> None:
             # pagination contract exists to prevent. Honor summary_only + the
             # limit/cursor page + exact counts, like the symbol/file branches.
             if summary_only:
-                return {
-                    "spec_id": spec["spec_id"],
-                    "dependent_specs": dep_spec_meta,
-                    "counts": {
-                        "implementing_symbols": len(impl_ids),
-                        "downstream": len([n for n in forward if n in view.sym_meta]),
-                        "upstream_callers": len([n for n in backward if n in view.sym_meta]),
+                return _attach_external_callers(
+                    {
+                        "spec_id": spec["spec_id"],
+                        "dependent_specs": dep_spec_meta,
+                        "counts": {
+                            "implementing_symbols": len(impl_ids),
+                            "downstream": len(
+                                [n for n in forward if n in view.sym_meta]
+                            ),
+                            "upstream_callers": len(
+                                [n for n in backward if n in view.sym_meta]
+                            ),
+                        },
                     },
-                }
+                    st=st,
+                    view=view,
+                    corroborate_with=corroborate_with,
+                    roots=impl_ids,
+                    known=backward,
+                    limit=0,
+                )
             impl_page, impl_total, impl_next = _paginate_meta(impl_ids, view)
             down_page, down_total, down_next = _paginate_meta(forward, view)
             up_page, up_total, up_next = _paginate_meta(backward, view)
@@ -4238,7 +4486,7 @@ def register(mcp: FastMCP) -> None:
                 limit=limit,
                 summary_only=summary_only,
             )
-            return _attach_payload_warning(
+            payload = _attach_external_callers(
                 {
                     "spec_id": spec["spec_id"],
                     "dependent_specs": dep_spec_meta,
@@ -4255,8 +4503,16 @@ def register(mcp: FastMCP) -> None:
                         None,
                     ),
                 },
-                warn,
+                st=st,
+                view=view,
+                corroborate_with=corroborate_with,
+                roots=impl_ids,
+                known=backward,
+                limit=limit,
             )
+            if payload.get("isError"):
+                return payload
+            return _attach_payload_warning(payload, warn)
         return mcp_error(
             f"Unknown target_type '{target_type}'",
             hint="target_type must be one of: 'symbol', 'file', 'spec'",

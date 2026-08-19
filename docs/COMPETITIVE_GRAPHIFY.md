@@ -5,6 +5,11 @@
 > corroborating evidence. This does not reverse the decision below — it is the
 > strongest form of it. Importing is how you get inheritance edges and 36-language
 > reach *without* building either. See "Consuming graph.json" at the end.
+>
+> **Update (2026-08-19):** the same graph now answers backwards, too —
+> `who_calls` / `analyze_impact` gained an `external_callers` lane. See "The
+> backward direction" at the end. Still no edge written, still no schema
+> change.
 
 **Decision (2026-07-31):** do **not** port Graphify features into the 0.29
 beta core. Overlap is real (tree-sitter call graph + MCP + anti-vector);
@@ -149,6 +154,54 @@ edges overall) but "Graphify fails differently". Where the two fail the same
 way — dynamic dispatch, string-keyed harnesses, reflection — nothing is
 recovered, and the payload reports zero rather than pretending.
 
+### The backward direction: callers, not just candidates (2026-08-19)
+
+Everything above corroborates a **negative** claim — "nothing refers to this".
+That is the cheap half. The same missing edge also sits inside `who_calls` and
+`analyze_impact`, where the claim is **positive** ("these are the callers") and
+nothing in the payload hints that it might be short. A false "dead" costs you a
+deletion you were told to double-check; a missing caller costs you a caller you
+never knew about.
+
+`who_calls(corroborate_with=…)` and `analyze_impact(corroborate_with=…)` now
+carry an `external_callers` lane. Measured with `scripts/dogfood_caller_gap.py`
+on two repos, both graphs code-only (`input_tokens: 0`):
+
+| | livespec (Python, 1651 symbols) | Hono (TypeScript, 2015) |
+|---|---:|---:|
+| caller pairs both extractors have | 1235 | 500 |
+| pairs **only** the external graph has | **139** | **138** |
+| of those, with no path at all in livespec | 123 | 133 |
+| dominant relation | `calls` 67, `uses` 56 | `inherits` 62, `calls` 40 |
+
+The two profiles fail differently, which is why two repos are worth more than
+twice one. Python's gap is type-position usage that livespec does not model:
+`AppState` reports **2** callers and the lane adds **34**, against 38 `:
+AppState` annotations in the source. TypeScript's gap is inheritance:
+`HTMLAttributes` reports **0** callers and the lane adds **48**, which is
+exactly the number of `extends HTMLAttributes` in `hono/src`. Without the lane,
+the base interface half of JSX hangs off reads as used by nobody.
+
+The boundary is unchanged and is what makes this safe: the lane is separate,
+the counts stay livespec's, and no edge is written. It is the annotation of a
+graph, not a graph.
+
+### Node ids are lossy, and Graphify says so itself
+
+Naming callers needs the inverse direction — external node back to livespec
+symbol — and that is where Graphify's identity model leaks. Node ids are a
+case-insensitive slug of the qualified name, so `class Fingerprint` and `def
+fingerprint()` in one module land on the same node and pool their edges. Ask
+about either, get the union. Graphify reports the same thing from its own side
+during extraction (`node ... was extracted twice under different labels`; 28
+nodes deduplicated on Hono).
+
+`build_claim_index` refuses a node two livespec symbols both claim. Measured:
+7 of 1417 matched nodes here (0.4%), 23 of 962 on Hono. **It moves no published
+figure** — a correctness fix in the matching layer, same shape as the file-node
+collision, and worth distinguishing from the `method` case, which did inflate
+the result.
+
 ### Still deferred
 
 Ingesting edges into `symbol_edge` (measured: **133** edges livespec lacks on
@@ -156,3 +209,8 @@ its own repo), and the documentation layer (**316** `rationale_for` edges +
 **409** prose nodes) — the latter is the closest thing Graphify has to our
 Spec↔code wedge, and the only piece that would need an LLM. Both need the
 provenance question above answered deliberately rather than in passing.
+
+The caller lane deliberately does **not** count as a step toward ingestion. It
+gets the same edges in front of an agent without giving them a home in the
+index, which is the whole argument for reading a second extractor rather than
+merging with one.
