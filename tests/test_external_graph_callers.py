@@ -11,11 +11,11 @@ Measured on this repository against a code-only Graphify graph (2736 nodes,
 5172 edges, `input_tokens: 0`):
 
     caller pairs both extractors agree on        1235
-    caller pairs only the external graph has      141   <- this lane
-      of those, with NO path at all in livespec   125
-      by relation: calls 64, uses 43, references 16, indirect_call 2
+    caller pairs only the external graph has      139   <- this lane
+      of those, with NO path at all in livespec   123
+      by relation: calls 67, uses 56, references 14, indirect_call 2
 
-The `uses` / `references` majority is the point. They are type-position usage —
+The `uses` + `references` share is the point: 70 of 139. They are type-position usage —
 `graph_pagerank(view: GraphView)`, `lookup(...) -> ExternalNode` — which
 livespec does not model at all, so those callers are not merely unresolved,
 they are unrepresentable. Hand-checked through the MCP wire: `ExternalNode`
@@ -49,7 +49,7 @@ def _repo(workspace: Path) -> None:
 
     `render` is called outright, so livespec resolves it. `Payload` is only
     ever named in a type annotation, which livespec does not extract — the
-    exact shape of the 59 `uses`/`references` misses measured on this repo.
+    exact shape of the 70 `uses`/`references` misses measured on this repo.
     """
     pkg = workspace / "pkg"
     pkg.mkdir()
@@ -132,7 +132,7 @@ def test_a_node_two_symbols_both_claim_vouches_for_neither(tmp_path: Path):
     A `class Fingerprint` and a `def fingerprint()` in one module land on one
     node and pool their edges. Asking about either returns the union, which is
     how `Fingerprint` came back as calling `tokenize` when it is `fingerprint()`
-    that does. Measured on this repo: 6 of 1418 matched nodes (0.4%) — small
+    that does. Measured on this repo: 7 of 1417 matched nodes (0.4%) — small
     enough to move no published total, large enough that the hand-checked
     example was wrong.
     """
