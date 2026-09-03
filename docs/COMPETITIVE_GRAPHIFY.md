@@ -1,5 +1,10 @@
 # Competitive note — Graphify vs livespec
 
+> **Update (2026-09-03): ingestion landed. The graph is no longer read-only.**
+> `ingest_external_graph` writes Graphify's dependency edges into `symbol_edge`
+> under `origin='external:graphify'`, so `who_calls` and `analyze_impact` see
+> them too — not just `find_dead_code`. See "Ingesting edges" at the end.
+>
 > **Update (2026-08-11): we now *consume* Graphify instead of only coexisting.**
 > `find_dead_code(corroborate_with=<graph.json>)` reads a Graphify graph as
 > corroborating evidence. This does not reverse the decision below — it is the
@@ -149,10 +154,108 @@ edges overall) but "Graphify fails differently". Where the two fail the same
 way — dynamic dispatch, string-keyed harnesses, reflection — nothing is
 recovered, and the payload reports zero rather than pretending.
 
+---
+
+## Ingesting edges (2026-09-03)
+
+The v0.32 note deferred this pending "the provenance question answered
+deliberately rather than in passing". Here is the answer, and what it bought.
+
+### The provenance question, answered
+
+If a `graph.json` can put rows into `symbol_edge`, how does anyone tell them
+apart afterwards, and how do they come back out?
+
+Not by `weight`. That is a resolution-confidence ladder (1.0 resolved, 0.7
+same-file scoped, 0.5 ambiguous fan-out) that `min_weight` filters on; a
+livespec edge can legitimately hold any value on it, and
+`UNIQUE(src, dst, edge_type)` means an ingested edge can land on a row we
+already own. Nothing on that ladder makes an ingest *reversible*.
+
+So: `symbol_edge.origin`, `DEFAULT 'livespec'` (migration 22). This is not the
+parallel confidence system the table above refused to build — confidence still
+lives in `weight`. `origin` says *whose claim* the row is, which `weight` has
+never encoded and cannot. `DELETE ... WHERE origin='external:graphify'` touches
+exactly the rows ingest wrote, and `_resolve_refs` reclaims a row to
+`'livespec'` in its existing `ON CONFLICT` clause, so an ingested label never
+outlives our own extraction of the same edge.
+
+Three boundaries hold the rest, in descending order of how much they matter:
+
+1. **The symbol table stays ours, absolutely.** An edge is ingested only when
+   *both* endpoints already resolve to livespec symbols. Symbols are what every
+   tool enumerates; the moment a foreign file can add one, every count in the
+   product is partly someone else's.
+2. **Every ingested row is labelled and reversible**, and every apply rewrites
+   rather than accumulates — the state after an ingest is a function of the
+   current graph and the current index, never of history.
+3. **Ingested edges are ordinary edges afterwards.** That is the point; a
+   labelled edge nobody reads is worth nothing. The tools say so in their
+   payloads (`via_external_edge` at depth 1, an `external_edges` block) instead
+   of pretending the answer is purely ours.
+
+### Measured on this repo
+
+Against a code-only Graphify run of livespec's own tree — 3487 nodes, 5902
+edges, `input_tokens: 0`:
+
+| | |
+|---|---:|
+| livespec symbols matched to an external node | 1355 / 1568 |
+| ambiguous (two symbols claimed one node → dropped) | 3 |
+| external `calls` edges livespec **already had** | 1200 |
+| edges livespec **lacked** | **145** |
+
+145 breaks down as 51 `calls`, 2 `indirect_call`, 76 `uses`, 16 `references` —
+close to the 133 the v0.32 note predicted. The 1200 agreed `calls` is the more
+interesting number: **96% agreement** on the pairs both tools can see, which
+cross-validates both and bounds how much a second extractor can ever be worth.
+
+The concrete win is the one this document has been describing since v0.32.
+`who_calls(ExternalNode)` returned **1** caller (the function that constructs
+it) and now returns **5** — the four methods that take it as a type annotation.
+livespec does not model type-position usage at all. That blind spot was
+previously visible only to `find_dead_code`; now it is visible to the tool an
+agent actually calls.
+
+### Import relations stay off, and the measurement says why
+
+Corroboration accepts `imports` as evidence, correctly: it answers "does
+*anything* refer to this?", and imports were its single largest source (68 of
+the 133 drops in the 13-repo sweep). Ingestion cannot inherit that. `who_calls`
+does not distinguish edge types, so an ingested `imports` row would report
+importers as callers — lying in one tool to improve another.
+
+The measurement settles the trade at zero cost: ingesting **all nine**
+relations on this repo adds exactly the same **145** edges. Graphify hangs
+import edges off its per-file nodes, and a file node never maps to a livespec
+symbol (`ExternalNode.is_file_node` has refused them since v0.32). The 498
+import links skipped by default would all die at `endpoint_not_indexed` anyway.
+
+That is also the clearest statement of why both features stay: **ingestion
+makes the call graph better; corroboration answers a broader question more
+cheaply. Neither subsumes the other.**
+
+### Boundaries that did *not* survive unchanged
+
+The v0.32 note said "Never a source. Corroboration adds no symbols and writes
+no edges. The call graph stays ours." Half of that is now false and should be
+read as superseded: livespec writes edges from an external graph, on explicit
+request, labelled and reversible. **The symbol half is not negotiable and did
+not move.**
+
+The staleness window is the honest cost. A re-extract deletes the symbols of
+every changed file and the FK cascade takes their ingested edges with them, so
+after any `index_project` an ingest is partly gone and partly stale.
+`index_project` samples the count *before* the run and reports both halves —
+counting only afterwards would report nothing at all for exactly the rows the
+run destroyed.
+
 ### Still deferred
 
-Ingesting edges into `symbol_edge` (measured: **133** edges livespec lacks on
-its own repo), and the documentation layer (**316** `rationale_for` edges +
-**409** prose nodes) — the latter is the closest thing Graphify has to our
-Spec↔code wedge, and the only piece that would need an LLM. Both need the
-provenance question above answered deliberately rather than in passing.
+The documentation layer (**316** `rationale_for` edges + **409** prose nodes).
+It is still the closest thing Graphify has to our Spec↔code wedge and still the
+only piece that would need an LLM — theirs, not ours, but an LLM in the path of
+something we would present as traceability. Ingesting edges did not make that
+question easier; it only means the mechanism (`origin`, reversibility, a
+labelled payload) now exists if the answer ever turns out to be yes.

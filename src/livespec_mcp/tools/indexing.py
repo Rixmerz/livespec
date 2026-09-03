@@ -140,6 +140,65 @@ def _maybe_regenerate_explorer(st: AppState, explorer: bool) -> bool:
         return False
 
 
+def _external_edge_counts(st: AppState) -> dict[str, int]:
+    from livespec_mcp.domain.graph import external_edge_summary
+
+    return external_edge_summary(st.conn, st.project_id) or {}
+
+
+def _attach_external_edge_staleness(
+    st: AppState, result: dict[str, Any], before: dict[str, int]
+) -> None:
+    """Report what this index run did to edges ingested from an external graph.
+
+    Silent on an index nobody has ingested into, and on a run that changed
+    nothing. Otherwise it says how many ingested edges the run destroyed and
+    how many survived — the survivors being the more dangerous half, since they
+    are still answering `who_calls` from a graph built against code that has
+    since moved."""
+    if not before:
+        return
+    if not (result.get("files_changed") or result.get("files_deleted")):
+        return
+    after = _external_edge_counts(st)
+    total_before = sum(before.values())
+    total_after = sum(after.values())
+    result["external_edges_stale"] = {
+        "by_origin": before,
+        "surviving_by_origin": after,
+        "dropped_by_reextract": total_before - total_after,
+        "hint": (
+            f"This run changed files. {total_before - total_after} of "
+            f"{total_before} ingested edges went with the symbols that were "
+            f"re-extracted; {total_after} survive and may no longer match the "
+            "code. Regenerate the external graph and re-run "
+            "ingest_external_graph, or ingest_external_graph(remove=True)."
+        ),
+    }
+
+
+def _delete_external_edges(st: AppState, project_id: int, origin: str) -> int:
+    """Delete exactly the edges one external origin wrote into this project.
+
+    The `_resolve_refs` contract forbids DELETEing from `symbol_edge` — refs
+    from unchanged files must survive when the files they target change. That
+    rule is about the *resolver*, which cannot know whether an absent ref means
+    "gone" or "not re-parsed this run". Here the answer is not in doubt: these
+    rows exist only because a previous ingest of this origin put them there,
+    and the predicate cannot reach a livespec-derived row.
+    """
+    cur = st.conn.execute(
+        """DELETE FROM symbol_edge
+           WHERE origin = ?
+             AND src_symbol_id IN (
+               SELECT s.id FROM symbol s JOIN file f ON f.id = s.file_id
+               WHERE f.project_id = ?
+             )""",
+        (origin, project_id),
+    )
+    return int(cur.rowcount or 0)
+
+
 def register(mcp: FastMCP) -> None:
     @mcp.tool(annotations={"readOnlyHint": False, "idempotentHint": True, "destructiveHint": False})
     def index_project(
@@ -171,8 +230,16 @@ def register(mcp: FastMCP) -> None:
         Use after pulling new commits or when documentation feels stale.
         """
         st = get_state(workspace, create=True)
+        # Sampled BEFORE the run, and that is the whole point. A re-extract
+        # deletes and re-inserts the symbols of every changed file, and the FK
+        # cascade takes their ingested edges with them — so by the time the run
+        # is over, the rows most likely to have gone stale are the ones that no
+        # longer exist to be counted. Comparing the two counts is the only way
+        # to report what a run actually cost an ingest.
+        external_before = _external_edge_counts(st)
         result = run_index_pipeline(st, force=force)
         result["explorer_regenerated"] = _maybe_regenerate_explorer(st, explorer)
+        _attach_external_edge_staleness(st, result, external_before)
         try:
             from livespec_mcp.domain.specs_sync import sync_specs_from_config
 
@@ -213,6 +280,213 @@ def register(mcp: FastMCP) -> None:
             w.start()
             result["watcher_started"] = True
         return result
+
+    @mcp.tool(
+        annotations={
+            "readOnlyHint": False,
+            "idempotentHint": True,
+            "destructiveHint": False,
+        }
+    )
+    def ingest_external_graph(
+        graph_path: str | None = None,
+        dry_run: bool = True,
+        remove: bool = False,
+        relations: list[str] | None = None,
+        workspace: Workspace | None = None,
+    ) -> dict[str, Any]:
+        """Add a second extractor's edges to this index's call graph.
+
+        Reads a [Graphify](https://github.com/Graphify-Labs/graphify)
+        `graph.json` and writes the dependency edges livespec's own resolver
+        missed into `symbol_edge`, tagged `origin='external:graphify'`. Unlike
+        `find_dead_code(corroborate_with=…)`, which can only *remove* dead-code
+        candidates and touches no table, ingested edges are real edges: after
+        this, `who_calls`, `who_does_this_call`, `analyze_impact` and
+        `find_dead_code` all see them.
+
+        The three things worth knowing before running it:
+
+        - **No symbol is ever created.** An edge is ingested only when both
+          endpoints already resolve to symbols livespec extracted. Everything
+          else is counted under `skipped.endpoint_not_indexed` and dropped.
+        - **It is reversible and idempotent.** Every run first deletes the rows
+          it wrote last time, so the result depends on the current graph and
+          the current index, never on history. `remove=True` deletes them and
+          writes nothing.
+        - **`dry_run=True` is the default.** The first call reports what it
+          would add — counts by relation, a sample of concrete edges, and how
+          often the two extractors already agree. Call again with
+          `dry_run=False` to apply.
+
+        `relations` overrides the ingested set (default: `calls`,
+        `indirect_call`, `inherits`, `mixes_in`, `uses`, `references`). The
+        import relations — `imports`, `imports_from`, `re_exports` — are
+        available but off by default: they describe module wiring, and putting
+        "imported by" rows into the graph would make `who_calls` report
+        importers as callers. Use `find_dead_code(corroborate_with=…)` when you
+        want import evidence; it asks the broader question without writing
+        anything.
+
+        Re-run after any `index_project` that changed files: a re-extract can
+        delete or move the symbols these edges point at.
+        """
+        from livespec_mcp.domain.external_ingest import (
+            DEFAULT_RELATIONS,
+            EXTERNAL_ORIGIN,
+            RELATION_EDGE_TYPE,
+            plan_ingest,
+            sample_edges,
+        )
+        from livespec_mcp.domain.graph import invalidate_graph_cache
+        from livespec_mcp.tools._errors import mcp_error
+
+        st = get_state(workspace)
+        pid = st.project_id
+        project_symbols_sql = (
+            "SELECT s.id, s.name, s.qualified_name, s.start_line, f.path AS file_path "
+            "FROM symbol s JOIN file f ON f.id = s.file_id WHERE f.project_id = ?"
+        )
+
+        if remove:
+            removed = _delete_external_edges(st, pid, EXTERNAL_ORIGIN)
+            st.conn.commit()
+            invalidate_graph_cache(pid)
+            return {
+                "removed": removed,
+                "origin": EXTERNAL_ORIGIN,
+                "hint": (
+                    "The call graph is livespec-only again. livespec's own "
+                    "edges were never touched — the delete is scoped to rows "
+                    "carrying this origin."
+                ),
+            }
+
+        if relations is not None:
+            unknown = sorted(set(relations) - set(RELATION_EDGE_TYPE))
+            if unknown:
+                return mcp_error(
+                    f"Unknown external relation(s): {', '.join(unknown)}",
+                    did_you_mean=sorted(RELATION_EDGE_TYPE),
+                    hint=(
+                        "These are Graphify's `relation` values. Omit "
+                        "`relations` for the default dependency set."
+                    ),
+                )
+            if not relations:
+                return mcp_error(
+                    "relations is empty — nothing to ingest.",
+                    hint="Omit it for the default set, or name at least one relation.",
+                )
+
+        from livespec_mcp.tools.analysis import (
+            _load_corroborating_graph,
+            _resolve_corroboration_source,
+        )
+
+        resolved_path, availability_hint = _resolve_corroboration_source(st, graph_path)
+        if not resolved_path:
+            return mcp_error(
+                "No external graph to ingest.",
+                hint=(
+                    availability_hint
+                    or "Pass graph_path=<graphify-out/graph.json>, or set "
+                    '`[graph] external = "graphify-out/graph.json"` in '
+                    ".livespec.toml."
+                ),
+            )
+
+        graph, err = _load_corroborating_graph(st, resolved_path, keep_link_meta=True)
+        if err is not None:
+            return err
+
+        symbols = [dict(r) for r in st.conn.execute(project_symbols_sql, (pid,))]
+        # Rows this ingest owns are excluded from "already known" because the
+        # apply path deletes them first. Without that, a second dry run would
+        # report every edge as agreed and predict a no-op for a run that
+        # actually rewrites them.
+        existing = {
+            (int(r["src_symbol_id"]), int(r["dst_symbol_id"]), r["edge_type"])
+            for r in st.conn.execute(
+                """SELECT e.src_symbol_id, e.dst_symbol_id, e.edge_type
+                   FROM symbol_edge e
+                   JOIN symbol s ON s.id = e.src_symbol_id
+                   JOIN file f ON f.id = s.file_id
+                   WHERE f.project_id = ? AND e.origin <> ?""",
+                (pid, EXTERNAL_ORIGIN),
+            )
+        }
+        plan = plan_ingest(
+            graph,
+            symbols,
+            existing,
+            relations=frozenset(relations) if relations else None,
+        )
+
+        sym_meta = {int(r["id"]): r for r in symbols}
+        payload: dict[str, Any] = {
+            "source": graph.path,
+            "origin": EXTERNAL_ORIGIN,
+            "dry_run": dry_run,
+            "relations": sorted(relations or DEFAULT_RELATIONS),
+            "external_nodes": graph.node_count,
+            "external_edges": graph.edge_count,
+            "file_overlap": round(graph.file_overlap, 3),
+            "mapped_nodes": plan.mapped_nodes,
+            "ambiguous_nodes": plan.ambiguous_nodes,
+            "edges_to_add": plan.edge_count,
+            "edges_by_relation": dict(sorted(plan.by_relation.items())),
+            "already_known": plan.agreed,
+            "already_known_by_relation": dict(sorted(plan.agreed_by_relation.items())),
+            "skipped": dict(sorted(plan.skipped.items())),
+            "sample": sample_edges(plan, sym_meta),
+        }
+        if graph.has_non_ast_origin:
+            payload["warning"] = (
+                "Some external edges are not marked `_origin: ast` — this graph "
+                "may include LLM-derived (semantic) edges, unlike a code-only "
+                "Graphify run. Those would land in your call graph."
+            )
+        if relations and set(relations) & {"imports", "imports_from", "re_exports"}:
+            payload["import_relations_warning"] = (
+                "Import relations are being ingested. `who_calls` does not "
+                "distinguish edge types, so importers will be reported as "
+                "callers. Run with remove=True to undo."
+            )
+
+        if dry_run:
+            payload["next"] = (
+                "ingest_external_graph(dry_run=False) to apply, or "
+                "find_dead_code(corroborate_with=…) if you only want dead-code "
+                "filtering without writing to the index."
+            )
+            return payload
+
+        replaced = _delete_external_edges(st, pid, EXTERNAL_ORIGIN)
+        st.conn.executemany(
+            """INSERT OR IGNORE INTO
+               symbol_edge(src_symbol_id, dst_symbol_id, edge_type, weight, origin)
+               VALUES(?,?,?,?,?)""",
+            [
+                (e.src_symbol_id, e.dst_symbol_id, e.edge_type, e.weight, EXTERNAL_ORIGIN)
+                for e in plan.new_edges
+            ],
+        )
+        st.conn.commit()
+        invalidate_graph_cache(pid)
+        payload["edges_added"] = plan.edge_count
+        payload["edges_replaced"] = replaced
+        payload["hint"] = (
+            "These edges are now part of the call graph and will show up in "
+            "who_calls / analyze_impact / find_dead_code, labelled "
+            f"`{EXTERNAL_ORIGIN}`. Re-run after any index_project that changed "
+            "files; remove=True takes them back out."
+        )
+        return payload
+
+    ingest_external_graph.__doc__ = (
+        ingest_external_graph.__doc__ or ""
+    ) + WORKSPACE_DOCSTRING_NOTE
 
     # Append the shared workspace note as a real docstring. A bare f-string as
     # the first statement is an expression, not a docstring, so __doc__ would be

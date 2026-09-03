@@ -561,6 +561,37 @@ def _m021_symbol_fingerprint(conn: sqlite3.Connection) -> None:
     )
 
 
+def _m022_symbol_edge_origin(conn: sqlite3.Connection) -> None:
+    """v0.33: `symbol_edge.origin` — who derived each edge.
+
+    Answers the question that blocked ingesting an external extractor's edges
+    since v0.32: if a Graphify graph can put rows into `symbol_edge`, how does
+    anyone tell them apart afterwards, and how do they come back out?
+
+    `weight` cannot carry this. It is a resolution-confidence ladder (1.0
+    resolved, 0.7 same-file scoped, 0.5 ambiguous fan-out) that
+    `min_weight` filters on, a livespec edge can legitimately hold any value on
+    it, and `UNIQUE(src, dst, edge_type)` means an ingested edge can land on a
+    row we already own. A separate column is the only thing that makes an
+    ingest *reversible* — `DELETE ... WHERE origin='external:<tag>'` touches
+    exactly the rows that ingest wrote and nothing else.
+
+    This is not the parallel confidence system `docs/COMPETITIVE_GRAPHIFY.md`
+    refused to build. Confidence still lives in `weight`; this says *whose
+    claim* the row is, which weight has never encoded and cannot.
+
+    Additive with a default, so every existing row is correctly labelled
+    `livespec` without a re-extract."""
+    if _has_column(conn, "symbol_edge", "origin"):
+        return
+    _try_add_column(
+        conn, "symbol_edge", "origin", "TEXT NOT NULL DEFAULT 'livespec'"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_edge_origin ON symbol_edge(origin)"
+    )
+
+
 # Ordered registry. Append-only — never reuse a version number.
 MIGRATIONS: list[Migration] = [
     (1, "drop_dead_tables", _m001_drop_dead_tables),
@@ -584,6 +615,7 @@ MIGRATIONS: list[Migration] = [
     (19, "drop_vector_search", _m019_drop_vector_search),
     (20, "spec_source", _m020_spec_source),
     (21, "symbol_fingerprint", _m021_symbol_fingerprint),
+    (22, "symbol_edge_origin", _m022_symbol_edge_origin),
 ]
 
 

@@ -558,7 +558,8 @@ def _resolve_routes(conn: sqlite3.Connection) -> int:
                 """INSERT INTO symbol_edge(src_symbol_id, dst_symbol_id, edge_type, weight)
                    VALUES(?,?, 'invokes_route', ?)
                    ON CONFLICT(src_symbol_id, dst_symbol_id, edge_type)
-                   DO UPDATE SET weight = MAX(symbol_edge.weight, excluded.weight)""",
+                   DO UPDATE SET weight = MAX(symbol_edge.weight, excluded.weight),
+                                 origin = 'livespec'""",
                 (src_id, server_id, weight),
             )
             edge_count += 1
@@ -809,7 +810,8 @@ def _resolve_refs(
                 """INSERT INTO symbol_edge(src_symbol_id, dst_symbol_id, edge_type, weight)
                    VALUES(?,?,?,?)
                    ON CONFLICT(src_symbol_id, dst_symbol_id, edge_type)
-                   DO UPDATE SET weight = MAX(symbol_edge.weight, excluded.weight)""",
+                   DO UPDATE SET weight = MAX(symbol_edge.weight, excluded.weight),
+                                 origin = 'livespec'""",
                 (src_id, tid, "calls", weight),
             )
             edge_count += 1

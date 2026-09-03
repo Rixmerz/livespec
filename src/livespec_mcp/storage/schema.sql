@@ -74,11 +74,19 @@ CREATE TABLE IF NOT EXISTS symbol_edge (
     dst_symbol_id INTEGER NOT NULL REFERENCES symbol(id) ON DELETE CASCADE,
     edge_type TEXT NOT NULL,       -- calls | imports | inherits | references
     weight REAL NOT NULL DEFAULT 1.0,
+    -- Who derived this edge. 'livespec' (our extractors) or 'external:<tag>'
+    -- for an edge ingested from another extractor's graph. Not a confidence
+    -- score -- that stays in `weight`. This column exists so an ingest is
+    -- reversible (delete exactly its own rows) and so a caller can tell whose
+    -- claim it is reading. The resolver reclaims a row to 'livespec' the
+    -- moment our own extraction derives the same edge.
+    origin TEXT NOT NULL DEFAULT 'livespec',
     UNIQUE(src_symbol_id, dst_symbol_id, edge_type)
 );
 
 CREATE INDEX IF NOT EXISTS idx_edge_src ON symbol_edge(src_symbol_id, edge_type);
 CREATE INDEX IF NOT EXISTS idx_edge_dst ON symbol_edge(dst_symbol_id, edge_type);
+CREATE INDEX IF NOT EXISTS idx_edge_origin ON symbol_edge(origin);
 
 -- Persistent refs: every call/reference site captured during extraction.
 -- We keep them on disk (rather than in-memory only) so a partial re-index

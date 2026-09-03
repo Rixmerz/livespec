@@ -4,6 +4,92 @@ All notable changes to this project are documented here. Format loosely
 follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), versioning
 follows [SemVer](https://semver.org/).
 
+## [Unreleased]
+
+### Added — ingest an external extractor's edges into the call graph
+
+`ingest_external_graph(graph_path=None, dry_run=True, remove=False,
+relations=None)` — new core tool (34 core / 51 total).
+
+v0.32 could only *consume* a Graphify graph as corroborating evidence:
+`find_dead_code` and `find_orphan_tests` dropped candidates, and nothing was
+written. That was deliberately the weakest possible form of consumption, and it
+left the half that matters undone. The questions an agent actually asks —
+`who_calls`, `analyze_impact`, "what breaks if I change this?" — read
+`symbol_edge`, which corroboration never touches. So a base class alive only
+via `extends`, or a type used only in a parameter annotation, still reported
+zero callers no matter how many external graphs sat on disk.
+
+This ingests those edges. Measured on this repo against a code-only Graphify
+run of its own tree (3487 nodes, 5902 edges, `input_tokens: 0`):
+
+    1355 of 1568 livespec symbols matched an external node  (3 ambiguous)
+    1200 external `calls` edges livespec already had         (96% agreement)
+     145 edges livespec lacked   51 calls · 2 indirect_call · 76 uses · 16 references
+
+`who_calls(ExternalNode)` went from **1 caller to 5** — the four methods taking
+it as a type annotation, which livespec does not model at all.
+
+- **The symbol table stays ours.** An edge is ingested only when *both*
+  endpoints already resolve to livespec symbols. Everything else is counted
+  under `skipped.endpoint_not_indexed` and dropped, never created.
+- **Reversible and idempotent.** Every apply first deletes the rows it wrote
+  last time, so the result depends on the current graph and the current index,
+  never on ingest history. `remove=True` deletes them and writes nothing.
+- **`dry_run=True` by default.** The first call reports counts by relation, a
+  sample of concrete edges, and how often the two extractors already agree.
+- **Import relations are off by default.** `imports` / `imports_from` /
+  `re_exports` are available via `relations=`, but `who_calls` does not
+  distinguish edge types, so ingesting them would make importers read as
+  callers. On this repo they add **zero** edges anyway — Graphify hangs them
+  off per-file nodes, which never map to a livespec symbol. Corroboration
+  remains the right tool for import evidence: it asks the broader "does
+  anything refer to this?" and writes nothing.
+- **Ambiguity is dropped, not guessed.** An external node two livespec symbols
+  both claim is skipped; a missing caller is a gap, an invented one is a lie
+  that survives into `analyze_impact`.
+
+### Added — `symbol_edge.origin` (migration 22)
+
+Answers the provenance question that `docs/COMPETITIVE_GRAPHIFY.md` left open
+in v0.32. `weight` could not carry it: it is a resolution-confidence ladder
+that `min_weight` filters on, a livespec edge can hold any value on it, and
+`UNIQUE(src, dst, edge_type)` means an ingested edge can land on a row we
+already own. A separate column is the only thing that makes an ingest
+*reversible* — `DELETE ... WHERE origin='external:graphify'` touches exactly
+the rows ingest wrote.
+
+This is not the parallel confidence system that note refused to build.
+Confidence still lives in `weight`; `origin` says *whose claim* the row is.
+
+- Additive with `DEFAULT 'livespec'` — every existing row is correctly
+  labelled without a re-extract.
+- `_resolve_refs` reclaims a row to `'livespec'` in its existing `ON CONFLICT`
+  clause, so an ingested label never outlives our own extraction of the same
+  edge (and `remove=True` cannot then delete an edge livespec earned).
+- The `_resolve_refs` never-DELETE contract is unchanged; the delete lives in
+  the ingest path, where "these rows exist only because a previous ingest of
+  this origin put them there" is not in doubt.
+
+### Changed — read tools say when part of an answer is borrowed
+
+An ingested edge is an ordinary edge afterwards, which is the point and also
+the risk: a caller from a `graph.json` someone generated last month is
+indistinguishable from an extracted one unless the tool says so.
+
+- `who_calls` / `who_does_this_call` label depth-1 neighbours reached through
+  an ingested edge with `via_external_edge`. Only depth 1 — past one hop
+  "which edge made this a caller" has no single answer, and a label that is
+  sometimes about a different edge is worse than none.
+- `who_calls`, `who_does_this_call`, `analyze_impact` (all three target types)
+  and `find_dead_code` carry an `external_edges` block naming the origins in
+  play. Silent on any index nobody has ingested into.
+- `index_project` reports `external_edges_stale` when a run that changed files
+  had ingested edges — with how many the re-extract destroyed via the FK
+  cascade and how many survived. The count is sampled **before** the run: the
+  rows most likely to be stale are the ones that no longer exist to be counted
+  afterwards.
+
 ## [0.32.0] - 2026-08-17
 
 ### Added

@@ -106,15 +106,20 @@ def load_graph(conn: sqlite3.Connection, project_id: int) -> GraphView:
         }
         g.add_node(sid)
     for r in conn.execute(
-        """SELECT e.src_symbol_id, e.dst_symbol_id, e.edge_type, e.weight
+        """SELECT e.src_symbol_id, e.dst_symbol_id, e.edge_type, e.weight, e.origin
            FROM symbol_edge e
            JOIN symbol s ON s.id = e.src_symbol_id
            JOIN file f ON f.id = s.file_id
            WHERE f.project_id = ?""",
         (project_id,),
     ):
+        # `origin` (v0.33) rides along so a caller can tell whose claim an edge
+        # is. Carried as an attribute rather than filtered here: an ingested
+        # edge is an ordinary edge for traversal, and the tools that report it
+        # are the ones that should say where it came from.
         g.add_edge(int(r["src_symbol_id"]), int(r["dst_symbol_id"]),
-                   edge_type=r["edge_type"], weight=float(r["weight"]))
+                   edge_type=r["edge_type"], weight=float(r["weight"]),
+                   origin=r["origin"] or "livespec")
 
     view = GraphView(g=g, sym_meta=sym_meta)
     with _GRAPH_CACHE_LOCK:
@@ -243,3 +248,28 @@ def _pagerank_pure(
         if diff < tol:
             break
     return rank
+
+
+def external_edge_summary(
+    conn: sqlite3.Connection, project_id: int
+) -> dict[str, int] | None:
+    """Ingested-edge counts by origin for a project, or None when there are none.
+
+    Read tools call this to say, in their own payload, that part of the answer
+    came from a second extractor. An agent that cannot tell an ingested edge
+    from an extracted one cannot calibrate what it is reading, and the cost of
+    saying so is one indexed COUNT on a column that is `'livespec'` for every
+    row on an index nobody has ingested into.
+    """
+    rows = conn.execute(
+        """SELECT e.origin, COUNT(*) AS c
+           FROM symbol_edge e
+           JOIN symbol s ON s.id = e.src_symbol_id
+           JOIN file f ON f.id = s.file_id
+           WHERE f.project_id = ? AND e.origin <> 'livespec'
+           GROUP BY e.origin""",
+        (project_id,),
+    ).fetchall()
+    if not rows:
+        return None
+    return {r["origin"]: int(r["c"]) for r in rows}
