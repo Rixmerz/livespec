@@ -384,7 +384,7 @@ gates it, you build with live links; *brownfield* → `/livespec-onboard` orient
 `propose_specs_from_codebase` reconstructs intent, **author OpenSpec first**
 (export only as a bootstrap dump).
 
-## Tools (50 total: 33 core + 12 Spec plugin + 5 docs plugin)
+## Tools (51 total: 34 core + 12 Spec plugin + 5 docs plugin)
 
 Every tool requires `workspace` (absolute project root). Pass it on each call;
 omitting it is an error (no env fallback). LRU cache (8 workspaces) — one MCP
@@ -398,12 +398,12 @@ set `LIVESPEC_PLUGINS`. **`import_specs_from_markdown`** and
 first `workspace=` call on a repo with Specs + explorer, the menu grows to
 **45** tools. Reconnect the MCP host if your client cached an old tool list.
 
-### Default surface — code intel + Spec agentic (28)
+### Default surface — code intel + Spec agentic (34)
 
 These tools answer the questions an agent ASKS on an unfamiliar codebase.
 Always registered (including markdown Spec import + OpenSpec sync).
 
-#### Indexing (1)
+#### Indexing (2)
 - `index_project(force=False, watch=False, explorer=False)` — walk, parse,
   persist. Also rebuilds search chunks idempotently. Respects
   `.gitignore` (root + nested, negations included) on top of the
@@ -430,10 +430,14 @@ Always registered (including markdown Spec import + OpenSpec sync).
   links_seed = "docs/requirements/livespec-spec-links.json"  # optional bulk_link seed
 
   [graph]
-  # External code graph (Graphify) used as corroborating evidence by
-  # find_dead_code / find_orphan_tests and to group Spec proposals.
-  # Never a source of symbols or edges. A graph at the default path
-  # announces itself but is not used until you point at it here.
+  # External code graph (Graphify). Corroborating evidence for
+  # find_dead_code / find_orphan_tests, community grouping for Spec
+  # proposals, and the default source for ingest_external_graph.
+  # Never a source of SYMBOLS — those stay livespec's, always. Edges it
+  # contributes are only ever written by an explicit ingest_external_graph
+  # call, are tagged origin='external:graphify', and come back out with
+  # remove=True. A graph at the default path announces itself but is not
+  # used until you point at it here.
   external = "graphify-out/graph.json"
 
   [workspace]
@@ -446,6 +450,34 @@ Always registered (including markdown Spec import + OpenSpec sync).
   [explorer]
   mount_path = "/explorer"              # FastAPI mount prefix for autowire
   ```
+
+- `ingest_external_graph(graph_path=None, dry_run=True, remove=False,
+  relations=None)` — **add a second extractor's edges to the call graph**
+  (v0.33). Reads a [Graphify](https://github.com/Graphify-Labs/graphify)
+  `graph.json` and writes the dependency edges livespec's resolver missed into
+  `symbol_edge`, tagged `origin='external:graphify'`. Where
+  `corroborate_with` can only *remove* dead-code candidates, these are real
+  edges: `who_calls`, `who_does_this_call`, `analyze_impact` and
+  `find_dead_code` all see them, and label them.
+
+  Measured on livespec itself against a code-only Graphify run of its own tree
+  (3564 nodes, 6089 edges, **0 LLM tokens**): 1394 of 1593 symbols matched a
+  node, **1250 `calls` edges already agreed** (95%), and **165 edges livespec
+  lacked** were added — 63 `calls`, 2 `indirect_call`, 83 `uses`, 17
+  `references`. `who_calls(ExternalNode)` went from 1 caller to 5: the four
+  methods that take it as a type annotation, which livespec does not model.
+
+  Three guarantees: **no symbol is ever created** (both endpoints must already
+  be livespec symbols); **reversible and idempotent** (`remove=True` deletes
+  exactly its own rows; every apply rewrites rather than accumulates); and
+  **`dry_run=True` by default**, so the first call reports what it would add.
+  Import relations (`imports`, `imports_from`, `re_exports`) are available via
+  `relations=` but off by default — `who_calls` does not distinguish edge
+  types, so ingesting them would make importers read as callers. On this repo
+  they add **zero** edges anyway: Graphify hangs them off per-file nodes, which
+  never map to a livespec symbol. Re-run after any `index_project` that changed
+  files — it reports `external_edges_stale` when a re-extract invalidated
+  ingested rows.
 
 #### Search (1, v0.12; vectors removed)
 - `search(query, scope='all'|'code'|'specs', limit=20)` — FTS5 keyword
@@ -507,6 +539,10 @@ Always registered (including markdown Spec import + OpenSpec sync).
   misses. Graphify's code pass is tree-sitter with no LLM, so this costs
   nothing in determinism; see
   [`docs/COMPETITIVE_GRAPHIFY.md`](docs/COMPETITIVE_GRAPHIFY.md).
+  Corroboration and `ingest_external_graph` are complementary, not
+  alternatives: corroboration asks the broader "does *anything* refer to
+  this?" (so `imports` counts) and writes nothing; ingestion adds the
+  dependency edges to the graph so every other tool sees them too.
 - `find_legacy_flows(project?, include_infra_routes=False)` — likely-unused HTTP
   flows (`route_ref` + `invokes_route`, best with `group_db`): servers with
   no indexed client hop + clients with no matched server. Graph only —

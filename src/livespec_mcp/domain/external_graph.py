@@ -3,7 +3,9 @@
 livespec's own extractors are the source of truth. This module never adds
 symbols, never writes edges, and never feeds the call graph. It answers exactly
 one question, on demand: *does another deterministic extractor believe this
-symbol is reachable?*
+symbol is reachable?* (`external_ingest.py`, v0.33, is the module that *does*
+write edges — on explicit request, labelled and reversible. It reuses this
+reader, and this reader's guarantees are what make that safe.)
 
 Why bother. `find_dead_code` is livespec's least trustworthy output, and the
 untrustworthiness is not uniform — it tracks what the extractor cannot see.
@@ -127,6 +129,16 @@ class ExternalGraph:
     outbound: dict[str, list[tuple[str, str]]] = field(default_factory=dict)
     #: node id -> node, for resolving outbound targets.
     by_id: dict[str, ExternalNode] = field(default_factory=dict)
+    #: (source, target, relation) -> the link's own confidence fields. Only
+    #: populated when the caller asks (`keep_link_meta=True`), because only
+    #: ingestion needs it — to turn Graphify's confidence into a livespec
+    #: `weight`. Corroboration never reads it (there, the presence of an
+    #: evidence relation is the whole signal) and must not pay for it: on a
+    #: large monorepo graph this is one small dict per edge, which is real
+    #: memory for a field nobody in that path would touch.
+    link_meta: dict[tuple[str, str, str], dict[str, Any]] = field(
+        default_factory=dict
+    )
     #: Relation histogram over all links, for reporting.
     relation_counts: dict[str, int] = field(default_factory=dict)
     #: True when any link carries an origin other than deterministic AST.
@@ -202,7 +214,9 @@ def _parse_line(location: Any) -> int | None:
         return None
 
 
-def load_external_graph(path: str | Path) -> ExternalGraph:
+def load_external_graph(
+    path: str | Path, *, keep_link_meta: bool = False
+) -> ExternalGraph:
     """Parse a Graphify-style node-link graph.
 
     Raises ``FileNotFoundError`` if the path does not exist and ``ValueError``
@@ -277,6 +291,14 @@ def load_external_graph(path: str | Path) -> ExternalGraph:
         graph.inbound.setdefault(target, []).append(relation)
         if isinstance(source, str):
             graph.outbound.setdefault(source, []).append((relation, target))
+            if keep_link_meta:
+                graph.link_meta.setdefault(
+                    (source, target, relation),
+                    {
+                        "confidence": link.get("confidence"),
+                        "confidence_score": link.get("confidence_score"),
+                    },
+                )
 
     return graph
 

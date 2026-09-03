@@ -44,6 +44,83 @@ Todo el stack es local-first: 0 servicios externos, 0 API keys obligatorias, 0 D
 
 ## 3. Estado actual
 
+### Unreleased — ingerir aristas de Graphify (no solo corroborar)
+
+**HEAD:** rama `claude/livespec-graphify-integration-fy5ybs` sobre `a6e57d7`.
+**Tools:** 51 (34 core + 12 Spec + 5 docs). **Migración:** v22
+(`symbol_edge.origin`). **Tests nuevos:** `tests/test_external_ingest.py`
+(18 casos).
+
+v0.32 solo **consumía** el grafo: `find_dead_code` / `find_orphan_tests`
+descartaban candidatos y no se escribía nada. Era a propósito la forma más
+débil de consumo, y dejaba sin hacer la mitad que importa — `who_calls`,
+`analyze_impact`, "qué se rompe si cambio esto" leen `symbol_edge`, que la
+corroboración nunca toca. Una clase base viva solo por `extends`, o un tipo
+usado solo en anotación de parámetro, seguía reportando cero callers por más
+grafos que hubiera en el disco.
+
+**`ingest_external_graph(graph_path=None, dry_run=True, remove=False,
+relations=None)`** escribe esas aristas. Medido sobre este repo contra una
+corrida code-only de Graphify de su propio árbol (3564 nodos, 6089 aristas,
+`input_tokens: 0`):
+
+    1394 de 1593 símbolos livespec matchearon un nodo   (1 ambiguo)
+    1250 aristas `calls` externas que livespec YA tenía  (95% de acuerdo)
+     165 aristas que livespec NO tenía
+         63 calls · 2 indirect_call · 83 uses · 17 references
+
+`who_calls(ExternalNode)` pasó de **1 caller a 5**: los cuatro métodos que lo
+toman como anotación de tipo. livespec no modela uso en posición de tipo.
+
+**La pregunta de provenance, respondida.** `weight` no podía cargarla — es una
+escalera de confianza de resolución que `min_weight` filtra, una arista
+livespec puede tener cualquier valor ahí, y `UNIQUE(src, dst, edge_type)`
+significa que una arista externa puede caer sobre una fila nuestra. Columna
+nueva `symbol_edge.origin` (`DEFAULT 'livespec'`, migración 22). No es el
+sistema de confianza paralelo que `docs/COMPETITIVE_GRAPHIFY.md` se negó a
+construir: la confianza sigue en `weight`; `origin` dice *de quién es la
+afirmación*. `_resolve_refs` recupera la fila a `'livespec'` en su `ON
+CONFLICT` existente, así que una etiqueta externa nunca sobrevive a nuestra
+propia extracción de la misma arista.
+
+**Los tres límites.** (1) La tabla de símbolos sigue siendo nuestra, absoluto:
+se ingiere una arista solo si *ambos* extremos ya resuelven a símbolos
+livespec. (2) Reversible e idempotente: cada apply borra primero sus propias
+filas, `remove=True` las saca todas. (3) Las aristas ingeridas son aristas
+comunes después — ése es el punto — y las tools lo **dicen**
+(`via_external_edge` en profundidad 1, bloque `external_edges`).
+
+**Las relaciones de import quedan apagadas, y la medición explica por qué.**
+La corroboración acepta `imports` como evidencia, correctamente (68 de los 133
+descartes del sweep de 13 repos). La ingesta no puede heredarlo: `who_calls` no
+distingue edge types, así que una fila `imports` haría que los importadores se
+reporten como callers. Y la medición liquida el trade a costo cero: ingerir
+**las nueve** relaciones sobre este repo agrega exactamente las mismas **165**
+aristas — Graphify cuelga los imports de sus nodos por archivo, y un nodo de
+archivo nunca matchea un símbolo livespec.
+
+**Ventana de staleness.** Un re-extract borra los símbolos de cada archivo
+cambiado y el cascade FK se lleva sus aristas ingeridas. `index_project`
+muestrea el conteo *antes* de la corrida y reporta las dos mitades
+(`external_edges_stale`): contar solo después no reportaría nada justo para
+las filas que la corrida destruyó.
+
+**El bug que sólo aparece en una DB vieja.** La primera versión ponía `CREATE
+INDEX ... ON symbol_edge(origin)` en `schema.sql`. Ese archivo corre *antes* de
+las migraciones en cada `connect()`, y `CREATE TABLE IF NOT EXISTS` es no-op
+sobre una DB que ya tiene la tabla: reventaba con `no such column: origin` en
+la base de **todo** usuario existente, antes de que la migración que agrega la
+columna pudiera correr. CI pasó igual porque todos los tests construyen DBs
+frescas. Se encontró construyendo una DB con el código de `main` y abriéndola
+con el nuevo. El índice ahora vive en la migración, y hay dos tests de
+regresión — la ruta de upgrade, y un guard general de que `schema.sql` nunca
+indexa una columna que agrega una migración. Regla para el futuro: **un índice
+sobre una columna que agrega una migración va en la migración.**
+
+**Sigue diferido:** la capa de documentación (316 aristas `rationale_for` +
+409 nodos de prosa). Sigue siendo lo más cercano que Graphify tiene a nuestro
+wedge Spec↔código y la única pieza que necesitaría un LLM.
+
 ### v0.32.0 — baseline de deuda + 22 tools que no tenían descripción
 
 **Baseline (§8 del plan CodeLayer).** Lo que se congela es una *violación*, no

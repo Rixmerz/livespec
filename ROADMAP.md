@@ -69,9 +69,15 @@ ser “próximo pilar” y pasan a “superficie beta documentada”.
 Lo que **sigue** abierto hacia 1.0: disclaimers operativos, pin Skill=PyPI,
 adopción externa, no más superficie de tools.
 
-**vs Graphify (2026-07-31):** conviven; **no** portar Leiden / multimodal /
-provenance column al core. Ver `docs/COMPETITIVE_GRAPHIFY.md`. Weight +
-`edge_type` ya cubren EXTRACTED/AMBIGUOUS/INFERRED.
+**vs Graphify (2026-07-31, actualizado 2026-09-03):** conviven; **no** portar
+Leiden / multimodal al core. Ver `docs/COMPETITIVE_GRAPHIFY.md`. Weight +
+`edge_type` ya cubren EXTRACTED/AMBIGUOUS/INFERRED — pero la columna de
+provenance **sí** se agregó (mig 22, `symbol_edge.origin`) porque no era
+confianza: es lo único que hace *reversible* una ingesta. `ingest_external_graph`
+escribe las aristas de dependencia que nuestro resolver perdió (medido: 165 en
+este repo, 95% de acuerdo en las que ambos ven), etiquetadas y reversibles. La
+tabla de símbolos sigue siendo nuestra, sin excepción. La capa de documentación
+(prosa + `rationale_for`) sigue diferida: es la única que necesitaría un LLM.
 
 ---
 

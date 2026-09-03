@@ -3039,7 +3039,7 @@ def _resolve_corroboration_source(
 
 
 def _load_corroborating_graph(
-    st: AppState, graph_path: str
+    st: AppState, graph_path: str, *, keep_link_meta: bool = False
 ) -> tuple[Any, dict[str, Any] | None]:
     """Shared load + sanity gate for both corroboration paths.
 
@@ -3058,7 +3058,7 @@ def _load_corroborating_graph(
         resolved = st.settings.workspace / resolved
 
     try:
-        graph = load_external_graph(resolved)
+        graph = load_external_graph(resolved, keep_link_meta=keep_link_meta)
     except FileNotFoundError:
         return None, mcp_error(
             f"External graph not found: {resolved}",
@@ -3092,6 +3092,33 @@ def _load_corroborating_graph(
         )
     graph.file_overlap = overlap
     return graph, None
+
+
+def _attach_external_edges(payload: dict[str, Any], st: AppState, project_id: int) -> dict[str, Any]:
+    """Say, in the payload, that ingested edges are part of this answer.
+
+    `ingest_external_graph` puts another extractor's edges into `symbol_edge`,
+    and from then on they are ordinary edges — which is the point, and also the
+    risk. A caller reading `who_calls` has no way to know a caller came from a
+    `graph.json` someone generated in March unless the tool says so. This is
+    the saying-so: cheap (one grouped COUNT on an indexed column), silent on
+    every index nobody has ingested into, and attached to the tools whose
+    numbers the ingest actually moved.
+    """
+    from livespec_mcp.domain.graph import external_edge_summary
+
+    summary = external_edge_summary(st.conn, project_id)
+    if not summary:
+        return payload
+    payload["external_edges"] = {
+        "by_origin": summary,
+        "hint": (
+            "Part of this answer rests on edges ingested from another "
+            "extractor (ingest_external_graph). Re-run it after re-indexing, "
+            "or ingest_external_graph(remove=True) for a livespec-only graph."
+        ),
+    }
+    return payload
 
 
 def _corroborate_orphan_tests(
@@ -3813,6 +3840,23 @@ def register(mcp: FastMCP) -> None:
         )
         page = meta_sorted[cursor : cursor + limit]
         next_cursor = cursor + limit if cursor + limit < len(meta_sorted) else None
+        # Depth-1 callers whose edge into the root was ingested rather than
+        # extracted. Only depth 1 is labelled: past one hop "which edge made
+        # this a caller" has no single answer, and a label that is sometimes
+        # about a different edge is worse than none. Copied, never mutated in
+        # place — these dicts belong to the cached GraphView.
+        external_direct = {
+            n
+            for n in (view.g.predecessors(sid) if sid in view.g else ())
+            if view.g[n][sid].get("origin", "livespec") != "livespec"
+        }
+        if external_direct:
+            page = [
+                {**m, "via_external_edge": view.g[m["id"]][sid]["origin"]}
+                if m.get("id") in external_direct
+                else m
+                for m in page
+            ]
         payload = {
             "root": sym["qualified_name"],
             "max_depth": max_depth,
@@ -3820,6 +3864,7 @@ def register(mcp: FastMCP) -> None:
             "count": total,
             "next_cursor": next_cursor,
         }
+        _attach_external_edges(payload, st, graph_pid)
         # v0.21 P2: cross-repo route callers — frontend call sites that hit this
         # symbol as an HTTP endpoint (invokes_route edges). Direct symbol_edge
         # query so it spans a shared group DB without the NetworkX graph.
@@ -3885,7 +3930,19 @@ def register(mcp: FastMCP) -> None:
         endpoints = _route_edge_peers(st.conn, sid, incoming=False)
         if endpoints:
             payload["invokes_endpoints"] = endpoints
-        return payload
+        external_direct = {
+            n
+            for n in (view.g.successors(sid) if sid in view.g else ())
+            if view.g[sid][n].get("origin", "livespec") != "livespec"
+        }
+        if external_direct:
+            payload["callees"] = [
+                {**m, "via_external_edge": view.g[sid][m["id"]]["origin"]}
+                if m.get("id") in external_direct
+                else m
+                for m in page
+            ]
+        return _attach_external_edges(payload, st, graph_pid)
 
     @mcp.tool(annotations={"readOnlyHint": True, "idempotentHint": True})
     @_workspace_note
@@ -4056,6 +4113,11 @@ def register(mcp: FastMCP) -> None:
             next_c = cursor + limit if cursor + limit < total else None
             return page, total, next_c
 
+        def _out(payload: dict[str, Any], project_id: int = pid) -> dict[str, Any]:
+            """Every cone answer here rides on `symbol_edge`, ingested rows
+            included, so every one of them says so."""
+            return _attach_external_edges(payload, st, project_id)
+
         if target_type == "symbol":
             sym = _resolve_symbol(st.conn, pids, target)
             if not sym:
@@ -4074,14 +4136,17 @@ def register(mcp: FastMCP) -> None:
                 else set()
             )
             if summary_only:
-                return {
-                    "root": sym["qualified_name"],
-                    "counts": {
-                        "impacted_callers": len(impacted),
-                        "calls_into": len(forward),
-                        "affected_specs": len(specs_for_symbols(impacted | {sid})),
+                return _out(
+                    {
+                        "root": sym["qualified_name"],
+                        "counts": {
+                            "impacted_callers": len(impacted),
+                            "calls_into": len(forward),
+                            "affected_specs": len(specs_for_symbols(impacted | {sid})),
+                        },
                     },
-                }
+                    graph_pid,
+                )
             callers_page, callers_total, callers_next = _paginate_meta(impacted, view)
             calls_page, calls_total, calls_next = _paginate_meta(forward, view)
             warn = _payload_warning(
@@ -4089,7 +4154,8 @@ def register(mcp: FastMCP) -> None:
                 limit=limit,
                 summary_only=summary_only,
             )
-            return _attach_payload_warning(
+            return _out(
+                _attach_payload_warning(
                 {
                     "root": sym["qualified_name"],
                     "impacted_callers": callers_page,
@@ -4102,6 +4168,8 @@ def register(mcp: FastMCP) -> None:
                     "next_cursor": callers_next if callers_next is not None else calls_next,
                 },
                 warn,
+                ),
+                graph_pid,
             )
         if target_type == "file":
             sids = [
@@ -4125,18 +4193,21 @@ def register(mcp: FastMCP) -> None:
                     )
             impacted -= set(sids)
             if summary_only:
-                return {
-                    "file": target,
-                    "symbols_in_file": len(sids),
-                    "counts": {
-                        "impacted_callers": len(impacted),
-                        "affected_specs": len(
-                            specs_for_symbols(impacted | set(sids))
-                        ),
-                    },
-                }
+                return _out(
+                    {
+                        "file": target,
+                        "symbols_in_file": len(sids),
+                        "counts": {
+                            "impacted_callers": len(impacted),
+                            "affected_specs": len(
+                                specs_for_symbols(impacted | set(sids))
+                            ),
+                        },
+                    }
+                )
             callers_page, callers_total, callers_next = _paginate_meta(impacted, view)
-            return _attach_payload_warning(
+            return _out(
+                _attach_payload_warning(
                 {
                     "file": target,
                     "symbols_in_file": len(sids),
@@ -4148,6 +4219,7 @@ def register(mcp: FastMCP) -> None:
                 _payload_warning(
                     callers_total, limit=limit, summary_only=summary_only
                 ),
+                )
             )
         if target_type == "spec":
             spec = st.conn.execute(
@@ -4221,15 +4293,19 @@ def register(mcp: FastMCP) -> None:
             # pagination contract exists to prevent. Honor summary_only + the
             # limit/cursor page + exact counts, like the symbol/file branches.
             if summary_only:
-                return {
-                    "spec_id": spec["spec_id"],
-                    "dependent_specs": dep_spec_meta,
-                    "counts": {
-                        "implementing_symbols": len(impl_ids),
-                        "downstream": len([n for n in forward if n in view.sym_meta]),
-                        "upstream_callers": len([n for n in backward if n in view.sym_meta]),
-                    },
-                }
+                return _out(
+                    {
+                        "spec_id": spec["spec_id"],
+                        "dependent_specs": dep_spec_meta,
+                        "counts": {
+                            "implementing_symbols": len(impl_ids),
+                            "downstream": len([n for n in forward if n in view.sym_meta]),
+                            "upstream_callers": len(
+                                [n for n in backward if n in view.sym_meta]
+                            ),
+                        },
+                    }
+                )
             impl_page, impl_total, impl_next = _paginate_meta(impl_ids, view)
             down_page, down_total, down_next = _paginate_meta(forward, view)
             up_page, up_total, up_next = _paginate_meta(backward, view)
@@ -4238,7 +4314,8 @@ def register(mcp: FastMCP) -> None:
                 limit=limit,
                 summary_only=summary_only,
             )
-            return _attach_payload_warning(
+            return _out(
+                _attach_payload_warning(
                 {
                     "spec_id": spec["spec_id"],
                     "dependent_specs": dep_spec_meta,
@@ -4256,6 +4333,7 @@ def register(mcp: FastMCP) -> None:
                     ),
                 },
                 warn,
+                )
             )
         return mcp_error(
             f"Unknown target_type '{target_type}'",
@@ -4680,6 +4758,10 @@ def register(mcp: FastMCP) -> None:
             payload["corroboration"] = corroboration
         elif corroboration_hint:
             payload["corroboration_available"] = corroboration_hint
+        # Ingested edges silence dead candidates through the base query's
+        # NOT EXISTS, before any of this code runs. A count that a `graph.json`
+        # helped produce must not read as a purely livespec finding.
+        _attach_external_edges(payload, st, pid)
         if filtered_out:
             # Present in summary_only too: this is precisely the field that
             # explains a surprising count, so stripping it in the cheap mode

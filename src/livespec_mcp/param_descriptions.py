@@ -167,6 +167,24 @@ PARAM_DESCRIPTIONS: dict[str, str] = {
 
 # Disambiguate params whose meaning depends on the tool.
 TOOL_PARAM_DESCRIPTIONS: dict[tuple[str, str], str] = {
+    ("ingest_external_graph", "graph_path"): (
+        "Path to the external code graph to ingest (Graphify "
+        "``graphify-out/graph.json``). Relative paths resolve against the "
+        "workspace root. Omit to use ``[graph] external`` from "
+        "``.livespec.toml``."
+    ),
+    ("ingest_external_graph", "remove"): (
+        "Delete every edge a previous ingest wrote (``origin="
+        "'external:graphify'``) and write nothing. livespec's own edges are "
+        "never touched."
+    ),
+    ("ingest_external_graph", "relations"): (
+        "External relations to ingest. Default: ``calls``, ``indirect_call``, "
+        "``inherits``, ``mixes_in``, ``uses``, ``references``. The import "
+        "relations (``imports``, ``imports_from``, ``re_exports``) are "
+        "available but off by default — ``who_calls`` does not distinguish "
+        "edge types, so ingesting them makes importers read as callers."
+    ),
     ("debt_baseline_capture", "reset"): (
         "Drop the previous snapshot before capturing. Say it deliberately — "
         "re-capturing without it quietly accepts whatever duplication landed "
