@@ -74,8 +74,8 @@ Leiden / multimodal al core. Ver `docs/COMPETITIVE_GRAPHIFY.md`. Weight +
 `edge_type` ya cubren EXTRACTED/AMBIGUOUS/INFERRED — pero la columna de
 provenance **sí** se agregó (mig 22, `symbol_edge.origin`) porque no era
 confianza: es lo único que hace *reversible* una ingesta. `ingest_external_graph`
-escribe las aristas de dependencia que nuestro resolver perdió (medido: 145 en
-este repo, 96% de acuerdo en las que ambos ven), etiquetadas y reversibles. La
+escribe las aristas de dependencia que nuestro resolver perdió (medido: 165 en
+este repo, 95% de acuerdo en las que ambos ven), etiquetadas y reversibles. La
 tabla de símbolos sigue siendo nuestra, sin excepción. La capa de documentación
 (prosa + `rationale_for`) sigue diferida: es la única que necesitaría un LLM.
 

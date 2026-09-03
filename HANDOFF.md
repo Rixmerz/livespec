@@ -61,13 +61,13 @@ grafos que hubiera en el disco.
 
 **`ingest_external_graph(graph_path=None, dry_run=True, remove=False,
 relations=None)`** escribe esas aristas. Medido sobre este repo contra una
-corrida code-only de Graphify de su propio árbol (3487 nodos, 5902 aristas,
+corrida code-only de Graphify de su propio árbol (3564 nodos, 6089 aristas,
 `input_tokens: 0`):
 
-    1355 de 1568 símbolos livespec matchearon un nodo   (3 ambiguos)
-    1200 aristas `calls` externas que livespec YA tenía  (96% de acuerdo)
-     145 aristas que livespec NO tenía
-         51 calls · 2 indirect_call · 76 uses · 16 references
+    1394 de 1593 símbolos livespec matchearon un nodo   (1 ambiguo)
+    1250 aristas `calls` externas que livespec YA tenía  (95% de acuerdo)
+     165 aristas que livespec NO tenía
+         63 calls · 2 indirect_call · 83 uses · 17 references
 
 `who_calls(ExternalNode)` pasó de **1 caller a 5**: los cuatro métodos que lo
 toman como anotación de tipo. livespec no modela uso en posición de tipo.
@@ -95,7 +95,7 @@ La corroboración acepta `imports` como evidencia, correctamente (68 de los 133
 descartes del sweep de 13 repos). La ingesta no puede heredarlo: `who_calls` no
 distingue edge types, así que una fila `imports` haría que los importadores se
 reporten como callers. Y la medición liquida el trade a costo cero: ingerir
-**las nueve** relaciones sobre este repo agrega exactamente las mismas **145**
+**las nueve** relaciones sobre este repo agrega exactamente las mismas **165**
 aristas — Graphify cuelga los imports de sus nodos por archivo, y un nodo de
 archivo nunca matchea un símbolo livespec.
 
@@ -104,6 +104,18 @@ cambiado y el cascade FK se lleva sus aristas ingeridas. `index_project`
 muestrea el conteo *antes* de la corrida y reporta las dos mitades
 (`external_edges_stale`): contar solo después no reportaría nada justo para
 las filas que la corrida destruyó.
+
+**El bug que sólo aparece en una DB vieja.** La primera versión ponía `CREATE
+INDEX ... ON symbol_edge(origin)` en `schema.sql`. Ese archivo corre *antes* de
+las migraciones en cada `connect()`, y `CREATE TABLE IF NOT EXISTS` es no-op
+sobre una DB que ya tiene la tabla: reventaba con `no such column: origin` en
+la base de **todo** usuario existente, antes de que la migración que agrega la
+columna pudiera correr. CI pasó igual porque todos los tests construyen DBs
+frescas. Se encontró construyendo una DB con el código de `main` y abriéndola
+con el nuevo. El índice ahora vive en la migración, y hay dos tests de
+regresión — la ruta de upgrade, y un guard general de que `schema.sql` nunca
+indexa una columna que agrega una migración. Regla para el futuro: **un índice
+sobre una columna que agrega una migración va en la migración.**
 
 **Sigue diferido:** la capa de documentación (316 aristas `rationale_for` +
 409 nodos de prosa). Sigue siendo lo más cercano que Graphify tiene a nuestro

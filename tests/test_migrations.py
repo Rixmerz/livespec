@@ -260,3 +260,92 @@ def test_m020_adds_spec_source_to_an_existing_db(tmp_path: Path):
     row = conn.execute("SELECT source FROM spec WHERE spec_id='SPEC-001'").fetchone()
     assert row["source"] is None
     conn.close()
+
+
+def test_m022_adds_origin_to_an_existing_db(tmp_path: Path):
+    """The upgrade path, on a database that predates the column.
+
+    This is the test that matters for migration 22, and it is not the same
+    test as "a fresh DB has the column". `connect()` runs `schema.sql` BEFORE
+    migrations, and `CREATE TABLE IF NOT EXISTS` is a no-op on a DB that
+    already has the table — so the first version of this migration put
+    `CREATE INDEX ... ON symbol_edge(origin)` in `schema.sql`, which raised
+    `no such column: origin` on every existing user's database before the
+    migration adding it could run. Every other test in the suite builds a
+    fresh DB, where schema.sql creates the column itself and the bug is
+    invisible. Only an old DB shows it.
+    """
+    db = tmp_path / "existing.db"
+    conn = connect(db)
+    conn.execute("INSERT INTO project(id, name, root) VALUES(1, 'p', '/p')")
+    conn.execute(
+        "INSERT INTO file(id, project_id, path, language, content_hash, "
+        "line_count, mtime) VALUES(1, 1, 'a.py', 'python', 'h', 2, 0.0)"
+    )
+    conn.execute(
+        "INSERT INTO symbol(id, file_id, name, qualified_name, kind, "
+        "start_line, end_line) VALUES(1, 1, 'a', 'a', 'function', 1, 1), "
+        "(2, 1, 'b', 'b', 'function', 2, 2)"
+    )
+    conn.execute(
+        "INSERT INTO symbol_edge(src_symbol_id, dst_symbol_id, edge_type) "
+        "VALUES(1, 2, 'calls')"
+    )
+    conn.commit()
+    # Rewind to a pre-22 database: no origin column, no index on it, and the
+    # migration unrecorded. SQLite refuses to drop a column an index still
+    # references, so the index goes first — which is also the real pre-22
+    # shape.
+    conn.execute("DELETE FROM schema_migrations WHERE version=22")
+    conn.execute("DROP INDEX IF EXISTS idx_edge_origin")
+    conn.execute("ALTER TABLE symbol_edge DROP COLUMN origin")
+    conn.commit()
+    conn.close()
+
+    conn = connect(db)
+    row = conn.execute("SELECT origin FROM symbol_edge").fetchone()
+    # An edge that predates the column is ours, and must say so — treating
+    # "unknown" as "livespec" downstream is exactly the assumption the column
+    # exists to stop making.
+    assert row["origin"] == "livespec"
+    indexes = {r["name"] for r in conn.execute("PRAGMA index_list(symbol_edge)")}
+    assert "idx_edge_origin" in indexes
+    conn.close()
+
+
+def test_schema_sql_never_indexes_a_column_a_migration_adds():
+    """Generalises the bug above so it cannot come back on another column.
+
+    `schema.sql` runs before migrations on every connect. Anything it does to
+    a table that already exists sees the OLD shape, so it may only index
+    columns that shipped with that table. A column introduced by a migration
+    must be indexed inside that migration.
+    """
+    import re
+
+    db_src = (Path(__file__).resolve().parents[1] / "src" / "livespec_mcp"
+              / "storage" / "db.py").read_text(encoding="utf-8")
+    schema_src = (Path(__file__).resolve().parents[1] / "src" / "livespec_mcp"
+                  / "storage" / "schema.sql").read_text(encoding="utf-8")
+
+    added = re.findall(
+        r"_try_add_column\(\s*conn,\s*[\"'](\w+)[\"'],\s*[\"'](\w+)[\"']", db_src
+    )
+    assert added, "no _try_add_column calls found — did the helper get renamed?"
+
+    offenders = []
+    for stmt in re.finditer(
+        r"CREATE\s+INDEX(?:\s+IF\s+NOT\s+EXISTS)?\s+\w+\s+ON\s+(\w+)\s*\(([^)]*)\)",
+        schema_src,
+        re.IGNORECASE,
+    ):
+        table, cols = stmt.group(1), stmt.group(2)
+        indexed = {c.strip().split()[0] for c in cols.split(",") if c.strip()}
+        for mig_table, mig_col in added:
+            if mig_table == table and mig_col in indexed:
+                offenders.append(f"{table}({mig_col})")
+    assert not offenders, (
+        "schema.sql indexes columns that migrations add, which raises "
+        f"`no such column` on every pre-existing database: {sorted(set(offenders))}. "
+        "Move the CREATE INDEX into the migration."
+    )

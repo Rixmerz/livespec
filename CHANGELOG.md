@@ -21,11 +21,11 @@ via `extends`, or a type used only in a parameter annotation, still reported
 zero callers no matter how many external graphs sat on disk.
 
 This ingests those edges. Measured on this repo against a code-only Graphify
-run of its own tree (3487 nodes, 5902 edges, `input_tokens: 0`):
+run of its own tree (3564 nodes, 6089 edges, `input_tokens: 0`):
 
-    1355 of 1568 livespec symbols matched an external node  (3 ambiguous)
-    1200 external `calls` edges livespec already had         (96% agreement)
-     145 edges livespec lacked   51 calls · 2 indirect_call · 76 uses · 16 references
+    1394 of 1593 livespec symbols matched an external node  (1 ambiguous)
+    1250 external `calls` edges livespec already had         (95% agreement)
+     165 edges livespec lacked   63 calls · 2 indirect_call · 83 uses · 17 references
 
 `who_calls(ExternalNode)` went from **1 caller to 5** — the four methods taking
 it as a type annotation, which livespec does not model at all.
@@ -41,13 +41,23 @@ it as a type annotation, which livespec does not model at all.
 - **Import relations are off by default.** `imports` / `imports_from` /
   `re_exports` are available via `relations=`, but `who_calls` does not
   distinguish edge types, so ingesting them would make importers read as
-  callers. On this repo they add **zero** edges anyway — Graphify hangs them
-  off per-file nodes, which never map to a livespec symbol. Corroboration
+  callers. On this repo they add **zero** edges anyway (165 either way) —
+  Graphify hangs them off per-file nodes, which never map to a livespec
+  symbol. Corroboration
   remains the right tool for import evidence: it asks the broader "does
   anything refer to this?" and writes nothing.
 - **Ambiguity is dropped, not guessed.** An external node two livespec symbols
   both claim is skipped; a missing caller is a gap, an invented one is a lie
   that survives into `analyze_impact`.
+
+Bug caught by testing the upgrade path on a real v0.32 database rather than a
+fresh one: the first version of this work put `CREATE INDEX ... ON
+symbol_edge(origin)` in `schema.sql`. That file runs *before* migrations on
+every connect, and `CREATE TABLE IF NOT EXISTS` no-ops on a DB that already has
+the table — so it raised `no such column: origin` on every existing database,
+before the migration adding the column could run. The index now lives in the
+migration. Two regression tests: the upgrade path itself, and a general guard
+that `schema.sql` never indexes a column a migration adds.
 
 ### Added — `symbol_edge.origin` (migration 22)
 

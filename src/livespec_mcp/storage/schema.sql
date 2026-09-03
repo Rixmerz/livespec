@@ -86,7 +86,12 @@ CREATE TABLE IF NOT EXISTS symbol_edge (
 
 CREATE INDEX IF NOT EXISTS idx_edge_src ON symbol_edge(src_symbol_id, edge_type);
 CREATE INDEX IF NOT EXISTS idx_edge_dst ON symbol_edge(dst_symbol_id, edge_type);
-CREATE INDEX IF NOT EXISTS idx_edge_origin ON symbol_edge(origin);
+-- NOTE: the index on `origin` is created by migration 22, NOT here. This file
+-- runs BEFORE migrations on every connect, and `CREATE TABLE IF NOT EXISTS` is
+-- a no-op on a DB that already has the table -- so an index here on a column a
+-- migration adds would raise `no such column` on every existing user's
+-- database before the migration that adds it ever runs. Index a
+-- migration-added column in the migration.
 
 -- Persistent refs: every call/reference site captured during extraction.
 -- We keep them on disk (rather than in-memory only) so a partial re-index

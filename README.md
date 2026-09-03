@@ -461,9 +461,9 @@ Always registered (including markdown Spec import + OpenSpec sync).
   `find_dead_code` all see them, and label them.
 
   Measured on livespec itself against a code-only Graphify run of its own tree
-  (3487 nodes, 5902 edges, **0 LLM tokens**): 1355 of 1568 symbols matched a
-  node, **1200 `calls` edges already agreed** (96%), and **145 edges livespec
-  lacked** were added — 51 `calls`, 2 `indirect_call`, 76 `uses`, 16
+  (3564 nodes, 6089 edges, **0 LLM tokens**): 1394 of 1593 symbols matched a
+  node, **1250 `calls` edges already agreed** (95%), and **165 edges livespec
+  lacked** were added — 63 `calls`, 2 `indirect_call`, 83 `uses`, 17
   `references`. `who_calls(ExternalNode)` went from 1 caller to 5: the four
   methods that take it as a type annotation, which livespec does not model.
 

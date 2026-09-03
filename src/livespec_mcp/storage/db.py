@@ -581,12 +581,22 @@ def _m022_symbol_edge_origin(conn: sqlite3.Connection) -> None:
     claim* the row is, which weight has never encoded and cannot.
 
     Additive with a default, so every existing row is correctly labelled
-    `livespec` without a re-extract."""
-    if _has_column(conn, "symbol_edge", "origin"):
-        return
-    _try_add_column(
-        conn, "symbol_edge", "origin", "TEXT NOT NULL DEFAULT 'livespec'"
-    )
+    `livespec` without a re-extract.
+
+    The index is created HERE and deliberately not in `schema.sql`. That file
+    runs before migrations on every connect, and `CREATE TABLE IF NOT EXISTS`
+    no-ops on a DB that already has the table -- so a `CREATE INDEX ... ON
+    symbol_edge(origin)` there raises `no such column: origin` on every
+    existing database, before this migration can add it. Caught by testing the
+    upgrade path on a real v0.32 database; every other test builds a fresh one,
+    where schema.sql creates the column itself and the bug is invisible."""
+    if not _has_column(conn, "symbol_edge", "origin"):
+        _try_add_column(
+            conn, "symbol_edge", "origin", "TEXT NOT NULL DEFAULT 'livespec'"
+        )
+    # Unconditional (and idempotent): on a fresh DB the column came from
+    # schema.sql, so the branch above is skipped and this is the only thing
+    # that creates the index.
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_edge_origin ON symbol_edge(origin)"
     )

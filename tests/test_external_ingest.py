@@ -9,12 +9,12 @@ annotation, still reported zero callers no matter how many external graphs were
 lying around.
 
 `ingest_external_graph` writes those edges. Measured on this repo
-(2026-09-03), against a code-only Graphify run of its own tree — 3487 nodes,
-5902 edges, `input_tokens: 0`:
+(2026-09-03), against a code-only Graphify run of its own tree — 3564 nodes,
+6089 edges, `input_tokens: 0`:
 
-    1355 of 1568 livespec symbols matched an external node (3 ambiguous)
-    1200 external `calls` edges livespec already had  (96% agreement)
-     145 edges livespec lacked  (51 calls, 2 indirect_call, 76 uses, 16 references)
+    1394 of 1593 livespec symbols matched an external node (1 ambiguous)
+    1250 external `calls` edges livespec already had  (95% agreement)
+     165 edges livespec lacked  (63 calls, 2 indirect_call, 83 uses, 17 references)
 
 and `who_calls(ExternalNode)` went from 1 caller to 5 — the four methods that
 take it as a type-position parameter, which livespec does not model at all.

@@ -196,20 +196,21 @@ Three boundaries hold the rest, in descending order of how much they matter:
 
 ### Measured on this repo
 
-Against a code-only Graphify run of livespec's own tree — 3487 nodes, 5902
+Against a code-only Graphify run of livespec's own tree — 3564 nodes, 6089
 edges, `input_tokens: 0`:
 
 | | |
 |---|---:|
-| livespec symbols matched to an external node | 1355 / 1568 |
-| ambiguous (two symbols claimed one node → dropped) | 3 |
-| external `calls` edges livespec **already had** | 1200 |
-| edges livespec **lacked** | **145** |
+| livespec symbols matched to an external node | 1394 / 1593 |
+| ambiguous (two symbols claimed one node → dropped) | 1 |
+| external `calls` edges livespec **already had** | 1250 |
+| edges livespec **lacked** | **165** |
 
-145 breaks down as 51 `calls`, 2 `indirect_call`, 76 `uses`, 16 `references` —
-close to the 133 the v0.32 note predicted. The 1200 agreed `calls` is the more
-interesting number: **96% agreement** on the pairs both tools can see, which
-cross-validates both and bounds how much a second extractor can ever be worth.
+165 breaks down as 63 `calls`, 2 `indirect_call`, 83 `uses`, 17 `references` —
+the same shape as the 133 the v0.32 note predicted, a little larger because the
+tree grew. The 1250 agreed `calls` is the more interesting number: **95%
+agreement** on the pairs both tools can see, which cross-validates both and
+bounds how much a second extractor can ever be worth.
 
 The concrete win is the one this document has been describing since v0.32.
 `who_calls(ExternalNode)` returned **1** caller (the function that constructs
@@ -227,9 +228,9 @@ does not distinguish edge types, so an ingested `imports` row would report
 importers as callers — lying in one tool to improve another.
 
 The measurement settles the trade at zero cost: ingesting **all nine**
-relations on this repo adds exactly the same **145** edges. Graphify hangs
+relations on this repo adds exactly the same **165** edges. Graphify hangs
 import edges off its per-file nodes, and a file node never maps to a livespec
-symbol (`ExternalNode.is_file_node` has refused them since v0.32). The 498
+symbol (`ExternalNode.is_file_node` has refused them since v0.32). The 509
 import links skipped by default would all die at `endpoint_not_indexed` anyway.
 
 That is also the clearest statement of why both features stay: **ingestion
