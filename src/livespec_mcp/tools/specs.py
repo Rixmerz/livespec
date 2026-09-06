@@ -16,7 +16,6 @@ import re
 import sqlite3
 from collections import deque
 from collections.abc import Container
-from pathlib import Path
 from typing import Any, Literal
 from uuid import uuid4
 
@@ -807,51 +806,32 @@ def register(
         # Optional external communities. Loaded up front so a bad path fails
         # before any work, and so the error is about the file rather than
         # surfacing later as mysteriously module-shaped groups.
-        from livespec_mcp.tools.analysis import _resolve_corroboration_source
+        from livespec_mcp.domain.external_source import (
+            load_gated_external_graph,
+            resolve_external_graph_source,
+        )
 
         ext_graph = None
-        community_graph, community_graph_hint = _resolve_corroboration_source(
-            st, community_graph
+        community_graph, community_graph_hint = resolve_external_graph_source(
+            st.settings.workspace, community_graph
         )
         if community_graph:
-            from livespec_mcp.domain.external_graph import (
-                load_external_graph,
-                overlap_ratio,
-            )
-
-            ext_path = Path(community_graph)
-            if not ext_path.is_absolute():
-                ext_path = st.settings.workspace / ext_path
-            try:
-                ext_graph = load_external_graph(ext_path)
-            except FileNotFoundError:
-                return mcp_error(
-                    f"External graph not found: {ext_path}",
-                    hint=(
-                        "Generate one with `/graphify <repo>` (writes "
-                        "graphify-out/graph.json), or pass an absolute path."
-                    ),
-                )
-            except (ValueError, OSError, UnicodeDecodeError) as exc:
-                return mcp_error(
-                    f"Could not read external graph {ext_path}: {exc}",
-                    hint="Expected Graphify's NetworkX node-link graph.json.",
-                )
+            # One implementation of load-and-gate, shared with corroboration and
+            # ingestion. This used to be a forty-line copy that had drifted: it
+            # re-derived the path, re-wrote both error messages and re-applied
+            # the overlap threshold by hand, so a fix to any of the three
+            # reached two call sites out of three.
             indexed_files = {
                 r["path"]
                 for r in st.conn.execute(
                     "SELECT path FROM file WHERE project_id=?", (pid,)
                 )
             }
-            if overlap_ratio(ext_graph, indexed_files) < 0.1:
-                return mcp_error(
-                    f"External graph {ext_path} shares almost no files with "
-                    "this index.",
-                    hint=(
-                        "It probably describes a different repo, or was built "
-                        "from a different root so its paths do not line up."
-                    ),
-                )
+            ext_graph, _overlap, problem = load_gated_external_graph(
+                st.settings.workspace, community_graph, indexed_files
+            )
+            if problem is not None:
+                return mcp_error(problem.message, hint=problem.hint)
 
         # Already-linked symbol IDs (for skip_already_covered)
         linked_sids = {

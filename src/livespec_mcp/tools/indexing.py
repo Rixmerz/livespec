@@ -311,11 +311,12 @@ def _run_external_ingest(
         record_ingest,
         sample_edges,
     )
-    from livespec_mcp.domain.graph import invalidate_graph_cache
-    from livespec_mcp.tools.analysis import (
-        _attach_unknown_relations,
-        _load_corroborating_graph,
+    from livespec_mcp.domain.external_source import (
+        load_gated_external_graph,
+        unknown_relations_report,
     )
+    from livespec_mcp.domain.graph import invalidate_graph_cache
+    from livespec_mcp.tools._errors import mcp_error
 
     pid = st.project_id
     # Every project in the group, not just the home one. `graphify merge-graphs`
@@ -326,11 +327,20 @@ def _run_external_ingest(
     # `group_project_ids()` is `[project_id]`.
     pids = st.group_project_ids()
     placeholders = ",".join("?" for _ in pids)
-    graph, overlap, err = _load_corroborating_graph(
-        st, resolved_path, keep_link_meta=True
+    indexed_files = {
+        r["path"]
+        for r in st.conn.execute(
+            f"SELECT path FROM file WHERE project_id IN ({placeholders})", tuple(pids)
+        )
+    }
+    graph, overlap, problem = load_gated_external_graph(
+        st.settings.workspace,
+        resolved_path,
+        indexed_files,
+        keep_link_meta=True,
     )
-    if err is not None:
-        return err
+    if problem is not None:
+        return mcp_error(problem.message, hint=problem.hint)
 
     symbols = [
         dict(r)
@@ -391,7 +401,7 @@ def _run_external_ingest(
             "(src/index.ts) produce one key both match. Dropping avoids writing "
             "an edge into the wrong repo; re-running will not change it."
         )
-    _attach_unknown_relations(payload, graph)
+    payload.update(unknown_relations_report(graph))
     if graph.has_non_ast_origin:
         payload["warning"] = (
             "Some external edges are not marked `_origin: ast` — this graph "
@@ -639,9 +649,13 @@ def register(mcp: FastMCP) -> None:
                     hint="Omit it for the default set, or name at least one relation.",
                 )
 
-        from livespec_mcp.tools.analysis import _resolve_corroboration_source
+        from livespec_mcp.domain.external_source import (
+            resolve_external_graph_source,
+        )
 
-        resolved_path, availability_hint = _resolve_corroboration_source(st, graph_path)
+        resolved_path, availability_hint = resolve_external_graph_source(
+            st.settings.workspace, graph_path
+        )
         if not resolved_path:
             return mcp_error(
                 "No external graph to ingest.",
