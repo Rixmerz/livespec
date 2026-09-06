@@ -71,6 +71,12 @@ client cached the short tool list.
 | Write Specs back to OpenSpec | `export_openspec(out_dir?)` | `specs/<capability>/spec.md` + `changes/` — closes the round-trip |
 | OpenSpec structural check | `validate_openspec(strict?)` | Mirror of `openspec validate --strict` (every requirement needs ≥1 scenario) |
 | Inspect change proposals | `list_spec_changes()` / `get_spec_change(name)` | proposal/design/tasks + ADD/MODIFY/REMOVE deltas |
+| Everything needed to change one symbol | `read_unit(qname, depth=1, token_budget=2000)` | Body + callee signatures + their types + raises + covering tests, in one payload |
+| Stack trace / `file:line` → symbol | `resolve_location(path, line)` | The inverse of `read_unit` |
+| "Have I written this already?" | `search_similar(code \| qname)` | Run it BEFORE adding a helper; AST hash + k-gram winnowing, no embeddings |
+| Freeze accepted duplication | `debt_baseline_capture()` / `debt_baseline_status()` | Old copies stay quiet; a NEW copy still reports |
+| Annotations the extractor cannot see | `scan_annotation_verbs()` | `@spec:` above a bare route registration that owns no symbol |
+| Borrow a second extractor's edges | `ingest_external_graph(graph_path?, dry_run=True)` | See §7.1; `remove=True` undoes it exactly |
 
 > **livespec speaks OpenSpec (Fission-AI).** If the repo has an `openspec/`
 > directory, livespec is the code-graph/traceability layer *beneath* it — it
@@ -298,6 +304,45 @@ When explaining code to the user, cite **Spec ids** from `list_specs` / annotati
 
 ---
 
+### 7.1 A second extractor (Graphify) — optional, zero LLM
+
+livespec's blind spots are specific and known: **type-position use**
+(`def f(x: Base)`), **inheritance** (`class A extends B`), and cross-file calls
+the resolver could not disambiguate. None of them produce an edge, so a base
+class or an interface used only as a type reads as referenced by nothing.
+
+[Graphify](https://github.com/Graphify-Labs/graphify)'s code pass is
+tree-sitter with **no LLM and no API key** — `graphify update <repo>` writes
+`graphify-out/graph.json` at `input_tokens: 0` — and it has *different* blind
+spots, which is the whole reason to read it.
+
+Two ways to use it, and they are not the same thing:
+
+1. `find_dead_code(corroborate_with="graphify-out/graph.json")` (also on
+   `find_orphan_tests`) — **writes nothing**, only removes candidates the other
+   extractor still sees referenced. Reach for this first.
+2. `ingest_external_graph(...)` — writes the missing dependency edges into
+   `symbol_edge` so `who_calls` / `analyze_impact` see them too. `dry_run=True`
+   is the default: read `edges_to_add`, `already_known` (how often the two
+   agree — the cross-validation number) and `sample` before applying.
+
+What to hold on to when you read the results:
+
+- **The symbol table stays livespec's.** An edge is ingested only when *both*
+  endpoints already resolve to livespec symbols.
+- **A type reference is not a caller.** `who_calls` counts invocation edges
+  only; ingested `references` / `inherits` rows appear under
+  `excluded_by_edge_type`. Widen with `edge_types=[...]`, or use
+  `analyze_impact`, which counts every dependency.
+- **Borrowed answers say so.** Depth-1 rows carry `via_external_edge`, and
+  every graph-reading tool carries an `external_edges` block.
+- **Re-run after an `index_project` that changed files.** The payload reports
+  it under `external_edges.stale`; `[graph] auto_ingest = true` automates it.
+- **Still not traffic.** Two static extractors agreeing is two static
+  extractors agreeing.
+
+---
+
 ## 8. Anti-patterns
 
 | Don't | Do instead |
@@ -310,6 +355,9 @@ When explaining code to the user, cite **Spec ids** from `list_specs` / annotati
 | Call removed tools (`get_symbol_info`, `find_references`) | `quick_orient`, `analyze_impact(max_depth=1)` |
 | Rely on filesystem watcher during active edits | `index_project()` when done |
 | Create Specs without linking code | `@spec:` + re-index or `bulk_link_spec_symbols` |
+| Trust counts on a repo whose index reported `languages_failed` | Those files were never parsed — run `livespec grammars`, re-index |
+| Report a `who_calls` count while ignoring `excluded_by_edge_type` | Say what was excluded, or widen `edge_types` |
+| Run `ingest_external_graph(dry_run=False)` on someone's index unannounced | Show the dry run first; `remove=True` undoes it |
 
 ---
 
