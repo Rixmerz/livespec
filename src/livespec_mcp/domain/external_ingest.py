@@ -170,6 +170,13 @@ class IngestPlan:
     #: than guessed — a wrong mapping writes a wrong edge into the call graph,
     #: which is worse than a missing one.
     ambiguous_nodes: int = 0
+    #: Of those, how many were claimed by symbols in DIFFERENT projects of a
+    #: group DB. Reported separately because the cause and the fix differ: two
+    #: repos in a group both have `src/index.ts`, both store it relative to
+    #: their own root, so one node's (file, line) key matches both. Nothing is
+    #: wrong with the graph or the index — the paths are simply not unique
+    #: across the group, and no amount of re-running changes that.
+    ambiguous_cross_project: int = 0
 
     def _skip(self, reason: str) -> None:
         self.skipped[reason] = self.skipped.get(reason, 0) + 1
@@ -200,8 +207,8 @@ def _weight_for(relation: str, confidence: object, score: object) -> float:
 
 def map_nodes_to_symbols(
     graph: ExternalGraph, symbols: list[dict]
-) -> tuple[dict[str, int], int]:
-    """External node id -> livespec symbol id, plus the ambiguous-node count.
+) -> tuple[dict[str, int], int, int]:
+    """External node id -> livespec symbol id, plus the ambiguous-node counts.
 
     Direction matters: we walk *livespec's* symbols and ask the external graph
     to identify each one, rather than the reverse. livespec's symbol table is
@@ -209,25 +216,36 @@ def map_nodes_to_symbols(
     construction, and the lookup keeps `external_graph.ExternalGraph.lookup`'s
     guards (file nodes and prose nodes can never satisfy a symbol).
 
-    `symbols` rows need `id`, `file_path`, `start_line` and `name`.
+    `symbols` rows need `id`, `file_path`, `start_line` and `name`, and
+    `project_id` when the caller spans a group DB.
+
+    Returns `(mapping, ambiguous, ambiguous_cross_project)`. The second count
+    is a subset of the first, split out because a group DB stores each repo's
+    paths relative to its own root: two repos with `src/index.ts` produce one
+    (file, line) key that both claim. Dropping is still right — a wrong mapping
+    writes a wrong edge, which is worse than a missing one — but the reader
+    should be told the cause is colliding paths, not a bad graph.
     """
-    claimed: dict[str, list[int]] = {}
+    claimed: dict[str, list[dict]] = {}
     for row in symbols:
         node = graph.lookup(
             row["file_path"], int(row["start_line"] or 0), row["name"] or ""
         )
         if node is None:
             continue
-        claimed.setdefault(node.node_id, []).append(int(row["id"]))
+        claimed.setdefault(node.node_id, []).append(row)
 
     mapping: dict[str, int] = {}
     ambiguous = 0
-    for node_id, symbol_ids in claimed.items():
-        if len(symbol_ids) == 1:
-            mapping[node_id] = symbol_ids[0]
-        else:
-            ambiguous += 1
-    return mapping, ambiguous
+    cross_project = 0
+    for node_id, rows in claimed.items():
+        if len(rows) == 1:
+            mapping[node_id] = int(rows[0]["id"])
+            continue
+        ambiguous += 1
+        if len({r.get("project_id") for r in rows}) > 1:
+            cross_project += 1
+    return mapping, ambiguous, cross_project
 
 
 def plan_ingest(
@@ -246,7 +264,11 @@ def plan_ingest(
     """
     wanted = frozenset(relations) if relations is not None else DEFAULT_RELATIONS
     plan = IngestPlan()
-    mapping, plan.ambiguous_nodes = map_nodes_to_symbols(graph, symbols)
+    (
+        mapping,
+        plan.ambiguous_nodes,
+        plan.ambiguous_cross_project,
+    ) = map_nodes_to_symbols(graph, symbols)
     plan.mapped_nodes = len(mapping)
 
     seen: set[tuple[int, int, str]] = set()

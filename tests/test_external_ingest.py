@@ -641,10 +641,26 @@ def test_a_node_two_symbols_both_claim_is_dropped_not_guessed(tmp_path: Path):
         {"id": 1, "name": "handler", "start_line": 10, "file_path": "app.py"},
         {"id": 2, "name": "handler", "start_line": 10, "file_path": "app.py"},
     ]
-    mapping, ambiguous = map_nodes_to_symbols(graph, both)
+    mapping, ambiguous, cross_project = map_nodes_to_symbols(graph, both)
     assert mapping == {}
     assert ambiguous == 1
+    # Both claimants are in the same project here, so this is the fallible-
+    # position case, not the colliding-paths-across-a-group case.
+    assert cross_project == 0
 
-    mapping, ambiguous = map_nodes_to_symbols(graph, both[:1])
+    mapping, ambiguous, cross_project = map_nodes_to_symbols(graph, both[:1])
     assert mapping == {"shared": 1}
     assert ambiguous == 0
+    assert cross_project == 0
+
+    # Two repos of a group DB, each storing `app.py` relative to its own root.
+    # Still dropped — writing the edge into the wrong repo is worse — but the
+    # cause is reported separately, because no amount of re-running fixes it.
+    grouped = [
+        {**both[0], "project_id": 1},
+        {**both[1], "project_id": 2},
+    ]
+    mapping, ambiguous, cross_project = map_nodes_to_symbols(graph, grouped)
+    assert mapping == {}
+    assert ambiguous == 1
+    assert cross_project == 1

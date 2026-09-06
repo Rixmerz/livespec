@@ -260,8 +260,10 @@ def _maybe_auto_ingest(st: AppState, result: dict[str, Any]) -> None:
     }
 
 
-def _delete_external_edges(st: AppState, project_id: int, origin: str) -> int:
-    """Delete exactly the edges one external origin wrote into this project.
+def _delete_external_edges(
+    st: AppState, project_ids: list[int] | int, origin: str
+) -> int:
+    """Delete exactly the edges one external origin wrote into these projects.
 
     The `_resolve_refs` contract forbids DELETEing from `symbol_edge` — refs
     from unchanged files must survive when the files they target change. That
@@ -269,15 +271,21 @@ def _delete_external_edges(st: AppState, project_id: int, origin: str) -> int:
     "gone" or "not re-parsed this run". Here the answer is not in doubt: these
     rows exist only because a previous ingest of this origin put them there,
     and the predicate cannot reach a livespec-derived row.
+
+    Scoped by the SOURCE symbol's project. Over a group DB that covers every
+    edge exactly once — including a cross-repo edge, whose source lives in one
+    of these projects even though its target lives in another.
     """
+    ids = [project_ids] if isinstance(project_ids, int) else list(project_ids)
+    placeholders = ",".join("?" for _ in ids)
     cur = st.conn.execute(
-        """DELETE FROM symbol_edge
+        f"""DELETE FROM symbol_edge
            WHERE origin = ?
              AND src_symbol_id IN (
                SELECT s.id FROM symbol s JOIN file f ON f.id = s.file_id
-               WHERE f.project_id = ?
+               WHERE f.project_id IN ({placeholders})
              )""",
-        (origin, project_id),
+        (origin, *ids),
     )
     return int(cur.rowcount or 0)
 
@@ -310,6 +318,14 @@ def _run_external_ingest(
     )
 
     pid = st.project_id
+    # Every project in the group, not just the home one. `graphify merge-graphs`
+    # produces a single graph.json spanning several repos, and a group DB is the
+    # one place livespec can hold both ends of an edge between them — the exact
+    # cross-repo dependency `route_ref` only covers when it happens to be HTTP.
+    # Identical to the previous behaviour on an ungrouped workspace, where
+    # `group_project_ids()` is `[project_id]`.
+    pids = st.group_project_ids()
+    placeholders = ",".join("?" for _ in pids)
     graph, overlap, err = _load_corroborating_graph(
         st, resolved_path, keep_link_meta=True
     )
@@ -319,9 +335,11 @@ def _run_external_ingest(
     symbols = [
         dict(r)
         for r in st.conn.execute(
-            "SELECT s.id, s.name, s.qualified_name, s.start_line, f.path AS file_path "
-            "FROM symbol s JOIN file f ON f.id = s.file_id WHERE f.project_id = ?",
-            (pid,),
+            "SELECT s.id, s.name, s.qualified_name, s.start_line, "
+            "f.path AS file_path, f.project_id AS project_id "
+            "FROM symbol s JOIN file f ON f.id = s.file_id "
+            f"WHERE f.project_id IN ({placeholders})",
+            tuple(pids),
         )
     ]
     # Rows this ingest owns are excluded from "already known" because the apply
@@ -330,12 +348,12 @@ def _run_external_ingest(
     existing = {
         (int(r["src_symbol_id"]), int(r["dst_symbol_id"]), r["edge_type"])
         for r in st.conn.execute(
-            """SELECT e.src_symbol_id, e.dst_symbol_id, e.edge_type
+            f"""SELECT e.src_symbol_id, e.dst_symbol_id, e.edge_type
                FROM symbol_edge e
                JOIN symbol s ON s.id = e.src_symbol_id
                JOIN file f ON f.id = s.file_id
-               WHERE f.project_id = ? AND e.origin <> ?""",
-            (pid, EXTERNAL_ORIGIN),
+               WHERE f.project_id IN ({placeholders}) AND e.origin <> ?""",
+            (*pids, EXTERNAL_ORIGIN),
         )
     }
     plan = plan_ingest(
@@ -356,6 +374,7 @@ def _run_external_ingest(
         "file_overlap": round(overlap, 3),
         "mapped_nodes": plan.mapped_nodes,
         "ambiguous_nodes": plan.ambiguous_nodes,
+        "projects": len(pids),
         "edges_to_add": plan.edge_count,
         "edges_by_relation": dict(sorted(plan.by_relation.items())),
         "already_known": plan.agreed,
@@ -363,6 +382,15 @@ def _run_external_ingest(
         "skipped": dict(sorted(plan.skipped.items())),
         "sample": sample_edges(plan, sym_meta),
     }
+    if plan.ambiguous_cross_project:
+        payload["ambiguous_cross_project"] = plan.ambiguous_cross_project
+        payload["ambiguous_cross_project_hint"] = (
+            f"{plan.ambiguous_cross_project} external node(s) were claimed by "
+            "symbols in different repos of this group and dropped. Each repo "
+            "stores paths relative to its own root, so two repos sharing a path "
+            "(src/index.ts) produce one key both match. Dropping avoids writing "
+            "an edge into the wrong repo; re-running will not change it."
+        )
     _attach_unknown_relations(payload, graph)
     if graph.has_non_ast_origin:
         payload["warning"] = (
@@ -389,7 +417,7 @@ def _run_external_ingest(
     # DELETE and the INSERT cascades the symbols away and the INSERT fails on a
     # foreign key, with no shaped error to show for it.
     with st.lock():
-        replaced = _delete_external_edges(st, pid, EXTERNAL_ORIGIN)
+        replaced = _delete_external_edges(st, pids, EXTERNAL_ORIGIN)
         st.conn.executemany(
             """INSERT OR IGNORE INTO
                symbol_edge(src_symbol_id, dst_symbol_id, edge_type, weight, origin)
@@ -414,7 +442,8 @@ def _run_external_ingest(
             edges_written=plan.edge_count,
         )
         st.conn.commit()
-    invalidate_graph_cache(pid)
+    for project in pids:
+        invalidate_graph_cache(project)
     payload["edges_added"] = plan.edge_count
     payload["edges_replaced"] = replaced
     payload["hint"] = (
@@ -576,11 +605,13 @@ def register(mcp: FastMCP) -> None:
             # underneath it; the ingest path below is worse, because a
             # re-extract between its DELETE and its INSERT makes the INSERT
             # fail on a foreign key with no shaped error to show for it.
+            group = st.group_project_ids()
             with st.lock():
-                removed = _delete_external_edges(st, pid, EXTERNAL_ORIGIN)
+                removed = _delete_external_edges(st, group, EXTERNAL_ORIGIN)
                 clear_ingest(st.conn, pid, EXTERNAL_ORIGIN)
                 st.conn.commit()
-            invalidate_graph_cache(pid)
+            for project in group:
+                invalidate_graph_cache(project)
             return {
                 "removed": removed,
                 "origin": EXTERNAL_ORIGIN,

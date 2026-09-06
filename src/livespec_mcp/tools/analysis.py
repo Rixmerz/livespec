@@ -2896,6 +2896,79 @@ def _route_edge_peers(conn, symbol_id: int, *, incoming: bool) -> list[dict]:
     ]
 
 
+def _cross_project_edge_peers(
+    conn, symbol_id: int, home_pid: int, *, incoming: bool
+) -> list[dict]:
+    """Symbol_edge peers of this symbol that live in ANOTHER project.
+
+    Same trick as `_route_edge_peers` and for the same reason: the NetworkX
+    view is built per project (`WHERE f.project_id = ?`), so an edge whose two
+    ends sit in different repos of a group DB is in no view at all. A direct
+    query spans the database, where symbol ids are global.
+
+    This became reachable when ingestion started mapping nodes across the whole
+    group (v0.33): a merged Graphify graph can link a type in one repo to its
+    use in another, which is precisely the non-HTTP cross-repo dependency
+    livespec had no way to represent. `invokes_route` is excluded because it
+    already has its own, better-labelled lane.
+    """
+    if incoming:
+        join_col, filter_col = "e.src_symbol_id", "e.dst_symbol_id"
+    else:
+        join_col, filter_col = "e.dst_symbol_id", "e.src_symbol_id"
+    rows = conn.execute(
+        f"""SELECT s.qualified_name, f.path, f.project_id, p.root,
+                   e.edge_type, e.weight, e.origin
+            FROM symbol_edge e
+            JOIN symbol s ON s.id = {join_col}
+            JOIN file f ON f.id = s.file_id
+            JOIN project p ON p.id = f.project_id
+            WHERE {filter_col} = ? AND f.project_id != ?
+              AND e.edge_type != 'invokes_route'
+            ORDER BY e.weight DESC, s.qualified_name""",
+        (symbol_id, home_pid),
+    ).fetchall()
+    return [
+        {
+            "qualified_name": r["qualified_name"],
+            "file": r["path"],
+            "project_root": r["root"],
+            "edge_type": r["edge_type"],
+            "confidence": round(float(r["weight"]), 3),
+            **({"via_external_edge": r["origin"]} if r["origin"] != "livespec" else {}),
+        }
+        for r in rows
+    ]
+
+
+def _attach_cross_repo_peers(
+    payload: dict[str, Any],
+    st: AppState,
+    symbol_id: int,
+    *,
+    incoming: bool,
+    key: str,
+) -> None:
+    """Add the cross-repo lane when a group DB actually has one.
+
+    Silent for every ungrouped workspace, which is the default install: there
+    is exactly one project, so the query can never match.
+    """
+    if not st.settings.grouped:
+        return
+    peers = _cross_project_edge_peers(
+        st.conn, symbol_id, st.project_id, incoming=incoming
+    )
+    if not peers:
+        return
+    payload[key] = peers
+    payload[f"{key}_hint"] = (
+        "These live in another repo of this group DB. They are not in the "
+        "per-project call graph, so they are listed separately rather than "
+        "counted above."
+    )
+
+
 def _call_style_handler_qnames(st: AppState, project_id: int) -> set[str]:
     """Qualified names of Hono/Express handlers resolved like ``find_endpoints``.
 
@@ -4005,6 +4078,9 @@ def register(mcp: FastMCP) -> None:
         route_callers = _route_edge_peers(st.conn, sid, incoming=True)
         if route_callers:
             payload["route_callers"] = route_callers
+        _attach_cross_repo_peers(
+            payload, st, sid, incoming=True, key="cross_repo_callers"
+        )
         return _attach_payload_warning(
             payload,
             _payload_warning(total, limit=limit, summary_only=summary_only),
@@ -4073,6 +4149,9 @@ def register(mcp: FastMCP) -> None:
         endpoints = _route_edge_peers(st.conn, sid, incoming=False)
         if endpoints:
             payload["invokes_endpoints"] = endpoints
+        _attach_cross_repo_peers(
+            payload, st, sid, incoming=False, key="cross_repo_callees"
+        )
         _note_excluded_edge_types(
             payload,
             view,
