@@ -38,6 +38,23 @@ from livespec_mcp.domain.languages import (
 )
 from livespec_mcp.server import mcp
 
+from .conftest import requires_grammar
+
+
+def _raise_grammar_unavailable(language: str):
+    raise GrammarUnavailableError(language, RuntimeError("no network"))
+
+
+def _indexed_paths(workspace: Path) -> set[str]:
+    """File rows this workspace actually persisted."""
+    from livespec_mcp.state import get_state
+
+    st = get_state(str(workspace))
+    return {
+        r["path"]
+        for r in st.conn.execute("SELECT path FROM file WHERE project_id=?", (st.project_id,))
+    }
+
 
 @pytest.fixture
 def no_grammars(monkeypatch):
@@ -133,31 +150,69 @@ async def test_the_file_is_left_unindexed_so_the_next_run_retries_it(workspace: 
     """
     (workspace / "app.ts").write_text("export function tsFn() { return 1 }\n")
 
-    def _boom(language: str):
-        raise GrammarUnavailableError(language, RuntimeError("no network"))
-
-    monkeypatch.setattr(extractors, "get_parser", _boom)
-    async with Client(mcp) as c:
-        first = (await c.call_tool("index_project", {})).data
+    # A LOCAL monkeypatch context, not the fixture. `monkeypatch.undo()` on the
+    # fixture reverts every patch it holds — including the autouse one in
+    # conftest that binds tool calls to this workspace — so the second
+    # `index_project({})` came back as a shaped "workspace required" error and
+    # the assertion died on a missing key rather than on the behaviour. Caught
+    # only on CI, because the grammar this test needs does not exist locally
+    # and the skip below hid it.
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(extractors, "get_parser", _raise_grammar_unavailable)
+        async with Client(mcp) as c:
+            first = (await c.call_tool("index_project", {})).data
     assert first["languages_failed"] == {"typescript": 1}
     assert first["symbols_total"] == 0
 
+    # Nothing was persisted, which is WHY the next run retries: no file row
+    # means no stored content hash to compare against.
+    assert _indexed_paths(workspace) == set()
+
     # The grammar becomes available (someone ran `livespec grammars`), and the
     # SAME unchanged file must now be extracted without force=True.
-    monkeypatch.undo()
-    real_parser_works = True
-    try:
-        get_parser("typescript")
-    except GrammarUnavailableError:
-        real_parser_works = False
-    if not real_parser_works:
-        pytest.skip("no typescript grammar available in this environment")
+    requires_grammar("typescript")
 
     async with Client(mcp) as c:
         second = (await c.call_tool("index_project", {})).data
     assert second["files_changed"] == 1, "the skipped file was never retried"
     assert second["symbols_total"] >= 1
     assert "languages_failed" not in second
+
+
+@pytest.mark.asyncio
+async def test_nothing_is_persisted_for_a_file_that_was_never_read(workspace: Path):
+    """The mechanism behind the retry, checkable without any grammar at all.
+
+    A file row carries the content hash. Persisting one for a file the parser
+    never opened is what made the skip permanent: the hash said "seen, and
+    unchanged" about bytes nothing had looked at.
+    """
+    (workspace / "keep.py").write_text("def kept():\n    return 1\n")
+    (workspace / "app.ts").write_text("export function tsFn() { return 1 }\n")
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(extractors, "get_parser", _raise_grammar_unavailable)
+        async with Client(mcp) as c:
+            payload = (await c.call_tool("index_project", {})).data
+
+    # The Python file indexed; the unreadable one left no trace whatsoever.
+    assert _indexed_paths(workspace) == {"keep.py"}
+    assert payload["languages_failed"] == {"typescript": 1}
+    assert payload["files_skipped"] >= 1
+
+    # A second run reaches the file again, because there is no stored hash
+    # claiming it is unchanged. It fails the same way here (still no grammar),
+    # and that is the point: the skip is retried, not remembered.
+    #
+    # This second call also guards the trap that made the CI-only failure
+    # above: it must be a real index payload, not the shaped "workspace
+    # required" error a clobbered conftest binding would produce.
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(extractors, "get_parser", _raise_grammar_unavailable)
+        async with Client(mcp) as c:
+            again = (await c.call_tool("index_project", {})).data
+    assert "files_changed" in again, again
+    assert again["languages_failed"] == {"typescript": 1}
 
 
 def test_prefetch_targets_what_livespec_extracts_not_the_whole_pack(monkeypatch):
