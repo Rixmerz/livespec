@@ -461,6 +461,10 @@ Always registered (including markdown Spec import + OpenSpec sync).
   # remove=True. A graph at the default path announces itself but is not
   # used until you point at it here.
   external = "graphify-out/graph.json"
+  # Re-apply the recorded ingest after an index run that changed files. Off by
+  # default: an ingest writes rows into symbol_edge, and a write that happens
+  # because someone saved a file is not something to opt into silently.
+  auto_ingest = false
 
   [workspace]
   group_db = "../.livespec-group/docs.db"  # cross-project: several repo roots
@@ -493,6 +497,22 @@ Always registered (including markdown Spec import + OpenSpec sync).
   be livespec symbols); **reversible and idempotent** (`remove=True` deletes
   exactly its own rows; every apply rewrites rather than accumulates); and
   **`dry_run=True` by default**, so the first call reports what it would add.
+
+  **An ingested reference is not a caller.** `who_calls` counts invocation
+  edges only, so a type-position use or an inheritance edge is reported under
+  `excluded_by_edge_type` rather than inflating the caller list — measured on
+  this repo, one class went from 2 callers to 40 before this, and 38 of the 40
+  were parameter annotations. Pass `edge_types=["calls","references"]` to
+  include them, or use `analyze_impact`, which counts every dependency.
+
+  **It remembers what it read** (migration 23): the graph path, its content
+  hash and the time. Every graph-reading tool's `external_edges` block reports
+  `stale` when a re-extract cascaded rows away, the file changed, or it is
+  gone. `[graph] auto_ingest = true` re-applies it after an index that changed
+  files. Over a `[workspace] group_db` it maps across every project in the
+  group, so a `graphify merge-graphs` output contributes cross-repo edges —
+  surfaced as `cross_repo_callers` / `cross_repo_callees`, since the
+  per-project call graph cannot hold an edge whose ends are in two repos.
   Import relations (`imports`, `imports_from`, `re_exports`) are available via
   `relations=` but off by default — `who_calls` does not distinguish edge
   types, so ingesting them would make importers read as callers. On this repo
