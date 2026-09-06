@@ -94,9 +94,7 @@ def _project_table_has_rows(state: AppState, table: str) -> bool:
 
 def _project_has_explorer_bundle(state: AppState) -> bool:
     """Explorer bundle on disk → docs plugin tools (export_explorer) are relevant."""
-    return (
-        state.settings.workspace / ".mcp-docs" / "explorer" / "index.html"
-    ).is_file()
+    return (state.settings.workspace / ".mcp-docs" / "explorer" / "index.html").is_file()
 
 
 def _parse_override(raw: str) -> set[str] | None:
@@ -111,8 +109,7 @@ def _parse_override(raw: str) -> set[str] | None:
     unknown = parts - set(KNOWN_PLUGINS)
     if unknown:
         logging.getLogger(__name__).warning(
-            "LIVESPEC_PLUGINS contains unknown plugin name(s) %s — valid values: "
-            "none, all, %s",
+            "LIVESPEC_PLUGINS contains unknown plugin name(s) %s — valid values: none, all, %s",
             sorted(unknown),
             ", ".join(KNOWN_PLUGINS),
         )

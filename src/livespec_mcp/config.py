@@ -78,6 +78,13 @@ class RepoConfig:
     # are called without an explicit ``corroborate_with``. Never a source of
     # symbols or edges. Relative paths resolve against the workspace root.
     external_graph: str | None = None
+    # [graph] auto_ingest — re-run `ingest_external_graph` automatically after
+    # an index run that changed files. Off by default: an ingest writes rows
+    # into `symbol_edge`, and a write that happens because a file was saved is
+    # not something to opt anyone into silently. On, it closes the staleness
+    # window that a re-extract opens (the FK cascade takes ingested edges with
+    # the symbols they pointed at).
+    graph_auto_ingest: bool = False
     # [workspace] — cross-project grouping: a shared DB path lets several repo
     # roots live in one database (each its own project_id) so a Spec can link
     # symbols across repos. Relative paths resolve against the workspace root.
@@ -104,6 +111,7 @@ class RepoConfig:
             },
             "graph": {
                 "external": self.external_graph,
+                "auto_ingest": self.graph_auto_ingest,
             },
             "workspace": {
                 "group_db": self.group_db,
@@ -222,18 +230,14 @@ def _ecosystem_ignore_patterns(workspace: Path) -> tuple[str, ...]:
             continue
         exclude = data.get("exclude")
         if isinstance(exclude, list):
-            patterns.extend(
-                p for p in (_normalize_exclude_pattern(x) for x in exclude) if p
-            )
+            patterns.extend(p for p in (_normalize_exclude_pattern(x) for x in exclude) if p)
         break  # deno.json wins over deno.jsonc if both exist (Deno's own rule)
 
     ts_data = _load_jsonc(workspace / "tsconfig.json")
     if ts_data is not None:
         exclude = ts_data.get("exclude")
         if isinstance(exclude, list):
-            patterns.extend(
-                p for p in (_normalize_exclude_pattern(x) for x in exclude) if p
-            )
+            patterns.extend(p for p in (_normalize_exclude_pattern(x) for x in exclude) if p)
 
     # Dedup, preserve order.
     seen: set[str] = set()
@@ -302,8 +306,7 @@ def load_repo_config(workspace: Path) -> RepoConfig:
     unknown = set(index) - {"ignore", "languages", "max_file_bytes"}
     if unknown:
         raise _config_error(
-            f"unknown [index] keys: {sorted(unknown)} "
-            "(valid: ignore, languages, max_file_bytes)"
+            f"unknown [index] keys: {sorted(unknown)} (valid: ignore, languages, max_file_bytes)"
         )
 
     ignore = index.get("ignore", [])
@@ -324,14 +327,21 @@ def load_repo_config(workspace: Path) -> RepoConfig:
             )
 
     max_file_bytes = index.get("max_file_bytes", DEFAULT_MAX_FILE_BYTES)
-    if not isinstance(max_file_bytes, int) or isinstance(max_file_bytes, bool) or max_file_bytes <= 0:
+    if (
+        not isinstance(max_file_bytes, int)
+        or isinstance(max_file_bytes, bool)
+        or max_file_bytes <= 0
+    ):
         raise _config_error("[index].max_file_bytes must be a positive integer")
 
     explorer = data.get("explorer", {})
     if not isinstance(explorer, dict):
         raise _config_error("[explorer] must be a table")
     unknown_explorer = set(explorer) - {
-        "auto_mount", "mount_path", "playground", "playground_mode",
+        "auto_mount",
+        "mount_path",
+        "playground",
+        "playground_mode",
     }
     if unknown_explorer:
         raise _config_error(
@@ -352,17 +362,13 @@ def load_repo_config(workspace: Path) -> RepoConfig:
         "readonly",
         "all",
     }:
-        raise _config_error(
-            '[explorer].playground_mode must be "readonly" or "all"'
-        )
+        raise _config_error('[explorer].playground_mode must be "readonly" or "all"')
     agent = data.get("agent", {})
     if not isinstance(agent, dict):
         raise _config_error("[agent] must be a table")
     unknown_agent = set(agent) - {"log_calls"}
     if unknown_agent:
-        raise _config_error(
-            f"unknown [agent] keys: {sorted(unknown_agent)} (valid: log_calls)"
-        )
+        raise _config_error(f"unknown [agent] keys: {sorted(unknown_agent)} (valid: log_calls)")
     agent_log_calls = agent.get("log_calls", False)
     if not isinstance(agent_log_calls, bool):
         raise _config_error("[agent].log_calls must be a boolean")
@@ -383,33 +389,32 @@ def load_repo_config(workspace: Path) -> RepoConfig:
     if links_seed is not None and not isinstance(links_seed, str):
         raise _config_error("[specs].links_seed must be a string path")
     openspec_dir = specs.get("openspec_dir")
-    if openspec_dir is not None and (
-        not isinstance(openspec_dir, str) or not openspec_dir.strip()
-    ):
+    if openspec_dir is not None and (not isinstance(openspec_dir, str) or not openspec_dir.strip()):
         raise _config_error("[specs].openspec_dir must be a non-empty string path")
 
     graph_tbl = data.get("graph", {})
     if not isinstance(graph_tbl, dict):
         raise _config_error("[graph] must be a table")
-    unknown_graph = set(graph_tbl) - {"external"}
+    unknown_graph = set(graph_tbl) - {"external", "auto_ingest"}
     if unknown_graph:
         raise _config_error(
-            f"unknown [graph] keys: {sorted(unknown_graph)} (valid: external)"
+            f"unknown [graph] keys: {sorted(unknown_graph)} (valid: external, auto_ingest)"
         )
     external_graph = graph_tbl.get("external")
     if external_graph is not None and (
         not isinstance(external_graph, str) or not external_graph.strip()
     ):
         raise _config_error("[graph].external must be a non-empty string path")
+    graph_auto_ingest = graph_tbl.get("auto_ingest", False)
+    if not isinstance(graph_auto_ingest, bool):
+        raise _config_error("[graph].auto_ingest must be a boolean")
 
     workspace_tbl = data.get("workspace", {})
     if not isinstance(workspace_tbl, dict):
         raise _config_error("[workspace] must be a table")
     unknown_ws = set(workspace_tbl) - {"group_db"}
     if unknown_ws:
-        raise _config_error(
-            f"unknown [workspace] keys: {sorted(unknown_ws)} (valid: group_db)"
-        )
+        raise _config_error(f"unknown [workspace] keys: {sorted(unknown_ws)} (valid: group_db)")
     group_db = workspace_tbl.get("group_db")
     if group_db is not None and (not isinstance(group_db, str) or not group_db.strip()):
         raise _config_error("[workspace].group_db must be a non-empty string path")
@@ -427,5 +432,6 @@ def load_repo_config(workspace: Path) -> RepoConfig:
         specs_links_seed=links_seed,
         specs_openspec_dir=openspec_dir,
         external_graph=external_graph,
+        graph_auto_ingest=graph_auto_ingest,
         group_db=group_db,
     )

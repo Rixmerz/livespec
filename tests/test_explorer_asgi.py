@@ -60,9 +60,7 @@ def test_autowire_uses_mount_path_from_config(workspace: Path):
         '[explorer]\nauto_mount = true\nmount_path = "/api/docs"\n',
         encoding="utf-8",
     )
-    result = autowire_fastapi_explorer(
-        workspace, auto_mount=True, mount_path="/api/docs"
-    )
+    result = autowire_fastapi_explorer(workspace, auto_mount=True, mount_path="/api/docs")
     assert result.wired is True
     text = main.read_text(encoding="utf-8")
     assert 'mount_explorer(app, prefix="/api/docs")' in text
@@ -73,7 +71,9 @@ def test_write_explorer_bundle_autowires_fastapi(workspace: Path):
     st = get_state(str(workspace), create=True)
     result = write_explorer_bundle(st)
     assert result["autowire"]["wired"] is True
-    assert 'mount_explorer(app, prefix="/explorer")' in (workspace / "main.py").read_text(encoding="utf-8")
+    assert 'mount_explorer(app, prefix="/explorer")' in (workspace / "main.py").read_text(
+        encoding="utf-8"
+    )
 
 
 def test_enable_explorer_mounts_with_config_prefix(workspace: Path):

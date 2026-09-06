@@ -36,9 +36,7 @@ async def test_dead_code_protects_express_imported_handler(workspace):
     """Import-mapped Express handler must not be dead when routed."""
     (workspace / "controllers").mkdir()
     (workspace / "controllers" / "details.ts").write_text(
-        "export default function details(req: any, res: any) {\n"
-        "  res.json({ ok: true });\n"
-        "}\n"
+        "export default function details(req: any, res: any) {\n  res.json({ ok: true });\n}\n"
     )
     (workspace / "routes.ts").write_text(
         "import express from 'express';\n"
@@ -60,7 +58,11 @@ async def test_dead_code_protects_express_imported_handler(workspace):
             )
         ).data
     qnames = {d["qualified_name"] for d in out.get("dead_symbols", [])}
-    assert not any("details" in q and "neverUsed" not in q for q in qnames if q.endswith("details") or ".details" in q), qnames
+    assert not any(
+        "details" in q and "neverUsed" not in q
+        for q in qnames
+        if q.endswith("details") or ".details" in q
+    ), qnames
     # default export may be named details
     assert not any(q.endswith("details") for q in qnames), qnames
     assert any(q.endswith("neverUsed") for q in qnames), qnames
@@ -89,20 +91,11 @@ async def test_orphan_skips_harness_and_fixtures(workspace):
     (workspace / "src").mkdir()
     (workspace / "src" / "app.py").write_text("def ping():\n    return 'ok'\n")
     (workspace / "tests").mkdir()
-    (workspace / "tests" / "conftest.py").write_text(
-        "def make_user():\n    return {}\n"
-    )
+    (workspace / "tests" / "conftest.py").write_text("def make_user():\n    return {}\n")
     (workspace / "tests" / "test_harness.py").write_text(
-        "from fastmcp import Client\n"
-        "\n"
-        "def test_via_client():\n"
-        "    Client(mcp)\n"
-        "    assert True\n"
+        "from fastmcp import Client\n\ndef test_via_client():\n    Client(mcp)\n    assert True\n"
     )
-    (workspace / "tests" / "test_lonely.py").write_text(
-        "def test_lonely():\n"
-        "    assert True\n"
-    )
+    (workspace / "tests" / "test_lonely.py").write_text("def test_lonely():\n    assert True\n")
     async with Client(mcp) as c:
         await c.call_tool("index_project", {})
         out = (await c.call_tool("find_orphan_tests", {})).data

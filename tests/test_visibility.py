@@ -45,9 +45,7 @@ def test_rust_visibility_extracted(tmp_path: Path):
     assert structs_by_first_line["C"] == "pub(crate)"
     assert structs_by_first_line["D"] == "pub(super)"
 
-    methods_by_name = {
-        s.name: s.visibility for s in result.symbols if s.kind == "method"
-    }
+    methods_by_name = {s.name: s.visibility for s in result.symbols if s.kind == "method"}
     assert methods_by_name["pub_method"] == "pub"
     assert methods_by_name["private_method"] == "private"
     assert methods_by_name["crate_method"] == "pub(crate)"
@@ -75,14 +73,10 @@ async def test_find_dead_code_skips_pub_rust_items(workspace):
 
     async with Client(mcp) as c:
         await c.call_tool("index_project", {})
-        out = (
-            await c.call_tool("find_dead_code", {"include_non_python": True})
-        ).data
+        out = (await c.call_tool("find_dead_code", {"include_non_python": True})).data
         qnames = {d["qualified_name"] for d in out["dead_symbols"]}
 
-        assert "src.lib.public_api" not in qnames, (
-            f"pub fn must NOT be flagged as dead: {qnames}"
-        )
+        assert "src.lib.public_api" not in qnames, f"pub fn must NOT be flagged as dead: {qnames}"
         assert "src.lib.truly_private_dead" in qnames, (
             f"private fn with no caller MUST be flagged: {qnames}"
         )

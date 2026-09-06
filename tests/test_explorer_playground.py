@@ -18,9 +18,7 @@ from livespec_mcp.explorer.playground import playground_enabled, playground_mode
 def _write_minimal_bundle(workspace: Path) -> None:
     out = workspace / ".mcp-docs" / "explorer"
     out.mkdir(parents=True, exist_ok=True)
-    (out / "index.html").write_text(
-        "<html><title>Spec Explorer</title></html>", encoding="utf-8"
-    )
+    (out / "index.html").write_text("<html><title>Spec Explorer</title></html>", encoding="utf-8")
     (out / "data.json").write_text("{}", encoding="utf-8")
 
 

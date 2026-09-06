@@ -95,9 +95,8 @@ async def test_docs_do_not_advertise_a_stale_core_count(doc: str):
         for m in re.finditer(r"(\d+)\s+core\b", line):
             if int(m.group(1)) != core_n:
                 stale.append(line.strip())
-    assert not stale, (
-        f"{doc} advertises a core-tool count that is not {core_n}:\n  "
-        + "\n  ".join(stale)
+    assert not stale, f"{doc} advertises a core-tool count that is not {core_n}:\n  " + "\n  ".join(
+        stale
     )
 
 

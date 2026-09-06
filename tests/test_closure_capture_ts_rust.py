@@ -74,9 +74,7 @@ async def test_find_dead_code_ts_closure_callback(workspace):
     )
     async with Client(mcp) as c:
         await c.call_tool("index_project", {})
-        out = (await c.call_tool(
-            "find_dead_code", {"include_non_python": True}
-        )).data
+        out = (await c.call_tool("find_dead_code", {"include_non_python": True})).data
         qnames = {d["qualified_name"] for d in out["dead_symbols"]}
         assert "app.start.onEvent" not in qnames, qnames
         assert "app.start.unusedInner" in qnames, qnames
@@ -96,9 +94,7 @@ async def test_find_dead_code_rust_closure_callback(workspace):
     )
     async with Client(mcp) as c:
         await c.call_tool("index_project", {})
-        out = (await c.call_tool(
-            "find_dead_code", {"include_non_python": True}
-        )).data
+        out = (await c.call_tool("find_dead_code", {"include_non_python": True})).data
         qnames = {d["qualified_name"] for d in out["dead_symbols"]}
         assert "lib.start.on_event" not in qnames, qnames
         assert "lib.start.unused_inner" in qnames, qnames

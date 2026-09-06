@@ -95,9 +95,7 @@ def _emit_requirement(
             cleaned = "\n".join(
                 ln
                 for ln in description.splitlines()
-                if not (
-                    ln.strip().startswith("<!--") and "livespec:id=" in ln
-                )
+                if not (ln.strip().startswith("<!--") and "livespec:id=" in ln)
             ).strip()
             if cleaned:
                 block += [cleaned, ""]
@@ -161,9 +159,7 @@ def export_openspec(
         lines: list[str] = [f"# {_capability_title(cap)} Specification", ""]
         # Re-emit the stored ## Purpose verbatim when we captured one on import;
         # otherwise synthesize a minimal placeholder so the file stays valid.
-        purpose_body = cap_purpose.get(cap) or (
-            f"The `{cap}` capability. Exported by livespec."
-        )
+        purpose_body = cap_purpose.get(cap) or (f"The `{cap}` capability. Exported by livespec.")
         lines += [
             "## Purpose",
             purpose_body,
@@ -195,9 +191,7 @@ def export_openspec(
     return result
 
 
-def _export_changes(
-    conn: Any, project_id: int, root: Path, written: list[str]
-) -> int:
+def _export_changes(conn: Any, project_id: int, root: Path, written: list[str]) -> int:
     changes = conn.execute(
         "SELECT id, name, status, proposal, design, tasks FROM spec_change "
         "WHERE project_id=? ORDER BY name",

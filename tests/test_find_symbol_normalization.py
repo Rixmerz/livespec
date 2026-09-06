@@ -30,9 +30,7 @@ async def test_find_symbol_matches_double_colon_query(workspace):
         # Query with :: should resolve to mod::Type::method qnames
         out = (await c.call_tool("find_symbol", {"query": "Greeter::greet"})).data
         qnames = {m["qualified_name"] for m in out["matches"]}
-        assert any("Greeter::greet" in q for q in qnames), (
-            f"Greeter::greet should match: {qnames}"
-        )
+        assert any("Greeter::greet" in q for q in qnames), f"Greeter::greet should match: {qnames}"
 
         # Plain Greeter still works (existing behavior)
         out = (await c.call_tool("find_symbol", {"query": "Greeter"})).data
@@ -47,10 +45,7 @@ async def test_find_symbol_matches_dot_against_double_colon_qname(workspace):
     pkg = workspace / "src"
     pkg.mkdir()
     (pkg / "lib.rs").write_text(
-        "pub struct API;\n"
-        "impl API {\n"
-        "    pub fn handle() -> i32 { 1 }\n"
-        "}\n"
+        "pub struct API;\nimpl API {\n    pub fn handle() -> i32 { 1 }\n}\n"
     )
 
     async with Client(mcp) as c:
@@ -69,9 +64,7 @@ async def test_find_symbol_path_separator_normalized(workspace):
     pkg = workspace / "pkg"
     pkg.mkdir()
     (pkg / "__init__.py").write_text("")
-    (pkg / "auth.py").write_text(
-        "def login(u, p):\n    return True\n"
-    )
+    (pkg / "auth.py").write_text("def login(u, p):\n    return True\n")
 
     async with Client(mcp) as c:
         await c.call_tool("index_project", {})
@@ -95,30 +88,26 @@ async def test_find_symbol_pages_and_counts(workspace):
     async with Client(mcp) as c:
         await c.call_tool("index_project", {})
 
-        first = (await c.call_tool(
-            "find_symbol", {"query": "handle_", "limit": 3}
-        )).data
+        first = (await c.call_tool("find_symbol", {"query": "handle_", "limit": 3})).data
         assert first["count"] == 7, first
         assert len(first["matches"]) == 3
         assert first["next_cursor"] == 3
 
-        second = (await c.call_tool(
-            "find_symbol", {"query": "handle_", "limit": 3, "cursor": first["next_cursor"]}
-        )).data
+        second = (
+            await c.call_tool(
+                "find_symbol", {"query": "handle_", "limit": 3, "cursor": first["next_cursor"]}
+            )
+        ).data
         assert second["count"] == 7
         assert second["next_cursor"] == 6
 
-        last = (await c.call_tool(
-            "find_symbol", {"query": "handle_", "limit": 3, "cursor": 6}
-        )).data
+        last = (
+            await c.call_tool("find_symbol", {"query": "handle_", "limit": 3, "cursor": 6})
+        ).data
         assert last["next_cursor"] is None
         assert len(last["matches"]) == 1
 
-        seen = {
-            m["qualified_name"]
-            for page in (first, second, last)
-            for m in page["matches"]
-        }
+        seen = {m["qualified_name"] for page in (first, second, last) for m in page["matches"]}
         assert len(seen) == 7  # the three pages cover the set exactly once
 
 

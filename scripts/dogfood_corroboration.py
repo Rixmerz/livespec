@@ -52,9 +52,19 @@ def _graphify_python() -> str | None:
     if shutil.which("uv"):
         try:
             out = subprocess.run(
-                ["uv", "tool", "run", "--from", "graphifyy", "python", "-c",
-                 "import sys; print(sys.executable)"],
-                capture_output=True, text=True, timeout=120,
+                [
+                    "uv",
+                    "tool",
+                    "run",
+                    "--from",
+                    "graphifyy",
+                    "python",
+                    "-c",
+                    "import sys; print(sys.executable)",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=120,
             )
             candidate = out.stdout.strip()
             if candidate and Path(candidate).exists():
@@ -93,9 +103,7 @@ print(json.dumps({{"nodes": G.number_of_nodes(), "edges": G.number_of_edges(),
                    "llm_in": res.get("input_tokens", 0)}}))
 """
     try:
-        proc = subprocess.run(
-            [python, "-c", code], capture_output=True, text=True, timeout=1800
-        )
+        proc = subprocess.run([python, "-c", code], capture_output=True, text=True, timeout=1800)
     except (subprocess.SubprocessError, OSError):
         return None
     return out if out.is_file() and proc.returncode == 0 else None
@@ -121,9 +129,7 @@ async def measure(repo: Path, graph: Path | None) -> dict[str, Any]:
             ("find_dead_code", "dropped_as_referenced"),
             ("find_orphan_tests", "dropped_as_reaching_production"),
         ):
-            base = await _call(
-                client, tool, {"workspace": str(repo), "summary_only": True}
-            )
+            base = await _call(client, tool, {"workspace": str(repo), "summary_only": True})
             row[f"{tool}_before"] = base.get("count")
             if graph is None:
                 continue
@@ -168,17 +174,13 @@ def summarise(rows: list[dict[str, Any]]) -> dict[str, Any]:
             ),
             "max_reduction": round(max(reductions), 3) if reductions else None,
             "total_before": sum(x.get(f"{tool}_before") or 0 for x in rows),
-            "total_after": sum(
-                x.get(f"{tool}_after", x.get(f"{tool}_before")) or 0 for x in rows
-            ),
+            "total_after": sum(x.get(f"{tool}_after", x.get(f"{tool}_before")) or 0 for x in rows),
         }
         relations: dict[str, int] = {}
         for x in rows:
             for rel, n in (x.get(f"{tool}_relations") or {}).items():
                 relations[rel] = relations.get(rel, 0) + n
-        out[tool]["dropped_by_relation"] = dict(
-            sorted(relations.items(), key=lambda kv: -kv[1])
-        )
+        out[tool]["dropped_by_relation"] = dict(sorted(relations.items(), key=lambda kv: -kv[1]))
     return out
 
 
@@ -188,9 +190,7 @@ async def main() -> int:
         print("set LIVESPEC_CORROB_ROOT to a directory of repos", file=sys.stderr)
         return 2
     root_path = Path(root).expanduser().resolve()
-    repos = sorted(
-        d for d in root_path.iterdir() if d.is_dir() and not d.name.startswith(".")
-    )
+    repos = sorted(d for d in root_path.iterdir() if d.is_dir() and not d.name.startswith("."))
     if not repos:
         print(f"no repos under {root_path}", file=sys.stderr)
         return 2
@@ -203,8 +203,7 @@ async def main() -> int:
     for i, repo in enumerate(repos, 1):
         label = repo.name if KEEP_NAMES else f"repo-{i:02d}"
         graph = build_graph(repo, python)
-        print(f"[{i}/{len(repos)}] {label} graph={'yes' if graph else 'no'}",
-              file=sys.stderr)
+        print(f"[{i}/{len(repos)}] {label} graph={'yes' if graph else 'no'}", file=sys.stderr)
         row = await measure(repo, graph)
         rows.append({"repo": label, "has_graph": graph is not None, **row})
 

@@ -16,8 +16,15 @@ from fastmcp import Client
 from livespec_mcp.server import mcp
 
 _TOP_KEYS = {
-    "meta", "dashboard", "specs", "spec_topology", "endpoints",
-    "fixtures", "coverage", "trend", "changes",
+    "meta",
+    "dashboard",
+    "specs",
+    "spec_topology",
+    "endpoints",
+    "fixtures",
+    "coverage",
+    "trend",
+    "changes",
 }
 
 
@@ -41,9 +48,7 @@ def _write_flask_app(workspace: Path) -> None:
         "    return 'ok'\n"
     )
     (pkg / "lib.py").write_text(
-        '"""Auth helpers."""\n'
-        "def verify(user, password):\n"
-        "    return True\n"
+        '"""Auth helpers."""\ndef verify(user, password):\n    return True\n'
     )
 
 
@@ -80,9 +85,7 @@ async def test_export_explorer_writes_both_files(workspace: Path):
         )
         js_path = explorer_dir / "_viewer_check.js"
         js_path.write_text(js, encoding="utf-8")
-        check = subprocess.run(
-            ["node", "--check", str(js_path)], capture_output=True, text=True
-        )
+        check = subprocess.run(["node", "--check", str(js_path)], capture_output=True, text=True)
         js_path.unlink(missing_ok=True)
         assert check.returncode == 0, check.stderr
     # v0.15 viewer: a real test-coverage meter + coverage_source badge,
@@ -161,20 +164,31 @@ async def test_export_explorer_data_schema(workspace: Path):
     # meta + counts shape
     assert set(data["meta"].keys()) == {"project", "generated_at", "base_path", "counts"}
     assert set(data["meta"]["counts"].keys()) == {
-        "specs", "symbols", "endpoints", "files",
+        "specs",
+        "symbols",
+        "endpoints",
+        "files",
     }
     assert data["meta"]["counts"]["specs"] == 2
 
     # dashboard rollup (PO headline) shape + correctness
     dash = data["dashboard"]
     assert set(dash.keys()) == {
-        "specs", "dev_state_counts", "with_endpoints",
-        "with_dependencies", "implemented_pct", "verified", "avg_coverage",
+        "specs",
+        "dev_state_counts",
+        "with_endpoints",
+        "with_dependencies",
+        "implemented_pct",
+        "verified",
+        "avg_coverage",
         "avg_test_coverage",
     }
     assert dash["specs"] == 2
     assert set(dash["dev_state_counts"].keys()) == {
-        "not_started", "in_progress", "implemented", "verified",
+        "not_started",
+        "in_progress",
+        "implemented",
+        "verified",
     }
     # dev_state counts sum to the spec total.
     assert sum(dash["dev_state_counts"].values()) == 2
@@ -188,9 +202,7 @@ async def test_export_explorer_data_schema(workspace: Path):
     # avg_test_coverage present; 0.0 here (no real test coverage).
     assert dash["avg_test_coverage"] == 0.0
     # verified count == #Specs with real test coverage > 0.
-    assert dash["verified"] == sum(
-        1 for r in data["specs"] if r["test_coverage_ratio"] > 0
-    )
+    assert dash["verified"] == sum(1 for r in data["specs"] if r["test_coverage_ratio"] > 0)
 
     # auth-user-login carries its implementing symbol (with signature), endpoint, dep.
     rf1 = next(r for r in data["specs"] if r["id"] == "auth-user-login")
@@ -209,8 +221,14 @@ async def test_export_explorer_data_schema(workspace: Path):
     # Every spec carries a derived dev_state in the valid vocabulary.
     valid_states = {"not_started", "in_progress", "implemented", "verified"}
     valid_sources = {
-        "derived", "explicit", "report", "both", "none",
-        "derived+report", "explicit+report", "derived+explicit+report",
+        "derived",
+        "explicit",
+        "report",
+        "both",
+        "none",
+        "derived+report",
+        "explicit+report",
+        "derived+explicit+report",
     }
     for r in data["specs"]:
         assert r["dev_state"] in valid_states
@@ -250,8 +268,14 @@ async def test_export_explorer_data_schema(workspace: Path):
     assert "auth-user-login" in login_ep["spec_ids"]
     for ep in data["endpoints"]:
         assert set(ep.keys()) == {
-            "kind", "framework", "handler", "signature", "path", "method",
-            "spec_ids", "parameters",
+            "kind",
+            "framework",
+            "handler",
+            "signature",
+            "path",
+            "method",
+            "spec_ids",
+            "parameters",
         }
         assert isinstance(ep["parameters"], list)
         # Every API-surface endpoint carries a kind in the valid vocabulary,
@@ -270,8 +294,14 @@ async def test_export_explorer_data_schema(workspace: Path):
     for fx in data["fixtures"]:
         assert fx["kind"] == "fixture"
         assert set(fx.keys()) == {
-            "kind", "framework", "handler", "signature", "path", "method",
-            "spec_ids", "parameters",
+            "kind",
+            "framework",
+            "handler",
+            "signature",
+            "path",
+            "method",
+            "spec_ids",
+            "parameters",
         }
     # No fixture leaks into the API-surface endpoint list or its count.
     assert all(e["kind"] != "fixture" for e in data["endpoints"])
@@ -279,13 +309,14 @@ async def test_export_explorer_data_schema(workspace: Path):
 
     # coverage section shape
     assert set(data["coverage"].keys()) == {
-        "orphan_modules", "orphan_endpoints", "non_product_modules", "totals",
+        "orphan_modules",
+        "orphan_endpoints",
+        "non_product_modules",
+        "totals",
     }
     assert "modules_non_product" in data["coverage"]["totals"]
     # Test / fixture paths must not inflate product orphan modules.
-    assert not any(
-        p.startswith("tests/") for p in data["coverage"]["orphan_modules"]
-    )
+    assert not any(p.startswith("tests/") for p in data["coverage"]["orphan_modules"])
 
     # v0.16 D: top-level coverage trend — a chronological list of rollup
     # snapshots. audit_coverage (run inside compute_coverage) records one each
@@ -304,13 +335,19 @@ async def test_export_explorer_data_schema(workspace: Path):
     # the lists are empty — but the keyed shape is always present.
     assert isinstance(data["changes"], dict)
     assert set(data["changes"].keys()) == {
-        "base", "head", "files_changed", "specs_touched",
+        "base",
+        "head",
+        "files_changed",
+        "specs_touched",
     }
     assert isinstance(data["changes"]["files_changed"], list)
     assert isinstance(data["changes"]["specs_touched"], list)
     for rt in data["changes"]["specs_touched"]:
         assert set(rt.keys()) == {
-            "spec_id", "title", "files", "test_coverage_ratio",
+            "spec_id",
+            "title",
+            "files",
+            "test_coverage_ratio",
         }
 
 
@@ -356,7 +393,10 @@ async def test_export_explorer_zero_rf_case(workspace: Path):
     assert isinstance(data["changes"], dict)
     assert data["changes"]["specs_touched"] == []
     assert set(data["changes"].keys()) == {
-        "base", "head", "files_changed", "specs_touched",
+        "base",
+        "head",
+        "files_changed",
+        "specs_touched",
     }
 
 
@@ -424,10 +464,7 @@ async def test_export_explorer_mermaid_labels_sanitized(workspace: Path):
     # ` & ` / ` < ` / ` > ` left inside the quoted ["..."] label.
     def mermaid_label(s: str) -> str:
         return (
-            s.replace("&", "&amp;")
-            .replace("<", "&lt;")
-            .replace(">", "&gt;")
-            .replace('"', "&quot;")
+            s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace('"', "&quot;")
         )
 
     label = mermaid_label(node["id"] + ": " + node["title"])

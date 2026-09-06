@@ -12,7 +12,11 @@ import re as _re_rs
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from livespec_mcp.domain.languages import detect_language, get_parser
+from livespec_mcp.domain.languages import (
+    GrammarUnavailableError,
+    detect_language,
+    get_parser,
+)
 
 
 @dataclass
@@ -47,8 +51,9 @@ class ExtractedRoute:
     site that hits a route (`fetch('/x')`, `requests.get('/x')`). The resolver
     joins client↔server by normalized path.
     """
+
     src_qname: str
-    role: str          # 'client' | 'server'
+    role: str  # 'client' | 'server'
     method: str | None
     path: str
     line: int
@@ -68,13 +73,25 @@ class ExtractResult:
     # e.g. a file saved mid-edit. tree-sitter is error-recovering, so this is
     # effectively Python-only.
     parse_error: bool = False
+    # Set to the language id when the tree-sitter GRAMMAR could not be loaded,
+    # so the file was never parsed at all. Distinct from `parse_error`: there
+    # the file was read and rejected, here it was never read. The indexer must
+    # not persist such a file — doing so records zero symbols AND advances the
+    # content hash, so the next run treats it as unchanged and never retries.
+    grammar_missing: str | None = None
 
 
 # Compound statements whose bodies can hold conditionally-defined symbols.
 # `visit()` descends into these without changing scope so a def under
 # `if TYPE_CHECKING:` / a try-import shim / a version guard is still extracted.
 _COMPOUND_STMTS: tuple[type, ...] = (
-    ast.If, ast.Try, ast.With, ast.AsyncWith, ast.For, ast.AsyncFor, ast.While,
+    ast.If,
+    ast.Try,
+    ast.With,
+    ast.AsyncWith,
+    ast.For,
+    ast.AsyncFor,
+    ast.While,
     ast.ExceptHandler,  # `except ...: def fallback()` import shims
 )
 if hasattr(ast, "Match"):  # py3.10+ — descend Match and its case bodies
@@ -174,7 +191,9 @@ def _py_extract(source: str, module_name: str) -> ExtractResult:
                     continue
                 out.imports[local] = mod
 
-    def add_func(node: ast.FunctionDef | ast.AsyncFunctionDef, parent_qname: str | None, kind: str) -> str:
+    def add_func(
+        node: ast.FunctionDef | ast.AsyncFunctionDef, parent_qname: str | None, kind: str
+    ) -> str:
         qname = f"{parent_qname}.{node.name}" if parent_qname else f"{module_name}.{node.name}"
         start = node.lineno
         end = getattr(node, "end_lineno", start) or start
@@ -379,15 +398,37 @@ def _collect_calls(func_node: ast.AST, src_qname: str, out: ExtractResult) -> No
 # Mirror the TS `callback_arg` handling, but conservatively scoped so we don't
 # emit a ref for every bare-Name data argument: only when the CALLEE is a known
 # registration/scheduling call, or the KEYWORD name signals a callback.
-_PY_CALLBACK_REG_NAMES = frozenset({
-    "register", "connect", "subscribe", "signal", "add_callback",
-    "add_done_callback", "add_signal_handler", "call_soon", "call_later",
-    "submit", "apply_async", "add_handler", "addhandler",
-})
-_PY_CALLBACK_KW_NAMES = frozenset({
-    "target", "key", "callback", "hook", "fn", "func", "handler",
-    "default_factory", "on_reindex",
-})
+_PY_CALLBACK_REG_NAMES = frozenset(
+    {
+        "register",
+        "connect",
+        "subscribe",
+        "signal",
+        "add_callback",
+        "add_done_callback",
+        "add_signal_handler",
+        "call_soon",
+        "call_later",
+        "submit",
+        "apply_async",
+        "add_handler",
+        "addhandler",
+    }
+)
+_PY_CALLBACK_KW_NAMES = frozenset(
+    {
+        "target",
+        "key",
+        "callback",
+        "hook",
+        "fn",
+        "func",
+        "handler",
+        "default_factory",
+        "on_reindex",
+    }
+)
+
 
 def _emit_py_callback_refs(node: ast.Call, src_qname: str, out: ExtractResult) -> None:
     """Emit ``callback_arg`` refs for a function passed as an argument.
@@ -426,9 +467,7 @@ def _emit_py_callback_refs(node: ast.Call, src_qname: str, out: ExtractResult) -
 
 _HTTP_CLIENT_VERBS = frozenset({"get", "post", "put", "delete", "patch", "head", "options"})
 _TS_TEMPLATE_URL_WITH_SLASH = _re_rs.compile(r"^\$\{[^}]{1,80}\}(/[^`${]{1,200})$")
-_TS_TEMPLATE_URL_WITHOUT_SLASH = _re_rs.compile(
-    r"^\$\{[^}]{1,80}\}([^`${/][^`${]{0,200})$"
-)
+_TS_TEMPLATE_URL_WITHOUT_SLASH = _re_rs.compile(r"^\$\{[^}]{1,80}\}([^`${/][^`${]{0,200})$")
 
 
 def _strip_balanced_template_interps(raw: str, *, max_len: int = 500) -> str:
@@ -538,9 +577,7 @@ def _ts_http_call_uses_param(call_node, param: str, text) -> bool:
     args_node = call_node.child_by_field_name("arguments")
     if args_node is None:
         return False
-    positional = [
-        a for a in args_node.children if a.type not in ("(", ")", ",", "comment")
-    ]
+    positional = [a for a in args_node.children if a.type not in ("(", ")", ",", "comment")]
     return bool(positional) and positional[0].type == "identifier" and text(positional[0]) == param
 
 
@@ -557,9 +594,7 @@ def _ts_fn_first_param(fn_node, text) -> str | None:
             if single is not None and single.type == "identifier":
                 return text(single)
             if single is not None:
-                ident = single.child_by_field_name("pattern") or single.child_by_field_name(
-                    "name"
-                )
+                ident = single.child_by_field_name("pattern") or single.child_by_field_name("name")
                 if ident is not None and ident.type == "identifier":
                     return text(ident)
     if params is None:
@@ -594,9 +629,7 @@ def _ts_find_http_wrappers(root, src_bytes: bytes) -> frozenset[str]:
         stack = [body]
         while stack:
             node = stack.pop()
-            if node.type == "call_expression" and _ts_http_call_uses_param(
-                node, param, text
-            ):
+            if node.type == "call_expression" and _ts_http_call_uses_param(node, param, text):
                 return True
             # Do not descend into nested named functions (their params differ).
             if node is not body and node.type in (
@@ -616,9 +649,7 @@ def _ts_find_http_wrappers(root, src_bytes: bytes) -> frozenset[str]:
         if not param:
             return
         body = (
-            fn_node.child_by_field_name("body")
-            if hasattr(fn_node, "child_by_field_name")
-            else None
+            fn_node.child_by_field_name("body") if hasattr(fn_node, "child_by_field_name") else None
         )
         if body is None:
             return
@@ -653,16 +684,32 @@ def _ts_find_http_wrappers(root, src_bytes: bytes) -> frozenset[str]:
 # allowlist is a first filter only — the definitive server-vs-client
 # discriminator is a trailing handler arg (see `_TS_HANDLER_ARG_TYPES`), since
 # router variables are commonly named `api`/`client`/`request` too.
-_TS_HTTP_CLIENT_OBJS = frozenset({
-    "axios", "api", "http", "https", "client", "request", "httpclient", "$http", "fetch", "got",
-})
+_TS_HTTP_CLIENT_OBJS = frozenset(
+    {
+        "axios",
+        "api",
+        "http",
+        "https",
+        "client",
+        "request",
+        "httpclient",
+        "$http",
+        "fetch",
+        "got",
+    }
+)
 # tree-sitter node types for a route-handler argument: a function/arrow, or a
 # bare identifier naming a handler. Their presence after the URL marks a SERVER
 # route registration (`api.get('/x', handler)`), never a client call.
-_TS_HANDLER_ARG_TYPES = frozenset({
-    "arrow_function", "function_expression", "function", "generator_function",
-    "identifier",
-})
+_TS_HANDLER_ARG_TYPES = frozenset(
+    {
+        "arrow_function",
+        "function_expression",
+        "function",
+        "generator_function",
+        "identifier",
+    }
+)
 
 
 def _py_client_route(call: ast.Call) -> tuple[str | None, str] | None:
@@ -737,12 +784,24 @@ def _decorator_dotted(node: ast.AST) -> str | None:
 
 
 # Flask / FastAPI / Starlette HTTP route decorators (last dotted segment).
-_HTTP_VERB_DECORATOR_LASTSEGS = frozenset({
-    "get", "post", "put", "delete", "patch", "head", "options",
-})
-HTTP_ROUTE_DECORATOR_LASTSEGS = _HTTP_VERB_DECORATOR_LASTSEGS | frozenset({
-    "route", "api_route", "websocket",
-})
+_HTTP_VERB_DECORATOR_LASTSEGS = frozenset(
+    {
+        "get",
+        "post",
+        "put",
+        "delete",
+        "patch",
+        "head",
+        "options",
+    }
+)
+HTTP_ROUTE_DECORATOR_LASTSEGS = _HTTP_VERB_DECORATOR_LASTSEGS | frozenset(
+    {
+        "route",
+        "api_route",
+        "websocket",
+    }
+)
 
 # v0.21 P2: route path normalization — the join key between a frontend call
 # site and a backend handler. Every framework's path-param syntax collapses to
@@ -750,10 +809,10 @@ HTTP_ROUTE_DECORATOR_LASTSEGS = _HTTP_VERB_DECORATOR_LASTSEGS | frozenset({
 # (FastAPI/Hono) and `/users/:id` (Express/React-router) all match, and a
 # concrete client call `/users/123` matches the template too.
 _ROUTE_PARAM_PATTERNS = (
-    _re_rs.compile(r"<[^>]+>"),                    # Flask <int:id>, <id>
-    _re_rs.compile(r"\{[^}]+\}"),                  # FastAPI / Hono {id}
-    _re_rs.compile(r":[A-Za-z_][A-Za-z0-9_]*"),    # Express / React-router :id
-    _re_rs.compile(r"\*+"),                        # wildcards
+    _re_rs.compile(r"<[^>]+>"),  # Flask <int:id>, <id>
+    _re_rs.compile(r"\{[^}]+\}"),  # FastAPI / Hono {id}
+    _re_rs.compile(r":[A-Za-z_][A-Za-z0-9_]*"),  # Express / React-router :id
+    _re_rs.compile(r"\*+"),  # wildcards
 )
 _URL_SCHEME_RE = _re_rs.compile(r"^[a-zA-Z][a-zA-Z0-9+.\-]*://[^/]+(/.*)?$")
 
@@ -775,10 +834,7 @@ def normalize_route_path(raw: str | None) -> str:
     s = s.split("?", 1)[0].split("#", 1)[0]
     for pat in _ROUTE_PARAM_PATTERNS:
         s = pat.sub("{}", s)
-    norm_parts = [
-        "{}" if (seg and seg != "{}" and seg.isdigit()) else seg
-        for seg in s.split("/")
-    ]
+    norm_parts = ["{}" if (seg and seg != "{}" and seg.isdigit()) else seg for seg in s.split("/")]
     s = "/".join(norm_parts)
     s = _re_rs.sub(r"/{2,}", "/", s)
     if not s.startswith("/"):
@@ -898,9 +954,7 @@ def _extract_visibility(node, src_bytes: bytes, language: str) -> str | None:
         # Walk siblings — `export` typically wraps the declaration in an
         # export_statement node, so check the parent.
         parent = node.parent if hasattr(node, "parent") else None
-        if parent is not None and parent.type in (
-            "export_statement", "export_default_declaration"
-        ):
+        if parent is not None and parent.type in ("export_statement", "export_default_declaration"):
             return "exported"
         return None
     if language == "java":
@@ -968,6 +1022,7 @@ def _normalize_ts_body(node, src_bytes: bytes) -> str:
         return src_bytes[node.start_byte : node.end_byte].decode("utf-8", errors="replace")
     return " ".join(parts)
 
+
 # Node-type heuristics: covers most C-family + Go.
 _DEF_NODE_TYPES = {
     "function_declaration",
@@ -978,18 +1033,18 @@ _DEF_NODE_TYPES = {
     "class_definition",
     "interface_declaration",
     # Rust
-    "function_item",     # plain Rust functions
-    "impl_item",         # walked specially to qualify methods as Type::method
-    "trait_item",        # trait definitions and their default methods
-    "struct_item",       # treated as classes
+    "function_item",  # plain Rust functions
+    "impl_item",  # walked specially to qualify methods as Type::method
+    "trait_item",  # trait definitions and their default methods
+    "struct_item",  # treated as classes
     "enum_item",
     # Go: structs/interfaces declared as type_spec inside type_declaration
     "type_spec",
     # Ruby
-    "method",            # def foo
+    "method",  # def foo
     "singleton_method",  # def self.foo
-    "class",             # class Foo
-    "module",            # module Foo
+    "class",  # class Foo
+    "module",  # module Foo
 }
 
 _CALL_NODE_TYPES = {
@@ -1008,7 +1063,7 @@ _CALL_NODE_TYPES = {
 
 # Anonymous function literals — name comes from the surrounding binding
 _ANONYMOUS_FN_TYPES = {
-    "arrow_function",       # JS/TS: const f = () => {}
+    "arrow_function",  # JS/TS: const f = () => {}
     "function_expression",  # JS/TS: const f = function () {}
 }
 
@@ -1169,9 +1224,7 @@ def _ts_leading_doc_comment(node, src_bytes: bytes, language: str) -> str | None
     return "\n".join(cleaned).strip() or None
 
 
-_BANNER_RE = __import__("re").compile(
-    r"^[-=*#_~]{2,}.+?[-=*#_~]{2,}$"
-)
+_BANNER_RE = __import__("re").compile(r"^[-=*#_~]{2,}.+?[-=*#_~]{2,}$")
 
 
 def _is_separator_only(text: str) -> bool:
@@ -1240,7 +1293,12 @@ def _ts_extract(
     out = ExtractResult()
     try:
         parser = get_parser(language)
-    except Exception:
+    except GrammarUnavailableError:
+        # Never silently return zero symbols: the caller persists what we
+        # return, and an empty result for an unread file is indistinguishable
+        # from a genuinely empty one until the whole repo reads as dead code.
+        out.grammar_missing = language
+        out.parse_error = True
         return out
     src_bytes = source.encode("utf-8", errors="replace")
     tree = parser.parse(src_bytes)
@@ -1273,7 +1331,9 @@ def _ts_extract(
                 return text(c)
         return None
 
-    def emit_symbol(node, name: str, parent_qname: str | None, kind: str, qname_sep: str = ".") -> str:
+    def emit_symbol(
+        node, name: str, parent_qname: str | None, kind: str, qname_sep: str = "."
+    ) -> str:
         qname = f"{parent_qname}{qname_sep}{name}" if parent_qname else f"{module_name}.{name}"
         start_line = node.start_point[0] + 1
         end_line = node.end_point[0] + 1
@@ -1310,7 +1370,11 @@ def _ts_extract(
     def impl_target_name(impl_node) -> str | None:
         """For Rust `impl Type` or `impl Trait for Type`, return Type."""
         # tree-sitter-rust exposes a `type` field for the implementee
-        child = impl_node.child_by_field_name("type") if hasattr(impl_node, "child_by_field_name") else None
+        child = (
+            impl_node.child_by_field_name("type")
+            if hasattr(impl_node, "child_by_field_name")
+            else None
+        )
         if child is not None:
             return text(child).split("<")[0].strip()
         # Fallback: first type_identifier
@@ -1324,7 +1388,9 @@ def _ts_extract(
         if node.type == "impl_item":
             type_name = impl_target_name(node)
             if type_name:
-                impl_qname = f"{parent_qname}.{type_name}" if parent_qname else f"{module_name}.{type_name}"
+                impl_qname = (
+                    f"{parent_qname}.{type_name}" if parent_qname else f"{module_name}.{type_name}"
+                )
                 # Emit the impl as a class-like aggregator if not already present
                 emit_symbol(node, type_name, parent_qname, "class")
                 # Walk children with Type qname as parent and Rust :: separator
@@ -1342,7 +1408,9 @@ def _ts_extract(
         # ----- Anonymous functions assigned to a binding -----
         # `const foo = () => {}` -> variable_declarator { name: foo, value: arrow_function }
         if node.type == "variable_declarator":
-            value = node.child_by_field_name("value") if hasattr(node, "child_by_field_name") else None
+            value = (
+                node.child_by_field_name("value") if hasattr(node, "child_by_field_name") else None
+            )
             if value is not None and value.type in _ANONYMOUS_FN_TYPES:
                 name = find_name(node)
                 if name:
@@ -1380,7 +1448,8 @@ def _ts_extract(
                     c
                     for c in node.children
                     if c.type in _ANONYMOUS_FN_TYPES
-                    or c.type in ("function_declaration", "function_expression", "class_declaration")
+                    or c.type
+                    in ("function_declaration", "function_expression", "class_declaration")
                 ),
                 None,
             )
@@ -1466,19 +1535,42 @@ def _ts_extract(
 # routers like Hono/Express, event emitters, plugin registries). Lowercase;
 # compared against the call's last dotted segment. Kept tight — `add`/`set`/
 # `push` are too generic.
-_TS_CALLBACK_REG_VERBS = frozenset({
-    # HTTP verb routing (Hono, Express, Fastify, ...)
-    "get", "post", "put", "delete", "patch", "options", "all", "route",
-    # middleware / event registration
-    "use", "on", "once", "subscribe", "register", "connect",
-    "addeventlistener", "addlistener",
-})
+_TS_CALLBACK_REG_VERBS = frozenset(
+    {
+        # HTTP verb routing (Hono, Express, Fastify, ...)
+        "get",
+        "post",
+        "put",
+        "delete",
+        "patch",
+        "options",
+        "all",
+        "route",
+        # middleware / event registration
+        "use",
+        "on",
+        "once",
+        "subscribe",
+        "register",
+        "connect",
+        "addeventlistener",
+        "addlistener",
+    }
+)
 
 # HTTP verbs that map a path string to a handler (subset of the above used
 # for route extraction — `use`/`on` handled separately).
-_HONO_ROUTE_VERBS = frozenset({
-    "get", "post", "put", "delete", "patch", "options", "all",
-})
+_HONO_ROUTE_VERBS = frozenset(
+    {
+        "get",
+        "post",
+        "put",
+        "delete",
+        "patch",
+        "options",
+        "all",
+    }
+)
 
 
 def ts_registered_callback_names(source: str, language: str) -> frozenset[str]:
@@ -1493,7 +1585,11 @@ def ts_registered_callback_names(source: str, language: str) -> frozenset[str]:
     """
     try:
         parser = get_parser(language)
-    except Exception:
+    except GrammarUnavailableError:
+        # Best-effort enrichment over a file the main extractor already
+        # handled; if the grammar is gone, `_ts_extract` already flagged it on
+        # the index run and the payload said so. Returning empty here only
+        # widens dead-code candidates, it never records anything.
         return frozenset()
     src_bytes = source.encode("utf-8", errors="replace")
     try:
@@ -1529,9 +1625,18 @@ def ts_registered_callback_names(source: str, language: str) -> frozenset[str]:
 
 # Receivers that look like HTTP apps/routers — used to ignore axios/cache/headers
 # `.get("…")` false positives when scanning call-style routes (Hono + Express).
-_HTTP_ROUTE_RECEIVERS = frozenset({
-    "app", "router", "server", "api", "route", "routes", "web", "http",
-})
+_HTTP_ROUTE_RECEIVERS = frozenset(
+    {
+        "app",
+        "router",
+        "server",
+        "api",
+        "route",
+        "routes",
+        "web",
+        "http",
+    }
+)
 
 
 def _is_http_route_receiver(name: str | None) -> bool:
@@ -1615,7 +1720,7 @@ def scan_hono_routes(source: str, language: str) -> list[dict]:
     """
     try:
         parser = get_parser(language)
-    except Exception:
+    except GrammarUnavailableError:
         return []
     src_bytes = source.encode("utf-8", errors="replace")
     try:
@@ -1665,29 +1770,35 @@ def scan_hono_routes(source: str, language: str) -> list[dict]:
                         break
                 line = node.start_point[0] + 1
                 if pname in _HONO_ROUTE_VERBS and args and str_arg(args[0]) is not None:
-                    routes.append({
-                        "method": pname.upper(),
-                        "path": str_arg(args[0]),
-                        "handler_name": handler,
-                        "handler_import": handler_import,
-                        "line": line,
-                    })
+                    routes.append(
+                        {
+                            "method": pname.upper(),
+                            "path": str_arg(args[0]),
+                            "handler_name": handler,
+                            "handler_import": handler_import,
+                            "line": line,
+                        }
+                    )
                 elif pname == "on" and len(args) >= 2 and str_arg(args[1]) is not None:
-                    routes.append({
-                        "method": (str_arg(args[0]) or "ON").upper(),
-                        "path": str_arg(args[1]),
-                        "handler_name": handler,
-                        "handler_import": handler_import,
-                        "line": line,
-                    })
+                    routes.append(
+                        {
+                            "method": (str_arg(args[0]) or "ON").upper(),
+                            "path": str_arg(args[1]),
+                            "handler_name": handler,
+                            "handler_import": handler_import,
+                            "line": line,
+                        }
+                    )
                 elif pname == "route" and args and str_arg(args[0]) is not None:
-                    routes.append({
-                        "method": "ROUTE",
-                        "path": str_arg(args[0]),
-                        "handler_name": handler,
-                        "handler_import": handler_import,
-                        "line": line,
-                    })
+                    routes.append(
+                        {
+                            "method": "ROUTE",
+                            "path": str_arg(args[0]),
+                            "handler_name": handler,
+                            "handler_import": handler_import,
+                            "line": line,
+                        }
+                    )
         for c in node.children:
             walk(c)
 
@@ -1695,14 +1806,36 @@ def scan_hono_routes(source: str, language: str) -> list[dict]:
     return routes
 
 
-_GO_HTTP_ROUTE_VERBS = frozenset({
-    "get", "post", "put", "delete", "patch", "head", "options", "any",
-    "handlefunc", "handle", "method",
-})
+_GO_HTTP_ROUTE_VERBS = frozenset(
+    {
+        "get",
+        "post",
+        "put",
+        "delete",
+        "patch",
+        "head",
+        "options",
+        "any",
+        "handlefunc",
+        "handle",
+        "method",
+    }
+)
 
-_GO_HTTP_RECEIVERS = frozenset({
-    "r", "router", "mux", "e", "engine", "app", "api", "http", "group", "g",
-})
+_GO_HTTP_RECEIVERS = frozenset(
+    {
+        "r",
+        "router",
+        "mux",
+        "e",
+        "engine",
+        "app",
+        "api",
+        "http",
+        "group",
+        "g",
+    }
+)
 
 
 def _is_go_http_route_receiver(name: str | None) -> bool:
@@ -1727,7 +1860,7 @@ def scan_go_routes(source: str) -> list[dict]:
     """
     try:
         parser = get_parser("go")
-    except Exception:
+    except GrammarUnavailableError:
         return []
     src_bytes = source.encode("utf-8", errors="replace")
     try:
@@ -1782,15 +1915,11 @@ def scan_go_routes(source: str) -> list[dict]:
                         left = obj.child_by_field_name("operand")
                         if left is not None and left.type == "identifier":
                             receiver = text(left).strip() or None
-                    if pname in _GO_HTTP_ROUTE_VERBS and _is_go_http_route_receiver(
-                        receiver
-                    ):
+                    if pname in _GO_HTTP_ROUTE_VERBS and _is_go_http_route_receiver(receiver):
                         args_node = node.child_by_field_name("arguments")
                         args = [
                             a
-                            for a in (
-                                args_node.children if args_node is not None else []
-                            )
+                            for a in (args_node.children if args_node is not None else [])
                             if a.type not in ("(", ")", ",", "comment")
                         ]
                         line = node.start_point[0] + 1
@@ -1816,13 +1945,15 @@ def scan_go_routes(source: str) -> list[dict]:
                             method = "ANY" if pname == "any" else pname.upper()
                             path = str_arg(args[0])
                         if path is not None and method is not None:
-                            routes.append({
-                                "method": method,
-                                "path": path,
-                                "handler_name": handler,
-                                "line": line,
-                                "framework": infer_fw(receiver, pname),
-                            })
+                            routes.append(
+                                {
+                                    "method": method,
+                                    "path": path,
+                                    "handler_name": handler,
+                                    "line": line,
+                                    "framework": infer_fw(receiver, pname),
+                                }
+                            )
         for c in node.children:
             walk(c)
 
@@ -1892,6 +2023,7 @@ def _ts_collect_calls(
         return src_bytes[n.start_byte : n.end_byte].decode("utf-8", errors="replace")
 
     import re as _re_local
+
     _SEP = _re_local.compile(r"\.|::")
 
     def call_target_and_leftmost(call_node) -> tuple[str | None, str | None]:
@@ -1910,7 +2042,11 @@ def _ts_collect_calls(
                         receiver_text = _SEP.split(rt)[0].split("\\")[-1] or None
                         break
         for field_name in ("function", "name", "method"):
-            child = call_node.child_by_field_name(field_name) if hasattr(call_node, "child_by_field_name") else None
+            child = (
+                call_node.child_by_field_name(field_name)
+                if hasattr(call_node, "child_by_field_name")
+                else None
+            )
             if child is not None:
                 # Member/property callee: `a.b.c(...)`, and crucially chained
                 # calls `promise.then(h).catch(e)`. The CALLED name is the
@@ -1954,7 +2090,11 @@ def _ts_collect_calls(
         """
         if tgt.lower() not in _TS_CALLBACK_REG_VERBS:
             return
-        args_node = call_node.child_by_field_name("arguments") if hasattr(call_node, "child_by_field_name") else None
+        args_node = (
+            call_node.child_by_field_name("arguments")
+            if hasattr(call_node, "child_by_field_name")
+            else None
+        )
         if args_node is None:
             return
         for a in args_node.children:
@@ -2003,7 +2143,11 @@ def _ts_collect_calls(
         elif name_node.type == "member_expression":
             # e.g. Form.Field — leftmost object is the component namespace
             # member_expression children: object . property_identifier
-            obj = name_node.child_by_field_name("object") if hasattr(name_node, "child_by_field_name") else None
+            obj = (
+                name_node.child_by_field_name("object")
+                if hasattr(name_node, "child_by_field_name")
+                else None
+            )
             if obj is None:
                 for c in name_node.children:
                     if c.type == "identifier":
@@ -2084,7 +2228,8 @@ def _ts_collect_calls(
             return None
         args_node = call_node.child_by_field_name("arguments")
         positional = [
-            arg for arg in (args_node.children if args_node is not None else [])
+            arg
+            for arg in (args_node.children if args_node is not None else [])
             if arg.type not in ("(", ")", ",", "comment")
         ]
         if not positional:
@@ -2137,10 +2282,7 @@ def _ts_collect_calls(
         args_node = call_node.child_by_field_name("arguments")
         if args_node is None:
             return None
-        positional = [
-            a for a in args_node.children
-            if a.type not in ("(", ")", ",", "comment")
-        ]
+        positional = [a for a in args_node.children if a.type not in ("(", ")", ",", "comment")]
         if not positional:
             return None
         path = _url_path(positional[0])
@@ -2273,7 +2415,8 @@ def _ts_collect_imports(
     def import_source(import_node) -> str | None:
         src = (
             import_node.child_by_field_name("source")
-            if hasattr(import_node, "child_by_field_name") else None
+            if hasattr(import_node, "child_by_field_name")
+            else None
         )
         if src is not None:
             return unquote(text(src))
@@ -2296,11 +2439,13 @@ def _ts_collect_imports(
                         continue
                     name_n = (
                         spec.child_by_field_name("name")
-                        if hasattr(spec, "child_by_field_name") else None
+                        if hasattr(spec, "child_by_field_name")
+                        else None
                     )
                     alias_n = (
                         spec.child_by_field_name("alias")
-                        if hasattr(spec, "child_by_field_name") else None
+                        if hasattr(spec, "child_by_field_name")
+                        else None
                     )
                     if alias_n is not None:
                         imports[text(alias_n)] = module
@@ -2315,19 +2460,20 @@ def _ts_collect_imports(
     def collect_require(declarator_node) -> None:
         value = (
             declarator_node.child_by_field_name("value")
-            if hasattr(declarator_node, "child_by_field_name") else None
+            if hasattr(declarator_node, "child_by_field_name")
+            else None
         )
         if value is None or value.type not in ("call_expression", "call"):
             return
         fn = (
-            value.child_by_field_name("function")
-            if hasattr(value, "child_by_field_name") else None
+            value.child_by_field_name("function") if hasattr(value, "child_by_field_name") else None
         )
         if fn is None or text(fn) != "require":
             return
         args = (
             value.child_by_field_name("arguments")
-            if hasattr(value, "child_by_field_name") else None
+            if hasattr(value, "child_by_field_name")
+            else None
         )
         if args is None:
             return
@@ -2341,7 +2487,8 @@ def _ts_collect_imports(
         module = _resolve_module_path(source, current_dir)
         name = (
             declarator_node.child_by_field_name("name")
-            if hasattr(declarator_node, "child_by_field_name") else None
+            if hasattr(declarator_node, "child_by_field_name")
+            else None
         )
         if name is None:
             return
@@ -2354,7 +2501,8 @@ def _ts_collect_imports(
                 elif c.type == "pair_pattern":
                     val = (
                         c.child_by_field_name("value")
-                        if hasattr(c, "child_by_field_name") else None
+                        if hasattr(c, "child_by_field_name")
+                        else None
                     )
                     if val is not None and val.type == "identifier":
                         imports[text(val)] = module
@@ -2368,7 +2516,8 @@ def _ts_collect_imports(
             module = _resolve_module_path(source, current_dir)
             clause = (
                 child.child_by_field_name("import_clause")
-                if hasattr(child, "child_by_field_name") else None
+                if hasattr(child, "child_by_field_name")
+                else None
             )
             if clause is not None:
                 collect_clause(clause, module)
@@ -2406,10 +2555,7 @@ def _go_collect_imports(root_node, src_bytes: bytes) -> dict[str, str]:
         return s
 
     def add_spec(spec) -> None:
-        path_n = (
-            spec.child_by_field_name("path")
-            if hasattr(spec, "child_by_field_name") else None
-        )
+        path_n = spec.child_by_field_name("path") if hasattr(spec, "child_by_field_name") else None
         if path_n is None:
             for c in spec.children:
                 if c.type in ("interpreted_string_literal", "raw_string_literal"):
@@ -2421,10 +2567,7 @@ def _go_collect_imports(root_node, src_bytes: bytes) -> dict[str, str]:
         if not path:
             return
         scope = path.rsplit("/", 1)[-1]
-        name_n = (
-            spec.child_by_field_name("name")
-            if hasattr(spec, "child_by_field_name") else None
-        )
+        name_n = spec.child_by_field_name("name") if hasattr(spec, "child_by_field_name") else None
         if name_n is not None:
             local = text(name_n).strip()
             if local in (".", "_", ""):
@@ -2477,8 +2620,7 @@ def _rb_collect_imports(
         if child.type not in ("call", "method_call", "command"):
             continue
         method_n = (
-            child.child_by_field_name("method")
-            if hasattr(child, "child_by_field_name") else None
+            child.child_by_field_name("method") if hasattr(child, "child_by_field_name") else None
         )
         if method_n is None:
             for c in child.children:
@@ -2681,7 +2823,11 @@ def extract(path: Path, source: str, project_root: Path) -> tuple[str, ExtractRe
     lang = detect_language(path)
     if lang is None:
         return "unknown", ExtractResult()
-    rel = path.relative_to(project_root) if path.is_absolute() and path.is_relative_to(project_root) else path
+    rel = (
+        path.relative_to(project_root)
+        if path.is_absolute() and path.is_relative_to(project_root)
+        else path
+    )
     module_name = ".".join(rel.with_suffix("").parts)
     if lang == "python":
         return lang, _py_extract(source, module_name)

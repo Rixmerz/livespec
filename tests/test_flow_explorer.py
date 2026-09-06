@@ -91,11 +91,7 @@ async def test_export_flow_explorer_group(tmp_path: Path):
     async with Client(mcp) as c:
         await c.call_tool("index_project", {"workspace": str(a)})
         await c.call_tool("index_project", {"workspace": str(b)})
-        out = (
-            await c.call_tool(
-                "export_flow_explorer", {"workspace": str(a)}
-            )
-        ).data
+        out = (await c.call_tool("export_flow_explorer", {"workspace": str(a)})).data
 
     assert out["ok"] is True
     assert out["counts"]["projects"] == 2
@@ -124,8 +120,7 @@ async def test_export_flow_explorer_group(tmp_path: Path):
     ]
     assert any(edge["kind"] == "route" for edge in bundle["flow_topology"]["edges"])
     assert all(
-        endpoint["method"] and endpoint["path"].startswith("/")
-        for endpoint in bundle["endpoints"]
+        endpoint["method"] and endpoint["path"].startswith("/") for endpoint in bundle["endpoints"]
     )
     html_text = html.read_text(encoding="utf-8")
     assert "function safeId" in html_text
@@ -147,9 +142,7 @@ async def test_export_flow_explorer_group(tmp_path: Path):
         )
         js_path = html.parent / "_check.js"
         js_path.write_text(js, encoding="utf-8")
-        check = subprocess.run(
-            ["node", "--check", str(js_path)], capture_output=True, text=True
-        )
+        check = subprocess.run(["node", "--check", str(js_path)], capture_output=True, text=True)
         js_path.unlink(missing_ok=True)
         assert check.returncode == 0, check.stderr
 
@@ -162,10 +155,6 @@ async def test_export_flow_explorer_solo(tmp_path: Path):
     (root / "m.py").write_text("def f():\n    return 1\n")
     async with Client(mcp) as c:
         await c.call_tool("index_project", {"workspace": str(root)})
-        out = (
-            await c.call_tool(
-                "export_flow_explorer", {"workspace": str(root)}
-            )
-        ).data
+        out = (await c.call_tool("export_flow_explorer", {"workspace": str(root)})).data
     assert out["ok"] is True
     assert str(root / ".mcp-docs" / "flow-explorer") in out["out_dir"]

@@ -56,12 +56,7 @@ class TestTsFrameworkEntryPointKind:
 
     def test_angular_app_pages_is_not_nextjs(self):
         """Angular feature folders live under src/app/pages/ — not Next.js."""
-        assert (
-            _ts_framework_entry_point_kind(
-                "src/app/pages/hotel/hotel.component.ts"
-            )
-            is None
-        )
+        assert _ts_framework_entry_point_kind("src/app/pages/hotel/hotel.component.ts") is None
         assert (
             _ts_framework_entry_point_kind(
                 "src/app/pages/third-party-spa/third-party-spa.component.ts"
@@ -92,9 +87,7 @@ class TestTsFrameworkEntryPointKind:
 
     def test_angular_error_component_is_not_nextjs_error(self):
         assert (
-            _ts_framework_entry_point_kind(
-                "src/app/shared/components/error/error.component.ts"
-            )
+            _ts_framework_entry_point_kind("src/app/shared/components/error/error.component.ts")
             is None
         )
 
@@ -178,20 +171,18 @@ async def test_fresh_island_not_dead(workspace):
     islands = workspace / "islands"
     islands.mkdir()
     (islands / "Counter.tsx").write_text(
-        "export default function Counter() {\n"
-        "  return <div>0</div>;\n"
-        "}\n"
+        "export default function Counter() {\n  return <div>0</div>;\n}\n"
     )
     # A genuine orphan in a regular dir — must still be flagged
     lib = workspace / "lib"
     lib.mkdir()
-    (lib / "orphan.ts").write_text(
-        "export function reallyDead() {\n  return 42;\n}\n"
-    )
+    (lib / "orphan.ts").write_text("export function reallyDead() {\n  return 42;\n}\n")
     async with Client(mcp) as c:
         await c.call_tool("index_project", {})
         out = (
-            await c.call_tool("find_dead_code", {"include_non_python": True, "include_public": True})
+            await c.call_tool(
+                "find_dead_code", {"include_non_python": True, "include_public": True}
+            )
         ).data
         qnames = {d["qualified_name"] for d in out["dead_symbols"]}
         assert not any("Counter" in q for q in qnames), (
@@ -209,27 +200,23 @@ async def test_nextjs_pages_not_dead(workspace):
     pages = workspace / "pages"
     pages.mkdir()
     (pages / "index.tsx").write_text(
-        "export default function HomePage() {\n"
-        "  return <main>Hello</main>;\n"
-        "}\n"
+        "export default function HomePage() {\n  return <main>Hello</main>;\n}\n"
     )
     lib = workspace / "lib"
     lib.mkdir()
-    (lib / "orphan.ts").write_text(
-        "export function reallyDead() {\n  return 1;\n}\n"
-    )
+    (lib / "orphan.ts").write_text("export function reallyDead() {\n  return 1;\n}\n")
     async with Client(mcp) as c:
         await c.call_tool("index_project", {})
         out = (
-            await c.call_tool("find_dead_code", {"include_non_python": True, "include_public": True})
+            await c.call_tool(
+                "find_dead_code", {"include_non_python": True, "include_public": True}
+            )
         ).data
         qnames = {d["qualified_name"] for d in out["dead_symbols"]}
         assert not any("HomePage" in q for q in qnames), (
             f"Next.js pages HomePage should not be dead: {qnames}"
         )
-        assert any("reallyDead" in q for q in qnames), (
-            f"Regular orphan must be reported: {qnames}"
-        )
+        assert any("reallyDead" in q for q in qnames), f"Regular orphan must be reported: {qnames}"
 
 
 @pytest.mark.asyncio
@@ -238,27 +225,23 @@ async def test_nextjs_app_router_not_dead(workspace):
     dashboard = workspace / "app" / "dashboard"
     dashboard.mkdir(parents=True)
     (dashboard / "page.tsx").write_text(
-        "export default function DashboardPage() {\n"
-        "  return <h1>Dashboard</h1>;\n"
-        "}\n"
+        "export default function DashboardPage() {\n  return <h1>Dashboard</h1>;\n}\n"
     )
     lib = workspace / "lib"
     lib.mkdir()
-    (lib / "orphan.ts").write_text(
-        "export function reallyDead() {\n  return 1;\n}\n"
-    )
+    (lib / "orphan.ts").write_text("export function reallyDead() {\n  return 1;\n}\n")
     async with Client(mcp) as c:
         await c.call_tool("index_project", {})
         out = (
-            await c.call_tool("find_dead_code", {"include_non_python": True, "include_public": True})
+            await c.call_tool(
+                "find_dead_code", {"include_non_python": True, "include_public": True}
+            )
         ).data
         qnames = {d["qualified_name"] for d in out["dead_symbols"]}
         assert not any("DashboardPage" in q for q in qnames), (
             f"Next.js app-router DashboardPage should not be dead: {qnames}"
         )
-        assert any("reallyDead" in q for q in qnames), (
-            f"Regular orphan must be reported: {qnames}"
-        )
+        assert any("reallyDead" in q for q in qnames), f"Regular orphan must be reported: {qnames}"
 
 
 @pytest.mark.asyncio
@@ -267,27 +250,23 @@ async def test_sveltekit_route_server_not_dead(workspace):
     routes = workspace / "src" / "routes"
     routes.mkdir(parents=True)
     (routes / "+page.server.ts").write_text(
-        "export async function load() {\n"
-        "  return { data: [] };\n"
-        "}\n"
+        "export async function load() {\n  return { data: [] };\n}\n"
     )
     lib = workspace / "lib"
     lib.mkdir()
-    (lib / "orphan.ts").write_text(
-        "export function reallyDead() {\n  return 1;\n}\n"
-    )
+    (lib / "orphan.ts").write_text("export function reallyDead() {\n  return 1;\n}\n")
     async with Client(mcp) as c:
         await c.call_tool("index_project", {})
         out = (
-            await c.call_tool("find_dead_code", {"include_non_python": True, "include_public": True})
+            await c.call_tool(
+                "find_dead_code", {"include_non_python": True, "include_public": True}
+            )
         ).data
         qnames = {d["qualified_name"] for d in out["dead_symbols"]}
         assert not any("load" in q and "routes" in q for q in qnames), (
             f"SvelteKit route load() should not be dead: {qnames}"
         )
-        assert any("reallyDead" in q for q in qnames), (
-            f"Regular orphan must be reported: {qnames}"
-        )
+        assert any("reallyDead" in q for q in qnames), f"Regular orphan must be reported: {qnames}"
 
 
 @pytest.mark.asyncio
@@ -295,13 +274,13 @@ async def test_regular_ts_orphan_still_dead(workspace):
     """A TS function in a plain src/lib/ file with no callers IS dead."""
     lib = workspace / "src" / "lib"
     lib.mkdir(parents=True)
-    (lib / "utils.ts").write_text(
-        "export function reallyDead() {\n  return 42;\n}\n"
-    )
+    (lib / "utils.ts").write_text("export function reallyDead() {\n  return 42;\n}\n")
     async with Client(mcp) as c:
         await c.call_tool("index_project", {})
         out = (
-            await c.call_tool("find_dead_code", {"include_non_python": True, "include_public": True})
+            await c.call_tool(
+                "find_dead_code", {"include_non_python": True, "include_public": True}
+            )
         ).data
         qnames = {d["qualified_name"] for d in out["dead_symbols"]}
         assert any("reallyDead" in q for q in qnames), (
@@ -320,20 +299,14 @@ async def test_find_endpoints_nextjs_surfaces_pages(workspace):
     pages = workspace / "pages"
     pages.mkdir()
     (pages / "index.tsx").write_text(
-        "export default function HomePage() {\n"
-        "  return <main>Hello</main>;\n"
-        "}\n"
+        "export default function HomePage() {\n  return <main>Hello</main>;\n}\n"
     )
     (pages / "about.tsx").write_text(
-        "export default function AboutPage() {\n"
-        "  return <p>About</p>;\n"
-        "}\n"
+        "export default function AboutPage() {\n  return <p>About</p>;\n}\n"
     )
     async with Client(mcp) as c:
         await c.call_tool("index_project", {})
-        out = (
-            await c.call_tool("find_endpoints", {"framework": "nextjs"})
-        ).data
+        out = (await c.call_tool("find_endpoints", {"framework": "nextjs"})).data
         qnames = {e["qualified_name"] for e in out["endpoints"]}
         assert any("HomePage" in q for q in qnames), (
             f"NextJS pages HomePage not in endpoints: {qnames}"
@@ -352,15 +325,11 @@ async def test_find_endpoints_fresh_surfaces_islands(workspace):
     islands = workspace / "islands"
     islands.mkdir()
     (islands / "Counter.tsx").write_text(
-        "export default function Counter() {\n"
-        "  return <div>0</div>;\n"
-        "}\n"
+        "export default function Counter() {\n  return <div>0</div>;\n}\n"
     )
     async with Client(mcp) as c:
         await c.call_tool("index_project", {})
-        out = (
-            await c.call_tool("find_endpoints", {"framework": "fresh"})
-        ).data
+        out = (await c.call_tool("find_endpoints", {"framework": "fresh"})).data
         qnames = {e["qualified_name"] for e in out["endpoints"]}
         assert any("Counter" in q for q in qnames), (
             f"Fresh island Counter not in endpoints: {qnames}"
@@ -374,9 +343,7 @@ async def test_find_endpoints_none_includes_ts_frameworks(workspace):
     """find_endpoints() with no framework filter includes TS routing files."""
     islands = workspace / "islands"
     islands.mkdir()
-    (islands / "Nav.tsx").write_text(
-        "export default function Nav() {\n  return <nav/>;\n}\n"
-    )
+    (islands / "Nav.tsx").write_text("export default function Nav() {\n  return <nav/>;\n}\n")
     async with Client(mcp) as c:
         await c.call_tool("index_project", {})
         out = (await c.call_tool("find_endpoints", {})).data

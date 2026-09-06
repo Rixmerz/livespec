@@ -37,6 +37,7 @@ def _workspace_note(fn):
     fn.__doc__ = (fn.__doc__ or "") + WORKSPACE_DOCSTRING_NOTE
     return fn
 
+
 def register(mcp: FastMCP) -> None:
     @mcp.tool(annotations={"readOnlyHint": True, "idempotentHint": True})
     @_workspace_note
@@ -61,9 +62,7 @@ def register(mcp: FastMCP) -> None:
         if limit < 1 or limit > 200:
             return mcp_error("limit must be between 1 and 200")
         st = get_state(workspace)
-        results, query_mode = keyword_search(
-            st.conn, st.project_id, query, scope, limit
-        )
+        results, query_mode = keyword_search(st.conn, st.project_id, query, scope, limit)
         fresh = chunks_index_fresh(st.conn, st.project_id, st.settings.workspace)
         out: dict[str, Any] = {
             "query": query,

@@ -104,9 +104,7 @@ _COVERAGE_THRESHOLD = 0.7
 _MCP_TOOL_PARAMS: dict[str, list[dict[str, str]]] | None = None
 
 
-def _params_from_flat_schema(
-    tool_name: str, schema: dict[str, Any]
-) -> list[dict[str, str]]:
+def _params_from_flat_schema(tool_name: str, schema: dict[str, Any]) -> list[dict[str, str]]:
     flat = flatten_tool_parameters(schema, tool_name=tool_name)
     out: list[dict[str, str]] = []
     for name, prop in (flat.get("properties") or {}).items():
@@ -126,9 +124,7 @@ def _params_from_flat_schema(
     return out
 
 
-def _params_from_signature(
-    signature: str | None, *, tool_name: str = ""
-) -> list[dict[str, str]]:
+def _params_from_signature(signature: str | None, *, tool_name: str = "") -> list[dict[str, str]]:
     """Fallback when no MCP schema: names from AST signature + catalog copy."""
     if not signature:
         return []
@@ -184,9 +180,7 @@ def _mcp_tool_params_by_name() -> dict[str, list[dict[str, str]]]:
     else:
         # export_explorer runs inside an MCP Client async test — nest via thread.
         with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-            _MCP_TOOL_PARAMS = pool.submit(
-                lambda: asyncio.run(_collect_mcp_tool_params())
-            ).result()
+            _MCP_TOOL_PARAMS = pool.submit(lambda: asyncio.run(_collect_mcp_tool_params())).result()
     return _MCP_TOOL_PARAMS
 
 
@@ -203,9 +197,7 @@ def _endpoint_parameters(
     return _params_from_signature(signature, tool_name=tool_name)
 
 
-def _resolve_diff_range(
-    ws_root: str, base: str | None, head: str | None
-) -> tuple[str, str] | None:
+def _resolve_diff_range(ws_root: str, base: str | None, head: str | None) -> tuple[str, str] | None:
     """Resolve the git range for the explorer's "Changes" section.
 
     Defaulting (when ``base``/``head`` are omitted): prefer ``main``..``HEAD``;
@@ -253,9 +245,7 @@ def _resolve_diff_range(
     return eff_base, eff_head
 
 
-def _derive_dev_state(
-    symbol_count: int, coverage: float | None, test_coverage_ratio: float
-) -> str:
+def _derive_dev_state(symbol_count: int, coverage: float | None, test_coverage_ratio: float) -> str:
     """Derive a development state from code evidence (not the manual status).
 
     Thresholds: 0 symbols -> not_started; symbols with coverage < 0.7 ->
@@ -417,9 +407,7 @@ def compute_explorer_data(
     # computed twice — a real cost on a large repo where it ast-parses files).
     raw_endpoints = compute_endpoints(st, framework=framework)
     _endpoint_handler_qnames = {
-        ep.get("qualified_name")
-        for ep in raw_endpoints
-        if ep.get("qualified_name")
+        ep.get("qualified_name") for ep in raw_endpoints if ep.get("qualified_name")
     }
 
     specs: list[dict[str, Any]] = []
@@ -607,17 +595,13 @@ def compute_explorer_data(
         "with_dependencies": with_dependencies,
         # % of Specs that have >= 1 implementing symbol (any code attributed).
         "implemented_pct": (
-            round(implemented_symbol_count / total_reqs * 100, 1)
-            if total_reqs
-            else 0.0
+            round(implemented_symbol_count / total_reqs * 100, 1) if total_reqs else 0.0
         ),
         # Specs backed by REAL test coverage (call-graph-derived + explicit).
         "verified": verified_count,
         # Mean of the per-Spec average-link-confidence values (Specs with links).
         "avg_coverage": (
-            round(sum(coverage_values) / len(coverage_values), 4)
-            if coverage_values
-            else None
+            round(sum(coverage_values) / len(coverage_values), 4) if coverage_values else None
         ),
         # Mean of the per-Spec REAL test-coverage ratios (all Specs; None if no Specs).
         "avg_test_coverage": (
@@ -627,9 +611,9 @@ def compute_explorer_data(
         ),
     }
 
-    files_count = conn.execute(
-        "SELECT COUNT(*) c FROM file WHERE project_id=?", (pid,)
-    ).fetchone()["c"]
+    files_count = conn.execute("SELECT COUNT(*) c FROM file WHERE project_id=?", (pid,)).fetchone()[
+        "c"
+    ]
 
     # --- Coverage trend (top-level) ------------------------------------
     # Chronological rollup snapshots recorded by each audit_coverage run.
@@ -691,18 +675,11 @@ def _render_index_html(data: dict[str, Any]) -> str:
     # defensively so a stray sequence can't break the script element.
     inlined = json.dumps(data, indent=2).replace("</", "<\\/")
     project = data["meta"]["project"]
-    return _HTML_TEMPLATE.replace("__PROJECT__", _html_escape(project)).replace(
-        "__DATA__", inlined
-    )
+    return _HTML_TEMPLATE.replace("__PROJECT__", _html_escape(project)).replace("__DATA__", inlined)
 
 
 def _html_escape(s: str) -> str:
-    return (
-        s.replace("&", "&amp;")
-        .replace("<", "&lt;")
-        .replace(">", "&gt;")
-        .replace('"', "&quot;")
-    )
+    return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace('"', "&quot;")
 
 
 def write_explorer_bundle(

@@ -212,7 +212,6 @@ def validate_openspec(
         # membership; capped + counted rather than one entry per spec.
         "specs_without_scenarios": without_scenarios_capped,
         "specs_without_scenarios_count": len(without_scenarios),
-        "specs_without_scenarios_truncated": len(without_scenarios)
-        > len(without_scenarios_capped),
+        "specs_without_scenarios_truncated": len(without_scenarios) > len(without_scenarios_capped),
         "hygiene": _detect_hygiene(rows, sample_size),
     }

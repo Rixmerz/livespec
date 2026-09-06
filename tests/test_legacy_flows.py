@@ -13,9 +13,7 @@ from livespec_mcp.state import reset_state
 
 
 def _wire_group(root: Path, shared: Path) -> None:
-    (root / ".livespec.toml").write_text(
-        f'[workspace]\ngroup_db = "{shared}"\n', encoding="utf-8"
-    )
+    (root / ".livespec.toml").write_text(f'[workspace]\ngroup_db = "{shared}"\n', encoding="utf-8")
 
 
 @pytest.mark.asyncio
@@ -45,10 +43,7 @@ async def test_find_legacy_flows_unmatched_server(tmp_path: Path):
         "    return 'ok'\n"
     )
     (front / "client.py").write_text(
-        "import requests\n"
-        "\n"
-        "def call_search():\n"
-        "    return requests.post('/search')\n"
+        "import requests\n\ndef call_search():\n    return requests.post('/search')\n"
     )
 
     async with Client(mcp) as c:
@@ -62,10 +57,7 @@ async def test_find_legacy_flows_unmatched_server(tmp_path: Path):
         ).data
 
     assert out["grouped"] is True
-    paths = {
-        (f.get("path") or f.get("norm_path"), f["flow_kind"])
-        for f in out["flows"]
-    }
+    paths = {(f.get("path") or f.get("norm_path"), f["flow_kind"]) for f in out["flows"]}
     assert ("/legacy", "legacy_server") in paths or any(
         (f.get("norm_path") == "/legacy" or f.get("path") == "/legacy")
         and f["flow_kind"] == "legacy_server"
@@ -78,8 +70,7 @@ async def test_find_legacy_flows_unmatched_server(tmp_path: Path):
     ), out["flows"]
     # /health filtered by default
     assert not any(
-        (f.get("norm_path") == "/health" or f.get("path") == "/health")
-        for f in out["flows"]
+        (f.get("norm_path") == "/health" or f.get("path") == "/health") for f in out["flows"]
     ), out["flows"]
 
 
@@ -118,8 +109,7 @@ async def test_find_legacy_flows_summary_and_infra(tmp_path: Path):
     assert "legacy_servers_sample" in summary
     assert "flows" not in summary
     assert any(
-        f.get("norm_path") == "/health" or f.get("path") == "/health"
-        for f in with_infra["flows"]
+        f.get("norm_path") == "/health" or f.get("path") == "/health" for f in with_infra["flows"]
     )
 
 
@@ -211,8 +201,7 @@ async def test_find_legacy_flows_filters_api_docs(tmp_path: Path):
             (sid, role, "GET", path, path, 1),
         )
     conn.execute(
-        "INSERT INTO symbol_edge(src_symbol_id, dst_symbol_id, edge_type, weight) "
-        "VALUES(?,?,?,?)",
+        "INSERT INTO symbol_edge(src_symbol_id, dst_symbol_id, edge_type, weight) VALUES(?,?,?,?)",
         (s_client, s_live, "invokes_route", 0.9),
     )
     conn.commit()

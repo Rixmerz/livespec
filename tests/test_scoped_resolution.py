@@ -73,16 +73,12 @@ def test_ts_js_cross_module_edges_weight_1(tmp_path: Path, lang_dir: str, suffix
     # Named import: main.main -> helpers.helper, weight 1.0
     w_named = _edge_weight(conn, "src.main.main", "src.helpers.helper")
     assert w_named == 1.0, (
-        f"named import edge should be weight=1.0, got {w_named} "
-        f"(suffix={suffix})"
+        f"named import edge should be weight=1.0, got {w_named} (suffix={suffix})"
     )
 
     # Namespace import via utils.format(), resolved by leftmost-name lookup
     w_ns = _edge_weight(conn, "src.main.main", "src.utils.format")
-    assert w_ns == 1.0, (
-        f"namespace-import edge should be weight=1.0, got {w_ns} "
-        f"(suffix={suffix})"
-    )
+    assert w_ns == 1.0, f"namespace-import edge should be weight=1.0, got {w_ns} (suffix={suffix})"
 
     conn.close()
 
@@ -121,9 +117,7 @@ def test_ruby_require_relative_edge_weight_1(tmp_path: Path):
     index_project(settings, conn)
 
     w = _edge_weight(conn, "lib.main.run", "lib.helpers.Helpers.double")
-    assert w == 1.0, (
-        f"Ruby require_relative + Const.method should be weight=1.0, got {w}"
-    )
+    assert w == 1.0, f"Ruby require_relative + Const.method should be weight=1.0, got {w}"
     conn.close()
 
 
@@ -143,9 +137,7 @@ def test_php_use_namespace_edge_weight_1(tmp_path: Path):
         "app.main.run",
         "app.Service.Greeter.Greeter.makeDefault",
     )
-    assert w == 1.0, (
-        f"PHP use + scoped_call should be weight=1.0, got {w}"
-    )
+    assert w == 1.0, f"PHP use + scoped_call should be weight=1.0, got {w}"
     conn.close()
 
 
@@ -167,9 +159,7 @@ def test_rust_use_declaration_edges_weight_1(tmp_path: Path):
         "proj.src.main.run",
         "proj.src.util.Greeter::make_default",
     )
-    assert w_method == 1.0, (
-        f"Rust scoped-call edge should be weight=1.0, got {w_method}"
-    )
+    assert w_method == 1.0, f"Rust scoped-call edge should be weight=1.0, got {w_method}"
 
     # `helper(...)` -> proj.src.util.helper
     w_helper = _edge_weight(
@@ -177,9 +167,7 @@ def test_rust_use_declaration_edges_weight_1(tmp_path: Path):
         "proj.src.main.run",
         "proj.src.util.helper",
     )
-    assert w_helper == 1.0, (
-        f"Rust use+call edge should be weight=1.0, got {w_helper}"
-    )
+    assert w_helper == 1.0, f"Rust use+call edge should be weight=1.0, got {w_helper}"
     conn.close()
 
 
@@ -191,10 +179,7 @@ def test_python_cross_module_edges_weight_1(tmp_path: Path):
     (pkg / "__init__.py").write_text("")
     (pkg / "helpers.py").write_text("def helper():\n    return 1\n")
     (pkg / "main.py").write_text(
-        "from pkg.helpers import helper\n"
-        "\n"
-        "def main():\n"
-        "    return helper()\n"
+        "from pkg.helpers import helper\n\ndef main():\n    return helper()\n"
     )
 
     settings, conn = _bootstrap(tmp_path)
@@ -230,30 +215,22 @@ def test_same_name_fanout_prefers_same_file(tmp_path: Path):
     # Weight may be 1.0 (Python AST extractor sets scope to current module,
     # narrowing candidates to 1) OR 0.7 (same-file fallback when scope is
     # absent). Either path closes the bug; what matters is no fan-out.
-    w_correct = _edge_weight(
-        conn, "pkg.embed_cache.search", "pkg.embed_cache.list_tools"
-    )
+    w_correct = _edge_weight(conn, "pkg.embed_cache.search", "pkg.embed_cache.list_tools")
     assert w_correct is not None and w_correct >= 0.7, (
         f"same-file resolution must produce an edge with weight ≥ 0.7, got {w_correct}"
     )
-    w_correct_cos = _edge_weight(
-        conn, "pkg.embed_cache.search", "pkg.embed_cache._cosine"
-    )
+    w_correct_cos = _edge_weight(conn, "pkg.embed_cache.search", "pkg.embed_cache._cosine")
     assert w_correct_cos is not None and w_correct_cos >= 0.7, (
         f"same-file _cosine resolution must produce an edge with weight ≥ 0.7, got {w_correct_cos}"
     )
 
     # The actual bug fix: fan-out targets must NOT have an edge from search().
-    w_wrong_lt = _edge_weight(
-        conn, "pkg.embed_cache.search", "pkg.internal_proxy.list_tools"
-    )
+    w_wrong_lt = _edge_weight(conn, "pkg.embed_cache.search", "pkg.internal_proxy.list_tools")
     assert w_wrong_lt is None, (
         f"resolver fanned out to internal_proxy.list_tools (got weight={w_wrong_lt}) — "
         "should be filtered by same-file preference"
     )
-    w_wrong_cos = _edge_weight(
-        conn, "pkg.embed_cache.search", "pkg.proxy_pool._cosine"
-    )
+    w_wrong_cos = _edge_weight(conn, "pkg.embed_cache.search", "pkg.proxy_pool._cosine")
     assert w_wrong_cos is None, (
         f"resolver fanned out to proxy_pool._cosine (got weight={w_wrong_cos}) — "
         "should be filtered by same-file preference"

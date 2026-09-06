@@ -48,8 +48,10 @@ def _index(tmp_path: Path, files: dict[str, str]) -> tuple[sqlite3.Connection, t
         p.write_text(body, encoding="utf-8")
     state = tmp_path / ".mcp-docs"
     settings = Settings(
-        workspace=tmp_path, state_dir=state,
-        db_path=state / "docs.db", docs_dir=state / "docs",
+        workspace=tmp_path,
+        state_dir=state,
+        db_path=state / "docs.db",
+        docs_dir=state / "docs",
     )
     settings.ensure_dirs()
     conn = connect(settings.db_path)
@@ -166,17 +168,21 @@ def test_a_symbol_no_test_touches_says_so(project):
 # la propiedad 2 — el hallazgo que casi condena el diseño
 # ---------------------------------------------------------------------------
 
+
 def test_a_third_party_type_is_external_not_a_gap(tmp_path: Path):
     """`DiGraph` no está en el índice porque es de networkx. Eso está bien."""
-    conn, pids = _index(tmp_path, {
-        "graphs.py": (
-            "from networkx import DiGraph\n"
-            "\n"
-            "\n"
-            "def build(g: DiGraph) -> DiGraph:\n"
-            "    return g\n"
-        ),
-    })
+    conn, pids = _index(
+        tmp_path,
+        {
+            "graphs.py": (
+                "from networkx import DiGraph\n"
+                "\n"
+                "\n"
+                "def build(g: DiGraph) -> DiGraph:\n"
+                "    return g\n"
+            ),
+        },
+    )
     cl = build_closure(conn, pids, _sym(conn, "build"), tmp_path)
     assert "DiGraph" not in cl.unresolved, (
         "un tipo de una dependencia contado como gap hace ilegible la métrica"
@@ -185,18 +191,24 @@ def test_a_third_party_type_is_external_not_a_gap(tmp_path: Path):
 
 
 def test_a_stdlib_type_is_external_without_needing_an_import_line(tmp_path: Path):
-    conn, pids = _index(tmp_path, {
-        "io_util.py": "def where() -> str:\n    return 'x'\n",
-    })
+    conn, pids = _index(
+        tmp_path,
+        {
+            "io_util.py": "def where() -> str:\n    return 'x'\n",
+        },
+    )
     cl = build_closure(conn, pids, _sym(conn, "where"), tmp_path)
     assert cl.unresolved == []
 
 
 def test_a_type_that_is_neither_defined_nor_imported_is_a_real_gap(tmp_path: Path):
     """Éste sí es un hueco: la clausura lo prometió y no lo entregó."""
-    conn, pids = _index(tmp_path, {
-        "orphan.py": "def handle(payload: MysteryShape) -> None:\n    return None\n",
-    })
+    conn, pids = _index(
+        tmp_path,
+        {
+            "orphan.py": "def handle(payload: MysteryShape) -> None:\n    return None\n",
+        },
+    )
     cl = build_closure(conn, pids, _sym(conn, "handle"), tmp_path)
     assert "MysteryShape" in cl.unresolved
     assert "NOT RESOLVED" in cl.render(), "un gap silencioso es peor que no tener clausura"
@@ -205,6 +217,7 @@ def test_a_type_that_is_neither_defined_nor_imported_is_a_real_gap(tmp_path: Pat
 # ---------------------------------------------------------------------------
 # la propiedad 3 — presupuesto y degradación
 # ---------------------------------------------------------------------------
+
 
 def test_a_closure_that_fits_is_not_degraded(project):
     conn, pids, root = project
@@ -216,9 +229,7 @@ def test_a_closure_that_fits_is_not_degraded(project):
 
 def test_over_budget_the_calls_are_dropped_and_declared(project):
     conn, pids, root = project
-    d = build_closure(
-        conn, pids, _sym(conn, "charge_card"), root, token_budget=120
-    ).as_dict()
+    d = build_closure(conn, pids, _sym(conn, "charge_card"), root, token_budget=120).as_dict()
     assert d["budget"]["degraded"] is True
     assert d["budget"]["dropped_calls"] >= 1
     assert "omitted to fit" in d["rendered"]
@@ -227,9 +238,7 @@ def test_over_budget_the_calls_are_dropped_and_declared(project):
 def test_the_body_is_never_trimmed_to_fit(project):
     """Una clausura sin parte del cuerpo pedido no es más chica: es equivocada."""
     conn, pids, root = project
-    d = build_closure(
-        conn, pids, _sym(conn, "charge_card"), root, token_budget=120
-    ).as_dict()
+    d = build_closure(conn, pids, _sym(conn, "charge_card"), root, token_budget=120).as_dict()
     assert "def charge_card" in d["body"]
     assert "raise DeclinedError" in d["body"]
 
@@ -247,9 +256,7 @@ def test_the_nearest_callees_survive_the_trim(project):
     full = build_closure(conn, pids, _sym(conn, "charge_card"), root)
     if len(full.calls) < 2:
         pytest.skip("hace falta más de un callee para observar el orden")
-    tight = build_closure(
-        conn, pids, _sym(conn, "charge_card"), root, token_budget=120
-    )
+    tight = build_closure(conn, pids, _sym(conn, "charge_card"), root, token_budget=120)
     assert full.calls[0].distance <= full.calls[-1].distance
     assert all(c.distance <= full.calls[-1].distance for c in tight.calls)
 
@@ -257,6 +264,7 @@ def test_the_nearest_callees_survive_the_trim(project):
 # ---------------------------------------------------------------------------
 # forma del payload
 # ---------------------------------------------------------------------------
+
 
 def test_the_payload_separates_external_from_unresolved(project):
     conn, pids, root = project
@@ -275,6 +283,7 @@ def test_the_estimate_is_of_what_the_agent_actually_reads(project):
 # ---------------------------------------------------------------------------
 # render legible — encontrado leyendo la salida, no aserciones sobre el dict
 # ---------------------------------------------------------------------------
+
 
 def test_a_function_callee_renders_without_doubling_its_name(project):
     """`gateway.authorizeauthorize(...)` era lo que salía."""

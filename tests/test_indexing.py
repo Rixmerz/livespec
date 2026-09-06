@@ -34,9 +34,7 @@ async def test_find_symbol_and_quick_orient(sample_repo):
         names = {m["name"] for m in found["matches"]}
         assert "login" in names
 
-        orient = (
-            await c.call_tool("quick_orient", {"qname": "pkg.auth.login"})
-        ).data
+        orient = (await c.call_tool("quick_orient", {"qname": "pkg.auth.login"})).data
         assert orient["qualified_name"] == "pkg.auth.login"
         assert orient["kind"] == "function"
         assert orient["callers_count"] >= 1  # API.handle calls it
@@ -91,9 +89,7 @@ async def test_requirement_crud_and_link(sample_repo):
         scan = (await c.call_tool("scan_spec_annotations", {})).data
         assert scan["links_created"] >= 1
 
-        impl = (
-            await c.call_tool("get_spec_implementation", {"spec_id": "auth-user-login"})
-        ).data
+        impl = (await c.call_tool("get_spec_implementation", {"spec_id": "auth-user-login"})).data
         qnames = {s["qualified_name"] for s in impl["symbols"]}
         assert "pkg.auth.login" in qnames
 
@@ -150,8 +146,13 @@ async def test_resource_index_status_returns_full_payload(sample_repo):
         res = await c.read_resource("project://index/status")
         data = json.loads(res[0].text)
         for key in (
-            "workspace", "project_id", "files", "symbols", "edges",
-            "specs", "last_run",
+            "workspace",
+            "project_id",
+            "files",
+            "symbols",
+            "edges",
+            "specs",
+            "last_run",
         ):
             assert key in data, f"missing key {key!r}: {data}"
         # Drop markers must NOT leak from the resource surface

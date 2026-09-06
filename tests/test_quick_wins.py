@@ -13,9 +13,7 @@ from livespec_mcp.server import mcp
 async def test_get_symbol_source_happy_path(sample_repo):
     async with Client(mcp) as c:
         await c.call_tool("index_project", {})
-        out = (
-            await c.call_tool("get_symbol_source", {"qname": "pkg.auth.login"})
-        ).data
+        out = (await c.call_tool("get_symbol_source", {"qname": "pkg.auth.login"})).data
         assert out["qualified_name"] == "pkg.auth.login"
         assert out["file_path"] == "pkg/auth.py"
         assert "def login" in out["source"]
@@ -29,9 +27,7 @@ async def test_get_symbol_source_happy_path(sample_repo):
 async def test_get_symbol_source_unknown_qname(sample_repo):
     async with Client(mcp) as c:
         await c.call_tool("index_project", {})
-        out = (
-            await c.call_tool("get_symbol_source", {"qname": "pkg.auth.lgoin"})
-        ).data
+        out = (await c.call_tool("get_symbol_source", {"qname": "pkg.auth.lgoin"})).data
         assert out["isError"] is True
         assert "not found" in out["error"]
         # did_you_mean should surface 'login' for the typo
@@ -43,9 +39,7 @@ async def test_get_symbol_source_unknown_qname(sample_repo):
 async def test_who_calls_returns_caller_set(sample_repo):
     async with Client(mcp) as c:
         await c.call_tool("index_project", {})
-        out = (
-            await c.call_tool("who_calls", {"qname": "pkg.auth.verify"})
-        ).data
+        out = (await c.call_tool("who_calls", {"qname": "pkg.auth.verify"})).data
         names = {n["qualified_name"] for n in out["callers"]}
         assert "pkg.auth.login" in names
         assert out["root"] == "pkg.auth.verify"
@@ -57,9 +51,7 @@ async def test_who_calls_returns_caller_set(sample_repo):
 async def test_who_calls_unknown_qname(sample_repo):
     async with Client(mcp) as c:
         await c.call_tool("index_project", {})
-        out = (
-            await c.call_tool("who_calls", {"qname": "pkg.does.not.exist"})
-        ).data
+        out = (await c.call_tool("who_calls", {"qname": "pkg.does.not.exist"})).data
         assert out["isError"] is True
 
 
@@ -67,11 +59,7 @@ async def test_who_calls_unknown_qname(sample_repo):
 async def test_who_does_this_call_returns_callees(sample_repo):
     async with Client(mcp) as c:
         await c.call_tool("index_project", {})
-        out = (
-            await c.call_tool(
-                "who_does_this_call", {"qname": "pkg.auth.login"}
-            )
-        ).data
+        out = (await c.call_tool("who_does_this_call", {"qname": "pkg.auth.login"})).data
         names = {n["qualified_name"] for n in out["callees"]}
         assert "pkg.auth.verify" in names
         assert out["root"] == "pkg.auth.login"
@@ -83,11 +71,7 @@ async def test_who_does_this_call_leaf_symbol(sample_repo):
     """A symbol with no outgoing calls returns callees=[]."""
     async with Client(mcp) as c:
         await c.call_tool("index_project", {})
-        out = (
-            await c.call_tool(
-                "who_does_this_call", {"qname": "pkg.auth.verify"}
-            )
-        ).data
+        out = (await c.call_tool("who_does_this_call", {"qname": "pkg.auth.verify"})).data
         assert out["callees"] == []
         assert out["count"] == 0
 
@@ -96,9 +80,7 @@ async def test_who_does_this_call_leaf_symbol(sample_repo):
 async def test_quick_orient_composite(sample_repo):
     async with Client(mcp) as c:
         await c.call_tool("index_project", {})
-        out = (
-            await c.call_tool("quick_orient", {"qname": "pkg.auth.login"})
-        ).data
+        out = (await c.call_tool("quick_orient", {"qname": "pkg.auth.login"})).data
         assert out["qualified_name"] == "pkg.auth.login"
         assert out["kind"] == "function"
         assert out["file_path"] == "pkg/auth.py"
@@ -125,9 +107,7 @@ async def test_quick_orient_includes_linked_rfs(sample_repo):
         # Pick up the @spec:auth-user-login in login's docstring
         await c.call_tool("scan_spec_annotations", {})
 
-        out = (
-            await c.call_tool("quick_orient", {"qname": "pkg.auth.login"})
-        ).data
+        out = (await c.call_tool("quick_orient", {"qname": "pkg.auth.login"})).data
         spec_ids = {r["spec_id"] for r in out["specs"]}
         assert "auth-user-login" in spec_ids
 
@@ -136,9 +116,7 @@ async def test_quick_orient_includes_linked_rfs(sample_repo):
 async def test_quick_orient_unknown_qname(sample_repo):
     async with Client(mcp) as c:
         await c.call_tool("index_project", {})
-        out = (
-            await c.call_tool("quick_orient", {"qname": "totally.not.real"})
-        ).data
+        out = (await c.call_tool("quick_orient", {"qname": "totally.not.real"})).data
         assert out["isError"] is True
 
 
@@ -166,22 +144,18 @@ async def test_quick_orient_flags_entry_points(workspace):
         await c.call_tool("index_project", {})
 
         # Decorated entry point — 0 callers but is_entry_point=True
-        out = (
-            await c.call_tool("quick_orient", {"qname": "app.health"})
-        ).data
+        out = (await c.call_tool("quick_orient", {"qname": "app.health"})).data
         assert out["callers_count"] == 0
         assert out["is_entry_point"] is True
         assert out["framework_decorators"], (
             f"expected framework_decorators populated, got {out['framework_decorators']}"
         )
         # Last segment of the decorator (`route`) is what _ENTRY_POINT_DECORATOR_LASTSEG checks
-        assert any(
-            d.endswith("route") or d == "route" for d in out["framework_decorators"]
-        ), f"expected route in {out['framework_decorators']}"
+        assert any(d.endswith("route") or d == "route" for d in out["framework_decorators"]), (
+            f"expected route in {out['framework_decorators']}"
+        )
 
         # Plain function — neither callers nor decorator → not an entry point
-        out_plain = (
-            await c.call_tool("quick_orient", {"qname": "app.plain_helper"})
-        ).data
+        out_plain = (await c.call_tool("quick_orient", {"qname": "app.plain_helper"})).data
         assert out_plain["is_entry_point"] is False
         assert out_plain["framework_decorators"] == []

@@ -66,9 +66,7 @@ def parse_change_dir(path: Path) -> ParsedChange:
     return change
 
 
-def ingest_change(
-    st: Any, parsed: ParsedChange, *, status: str = "proposed"
-) -> dict[str, Any]:
+def ingest_change(st: Any, parsed: ParsedChange, *, status: str = "proposed") -> dict[str, Any]:
     """Upsert a parsed change (+ its deltas) into the DB. Idempotent."""
     pid = st.project_id
     existing = st.conn.execute(
@@ -93,17 +91,21 @@ def ingest_change(
     for ordinal, d in enumerate(parsed.deltas):
         # For a RENAMED delta, resolve the old requirement name to its slug id so
         # apply can find and migrate the old spec.
-        rename_from_id = (
-            _ospec_spec_id(d.rename_from, d.module) if d.rename_from else None
-        )
+        rename_from_id = _ospec_spec_id(d.rename_from, d.module) if d.rename_from else None
         st.conn.execute(
             """INSERT OR IGNORE INTO spec_change_delta
                (change_id, operation, capability, spec_id, title, description,
                 rename_from, ordinal)
                VALUES(?,?,?,?,?,?,?,?)""",
             (
-                change_id, d.operation, d.module, d.spec_id, d.title, d.description,
-                rename_from_id, ordinal,
+                change_id,
+                d.operation,
+                d.module,
+                d.spec_id,
+                d.title,
+                d.description,
+                rename_from_id,
+                ordinal,
             ),
         )
     st.conn.commit()
@@ -124,14 +126,18 @@ def _module_id(st: Any, name: str | None) -> int | None:
     ).fetchone()
     if row:
         return int(row["id"])
-    cur = st.conn.execute(
-        "INSERT INTO module(project_id, name) VALUES(?,?)", (pid, name)
-    )
+    cur = st.conn.execute("INSERT INTO module(project_id, name) VALUES(?,?)", (pid, name))
     return int(cur.lastrowid)
 
 
-def _upsert_spec(st: Any, spec_id: str, title: str, description: str | None,
-                 capability: str | None, scenarios: list[tuple[str, str]]) -> None:
+def _upsert_spec(
+    st: Any,
+    spec_id: str,
+    title: str,
+    description: str | None,
+    capability: str | None,
+    scenarios: list[tuple[str, str]],
+) -> None:
     pid = st.project_id
     module_id = _module_id(st, capability)
     existing = st.conn.execute(
@@ -169,22 +175,47 @@ def _validate_deltas(st: Any, deltas: list[Any]) -> list[dict[str, Any]]:
         op, sid = d["operation"], d["spec_id"]
         exists = _spec_pk(st, sid) is not None
         if op == "added" and exists:
-            warnings.append({"operation": "added", "spec_id": sid,
-                             "issue": "ADDED target already exists — apply will overwrite it"})
+            warnings.append(
+                {
+                    "operation": "added",
+                    "spec_id": sid,
+                    "issue": "ADDED target already exists — apply will overwrite it",
+                }
+            )
         elif op == "modified" and not exists:
-            warnings.append({"operation": "modified", "spec_id": sid,
-                             "issue": "MODIFIED target does not exist — apply will create it"})
+            warnings.append(
+                {
+                    "operation": "modified",
+                    "spec_id": sid,
+                    "issue": "MODIFIED target does not exist — apply will create it",
+                }
+            )
         elif op == "removed" and not exists:
-            warnings.append({"operation": "removed", "spec_id": sid,
-                             "issue": "REMOVED target does not exist — no-op"})
+            warnings.append(
+                {
+                    "operation": "removed",
+                    "spec_id": sid,
+                    "issue": "REMOVED target does not exist — no-op",
+                }
+            )
         elif op == "renamed":
             old = d["rename_from"]
             if not old:
-                warnings.append({"operation": "renamed", "spec_id": sid,
-                                 "issue": "RENAMED delta has no source (FROM) — treated as add"})
+                warnings.append(
+                    {
+                        "operation": "renamed",
+                        "spec_id": sid,
+                        "issue": "RENAMED delta has no source (FROM) — treated as add",
+                    }
+                )
             elif _spec_pk(st, old) is None:
-                warnings.append({"operation": "renamed", "spec_id": sid,
-                                 "issue": f"RENAMED source {old!r} does not exist"})
+                warnings.append(
+                    {
+                        "operation": "renamed",
+                        "spec_id": sid,
+                        "issue": f"RENAMED source {old!r} does not exist",
+                    }
+                )
     return warnings
 
 
@@ -222,7 +253,11 @@ def apply_change(st: Any, name: str, *, dry_run: bool = False) -> dict[str, Any]
         op = d["operation"]
         if op in ("added", "modified"):
             _upsert_spec(
-                st, d["spec_id"], d["title"], d["description"], d["capability"],
+                st,
+                d["spec_id"],
+                d["title"],
+                d["description"],
+                d["capability"],
                 extract_scenarios(d["description"] or ""),
             )
             counts[op] += 1
@@ -257,9 +292,7 @@ def _apply_rename(st: Any, d: Any, scenarios: list[tuple[str, str]]) -> None:
     if not old_pk or not new_pk or old_pk == new_pk:
         return
     # OR IGNORE: a link/scenario the new spec already has wins; the rest move.
-    st.conn.execute(
-        "UPDATE OR IGNORE spec_symbol SET spec_id=? WHERE spec_id=?", (new_pk, old_pk)
-    )
+    st.conn.execute("UPDATE OR IGNORE spec_symbol SET spec_id=? WHERE spec_id=?", (new_pk, old_pk))
     st.conn.execute(
         "UPDATE OR IGNORE spec_scenario SET spec_id=? WHERE spec_id=?", (new_pk, old_pk)
     )

@@ -102,9 +102,7 @@ def read_trend(conn: sqlite3.Connection, project_id: int) -> list[dict[str, Any]
         {
             "ts": r["ts"],
             "avg_test_coverage": r["avg_test_coverage"],
-            "verified_count": int(r["verified_count"])
-            if r["verified_count"] is not None
-            else 0,
+            "verified_count": int(r["verified_count"]) if r["verified_count"] is not None else 0,
         }
         for r in rows
     ]

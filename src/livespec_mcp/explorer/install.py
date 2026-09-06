@@ -137,7 +137,8 @@ def init_fastapi_project(
     return FastapiInitResult(
         workspace=str(root),
         indexed=indexed,
-        explorer_bundle=explorer_bundle or (root / ".mcp-docs" / "explorer" / "index.html").is_file(),
+        explorer_bundle=explorer_bundle
+        or (root / ".mcp-docs" / "explorer" / "index.html").is_file(),
         autowire=autowire_payload,
         cursor_rule=rule_path,
         cursor_skill=skill_path,

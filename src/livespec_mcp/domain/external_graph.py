@@ -56,25 +56,78 @@ from typing import Any
 # made every method of every class un-killable and was responsible for 98 of
 # 223 dead-code rescues across that sweep — nearly half the measured effect was
 # an artifact of this line.
-STRUCTURAL_RELATIONS = frozenset({"contains", "rationale_for", "method"})
+#
+# `defines` and `exports` are the same trap wearing different names, found by
+# reading Graphify 0.9.55's extractors rather than by waiting for another
+# sweep: both are emitted `file_node -> symbol`, so every symbol in a file has
+# one. `evidence_for` looks only at the relation of an inbound edge, not at
+# whether its SOURCE maps to anything, so an unlisted containment relation
+# rescues every symbol in the language that emits it.
+STRUCTURAL_RELATIONS = frozenset({"contains", "rationale_for", "method", "defines", "exports"})
 
 # Relations accepted as evidence that a symbol is reachable. `imports` and
 # `imports_from` are weaker than `calls` (importing a name is not calling it)
 # but still contradict "nothing in this repo refers to it", which is the claim
 # `find_dead_code` actually makes.
+#
+# Widened for Graphify 0.9.55 (2026-09-06) from the six-relation set the v0.32
+# work saw on Python and TypeScript trees. The additions are per-language
+# spellings of relations already accepted here — `implements`/`extends`/
+# `specializes`/`embeds` are inheritance in Java, C#, CommonLisp and Go;
+# `instantiates` is a constructor call; `accesses`/`reads_from`/`requires` are
+# usage. Missing them meant a Java interface implemented ten times over still
+# read as referenced by nothing, which is precisely the blind spot this whole
+# feature exists to cover.
 EVIDENCE_RELATIONS = frozenset(
     {
+        # invocation
         "calls",
         "indirect_call",
+        "instantiates",
+        # inheritance / type hierarchy
         "inherits",
         "mixes_in",
+        "implements",
+        "extends",
+        "specializes",
+        "embeds",
+        # usage / type position
         "uses",
         "references",
+        "accesses",
+        "reads_from",
+        "requires",
+        "depends_on",
+        "uses_static_prop",
+        "uses_component",
+        "references_constant",
+        "binds_method",
+        "bound_to",
+        # module wiring
         "imports",
         "imports_from",
         "re_exports",
+        "includes",
     }
 )
+
+
+def classify_relation(relation: str) -> str:
+    """``structural`` | ``evidence`` | ``unknown`` for one external relation.
+
+    Exists so vocabulary drift is *reported* rather than silently dropped. Both
+    consumers of an external graph fail quietly in opposite directions when the
+    other tool grows a relation: corroboration ignores it (a real caller stops
+    rescuing a dead-code candidate) and ingestion skips it (an edge livespec
+    lacks never arrives). Neither shows up as an error, and the last two
+    additions to this vocabulary were found by reading another project's source
+    during an audit. A count in the payload is what makes the next one cheap.
+    """
+    if relation in STRUCTURAL_RELATIONS:
+        return "structural"
+    if relation in EVIDENCE_RELATIONS:
+        return "evidence"
+    return "unknown"
 
 
 @dataclass(frozen=True)
@@ -117,9 +170,7 @@ class ExternalGraph:
     #: Every node id that carries a usable (file, line) position.
     by_position: dict[tuple[str, int], ExternalNode] = field(default_factory=dict)
     #: file -> lowercased bare label -> nodes (fallback when lines drift).
-    by_file_name: dict[tuple[str, str], list[ExternalNode]] = field(
-        default_factory=dict
-    )
+    by_file_name: dict[tuple[str, str], list[ExternalNode]] = field(default_factory=dict)
     #: node id -> inbound relations, structural ones already dropped.
     inbound: dict[str, list[str]] = field(default_factory=dict)
     #: node id -> (relation, target node id), structural ones already dropped.
@@ -136,16 +187,20 @@ class ExternalGraph:
     #: evidence relation is the whole signal) and must not pay for it: on a
     #: large monorepo graph this is one small dict per edge, which is real
     #: memory for a field nobody in that path would touch.
-    link_meta: dict[tuple[str, str, str], dict[str, Any]] = field(
-        default_factory=dict
-    )
+    link_meta: dict[tuple[str, str, str], dict[str, Any]] = field(default_factory=dict)
     #: Relation histogram over all links, for reporting.
     relation_counts: dict[str, int] = field(default_factory=dict)
+    #: Relations this graph carries that livespec classifies as neither
+    #: structural nor evidence — i.e. vocabulary it does not understand yet.
+    #: Surfaced in every payload so drift in the other tool's output is visible
+    #: the first time it costs something, instead of on the next audit.
+    unknown_relations: dict[str, int] = field(default_factory=dict)
     #: True when any link carries an origin other than deterministic AST.
     has_non_ast_origin: bool = False
-    #: Share of this graph's files that the consuming index also has. Set by
-    #: the caller's sanity gate; 0.0 until then.
-    file_overlap: float = 0.0
+    #: Deliberately NOT a field any more. Overlap is a property of (this
+    #: graph, one index), and graphs are cached across calls and workspaces —
+    #: storing it here meant one project's sanity gate overwrote another's on a
+    #: shared object. `_load_corroborating_graph` returns it alongside instead.
 
     def lookup(self, file_path: str, line: int, name: str) -> ExternalNode | None:
         """Position first, then bare name within the same file.
@@ -214,9 +269,34 @@ def _parse_line(location: Any) -> int | None:
         return None
 
 
-def load_external_graph(
-    path: str | Path, *, keep_link_meta: bool = False
-) -> ExternalGraph:
+#: Parsed graphs, keyed by (path, mtime, size, keep_link_meta). Small because
+#: each entry is a full parse of a multi-megabyte file: on this repo's own
+#: 3.8 MB graph, 3573 nodes and 6097 links cost ~45 ms and a proportional
+#: amount of memory.
+#:
+#: The cache exists because `[graph] external` makes corroboration the default
+#: for a repo, and then EVERY `find_dead_code` re-parses the file: measured at
+#: 522 ms per call here, and this graph is small. Keying on (mtime, size) means
+#: a `graphify update` invalidates it by writing the file, which is exactly
+#: when the parse should be redone — no explicit invalidation to forget.
+_GRAPH_CACHE: dict[tuple[str, float, int, bool], ExternalGraph] = {}
+_GRAPH_CACHE_MAX = 4
+
+
+def _cache_key(path: Path, keep_link_meta: bool) -> tuple[str, float, int, bool] | None:
+    try:
+        st = path.stat()
+    except OSError:
+        return None
+    return (str(path), st.st_mtime, st.st_size, keep_link_meta)
+
+
+def clear_external_graph_cache() -> None:
+    """Drop every parsed graph. For tests, and for a caller that knows better."""
+    _GRAPH_CACHE.clear()
+
+
+def load_external_graph(path: str | Path, *, keep_link_meta: bool = False) -> ExternalGraph:
     """Parse a Graphify-style node-link graph.
 
     Raises ``FileNotFoundError`` if the path does not exist and ``ValueError``
@@ -225,6 +305,9 @@ def load_external_graph(
     silently: one bad row must not cost the caller the whole file.
     """
     p = Path(path)
+    key = _cache_key(p, keep_link_meta)
+    if key is not None and key in _GRAPH_CACHE:
+        return _GRAPH_CACHE[key]
     raw = p.read_text(encoding="utf-8")
     try:
         data = json.loads(raw)
@@ -283,6 +366,8 @@ def load_external_graph(
             continue
         graph.edge_count += 1
         graph.relation_counts[relation] = graph.relation_counts.get(relation, 0) + 1
+        if classify_relation(relation) == "unknown":
+            graph.unknown_relations[relation] = graph.unknown_relations.get(relation, 0) + 1
         origin = link.get("_origin")
         if isinstance(origin, str) and origin != "ast":
             graph.has_non_ast_origin = True
@@ -300,6 +385,10 @@ def load_external_graph(
                     },
                 )
 
+    if key is not None:
+        if len(_GRAPH_CACHE) >= _GRAPH_CACHE_MAX:
+            _GRAPH_CACHE.pop(next(iter(_GRAPH_CACHE)), None)
+        _GRAPH_CACHE[key] = graph
     return graph
 
 
@@ -310,9 +399,7 @@ def overlap_ratio(graph: ExternalGraph, indexed_files: set[str]) -> float:
     absolute paths against a relative index), and corroborating against it would
     silently vouch for nothing. Callers refuse rather than report a clean sweep.
     """
-    external_files = {
-        node.source_file for node in graph.by_position.values() if node.source_file
-    }
+    external_files = {node.source_file for node in graph.by_position.values() if node.source_file}
     if not external_files:
         return 0.0
     return len(external_files & indexed_files) / len(external_files)

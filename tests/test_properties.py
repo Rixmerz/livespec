@@ -63,7 +63,9 @@ def _bootstrap_settings(tmp_path: Path) -> Settings:
     n_files=st.integers(min_value=0, max_value=8),
     n_funcs=st.integers(min_value=0, max_value=6),
 )
-@settings(max_examples=10, deadline=None, suppress_health_check=[HealthCheck.function_scoped_fixture])
+@settings(
+    max_examples=10, deadline=None, suppress_health_check=[HealthCheck.function_scoped_fixture]
+)
 def test_index_project_is_idempotent(tmp_path_factory, n_files: int, n_funcs: int):
     """Re-indexing without file changes must leave edges and symbols unchanged."""
     tmp_path = tmp_path_factory.mktemp("idem")
@@ -82,9 +84,7 @@ def test_index_project_is_idempotent(tmp_path_factory, n_files: int, n_funcs: in
     conn = connect(settings.db_path)
     first = index_project(settings, conn)
     second = index_project(settings, conn)
-    assert second.files_changed == 0, (
-        f"Re-index without edits changed {second.files_changed} files"
-    )
+    assert second.files_changed == 0, f"Re-index without edits changed {second.files_changed} files"
     assert second.symbols_total == first.symbols_total
     assert second.edges_total == first.edges_total
     conn.close()
@@ -97,7 +97,9 @@ def test_index_project_is_idempotent(tmp_path_factory, n_files: int, n_funcs: in
     n_funcs=st.integers(min_value=2, max_value=8),
     edits=st.integers(min_value=1, max_value=5),
 )
-@settings(max_examples=10, deadline=None, suppress_health_check=[HealthCheck.function_scoped_fixture])
+@settings(
+    max_examples=10, deadline=None, suppress_health_check=[HealthCheck.function_scoped_fixture]
+)
 def test_partial_reindex_does_not_lose_edges(tmp_path_factory, n_funcs: int, edits: int):
     """Touching one file repeatedly should not cause edge counts to drift down."""
     tmp_path = tmp_path_factory.mktemp("partial")

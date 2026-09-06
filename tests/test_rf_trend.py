@@ -44,11 +44,7 @@ async def test_uncovered_symbols_lists_untested_impl(workspace):
     pkg.mkdir()
     (pkg / "__init__.py").write_text("")
     (pkg / "feature.py").write_text(
-        "def covered_impl():\n"
-        "    return 1\n"
-        "\n"
-        "def uncovered_impl():\n"
-        "    return 2\n"
+        "def covered_impl():\n    return 1\n\ndef uncovered_impl():\n    return 2\n"
     )
     (workspace / "tests").mkdir()
     # Test reaches only covered_impl — uncovered_impl has no test path.
@@ -61,9 +57,7 @@ async def test_uncovered_symbols_lists_untested_impl(workspace):
 
     async with Client(mcp) as c:
         await c.call_tool("index_project", {})
-        await c.call_tool(
-            "create_spec", {"spec_id": "auth-user-login", "title": "Feature"}
-        )
+        await c.call_tool("create_spec", {"spec_id": "auth-user-login", "title": "Feature"})
         await c.call_tool(
             "link_spec_symbol",
             {"spec_id": "auth-user-login", "symbol_qname": "pkg.feature.covered_impl"},
@@ -92,10 +86,7 @@ async def test_uncovered_symbols_empty_when_fully_tested(workspace):
     pkg = workspace / "pkg"
     pkg.mkdir()
     (pkg / "__init__.py").write_text("")
-    (pkg / "feature.py").write_text(
-        "def implementer():\n"
-        "    return 1\n"
-    )
+    (pkg / "feature.py").write_text("def implementer():\n    return 1\n")
     (workspace / "tests").mkdir()
     (workspace / "tests" / "test_feature.py").write_text(
         "from pkg.feature import implementer\n"
@@ -106,9 +97,7 @@ async def test_uncovered_symbols_empty_when_fully_tested(workspace):
 
     async with Client(mcp) as c:
         await c.call_tool("index_project", {})
-        await c.call_tool(
-            "create_spec", {"spec_id": "feature-done", "title": "Done"}
-        )
+        await c.call_tool("create_spec", {"spec_id": "feature-done", "title": "Done"})
         await c.call_tool(
             "link_spec_symbol",
             {"spec_id": "feature-done", "symbol_qname": "pkg.feature.implementer"},
@@ -144,9 +133,7 @@ async def test_compute_diff_spec_impact_returns_touched_rfs(git_repo_with_rf):
     async with Client(mcp) as c:
         await c.call_tool("index_project", {})
         # Link api-surface to the changed file's symbol so the diff touches it.
-        await c.call_tool(
-            "create_spec", {"spec_id": "api-surface", "title": "Auth login"}
-        )
+        await c.call_tool("create_spec", {"spec_id": "api-surface", "title": "Auth login"})
         await c.call_tool(
             "link_spec_symbol",
             {"spec_id": "api-surface", "symbol_qname": "pkg.auth.login"},
@@ -231,7 +218,11 @@ def test_trend_handles_no_rfs_avg_none(tmp_path):
     conn = connect(tmp_path / "trend2.db")
     pid = get_or_create_project(conn, "p", str(tmp_path))
     record_snapshot(
-        conn, pid, per_spec={}, avg=None, verified_count=0,
+        conn,
+        pid,
+        per_spec={},
+        avg=None,
+        verified_count=0,
         ts="2026-06-25T12:00:00+00:00",
     )
     trend = read_trend(conn, pid)
@@ -252,7 +243,11 @@ def test_trend_dedups_unchanged_consecutive(tmp_path):
             conn, pid, per_spec={"auth-user-login": 0.5}, avg=0.5, verified_count=1, ts=ts
         )
     record_snapshot(
-        conn, pid, per_spec={"auth-user-login": 1.0}, avg=1.0, verified_count=1,
+        conn,
+        pid,
+        per_spec={"auth-user-login": 1.0},
+        avg=1.0,
+        verified_count=1,
         ts="2026-06-25T10:10:00+00:00",
     )
     trend = read_trend(conn, pid)
@@ -271,9 +266,7 @@ async def test_audit_coverage_records_a_snapshot(workspace):
 
     async with Client(mcp) as c:
         await c.call_tool("index_project", {})
-        await c.call_tool(
-            "create_spec", {"spec_id": "trend-audit-spec", "title": "F"}
-        )
+        await c.call_tool("create_spec", {"spec_id": "trend-audit-spec", "title": "F"})
         await c.call_tool(
             "link_spec_symbol",
             {"spec_id": "trend-audit-spec", "symbol_qname": "pkg.feature.implementer"},

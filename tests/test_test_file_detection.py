@@ -19,6 +19,8 @@ from livespec_mcp.tools.analysis import (
     filter_api_endpoints,
 )
 
+from .conftest import requires_grammar
+
 # A body long enough to clear the `_is_infrastructure` "<5 lines" wrapper
 # filter, so these fixture symbols actually reach the PageRank ranking.
 _BODY = "\n".join(f"  const v{i} = {i};" for i in range(8))
@@ -103,13 +105,13 @@ def _write_ts_repo(workspace):
 async def test_find_orphan_tests_jest_anonymous_honest_zero(workspace):
     """Jest-style anonymous `test()` leaves only module symbols — count=0
     must carry diagnostics so agents don't read it as 'no test files'."""
+    requires_grammar("typescript")
     (workspace / "src").mkdir()
     (workspace / "src" / "math.ts").write_text(
         "export function add(a: number, b: number) { return a + b; }\n"
     )
     (workspace / "src" / "math.test.ts").write_text(
-        "import { add } from './math';\n"
-        'test("adds", () => { expect(add(1, 2)).toBe(3); });\n'
+        "import { add } from './math';\ntest(\"adds\", () => { expect(add(1, 2)).toBe(3); });\n"
     )
     async with Client(mcp) as c:
         await c.call_tool("index_project", {})
@@ -128,17 +130,15 @@ async def test_find_orphan_tests_flags_blind_files_in_polyglot_repo(workspace):
     vanish as soon as one Python test contributed a named function, which is
     every real polyglot repo — the Jest files were silently unscanned.
     """
+    requires_grammar("typescript")
     (workspace / "src").mkdir()
     (workspace / "src" / "math.ts").write_text(
         "export function add(a: number, b: number) { return a + b; }\n"
     )
     (workspace / "src" / "math.test.ts").write_text(
-        "import { add } from './math';\n"
-        'test("adds", () => { expect(add(1, 2)).toBe(3); });\n'
+        "import { add } from './math';\ntest(\"adds\", () => { expect(add(1, 2)).toBe(3); });\n"
     )
-    (workspace / "test_py_side.py").write_text(
-        "def test_named():\n    assert True\n"
-    )
+    (workspace / "test_py_side.py").write_text("def test_named():\n    assert True\n")
     async with Client(mcp) as c:
         await c.call_tool("index_project", {})
         out = (await c.call_tool("find_orphan_tests", {"summary_only": True})).data
@@ -232,8 +232,7 @@ async def test_overview_test_symbols_filtered_is_capped(workspace):
     )
     (src / "core.test.ts").write_text(
         "\n".join(
-            f"export function mockHelper{i}() {{\n{_BODY}\n  return {i};\n}}"
-            for i in range(25)
+            f"export function mockHelper{i}() {{\n{_BODY}\n  return {i};\n}}" for i in range(25)
         )
         + "\n"
     )
@@ -256,6 +255,7 @@ async def test_overview_test_symbols_filtered_is_capped(workspace):
 # fixing: find_endpoints on a real Hono backend listed POST /register, /login,
 # /refresh and /logout from `src/routes/v1/auth.test.ts` alongside the genuine
 # routes of the same name in `auth.ts` — nothing distinguished them.
+
 
 @pytest.mark.parametrize(
     "path",

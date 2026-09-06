@@ -19,11 +19,7 @@ def _make_dead_code_repo(workspace):
     (pkg / "__init__.py").write_text("")
     body = ["def used():\n    return 1\n", "def caller():\n    return used()\n"]
     for i in range(8):
-        body.append(
-            f"def dead_{i:02d}():\n"
-            f"    # nobody calls me, no spec link\n"
-            f"    return {i}\n"
-        )
+        body.append(f"def dead_{i:02d}():\n    # nobody calls me, no spec link\n    return {i}\n")
     (pkg / "code.py").write_text("\n".join(body))
 
 
@@ -32,9 +28,7 @@ async def test_find_dead_code_summary_only(workspace):
     _make_dead_code_repo(workspace)
     async with Client(mcp) as c:
         await c.call_tool("index_project", {})
-        out = (
-            await c.call_tool("find_dead_code", {"summary_only": True})
-        ).data
+        out = (await c.call_tool("find_dead_code", {"summary_only": True})).data
         assert out["count"] >= 8
         assert "by_kind" in out
         assert "by_top_dir" in out
@@ -46,14 +40,10 @@ async def test_find_dead_code_limit_and_cursor(workspace):
     _make_dead_code_repo(workspace)
     async with Client(mcp) as c:
         await c.call_tool("index_project", {})
-        page1 = (
-            await c.call_tool("find_dead_code", {"limit": 3, "cursor": 0})
-        ).data
+        page1 = (await c.call_tool("find_dead_code", {"limit": 3, "cursor": 0})).data
         assert len(page1["dead_symbols"]) == 3
         assert page1["next_cursor"] == 3
-        page2 = (
-            await c.call_tool("find_dead_code", {"limit": 3, "cursor": 3})
-        ).data
+        page2 = (await c.call_tool("find_dead_code", {"limit": 3, "cursor": 3})).data
         assert len(page2["dead_symbols"]) == 3
         # Pages are disjoint
         qn1 = {d["qualified_name"] for d in page1["dead_symbols"]}
@@ -103,14 +93,10 @@ async def test_find_orphan_tests_summary(workspace):
     (workspace / "src" / "__init__.py").write_text("")
     (workspace / "src" / "real.py").write_text("def prod():\n    return 1\n")
     (workspace / "tests").mkdir()
-    (workspace / "tests" / "test_orphan.py").write_text(
-        "def test_alone():\n    return None\n"
-    )
+    (workspace / "tests" / "test_orphan.py").write_text("def test_alone():\n    return None\n")
     async with Client(mcp) as c:
         await c.call_tool("index_project", {})
-        out = (
-            await c.call_tool("find_orphan_tests", {"summary_only": True})
-        ).data
+        out = (await c.call_tool("find_orphan_tests", {"summary_only": True})).data
         assert "count" in out
         assert "orphan_tests" not in out
 

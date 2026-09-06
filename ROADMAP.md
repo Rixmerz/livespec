@@ -69,7 +69,20 @@ ser “próximo pilar” y pasan a “superficie beta documentada”.
 Lo que **sigue** abierto hacia 1.0: disclaimers operativos, pin Skill=PyPI,
 adopción externa, no más superficie de tools.
 
-**vs Graphify (2026-07-31, actualizado 2026-09-03):** conviven; **no** portar
+**Addendum v0.33 (2026-09-06) — auditoría post-Graphify.** Siete tandas, cero
+tools nuevas: el corte hacia 1.0 sigue siendo confianza, no superficie. Lo que
+salió de auditar la integración recién landeada vale como método: el hallazgo
+más grave no era de Graphify sino del stack propio — `tree-sitter-language-pack`
+1.x descarga las gramáticas en runtime, y tragarse esa falla convertía un repo
+políglota en Python-only sin decir nada. La lección repetida en las siete
+tandas es la misma: **el modo de falla caro no es el error, es el silencio**
+(un archivo que no se leyó contado como vacío, una referencia de tipo contada
+como caller, una ingesta sin memoria de qué grafo leyó, una tool core que
+ningún manual de agente menciona). Cuatro tests nuevos existen sólo para que
+esos silencios fallen fuerte: `test_layering`, `test_agent_docs_sync`,
+`test_grammar_availability` y el reporte de `unknown_relations`.
+
+**vs Graphify (2026-07-31, actualizado 2026-09-06):** conviven; **no** portar
 Leiden / multimodal al core. Ver `docs/COMPETITIVE_GRAPHIFY.md`. Weight +
 `edge_type` ya cubren EXTRACTED/AMBIGUOUS/INFERRED — pero la columna de
 provenance **sí** se agregó (mig 22, `symbol_edge.origin`) porque no era

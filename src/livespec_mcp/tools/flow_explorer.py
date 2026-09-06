@@ -52,11 +52,7 @@ def _project_rows(st: AppState) -> list[dict[str, Any]]:
 
 
 def _endpoint_http_fields(ep: dict[str, Any]) -> tuple[str | None, str | None]:
-    method = (
-        ep.get("http_method")
-        or ep.get("hono_method")
-        or ep.get("express_method")
-    )
+    method = ep.get("http_method") or ep.get("hono_method") or ep.get("express_method")
     path = ep.get("http_path") or ep.get("hono_path") or ep.get("express_path")
     if isinstance(method, str):
         method = method.upper()
@@ -74,9 +70,7 @@ def _endpoint_entry(ep: dict[str, Any], project: str) -> dict[str, Any]:
         "project": project,
         "kind": ep.get("kind") or ep.get("ts_framework") or "other",
         "framework": (
-            ep.get("http_framework")
-            or ep.get("ts_framework")
-            or ep.get("django_cbv_base")
+            ep.get("http_framework") or ep.get("ts_framework") or ep.get("django_cbv_base")
         ),
         "handler": ep.get("qualified_name"),
         "file_path": ep.get("file_path"),
@@ -132,9 +126,7 @@ def _iter_project_endpoints(pst: AppState, framework: str | None):
             yield ep
 
 
-def _route_edges(
-    conn: Any, name_by_id: dict[int, str]
-) -> list[dict[str, str | None]]:
+def _route_edges(conn: Any, name_by_id: dict[int, str]) -> list[dict[str, str | None]]:
     """Return resolved HTTP hops with endpoint metadata from route_ref.
 
     Drops infra paths (``/health``, ``/liveness``, …) that cross-match every
@@ -201,17 +193,13 @@ def compute_flow_explorer_data(
         pid = p["id"]
         pname = name_by_id[pid]
         root = Path(p["root"])
-        n_files = conn.execute(
-            "SELECT COUNT(*) FROM file WHERE project_id=?", (pid,)
-        ).fetchone()[0]
+        n_files = conn.execute("SELECT COUNT(*) FROM file WHERE project_id=?", (pid,)).fetchone()[0]
         n_sym = conn.execute(
             """SELECT COUNT(*) FROM symbol s JOIN file f ON f.id=s.file_id
                WHERE f.project_id=?""",
             (pid,),
         ).fetchone()[0]
-        n_spec = conn.execute(
-            "SELECT COUNT(*) FROM spec WHERE project_id=?", (pid,)
-        ).fetchone()[0]
+        n_spec = conn.execute("SELECT COUNT(*) FROM spec WHERE project_id=?", (pid,)).fetchone()[0]
         n_link = conn.execute(
             """SELECT COUNT(*) FROM spec_symbol ss
                JOIN spec s ON s.id=ss.spec_id WHERE s.project_id=?""",
@@ -430,8 +418,7 @@ def compute_flow_explorer_data(
                 else ""
             )
             + (
-                "Cross-repo links include resolved HTTP route hops from the "
-                "indexer."
+                "Cross-repo links include resolved HTTP route hops from the indexer."
                 if route_edges
                 else "No HTTP route hops resolved yet (need literal/env-resolvable "
                 "client URLs matching server routes."
@@ -457,9 +444,7 @@ def write_flow_explorer_bundle(
     generated_at: str | None = None,
     framework: str | None = None,
 ) -> dict[str, Any]:
-    data = compute_flow_explorer_data(
-        st, generated_at=generated_at, framework=framework
-    )
+    data = compute_flow_explorer_data(st, generated_at=generated_at, framework=framework)
     out = flow_out_dir(st)
     out.mkdir(parents=True, exist_ok=True)
     data_path = out / "data.json"
@@ -489,9 +474,7 @@ def create_flow_host_app(flow_dir: Path, projects: list[dict[str, Any]] | None =
         data_path = flow_dir / "data.json"
         projects = []
         if data_path.is_file():
-            projects = json.loads(data_path.read_text(encoding="utf-8")).get(
-                "projects"
-            ) or []
+            projects = json.loads(data_path.read_text(encoding="utf-8")).get("projects") or []
 
     repo_routes: list[Any] = []
     mounted: list[str] = []

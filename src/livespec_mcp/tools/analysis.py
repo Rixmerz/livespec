@@ -46,6 +46,7 @@ from livespec_mcp.domain.test_coverage_reports import discover_report_coverage
 from livespec_mcp.state import AppState, get_state
 from livespec_mcp.tool_params import (
     Cursor,
+    EdgeTypes,
     Limit,
     MaxDepth,
     MinWeight,
@@ -76,9 +77,7 @@ _SQL_IN_CHUNK = 900
 _GREP_PATTERN_MAX = 200
 _GREP_LINE_MAX = 4000
 _GREP_PER_FILE_DEFAULT = 20
-_REDOS_NESTED = re.compile(
-    r"\([^)]*[+*][^)]*\)[+*]|\([^)]*[+*][^)]*\|[^)]*[+*][^)]*\)[+*]"
-)
+_REDOS_NESTED = re.compile(r"\([^)]*[+*][^)]*\)[+*]|\([^)]*[+*][^)]*\|[^)]*[+*][^)]*\)[+*]")
 
 
 def _grep_compile_pattern(pattern: str) -> tuple[re.Pattern[str] | None, str, str | None]:
@@ -88,12 +87,16 @@ def _grep_compile_pattern(pattern: str) -> tuple[re.Pattern[str] | None, str, st
     closed to literal with a hint rather than hanging the MCP process.
     """
     if len(pattern) > _GREP_PATTERN_MAX:
-        return None, "literal", (
-            f"pattern longer than {_GREP_PATTERN_MAX} chars — using literal match"
+        return (
+            None,
+            "literal",
+            (f"pattern longer than {_GREP_PATTERN_MAX} chars — using literal match"),
         )
     if _REDOS_NESTED.search(pattern):
-        return None, "literal", (
-            "pattern looks ReDoS-prone (nested quantifiers) — using literal match"
+        return (
+            None,
+            "literal",
+            ("pattern looks ReDoS-prone (nested quantifiers) — using literal match"),
         )
     try:
         return re.compile(pattern), "regex", None
@@ -221,8 +224,7 @@ def _grep_scope_staleness(
         )
     if hints:
         out["hint"] = (
-            " | ".join(hints)
-            + " | run index_project(workspace=..., force=false) and re-grep"
+            " | ".join(hints) + " | run index_project(workspace=..., force=false) and re-grep"
         )
     return out
 
@@ -301,12 +303,14 @@ def _grep_indexed_files_core(
                     continue
             elif needle not in line:
                 continue
-            matches.append({
-                "file_path": path,
-                "language": row["language"],
-                "line": line_no,
-                "text": line[:240],
-            })
+            matches.append(
+                {
+                    "file_path": path,
+                    "language": row["language"],
+                    "line": line_no,
+                    "text": line[:240],
+                }
+            )
             file_hits += 1
             if file_hits >= per_file_limit:
                 break
@@ -330,71 +334,139 @@ def _grep_indexed_files_core(
         out["fts_candidate_files"] = len(fts_paths) if fts_paths is not None else None
     return out
 
+
 # v0.5 P1: framework decorator names that imply hidden callers (HTTP routers,
 # CLI dispatchers, test frameworks, plugin systems, message brokers, MCP).
 # We match on the LAST dotted segment so `app.route`, `router.get`,
 # `bp.before_request`, `mcp.tool` all qualify. Keep this list short and well-
 # known; users can opt out via include_infrastructure=True.
-_ENTRY_POINT_DECORATOR_LASTSEG = frozenset({
-    # HTTP verbs (Flask/FastAPI/Bottle/etc.)
-    "route", "get", "post", "put", "delete", "patch", "head", "options",
-    "api_route", "websocket",
-    # FastAPI lifespan / startup hooks
-    "on_event", "lifespan",
-    # Flask/FastAPI hooks
-    "before_request", "after_request", "errorhandler", "teardown_appcontext",
-    "before_first_request", "context_processor",
-    # CLI dispatchers
-    "command", "group",
-    # Task brokers
-    "task", "shared_task",
-    # Test frameworks
-    "fixture",
-    # FastMCP / Anthropic agent SDK
-    "tool", "resource", "prompt",
-    # Plugin systems / event dispatch
-    "hookimpl", "event", "event_handler", "handler", "listener",
-    # Cron / schedules
-    "cron", "schedule", "scheduled",
-    # v0.13 P2: Spring Boot annotations (Java) — the DI container / web
-    # layer instantiates and invokes these; zero in-project callers is
-    # expected, not dead code.
-    "getmapping", "postmapping", "putmapping", "deletemapping",
-    "patchmapping", "requestmapping", "restcontroller", "controller",
-    "service", "repository", "configuration", "bean", "autowired",
-    "eventlistener", "postconstruct", "predestroy", "exceptionhandler",
-    "kafkalistener", "rabbitlistener", "jmslistener",
-    "springbootapplication",
-    # v0.13 P2: Angular decorators (TS) — framework-instantiated, methods
-    # reachable from HTML templates the indexer can't parse.
-    "component", "injectable", "directive", "pipe", "ngmodule",
-    "hostlistener",
-})
+_ENTRY_POINT_DECORATOR_LASTSEG = frozenset(
+    {
+        # HTTP verbs (Flask/FastAPI/Bottle/etc.)
+        "route",
+        "get",
+        "post",
+        "put",
+        "delete",
+        "patch",
+        "head",
+        "options",
+        "api_route",
+        "websocket",
+        # FastAPI lifespan / startup hooks
+        "on_event",
+        "lifespan",
+        # Flask/FastAPI hooks
+        "before_request",
+        "after_request",
+        "errorhandler",
+        "teardown_appcontext",
+        "before_first_request",
+        "context_processor",
+        # CLI dispatchers
+        "command",
+        "group",
+        # Task brokers
+        "task",
+        "shared_task",
+        # Test frameworks
+        "fixture",
+        # FastMCP / Anthropic agent SDK
+        "tool",
+        "resource",
+        "prompt",
+        # Plugin systems / event dispatch
+        "hookimpl",
+        "event",
+        "event_handler",
+        "handler",
+        "listener",
+        # Cron / schedules
+        "cron",
+        "schedule",
+        "scheduled",
+        # v0.13 P2: Spring Boot annotations (Java) — the DI container / web
+        # layer instantiates and invokes these; zero in-project callers is
+        # expected, not dead code.
+        "getmapping",
+        "postmapping",
+        "putmapping",
+        "deletemapping",
+        "patchmapping",
+        "requestmapping",
+        "restcontroller",
+        "controller",
+        "service",
+        "repository",
+        "configuration",
+        "bean",
+        "autowired",
+        "eventlistener",
+        "postconstruct",
+        "predestroy",
+        "exceptionhandler",
+        "kafkalistener",
+        "rabbitlistener",
+        "jmslistener",
+        "springbootapplication",
+        # v0.13 P2: Angular decorators (TS) — framework-instantiated, methods
+        # reachable from HTML templates the indexer can't parse.
+        "component",
+        "injectable",
+        "directive",
+        "pipe",
+        "ngmodule",
+        "hostlistener",
+    }
+)
 
 # Spring DI / lifecycle / messaging — protect from dead-code (via
 # `_ENTRY_POINT_DECORATOR_LASTSEG`) but do NOT list as find_endpoints.
 # Agents asking "what HTTP routes?" were drowning in @Bean/@Configuration.
-_SPRING_DI_ONLY_LASTSEGS = frozenset({
-    "service", "repository", "configuration", "bean", "autowired",
-    "eventlistener", "postconstruct", "predestroy",
-    "kafkalistener", "rabbitlistener", "jmslistener",
-    "springbootapplication",
-})
+_SPRING_DI_ONLY_LASTSEGS = frozenset(
+    {
+        "service",
+        "repository",
+        "configuration",
+        "bean",
+        "autowired",
+        "eventlistener",
+        "postconstruct",
+        "predestroy",
+        "kafkalistener",
+        "rabbitlistener",
+        "jmslistener",
+        "springbootapplication",
+    }
+)
 
 # Angular UI — protect from dead-code; list only with framework='angular'.
-_ANGULAR_UI_ONLY_LASTSEGS = frozenset({
-    "component", "injectable", "directive", "pipe", "ngmodule", "hostlistener",
-})
+_ANGULAR_UI_ONLY_LASTSEGS = frozenset(
+    {
+        "component",
+        "injectable",
+        "directive",
+        "pipe",
+        "ngmodule",
+        "hostlistener",
+    }
+)
 
 # CLI / MCP / Celery — protect from dead-code; list via framework=click|fastmcp|celery.
 # NOTE: ``fixture`` stays on the default *compute_endpoints* surface so the
 # Spec Explorer can split fixtures into DATA.fixtures; ``find_endpoints``
 # still drops them via ``filter_api_endpoints`` unless framework='pytest'.
-_NON_HTTP_SURFACE_LASTSEGS = frozenset({
-    "command", "group",
-    "tool", "resource", "prompt",
-    "task", "shared_task",
-})
+_NON_HTTP_SURFACE_LASTSEGS = frozenset(
+    {
+        "command",
+        "group",
+        "tool",
+        "resource",
+        "prompt",
+        "task",
+        "shared_task",
+    }
+)
 
 # Default find_endpoints ≈ HTTP(+FS routing) surface. Opt into Angular / CLI /
 # MCP / Celery with framework=. Java @Component still excluded via path check.
@@ -408,12 +480,27 @@ _ENDPOINT_SURFACE_DECORATOR_LASTSEG = (
 # Per-framework decorator presets for `find_endpoints(framework=...)`.
 _FRAMEWORK_DECORATOR_PATTERNS: dict[str, tuple[str, ...]] = {
     "flask": (
-        "route", "get", "post", "put", "delete", "patch",
-        "before_request", "after_request", "errorhandler",
+        "route",
+        "get",
+        "post",
+        "put",
+        "delete",
+        "patch",
+        "before_request",
+        "after_request",
+        "errorhandler",
     ),
     "fastapi": (
-        "route", "get", "post", "put", "delete", "patch", "head", "options",
-        "api_route", "websocket",
+        "route",
+        "get",
+        "post",
+        "put",
+        "delete",
+        "patch",
+        "head",
+        "options",
+        "api_route",
+        "websocket",
     ),
     "click": ("command", "group"),
     "pytest": ("fixture",),
@@ -422,24 +509,42 @@ _FRAMEWORK_DECORATOR_PATTERNS: dict[str, tuple[str, ...]] = {
     "django": ("login_required", "permission_required", "staff_member_required"),
     # v0.13 P2 / Unreleased: HTTP mappings + controllers only (not @Bean/@Service).
     "spring": (
-        "GetMapping", "PostMapping", "PutMapping", "DeleteMapping",
-        "PatchMapping", "RequestMapping", "RestController", "Controller",
+        "GetMapping",
+        "PostMapping",
+        "PutMapping",
+        "DeleteMapping",
+        "PatchMapping",
+        "RequestMapping",
+        "RestController",
+        "Controller",
         "ExceptionHandler",
     ),
     # v0.13 P2 / Unreleased: Angular UI entry points (not in default HTTP sweep).
     "angular": (
-        "Component", "Injectable", "Directive", "Pipe", "NgModule", "HostListener",
+        "Component",
+        "Injectable",
+        "Directive",
+        "Pipe",
+        "NgModule",
+        "HostListener",
     ),
 }
 
 # v0.13 P2: Angular lifecycle hooks — invoked by the framework, never by
 # in-project code. Protected when the parent class carries any Angular
 # decorator.
-_NG_LIFECYCLE_HOOKS = frozenset({
-    "ngOnInit", "ngOnDestroy", "ngOnChanges", "ngDoCheck",
-    "ngAfterViewInit", "ngAfterViewChecked",
-    "ngAfterContentInit", "ngAfterContentChecked",
-})
+_NG_LIFECYCLE_HOOKS = frozenset(
+    {
+        "ngOnInit",
+        "ngOnDestroy",
+        "ngOnChanges",
+        "ngDoCheck",
+        "ngAfterViewInit",
+        "ngAfterViewChecked",
+        "ngAfterContentInit",
+        "ngAfterContentChecked",
+    }
+)
 
 # Angular decorators whose classes are TEMPLATE-bound: any public method may
 # be referenced from HTML the indexer can't parse (`(click)="save()"`), so
@@ -455,16 +560,18 @@ _NG_ANY_DECORATOR_LASTSEGS = (
 # Spring stereotypes: the DI container instantiates these and may invoke any
 # public method via proxies / other beans. Method-level @GetMapping already
 # protects mapped handlers; class-level stereotypes protect the rest.
-_SPRING_STEREOTYPE_LASTSEGS = frozenset({
-    "restcontroller",
-    "controller",
-    "service",
-    "repository",
-    "component",
-    "configuration",
-    "controlleradvice",
-    "restcontrolleradvice",
-})
+_SPRING_STEREOTYPE_LASTSEGS = frozenset(
+    {
+        "restcontroller",
+        "controller",
+        "service",
+        "repository",
+        "component",
+        "configuration",
+        "controlleradvice",
+        "restcontrolleradvice",
+    }
+)
 
 
 def _decorator_lastseg(name: str) -> str:
@@ -513,30 +620,57 @@ def _is_endpoint_surface_decorator(name: str, file_path: str = "") -> bool:
     return True
 
 
-_DJANGO_CBV_BASES = frozenset({
-    # Generic class-based views
-    "View", "TemplateView", "RedirectView", "ListView", "DetailView",
-    "FormView", "CreateView", "UpdateView", "DeleteView",
-    "BaseDetailView", "BaseListView", "BaseFormView", "BaseCreateView",
-    "BaseUpdateView", "BaseDeleteView", "ProcessFormView",
-    "ArchiveIndexView", "YearArchiveView", "MonthArchiveView",
-    "WeekArchiveView", "DayArchiveView", "DateDetailView",
-    # Auth views (django.contrib.auth.views)
-    "LoginView", "LogoutView",
-    "PasswordChangeView", "PasswordChangeDoneView",
-    "PasswordResetView", "PasswordResetDoneView",
-    "PasswordResetConfirmView", "PasswordResetCompleteView",
-    # Auth mixins
-    "LoginRequiredMixin", "PermissionRequiredMixin",
-    "UserPassesTestMixin", "AccessMixin",
-    # Middleware base
-    "MiddlewareMixin",
-    # Admin views
-    "AutocompleteJsonView",
-    # API view patterns from DRF (common-enough adjacent)
-    "APIView", "ViewSet", "ModelViewSet", "GenericViewSet",
-    "ReadOnlyModelViewSet",
-})
+_DJANGO_CBV_BASES = frozenset(
+    {
+        # Generic class-based views
+        "View",
+        "TemplateView",
+        "RedirectView",
+        "ListView",
+        "DetailView",
+        "FormView",
+        "CreateView",
+        "UpdateView",
+        "DeleteView",
+        "BaseDetailView",
+        "BaseListView",
+        "BaseFormView",
+        "BaseCreateView",
+        "BaseUpdateView",
+        "BaseDeleteView",
+        "ProcessFormView",
+        "ArchiveIndexView",
+        "YearArchiveView",
+        "MonthArchiveView",
+        "WeekArchiveView",
+        "DayArchiveView",
+        "DateDetailView",
+        # Auth views (django.contrib.auth.views)
+        "LoginView",
+        "LogoutView",
+        "PasswordChangeView",
+        "PasswordChangeDoneView",
+        "PasswordResetView",
+        "PasswordResetDoneView",
+        "PasswordResetConfirmView",
+        "PasswordResetCompleteView",
+        # Auth mixins
+        "LoginRequiredMixin",
+        "PermissionRequiredMixin",
+        "UserPassesTestMixin",
+        "AccessMixin",
+        # Middleware base
+        "MiddlewareMixin",
+        # Admin views
+        "AutocompleteJsonView",
+        # API view patterns from DRF (common-enough adjacent)
+        "APIView",
+        "ViewSet",
+        "ModelViewSet",
+        "GenericViewSet",
+        "ReadOnlyModelViewSet",
+    }
+)
 
 
 def _django_cbv_base_from_signature(sig: str | None) -> str | None:
@@ -797,37 +931,44 @@ def _publicly_exported_names(file_path_abs: str, mtime: float) -> frozenset[str]
 # Excluded (too broad): `add`, `set`, `put`, `push`, `bind`, `attach`,
 # `register_converter` (SQLite — registers a TYPE converter, not a callable
 # in the Django sense), `signal` (too generic). Kept tight on purpose.
-_REGISTRATION_VERBS: frozenset[str] = frozenset({
-    "register",
-    "register_lookup",
-    "register_function",
-    "register_view",
-    "register_filter",
-    "register_tag",
-    "register_serializer",
-    "register_admin",
-    "connect",
-    "add_handler",
-    "subscribe",
-    "add_middleware",
-    "add_listener",
-    "on",
-    "use",
-    # FastAPI / Starlette
-    "include_router",
-    "add_api_route",
-    "add_exception_handler",
-    "add_event_handler",
-    "mount",
-    "add_websocket_route",
-})
+_REGISTRATION_VERBS: frozenset[str] = frozenset(
+    {
+        "register",
+        "register_lookup",
+        "register_function",
+        "register_view",
+        "register_filter",
+        "register_tag",
+        "register_serializer",
+        "register_admin",
+        "connect",
+        "add_handler",
+        "subscribe",
+        "add_middleware",
+        "add_listener",
+        "on",
+        "use",
+        # FastAPI / Starlette
+        "include_router",
+        "add_api_route",
+        "add_exception_handler",
+        "add_event_handler",
+        "mount",
+        "add_websocket_route",
+    }
+)
 
 # Constructor callables whose keyword Name args are framework entry points
 # (e.g. ``FastAPI(lifespan=lifespan)``).
 _FRAMEWORK_CTOR_NAMES = frozenset({"FastAPI", "Flask", "APIRouter"})
-_FRAMEWORK_CTOR_KW = frozenset({
-    "lifespan", "on_startup", "on_shutdown", "dependencies",
-})
+_FRAMEWORK_CTOR_KW = frozenset(
+    {
+        "lifespan",
+        "on_startup",
+        "on_shutdown",
+        "dependencies",
+    }
+)
 
 
 def _runtime_registered_names(file_path_abs: str, mtime: float) -> frozenset[str]:
@@ -961,13 +1102,22 @@ def _ts_runtime_registered_names(file_path_abs: str, language: str) -> frozenset
     return ts_registered_callback_names(source, language)
 
 
-_TS_SCOPE_NODE_TYPES = frozenset({
-    "function_declaration", "generator_function_declaration",
-    "function_expression", "arrow_function", "method_definition",
-})
-_TS_NESTED_DEF_TYPES = frozenset({
-    "function_declaration", "generator_function_declaration", "class_declaration",
-})
+_TS_SCOPE_NODE_TYPES = frozenset(
+    {
+        "function_declaration",
+        "generator_function_declaration",
+        "function_expression",
+        "arrow_function",
+        "method_definition",
+    }
+)
+_TS_NESTED_DEF_TYPES = frozenset(
+    {
+        "function_declaration",
+        "generator_function_declaration",
+        "class_declaration",
+    }
+)
 _RUST_SCOPE_NODE_TYPES = frozenset({"function_item", "closure_expression"})
 _RUST_NESTED_DEF_TYPES = frozenset({"function_item"})
 
@@ -1059,12 +1209,14 @@ def _module_level_referenced_names(file_path_abs: str, mtime: float) -> frozense
     return frozenset(refs)
 
 
-_FRAMEWORK_INNER_CLASS_NAMES = frozenset({
-    # Django ORM model + form metaclass hook — reflected via ModelBase.
-    "Meta",
-    # Django migration unit — registered via MigrationLoader.
-    "Migration",
-})
+_FRAMEWORK_INNER_CLASS_NAMES = frozenset(
+    {
+        # Django ORM model + form metaclass hook — reflected via ModelBase.
+        "Meta",
+        # Django migration unit — registered via MigrationLoader.
+        "Migration",
+    }
+)
 
 
 def _is_implicit_entry_point(meta: dict) -> bool:
@@ -1081,9 +1233,7 @@ def _is_implicit_entry_point(meta: dict) -> bool:
         return True
     if name == "register" and kind == "function":
         return True
-    if kind in ("function", "method") and any(
-        name.endswith(suf) for suf in _INFRA_NAME_SUFFIXES
-    ):
+    if kind in ("function", "method") and any(name.endswith(suf) for suf in _INFRA_NAME_SUFFIXES):
         return True
     # v0.9 P4: framework inner-class hooks. Django's ModelBase / FormMeta
     # metaclass reads `class Meta:` reflectively; MigrationLoader does the
@@ -1159,8 +1309,14 @@ _TS_FRAMEWORK_ENTRY_PATTERNS: tuple[tuple[str, frozenset[str] | None], ...] = (
         "/app/",
         frozenset(
             {
-                "page", "layout", "loading", "error",
-                "not-found", "template", "default", "route",
+                "page",
+                "layout",
+                "loading",
+                "error",
+                "not-found",
+                "template",
+                "default",
+                "route",
             }
         ),
     ),
@@ -1169,8 +1325,12 @@ _TS_FRAMEWORK_ENTRY_PATTERNS: tuple[tuple[str, frozenset[str] | None], ...] = (
         "/routes/",
         frozenset(
             {
-                "+page", "+layout", "+server", "+error",
-                "+page.server", "+layout.server",
+                "+page",
+                "+layout",
+                "+server",
+                "+error",
+                "+page.server",
+                "+layout.server",
             }
         ),
     ),
@@ -1220,10 +1380,12 @@ def _ts_framework_entry_point_kind(path: str) -> str | None:
 
     # SvelteKit routes (must check before generic /routes/ below)
     if "/routes/" in normalised:
-        sveltekit_stems = frozenset(
-            {"+page", "+layout", "+server", "+error"}
-        )
-        if stem in sveltekit_stems or basename.startswith("+page.server") or basename.startswith("+layout.server"):
+        sveltekit_stems = frozenset({"+page", "+layout", "+server", "+error"})
+        if (
+            stem in sveltekit_stems
+            or basename.startswith("+page.server")
+            or basename.startswith("+layout.server")
+        ):
             return "sveltekit"
         # SvelteKit .svelte files under routes/ are always entry points
         if ext == ".svelte":
@@ -1248,8 +1410,14 @@ def _ts_framework_entry_point_kind(path: str) -> str | None:
     if "/app/" in normalised and "/app/pages/" not in normalised:
         app_router_stems = frozenset(
             {
-                "page", "layout", "loading", "error",
-                "not-found", "template", "default", "route",
+                "page",
+                "layout",
+                "loading",
+                "error",
+                "not-found",
+                "template",
+                "default",
+                "route",
             }
         )
         parts = basename.split(".")
@@ -1355,6 +1523,7 @@ def _resolve_call_style_handler(
             (project_id, *candidates),
         ).fetchall()
         if rows:
+
             def rank(r) -> tuple[int, int]:
                 # Prefer exact handler name, then module basename (default export),
                 # then any real function, then __module__ fallback.
@@ -1458,8 +1627,7 @@ def compute_endpoints(
             return [
                 d
                 for d in decs
-                if _decorator_matches_any(d, patterns)
-                or _decorator_lastseg(d) in alias_lastsegs
+                if _decorator_matches_any(d, patterns) or _decorator_lastseg(d) in alias_lastsegs
             ]
     else:
         # Default = HTTP-ish surface (Flask/FastAPI/Spring mappings/…).
@@ -1476,17 +1644,15 @@ def compute_endpoints(
     def _py_source(rel_path: str) -> str:
         if rel_path not in py_source_cache:
             try:
-                py_source_cache[rel_path] = (
-                    workspace_path / rel_path
-                ).read_text(encoding="utf-8", errors="replace")
+                py_source_cache[rel_path] = (workspace_path / rel_path).read_text(
+                    encoding="utf-8", errors="replace"
+                )
             except OSError:
                 py_source_cache[rel_path] = ""
         return py_source_cache[rel_path]
 
     def _attach_python_http_route(entry: dict[str, Any], matching_decs: list[str]) -> None:
-        if not any(
-            _decorator_lastseg(d) in HTTP_ROUTE_DECORATOR_LASTSEGS for d in matching_decs
-        ):
+        if not any(_decorator_lastseg(d) in HTTP_ROUTE_DECORATOR_LASTSEGS for d in matching_decs):
             return
         fp = entry["file_path"]
         if not fp.endswith(".py"):
@@ -1574,19 +1740,23 @@ def compute_endpoints(
             if fw_kind is None:
                 continue
             # When a specific TS framework is requested, filter to it
-            if framework is not None and framework != fw_kind and not (
-                framework == "nextjs" and fw_kind in ("nextjs_pages", "nextjs_app")
+            if (
+                framework is not None
+                and framework != fw_kind
+                and not (framework == "nextjs" and fw_kind in ("nextjs_pages", "nextjs_app"))
             ):
                 continue
-            endpoints.append({
-                "qualified_name": r["qualified_name"],
-                "kind": r["kind"],
-                "file_path": fp,
-                "start_line": r["start_line"],
-                "end_line": r["end_line"],
-                "decorators": [],
-                "ts_framework": fw_kind,
-            })
+            endpoints.append(
+                {
+                    "qualified_name": r["qualified_name"],
+                    "kind": r["kind"],
+                    "file_path": fp,
+                    "start_line": r["start_line"],
+                    "end_line": r["end_line"],
+                    "decorators": [],
+                    "ts_framework": fw_kind,
+                }
+            )
             seen_qnames.add(r["qualified_name"])
 
     # v0.9 P5: Django class-based view detection. Classes that
@@ -1609,15 +1779,17 @@ def compute_endpoints(
             cbv_base = _django_cbv_base_from_signature(r["signature"])
             if cbv_base is None:
                 continue
-            endpoints.append({
-                "qualified_name": r["qualified_name"],
-                "kind": r["kind"],
-                "file_path": r["file_path"],
-                "start_line": r["start_line"],
-                "end_line": r["end_line"],
-                "decorators": [],
-                "django_cbv_base": cbv_base,
-            })
+            endpoints.append(
+                {
+                    "qualified_name": r["qualified_name"],
+                    "kind": r["kind"],
+                    "file_path": r["file_path"],
+                    "start_line": r["start_line"],
+                    "end_line": r["end_line"],
+                    "decorators": [],
+                    "django_cbv_base": cbv_base,
+                }
+            )
             seen_qnames.add(r["qualified_name"])
 
     # v0.13 P3 / Unreleased: call-style HTTP routes (Hono + Express).
@@ -1644,9 +1816,7 @@ def compute_endpoints(
             (pid,),
         ).fetchall():
             try:
-                src = (workspace_path / fr["path"]).read_text(
-                    encoding="utf-8", errors="replace"
-                )
+                src = (workspace_path / fr["path"]).read_text(encoding="utf-8", errors="replace")
             except OSError:
                 continue
             if marker not in src.lower():
@@ -1678,9 +1848,7 @@ def compute_endpoints(
                     # back to the scope that owns its call edges instead of a
                     # `file.js:12` pseudo-id, which every symbol-taking tool
                     # rejects with "Symbol not found" (beta sweep, 6/23 repos).
-                    enclosing = _enclosing_symbol_for_line(
-                        st.conn, int(fr["id"]), rt["line"]
-                    )
+                    enclosing = _enclosing_symbol_for_line(st.conn, int(fr["id"]), rt["line"])
                     if enclosing is not None:
                         qname = enclosing["qualified_name"]
                         kind = enclosing["kind"]
@@ -1689,20 +1857,22 @@ def compute_endpoints(
                 route_key = (rt["method"], rt["path"], entry_qname)
                 if route_key in seen_qnames:
                     continue
-                endpoints.append({
-                    "qualified_name": entry_qname,
-                    "kind": kind,
-                    "file_path": fr["path"],
-                    "start_line": start_line,
-                    "end_line": end_line,
-                    "decorators": [],
-                    method_key: rt["method"],
-                    path_key: rt["path"],
-                    "http_method": rt["method"],
-                    "http_path": rt["path"],
-                    "http_framework": call_fw,
-                    "handler_resolution": resolution,
-                })
+                endpoints.append(
+                    {
+                        "qualified_name": entry_qname,
+                        "kind": kind,
+                        "file_path": fr["path"],
+                        "start_line": start_line,
+                        "end_line": end_line,
+                        "decorators": [],
+                        method_key: rt["method"],
+                        path_key: rt["path"],
+                        "http_method": rt["method"],
+                        "http_path": rt["path"],
+                        "http_framework": call_fw,
+                        "handler_resolution": resolution,
+                    }
+                )
                 seen_qnames.add(route_key)
 
     # Unreleased: Go call-style routes (gin / echo / chi / net/http).
@@ -1721,9 +1891,7 @@ def compute_endpoints(
             (pid,),
         ).fetchall():
             try:
-                src = (workspace_path / fr["path"]).read_text(
-                    encoding="utf-8", errors="replace"
-                )
+                src = (workspace_path / fr["path"]).read_text(encoding="utf-8", errors="replace")
             except OSError:
                 continue
             src_l = src.lower()
@@ -1731,8 +1899,11 @@ def compute_endpoints(
             if not any(
                 m in src_l
                 for m in (
-                    "gin-gonic", "labstack/echo", "go-chi/chi",
-                    "handlefunc", "net/http",
+                    "gin-gonic",
+                    "labstack/echo",
+                    "go-chi/chi",
+                    "handlefunc",
+                    "net/http",
                 )
             ):
                 continue
@@ -1767,9 +1938,7 @@ def compute_endpoints(
                         end_line = sym["end_line"]
                         resolution = "handler"
                 if qname is None:
-                    enclosing = _enclosing_symbol_for_line(
-                        st.conn, int(fr["id"]), rt["line"]
-                    )
+                    enclosing = _enclosing_symbol_for_line(st.conn, int(fr["id"]), rt["line"])
                     if enclosing is not None:
                         qname = enclosing["qualified_name"]
                         kind = enclosing["kind"]
@@ -1778,18 +1947,20 @@ def compute_endpoints(
                 route_key = (rt["method"], rt["path"], entry_qname)
                 if route_key in seen_qnames:
                     continue
-                endpoints.append({
-                    "qualified_name": entry_qname,
-                    "kind": kind,
-                    "file_path": fr["path"],
-                    "start_line": start_line,
-                    "end_line": end_line,
-                    "decorators": [],
-                    "http_method": rt["method"],
-                    "http_path": rt["path"],
-                    "http_framework": fw,
-                    "handler_resolution": resolution,
-                })
+                endpoints.append(
+                    {
+                        "qualified_name": entry_qname,
+                        "kind": kind,
+                        "file_path": fr["path"],
+                        "start_line": start_line,
+                        "end_line": end_line,
+                        "decorators": [],
+                        "http_method": rt["method"],
+                        "http_path": rt["path"],
+                        "http_framework": fw,
+                        "handler_resolution": resolution,
+                    }
+                )
                 seen_qnames.add(route_key)
 
     endpoints.sort(key=lambda e: (e["file_path"], e["start_line"]))
@@ -1949,9 +2120,7 @@ def compute_spec_test_coverage(
 
     # Step 2: multi-source forward BFS, bounded depth, computed ONCE.
     tested_symbols: set[int] = set()
-    frontier: deque[tuple[int, int]] = deque(
-        (sid, 0) for sid in test_sids if sid in g
-    )
+    frontier: deque[tuple[int, int]] = deque((sid, 0) for sid in test_sids if sid in g)
     # Seed: a test symbol is itself "covered" trivially, but we only care
     # about what tests REACH — production impl symbols downstream. We still
     # add the seeds so an impl symbol that is *itself* a test symbol (rare)
@@ -2090,15 +2259,23 @@ def compute_coverage(st: AppState, *, record: bool = True) -> dict[str, Any]:
     # v0.8 P2 fix #8: filter package-marker basenames out of the
     # "modules without Spec" candidate set. They are import infrastructure,
     # never the right home for a `@spec:` annotation.
-    _PACKAGE_MARKER_BASENAMES = frozenset({
-        "__init__.py",
-        "package-info.java",
-        "mod.rs",
-        "lib.rs",
-    })
-    _INDEX_BASENAMES = frozenset({
-        "index.ts", "index.js", "index.tsx", "index.jsx", "index.mjs",
-    })
+    _PACKAGE_MARKER_BASENAMES = frozenset(
+        {
+            "__init__.py",
+            "package-info.java",
+            "mod.rs",
+            "lib.rs",
+        }
+    )
+    _INDEX_BASENAMES = frozenset(
+        {
+            "index.ts",
+            "index.js",
+            "index.tsx",
+            "index.jsx",
+            "index.mjs",
+        }
+    )
 
     ws_root = st.settings.workspace
 
@@ -2141,15 +2318,11 @@ def compute_coverage(st: AppState, *, record: bool = True) -> dict[str, Any]:
     ]
     # Split off files whose language has no annotation extractor —
     # these are not "truly orphan", just outside what we can scan.
-    modules_unsupported_language = [
-        p for p in all_no_spec_raw if not _annotation_supported(p)
-    ]
+    modules_unsupported_language = [p for p in all_no_spec_raw if not _annotation_supported(p)]
     # Test/fixture/script/bench noise is not a Spec-map gap — count it
     # separately so Coverage gaps stays actionable for product code.
     modules_non_product = [
-        p
-        for p in all_no_spec_raw
-        if _annotation_supported(p) and _is_non_product_orphan_path(p)
+        p for p in all_no_spec_raw if _annotation_supported(p) and _is_non_product_orphan_path(p)
     ]
     modules_no_spec = [
         p
@@ -2273,9 +2446,7 @@ def compute_coverage(st: AppState, *, record: bool = True) -> dict[str, Any]:
         spec_coverage_map.values(),
         key=lambda d: (-d["test_coverage_ratio"], d["spec_id"]),
     )
-    specs_with_derived_test_coverage = sum(
-        1 for d in spec_coverage if d["test_coverage_ratio"] > 0
-    )
+    specs_with_derived_test_coverage = sum(1 for d in spec_coverage if d["test_coverage_ratio"] > 0)
     avg_test_coverage = (
         round(
             sum(d["test_coverage_ratio"] for d in spec_coverage) / len(spec_coverage),
@@ -2373,8 +2544,14 @@ def _git_diff_changed_files(
             #   parsed as a git option (e.g. --output=... → arbitrary file
             #   write). This guards the caller-supplied range token.
             [
-                "git", "-C", ws_root, "diff", "--name-status", "-M",
-                "--end-of-options", f"{base_ref}..{head_ref}",
+                "git",
+                "-C",
+                ws_root,
+                "diff",
+                "--name-status",
+                "-M",
+                "--end-of-options",
+                f"{base_ref}..{head_ref}",
             ],
             capture_output=True,
             text=True,
@@ -2475,9 +2652,7 @@ def compute_diff_spec_impact(
         "specs_touched": [],
     }
 
-    changed_paths, err = _git_diff_changed_files(
-        str(st.settings.workspace), base, head
-    )
+    changed_paths, err = _git_diff_changed_files(str(st.settings.workspace), base, head)
     if err is not None or not changed_paths:
         return empty
 
@@ -2568,9 +2743,7 @@ def compute_diff_spec_impact(
             "title": spec_titles[spec_id],
             "files": sorted(files_by_spec.get(spec_id, set())),
             "test_coverage_ratio": (
-                coverage_map[spec_id]["test_coverage_ratio"]
-                if spec_id in coverage_map
-                else 0.0
+                coverage_map[spec_id]["test_coverage_ratio"] if spec_id in coverage_map else 0.0
             ),
         }
         for spec_id in sorted(spec_titles)
@@ -2794,7 +2967,10 @@ def did_you_mean_symbols(
     for r in rows:
         if len(out) >= limit:
             break
-        if short_lower in (r["name"] or "").lower() or short_lower in (r["qualified_name"] or "").lower():
+        if (
+            short_lower in (r["name"] or "").lower()
+            or short_lower in (r["qualified_name"] or "").lower()
+        ):
             qn = r["qualified_name"]
             if qn in seen:
                 continue
@@ -2895,6 +3071,75 @@ def _route_edge_peers(conn, symbol_id: int, *, incoming: bool) -> list[dict]:
     ]
 
 
+def _cross_project_edge_peers(conn, symbol_id: int, home_pid: int, *, incoming: bool) -> list[dict]:
+    """Symbol_edge peers of this symbol that live in ANOTHER project.
+
+    Same trick as `_route_edge_peers` and for the same reason: the NetworkX
+    view is built per project (`WHERE f.project_id = ?`), so an edge whose two
+    ends sit in different repos of a group DB is in no view at all. A direct
+    query spans the database, where symbol ids are global.
+
+    This became reachable when ingestion started mapping nodes across the whole
+    group (v0.33): a merged Graphify graph can link a type in one repo to its
+    use in another, which is precisely the non-HTTP cross-repo dependency
+    livespec had no way to represent. `invokes_route` is excluded because it
+    already has its own, better-labelled lane.
+    """
+    if incoming:
+        join_col, filter_col = "e.src_symbol_id", "e.dst_symbol_id"
+    else:
+        join_col, filter_col = "e.dst_symbol_id", "e.src_symbol_id"
+    rows = conn.execute(
+        f"""SELECT s.qualified_name, f.path, f.project_id, p.root,
+                   e.edge_type, e.weight, e.origin
+            FROM symbol_edge e
+            JOIN symbol s ON s.id = {join_col}
+            JOIN file f ON f.id = s.file_id
+            JOIN project p ON p.id = f.project_id
+            WHERE {filter_col} = ? AND f.project_id != ?
+              AND e.edge_type != 'invokes_route'
+            ORDER BY e.weight DESC, s.qualified_name""",
+        (symbol_id, home_pid),
+    ).fetchall()
+    return [
+        {
+            "qualified_name": r["qualified_name"],
+            "file": r["path"],
+            "project_root": r["root"],
+            "edge_type": r["edge_type"],
+            "confidence": round(float(r["weight"]), 3),
+            **({"via_external_edge": r["origin"]} if r["origin"] != "livespec" else {}),
+        }
+        for r in rows
+    ]
+
+
+def _attach_cross_repo_peers(
+    payload: dict[str, Any],
+    st: AppState,
+    symbol_id: int,
+    *,
+    incoming: bool,
+    key: str,
+) -> None:
+    """Add the cross-repo lane when a group DB actually has one.
+
+    Silent for every ungrouped workspace, which is the default install: there
+    is exactly one project, so the query can never match.
+    """
+    if not st.settings.grouped:
+        return
+    peers = _cross_project_edge_peers(st.conn, symbol_id, st.project_id, incoming=incoming)
+    if not peers:
+        return
+    payload[key] = peers
+    payload[f"{key}_hint"] = (
+        "These live in another repo of this group DB. They are not in the "
+        "per-project call graph, so they are listed separately rather than "
+        "counted above."
+    )
+
+
 def _call_style_handler_qnames(st: AppState, project_id: int) -> set[str]:
     """Qualified names of Hono/Express handlers resolved like ``find_endpoints``.
 
@@ -2913,9 +3158,7 @@ def _call_style_handler_qnames(st: AppState, project_id: int) -> set[str]:
             (project_id,),
         ).fetchall():
             try:
-                src = (workspace_path / fr["path"]).read_text(
-                    encoding="utf-8", errors="replace"
-                )
+                src = (workspace_path / fr["path"]).read_text(encoding="utf-8", errors="replace")
             except OSError:
                 continue
             if marker not in src.lower():
@@ -3000,101 +3243,44 @@ def _package_marker_is_emptyish(ws: Path, rel_path: str) -> bool:
     return not body.strip()
 
 
-#: Where Graphify writes by default. Used only to *tell* the caller a graph is
-#: sitting there — never to silently consume it. An index that quietly changed
-#: its answers because a file appeared on disk would be worse than one that
-#: needs asking.
-_DEFAULT_EXTERNAL_GRAPH = "graphify-out/graph.json"
-
-
 def _resolve_corroboration_source(
     st: AppState, explicit: str | None
 ) -> tuple[str | None, str | None]:
-    """Pick the external graph to use, and a hint when one is merely available.
+    """Thin wrapper over the domain resolver, kept for its many call sites."""
+    from livespec_mcp.domain.external_source import resolve_external_graph_source
 
-    Returns ``(path_or_None, hint_or_None)``. Precedence: the explicit argument,
-    then ``[graph] external`` in ``.livespec.toml``. A graph sitting at
-    Graphify's default output path is reported as a hint only — corroboration
-    changes what the tool reports, so it stays opt-in.
-    """
-    if explicit:
-        return explicit, None
-
-    from livespec_mcp.config import load_repo_config
-
-    configured = load_repo_config(st.settings.workspace).external_graph
-    if configured:
-        return configured, None
-
-    default_path = st.settings.workspace / _DEFAULT_EXTERNAL_GRAPH
-    if default_path.is_file():
-        return None, (
-            f"An external code graph is available at {_DEFAULT_EXTERNAL_GRAPH}. "
-            "Pass corroborate_with to drop candidates a second extractor still "
-            'sees referenced, or set `[graph] external = '
-            f'"{_DEFAULT_EXTERNAL_GRAPH}"` in .livespec.toml to use it by '
-            "default."
-        )
-    return None, None
+    return resolve_external_graph_source(st.settings.workspace, explicit)
 
 
 def _load_corroborating_graph(
     st: AppState, graph_path: str, *, keep_link_meta: bool = False
-) -> tuple[Any, dict[str, Any] | None]:
-    """Shared load + sanity gate for both corroboration paths.
+) -> tuple[Any, float, dict[str, Any] | None]:
+    """Load + sanity gate, with the failure shaped as an `mcp_error`.
 
-    Returns ``(graph, None)`` or ``(None, mcp_error)``. The overlap guard is the
-    important half: a graph whose paths don't line up matches nothing, and
-    "nothing matched" would otherwise be reported as "nothing to drop", which
-    reads as a clean bill of health for candidates nobody actually checked.
+    The logic lives in `domain/external_source.py`; this converts its
+    `GraphProblem` into the error shape the tool contract requires. That split
+    is why `tools/indexing.py` no longer imports out of this module.
     """
-    from livespec_mcp.domain.external_graph import (
-        load_external_graph,
-        overlap_ratio,
-    )
-
-    resolved = Path(graph_path)
-    if not resolved.is_absolute():
-        resolved = st.settings.workspace / resolved
-
-    try:
-        graph = load_external_graph(resolved, keep_link_meta=keep_link_meta)
-    except FileNotFoundError:
-        return None, mcp_error(
-            f"External graph not found: {resolved}",
-            hint=(
-                "Generate one with `/graphify <repo>` (writes "
-                "graphify-out/graph.json), or pass an absolute path."
-            ),
-        )
-    except (ValueError, OSError, UnicodeDecodeError) as exc:
-        return None, mcp_error(
-            f"Could not read external graph {resolved}: {exc}",
-            hint="Expected Graphify's NetworkX node-link graph.json.",
-        )
+    from livespec_mcp.domain.external_source import load_gated_external_graph
 
     indexed_files = {
         r["path"]
-        for r in st.conn.execute(
-            "SELECT path FROM file WHERE project_id=?", (st.project_id,)
-        )
+        for r in st.conn.execute("SELECT path FROM file WHERE project_id=?", (st.project_id,))
     }
-    overlap = overlap_ratio(graph, indexed_files)
-    if overlap < 0.1:
-        return None, mcp_error(
-            f"External graph {resolved} shares almost no files with this index "
-            f"({overlap:.0%} of its files are indexed here).",
-            hint=(
-                "It probably describes a different repo, or was built from a "
-                "different root so its paths do not line up. Corroborating "
-                "against it would vouch for nothing."
-            ),
-        )
-    graph.file_overlap = overlap
-    return graph, None
+    graph, overlap, problem = load_gated_external_graph(
+        st.settings.workspace,
+        graph_path,
+        indexed_files,
+        keep_link_meta=keep_link_meta,
+    )
+    if problem is not None:
+        return None, 0.0, mcp_error(problem.message, hint=problem.hint)
+    return graph, overlap, None
 
 
-def _attach_external_edges(payload: dict[str, Any], st: AppState, project_id: int) -> dict[str, Any]:
+def _attach_external_edges(
+    payload: dict[str, Any], st: AppState, project_id: int
+) -> dict[str, Any]:
     """Say, in the payload, that ingested edges are part of this answer.
 
     `ingest_external_graph` puts another extractor's edges into `symbol_edge`,
@@ -3105,12 +3291,24 @@ def _attach_external_edges(payload: dict[str, Any], st: AppState, project_id: in
     every index nobody has ingested into, and attached to the tools whose
     numbers the ingest actually moved.
     """
+    from livespec_mcp.domain.external_ingest import ingest_freshness
     from livespec_mcp.domain.graph import external_edge_summary
 
-    summary = external_edge_summary(st.conn, project_id)
-    if not summary:
+    summary = external_edge_summary(st.conn, project_id) or {}
+    # Provenance (migration 23) turns "these edges are borrowed" into "these
+    # edges are borrowed AND the thing they were borrowed from has moved",
+    # which is the version that tells the reader to do something.
+    #
+    # Read even when the live count is zero, and that case is the reason this
+    # is not an early return: a re-extract that cascaded away EVERY ingested
+    # edge leaves nothing to count, so keying the block on the live count made
+    # the disclosure vanish in precisely the worst state — an agent who ran an
+    # ingest, believes the graph still carries it, and is now reading a payload
+    # that mentions nothing.
+    stale = ingest_freshness(st.conn, project_id, summary)
+    if not summary and not stale:
         return payload
-    payload["external_edges"] = {
+    block: dict[str, Any] = {
         "by_origin": summary,
         "hint": (
             "Part of this answer rests on edges ingested from another "
@@ -3118,7 +3316,96 @@ def _attach_external_edges(payload: dict[str, Any], st: AppState, project_id: in
             "or ingest_external_graph(remove=True) for a livespec-only graph."
         ),
     }
+    if stale:
+        block["stale"] = stale
+    payload["external_edges"] = block
     return payload
+
+
+def _attach_unknown_relations(report: dict[str, Any], graph: Any) -> None:
+    """Merge the domain's drift report into a tool payload."""
+    from livespec_mcp.domain.external_source import unknown_relations_report
+
+    report.update(unknown_relations_report(graph))
+
+
+def _resolve_edge_types(edge_types: list[str] | None) -> frozenset[str]:
+    """Caller-supplied edge kinds, or the invocation set when unspecified."""
+    from livespec_mcp.domain.graph import INVOCATION_EDGE_TYPES
+
+    if edge_types is None:
+        return INVOCATION_EDGE_TYPES
+    return frozenset(edge_types)
+
+
+def _label_direct_edges(
+    page: list[dict[str, Any]], view: Any, sid: int, *, incoming: bool
+) -> list[dict[str, Any]]:
+    """Put the edge that made each depth-1 neighbour a neighbour on its row.
+
+    Only depth 1: past one hop "which edge made this a caller" has no single
+    answer, and a label that is sometimes about a different edge is worse than
+    none. Rows are copied, never mutated in place — these dicts belong to the
+    cached GraphView and are shared by every caller of `load_graph`.
+    """
+    if sid not in view.g:
+        return page
+    direct = view.g.predecessors(sid) if incoming else view.g.successors(sid)
+    edges = {n: (view.g[n][sid] if incoming else view.g[sid][n]) for n in direct}
+    out: list[dict[str, Any]] = []
+    for meta in page:
+        data = edges.get(meta.get("id"))
+        if data is None:
+            out.append(meta)
+            continue
+        row = {**meta, "edge_type": data.get("edge_type", "calls")}
+        origin = data.get("origin", "livespec")
+        if origin != "livespec":
+            row["via_external_edge"] = origin
+        out.append(row)
+    return out
+
+
+def _note_excluded_edge_types(
+    payload: dict[str, Any],
+    view: Any,
+    sid: int,
+    *,
+    incoming: bool,
+    edge_types: frozenset[str],
+    min_weight: float,
+) -> None:
+    """Say how many direct neighbours the edge-type filter left out, and why.
+
+    Without this the filter trades one silence for another: before, 38
+    type-position references were reported as callers; after, they would simply
+    be gone. Both are wrong. The count plus the argument that reveals them is
+    the honest answer — these symbols do depend on the root, they just do not
+    call it.
+    """
+    if sid not in view.g:
+        return
+    direct = view.g.predecessors(sid) if incoming else view.g.successors(sid)
+    excluded: dict[str, int] = {}
+    for n in direct:
+        data = view.g[n][sid] if incoming else view.g[sid][n]
+        if min_weight > 0.0 and float(data.get("weight", 1.0)) < min_weight:
+            continue
+        et = data.get("edge_type", "calls")
+        if et not in edge_types:
+            excluded[et] = excluded.get(et, 0) + 1
+    if not excluded:
+        return
+    total = sum(excluded.values())
+    payload["excluded_by_edge_type"] = dict(sorted(excluded.items()))
+    payload["excluded_by_edge_type_hint"] = (
+        f"{total} more symbol(s) depend on this one through edges that are not "
+        "calls (type position, inheritance, imports) and were left out of the "
+        "count. Pass edge_types=["
+        + ", ".join(f'"{et}"' for et in sorted(set(edge_types) | set(excluded)))
+        + "] to include them, or use analyze_impact, which counts every "
+        "dependency because a type annotation does break when the type changes."
+    )
 
 
 def _corroborate_orphan_tests(
@@ -3135,7 +3422,7 @@ def _corroborate_orphan_tests(
     ``find_orphan_tests`` makes and exactly what an in-process harness or a
     string-dispatched call breaks.
     """
-    graph, err = _load_corroborating_graph(st, graph_path)
+    graph, overlap, err = _load_corroborating_graph(st, graph_path)
     if err is not None:
         return candidates, err
 
@@ -3169,16 +3456,14 @@ def _corroborate_orphan_tests(
             {
                 "qualified_name": meta["qualified_name"],
                 "file_path": meta["file_path"],
-                "reaches": sorted(
-                    {f"{rel} -> {tgt.source_file}" for rel, tgt in reached}
-                )[:5],
+                "reaches": sorted({f"{rel} -> {tgt.source_file}" for rel, tgt in reached})[:5],
             }
         )
 
     report: dict[str, Any] = {
         "source": graph.path,
         "external_nodes": graph.node_count,
-        "file_overlap": round(graph.file_overlap, 3),
+        "file_overlap": round(overlap, 3),
         "candidates_before": len(candidates),
         "candidates_matched": matched,
         "dropped_as_reaching_production": len(dropped),
@@ -3190,6 +3475,7 @@ def _corroborate_orphan_tests(
             "is individually checkable."
         ),
     }
+    _attach_unknown_relations(report, graph)
     if graph.has_non_ast_origin:
         report["warning"] = (
             "Some external edges are not marked `_origin: ast` — this graph "
@@ -3211,7 +3497,7 @@ def _corroborate_dead_code(
     mismatched external file must never be reported as "nothing to corroborate",
     which would read as a clean bill of health.
     """
-    graph, err = _load_corroborating_graph(st, graph_path)
+    graph, overlap, err = _load_corroborating_graph(st, graph_path)
     if err is not None:
         return candidates, err
 
@@ -3221,9 +3507,7 @@ def _corroborate_dead_code(
     by_relation: dict[str, int] = {}
 
     for meta in candidates:
-        node = graph.lookup(
-            meta["file_path"], int(meta["start_line"]), meta.get("name") or ""
-        )
+        node = graph.lookup(meta["file_path"], int(meta["start_line"]), meta.get("name") or "")
         if node is None:
             survivors.append(meta)
             continue
@@ -3247,7 +3531,7 @@ def _corroborate_dead_code(
         "source": graph.path,
         "external_nodes": graph.node_count,
         "external_edges": graph.edge_count,
-        "file_overlap": round(graph.file_overlap, 3),
+        "file_overlap": round(overlap, 3),
         "candidates_before": len(candidates),
         "candidates_matched": matched,
         "dropped_as_referenced": len(dropped),
@@ -3261,6 +3545,7 @@ def _corroborate_dead_code(
             "deleting."
         ),
     }
+    _attach_unknown_relations(report, graph)
     if graph.has_non_ast_origin:
         # Graphify's code pass is pure tree-sitter; its semantic pass over
         # docs/media can involve an LLM. Say so rather than let a
@@ -3343,13 +3628,14 @@ def _attach_dead_code_not_swept(
         payload["hint"] = f"{existing} | {joined}" if existing and hints else (existing or joined)
 
 
-def _attach_endpoints_not_swept(payload: dict[str, Any], *, st: AppState, framework: str | None, total: int) -> None:
+def _attach_endpoints_not_swept(
+    payload: dict[str, Any], *, st: AppState, framework: str | None, total: int
+) -> None:
     """No-op: Express/Hono are included in the ``framework=None`` sweep.
 
     Kept so existing call sites stay valid after the opt-in→default change.
     """
     del payload, st, framework, total
-
 
 
 def _workspace_note(fn):
@@ -3368,6 +3654,7 @@ def _workspace_note(fn):
     """
     fn.__doc__ = (fn.__doc__ or "") + WORKSPACE_DOCSTRING_NOTE
     return fn
+
 
 def register(mcp: FastMCP) -> None:
     @mcp.tool(annotations={"readOnlyHint": True, "idempotentHint": True})
@@ -3430,11 +3717,7 @@ def register(mcp: FastMCP) -> None:
             sql.append("AND s.kind = ?")
             args.append(kind)
         body = " ".join(sql)
-        total = int(
-            st.conn.execute(
-                f"SELECT COUNT(*) AS n FROM ({body})", args
-            ).fetchone()["n"]
-        )
+        total = int(st.conn.execute(f"SELECT COUNT(*) AS n FROM ({body})", args).fetchone()["n"])
         offset = max(0, int(cursor))
         rows = st.conn.execute(
             f"{body} ORDER BY length(s.qualified_name) LIMIT ? OFFSET ?",
@@ -3553,19 +3836,20 @@ def register(mcp: FastMCP) -> None:
         # symbol carries one, else the workspace. Derived directly rather than
         # by walking back up from the file path, which breaks the moment a
         # path has a different depth than the walk assumes.
-        root = (
-            Path(sym["project_root"]) if sym.get("project_root")
-            else st.settings.workspace
-        )
+        root = Path(sym["project_root"]) if sym.get("project_root") else st.settings.workspace
 
         closure = build_closure(
-            st.conn, tuple(pids), sym, root,
-            depth=depth, token_budget=token_budget,
+            st.conn,
+            tuple(pids),
+            sym,
+            root,
+            depth=depth,
+            token_budget=token_budget,
         )
         out = closure.as_dict()
         if st.settings.grouped and sym.get("project_root"):
             out["project_root"] = sym["project_root"]
-        return out
+        return _attach_external_edges(out, st, st.project_id)
 
     @mcp.tool(annotations={"idempotentHint": False})
     @_workspace_note
@@ -3594,9 +3878,7 @@ def register(mcp: FastMCP) -> None:
 
         st = get_state(workspace)
         dropped = _debt.clear(st.conn) if reset else 0
-        corpus = _load_corpus(
-            st.conn, tuple(st.group_project_ids()), st.settings.workspace
-        )
+        corpus = _load_corpus(st.conn, tuple(st.group_project_ids()), st.settings.workspace)
         stats = _debt.capture(st.conn, corpus)
         return {
             **stats,
@@ -3629,8 +3911,8 @@ def register(mcp: FastMCP) -> None:
             "hint": (
                 "nothing frozen — search_similar reports every match, including "
                 "pre-existing debt. Run debt_baseline_capture once."
-                if not row[0] else
-                "search_similar reports only duplication newer than this snapshot"
+                if not row[0]
+                else "search_similar reports only duplication newer than this snapshot"
             ),
         }
 
@@ -3679,16 +3961,16 @@ def register(mcp: FastMCP) -> None:
 
         st = get_state(workspace)
         candidate = _fp(code, language="python")
-        corpus = _load_corpus(
-            st.conn, tuple(st.group_project_ids()), st.settings.workspace
-        )
+        corpus = _load_corpus(st.conn, tuple(st.group_project_ids()), st.settings.workspace)
 
         matches = _find(candidate, corpus, threshold=threshold, limit=limit)
 
         from livespec_mcp.domain import debt_baseline as _debt
 
         verdict = _debt.judge(
-            st.conn, candidate.structural_hash, matches,
+            st.conn,
+            candidate.structural_hash,
+            matches,
             touched_files=frozenset(touched_files or []),
             boy_scout=boy_scout,
         )
@@ -3714,7 +3996,8 @@ def register(mcp: FastMCP) -> None:
             "searched": len(corpus),
             "verdict": (
                 "already exists — import it instead of rewriting"
-                if matches else "nothing structurally similar in the index"
+                if matches
+                else "nothing structurally similar in the index"
             ),
         }
 
@@ -3779,8 +4062,7 @@ def register(mcp: FastMCP) -> None:
                 "end_line": innermost["end_line"],
             },
             "enclosing": [
-                {"qualified_name": r["qualified_name"], "kind": r["kind"]}
-                for r in rows[1:]
+                {"qualified_name": r["qualified_name"], "kind": r["kind"]} for r in rows[1:]
             ],
             "next": f'read_unit(qname="{innermost["qualified_name"]}")',
         }
@@ -3793,6 +4075,7 @@ def register(mcp: FastMCP) -> None:
         cursor: Cursor = 0,
         summary_only: SummaryOnly = False,
         min_weight: MinWeight = 0.6,
+        edge_types: EdgeTypes = None,
         workspace: Workspace | None = None,
     ) -> dict[str, Any]:
         """Symbols that call `qname` (transitive backward cone up to max_depth).
@@ -3813,6 +4096,18 @@ def register(mcp: FastMCP) -> None:
         fan-out edges that the static analyzer couldn't disambiguate
         (weight 0.5 — multiple short-name candidates, no scope match).
         Pass ``min_weight=0.0`` to see the unfiltered cone (legacy).
+
+        Unreleased: ``edge_types`` decides what counts as a call. The default
+        is invocation only (``calls`` / ``invokes_route``), which is every edge
+        livespec itself derives — so this changes nothing on an index nobody
+        has run `ingest_external_graph` on. On one that has, it keeps ingested
+        ``references`` / ``inherits`` rows out of a list labelled "callers":
+        a type-position use is a real dependency but it is not a call. Those
+        are reported separately under ``excluded_by_edge_type``, and
+        `analyze_impact` still counts every one of them.
+
+        Depth-1 callers carry ``edge_type``, plus ``via_external_edge`` when
+        the edge came from an ingested graph rather than livespec's resolver.
         """
         st = get_state(workspace)
         pids = st.group_project_ids()
@@ -3822,8 +4117,9 @@ def register(mcp: FastMCP) -> None:
         graph_pid = _graph_project_id(sym, st.project_id)
         view = load_graph(st.conn, graph_pid)
         sid = int(sym["id"])
+        wanted_types = _resolve_edge_types(edge_types)
         callers = (
-            ancestors_within(view.g, sid, max_depth, min_weight=min_weight)
+            ancestors_within(view.g, sid, max_depth, min_weight=min_weight, edge_types=wanted_types)
             if sid in view.g
             else set()
         )
@@ -3832,6 +4128,7 @@ def register(mcp: FastMCP) -> None:
             return {
                 "root": sym["qualified_name"],
                 "max_depth": max_depth,
+                "edge_types": sorted(wanted_types),
                 "count": total,
             }
         meta_sorted = sorted(
@@ -3840,30 +4137,23 @@ def register(mcp: FastMCP) -> None:
         )
         page = meta_sorted[cursor : cursor + limit]
         next_cursor = cursor + limit if cursor + limit < len(meta_sorted) else None
-        # Depth-1 callers whose edge into the root was ingested rather than
-        # extracted. Only depth 1 is labelled: past one hop "which edge made
-        # this a caller" has no single answer, and a label that is sometimes
-        # about a different edge is worse than none. Copied, never mutated in
-        # place — these dicts belong to the cached GraphView.
-        external_direct = {
-            n
-            for n in (view.g.predecessors(sid) if sid in view.g else ())
-            if view.g[n][sid].get("origin", "livespec") != "livespec"
-        }
-        if external_direct:
-            page = [
-                {**m, "via_external_edge": view.g[m["id"]][sid]["origin"]}
-                if m.get("id") in external_direct
-                else m
-                for m in page
-            ]
+        page = _label_direct_edges(page, view, sid, incoming=True)
         payload = {
             "root": sym["qualified_name"],
             "max_depth": max_depth,
+            "edge_types": sorted(wanted_types),
             "callers": page,
             "count": total,
             "next_cursor": next_cursor,
         }
+        _note_excluded_edge_types(
+            payload,
+            view,
+            sid,
+            incoming=True,
+            edge_types=wanted_types,
+            min_weight=min_weight,
+        )
         _attach_external_edges(payload, st, graph_pid)
         # v0.21 P2: cross-repo route callers — frontend call sites that hit this
         # symbol as an HTTP endpoint (invokes_route edges). Direct symbol_edge
@@ -3871,6 +4161,7 @@ def register(mcp: FastMCP) -> None:
         route_callers = _route_edge_peers(st.conn, sid, incoming=True)
         if route_callers:
             payload["route_callers"] = route_callers
+        _attach_cross_repo_peers(payload, st, sid, incoming=True, key="cross_repo_callers")
         return _attach_payload_warning(
             payload,
             _payload_warning(total, limit=limit, summary_only=summary_only),
@@ -3884,6 +4175,7 @@ def register(mcp: FastMCP) -> None:
         cursor: Cursor = 0,
         summary_only: SummaryOnly = False,
         min_weight: MinWeight = 0.6,
+        edge_types: EdgeTypes = None,
         workspace: Workspace | None = None,
     ) -> dict[str, Any]:
         """Symbols that `qname` calls (transitive forward cone up to max_depth).
@@ -3891,6 +4183,9 @@ def register(mcp: FastMCP) -> None:
         Forward-direction counterpart of `who_calls`. Same v0.9 P2
         pagination contract: ``limit`` / ``cursor`` / ``summary_only``.
         Same v0.9 P3 fan-out filter: ``min_weight=0.6`` by default.
+        Same ``edge_types`` default as `who_calls`: invocation edges only, so
+        an ingested type-position reference is reported under
+        ``excluded_by_edge_type`` rather than as something this symbol calls.
         """
         st = get_state(workspace)
         pids = st.group_project_ids()
@@ -3900,8 +4195,11 @@ def register(mcp: FastMCP) -> None:
         graph_pid = _graph_project_id(sym, st.project_id)
         view = load_graph(st.conn, graph_pid)
         sid = int(sym["id"])
+        wanted_types = _resolve_edge_types(edge_types)
         callees = (
-            descendants_within(view.g, sid, max_depth, min_weight=min_weight)
+            descendants_within(
+                view.g, sid, max_depth, min_weight=min_weight, edge_types=wanted_types
+            )
             if sid in view.g
             else set()
         )
@@ -3910,6 +4208,7 @@ def register(mcp: FastMCP) -> None:
             return {
                 "root": sym["qualified_name"],
                 "max_depth": max_depth,
+                "edge_types": sorted(wanted_types),
                 "count": total,
             }
         meta_sorted = sorted(
@@ -3921,7 +4220,8 @@ def register(mcp: FastMCP) -> None:
         payload = {
             "root": sym["qualified_name"],
             "max_depth": max_depth,
-            "callees": page,
+            "edge_types": sorted(wanted_types),
+            "callees": _label_direct_edges(page, view, sid, incoming=False),
             "count": total,
             "next_cursor": next_cursor,
         }
@@ -3930,18 +4230,15 @@ def register(mcp: FastMCP) -> None:
         endpoints = _route_edge_peers(st.conn, sid, incoming=False)
         if endpoints:
             payload["invokes_endpoints"] = endpoints
-        external_direct = {
-            n
-            for n in (view.g.successors(sid) if sid in view.g else ())
-            if view.g[sid][n].get("origin", "livespec") != "livespec"
-        }
-        if external_direct:
-            payload["callees"] = [
-                {**m, "via_external_edge": view.g[sid][m["id"]]["origin"]}
-                if m.get("id") in external_direct
-                else m
-                for m in page
-            ]
+        _attach_cross_repo_peers(payload, st, sid, incoming=False, key="cross_repo_callees")
+        _note_excluded_edge_types(
+            payload,
+            view,
+            sid,
+            incoming=False,
+            edge_types=wanted_types,
+            min_weight=min_weight,
+        )
         return _attach_external_edges(payload, st, graph_pid)
 
     @mcp.tool(annotations={"readOnlyHint": True, "idempotentHint": True})
@@ -3976,31 +4273,16 @@ def register(mcp: FastMCP) -> None:
         # by Django battle-test where two different `process_request`
         # methods reported identical top_callers because every callsite
         # matched both their short names.
-        callers_all = (
-            ancestors_within(view.g, sid, 1, min_weight=0.6)
-            if sid in view.g
-            else set()
-        )
-        callees_all = (
-            descendants_within(view.g, sid, 1, min_weight=0.6)
-            if sid in view.g
-            else set()
-        )
+        callers_all = ancestors_within(view.g, sid, 1, min_weight=0.6) if sid in view.g else set()
+        callees_all = descendants_within(view.g, sid, 1, min_weight=0.6) if sid in view.g else set()
 
         def _topn(ids: set[int], n: int = 5) -> list[dict[str, Any]]:
             scored = sorted(
-                (
-                    (view.sym_meta[i], ranks.get(i, 0.0))
-                    for i in ids
-                    if i in view.sym_meta
-                ),
+                ((view.sym_meta[i], ranks.get(i, 0.0)) for i in ids if i in view.sym_meta),
                 key=lambda x: x[1],
                 reverse=True,
             )
-            return [
-                {**meta, "pagerank": round(score, 6)}
-                for meta, score in scored[:n]
-            ]
+            return [{**meta, "pagerank": round(score, 6)} for meta, score in scored[:n]]
 
         specs = st.conn.execute(
             """SELECT r.spec_id, r.title, rs.relation, rs.confidence
@@ -4029,28 +4311,31 @@ def register(mcp: FastMCP) -> None:
             try:
                 all_decs = json.loads(decorators_json)
                 framework_decorators = [
-                    d for d in all_decs
-                    if _decorator_lastseg(d) in _ENTRY_POINT_DECORATOR_LASTSEG
+                    d for d in all_decs if _decorator_lastseg(d) in _ENTRY_POINT_DECORATOR_LASTSEG
                 ]
             except (json.JSONDecodeError, TypeError):
                 pass
 
-        return {
-            "qualified_name": sym["qualified_name"],
-            "kind": sym["kind"],
-            "signature": sym["signature"],
-            "file_path": sym["file_path"],
-            "start_line": sym["start_line"],
-            "end_line": sym["end_line"],
-            "docstring_lead": docstring_lead,
-            "is_entry_point": is_entry_point,
-            "framework_decorators": framework_decorators,
-            "callers_count": len(callers_all),
-            "callees_count": len(callees_all),
-            "top_callers": _topn(callers_all),
-            "top_callees": _topn(callees_all),
-            "specs": [dict(r) for r in specs],
-        }
+        return _attach_external_edges(
+            {
+                "qualified_name": sym["qualified_name"],
+                "kind": sym["kind"],
+                "signature": sym["signature"],
+                "file_path": sym["file_path"],
+                "start_line": sym["start_line"],
+                "end_line": sym["end_line"],
+                "docstring_lead": docstring_lead,
+                "is_entry_point": is_entry_point,
+                "framework_decorators": framework_decorators,
+                "callers_count": len(callers_all),
+                "callees_count": len(callees_all),
+                "top_callers": _topn(callers_all),
+                "top_callees": _topn(callees_all),
+                "specs": [dict(r) for r in specs],
+            },
+            st,
+            graph_pid,
+        )
 
     @mcp.tool(annotations={"readOnlyHint": True, "idempotentHint": True})
     def analyze_impact(
@@ -4102,7 +4387,9 @@ def register(mcp: FastMCP) -> None:
                 )
             ]
 
-        def _paginate_meta(ids: set[int], graph_view: GraphView) -> tuple[list[dict], int, int | None]:
+        def _paginate_meta(
+            ids: set[int], graph_view: GraphView
+        ) -> tuple[list[dict], int, int | None]:
             """Sort + slice. Returns (page, total, next_cursor)."""
             sorted_meta = sorted(
                 (graph_view.sym_meta[i] for i in ids if i in graph_view.sym_meta),
@@ -4156,18 +4443,18 @@ def register(mcp: FastMCP) -> None:
             )
             return _out(
                 _attach_payload_warning(
-                {
-                    "root": sym["qualified_name"],
-                    "impacted_callers": callers_page,
-                    "calls_into": calls_page,
-                    "affected_specs": specs_for_symbols(impacted | {sid}),
-                    "counts": {
-                        "impacted_callers": callers_total,
-                        "calls_into": calls_total,
+                    {
+                        "root": sym["qualified_name"],
+                        "impacted_callers": callers_page,
+                        "calls_into": calls_page,
+                        "affected_specs": specs_for_symbols(impacted | {sid}),
+                        "counts": {
+                            "impacted_callers": callers_total,
+                            "calls_into": calls_total,
+                        },
+                        "next_cursor": callers_next if callers_next is not None else calls_next,
                     },
-                    "next_cursor": callers_next if callers_next is not None else calls_next,
-                },
-                warn,
+                    warn,
                 ),
                 graph_pid,
             )
@@ -4188,9 +4475,7 @@ def register(mcp: FastMCP) -> None:
             impacted: set[int] = set()
             for sid in sids:
                 if sid in view.g:
-                    impacted |= ancestors_within(
-                        view.g, sid, max_depth, min_weight=min_weight
-                    )
+                    impacted |= ancestors_within(view.g, sid, max_depth, min_weight=min_weight)
             impacted -= set(sids)
             if summary_only:
                 return _out(
@@ -4199,26 +4484,22 @@ def register(mcp: FastMCP) -> None:
                         "symbols_in_file": len(sids),
                         "counts": {
                             "impacted_callers": len(impacted),
-                            "affected_specs": len(
-                                specs_for_symbols(impacted | set(sids))
-                            ),
+                            "affected_specs": len(specs_for_symbols(impacted | set(sids))),
                         },
                     }
                 )
             callers_page, callers_total, callers_next = _paginate_meta(impacted, view)
             return _out(
                 _attach_payload_warning(
-                {
-                    "file": target,
-                    "symbols_in_file": len(sids),
-                    "impacted_callers": callers_page,
-                    "affected_specs": specs_for_symbols(impacted | set(sids)),
-                    "counts": {"impacted_callers": callers_total},
-                    "next_cursor": callers_next,
-                },
-                _payload_warning(
-                    callers_total, limit=limit, summary_only=summary_only
-                ),
+                    {
+                        "file": target,
+                        "symbols_in_file": len(sids),
+                        "impacted_callers": callers_page,
+                        "affected_specs": specs_for_symbols(impacted | set(sids)),
+                        "counts": {"impacted_callers": callers_total},
+                        "next_cursor": callers_next,
+                    },
+                    _payload_warning(callers_total, limit=limit, summary_only=summary_only),
                 )
             )
         if target_type == "spec":
@@ -4300,9 +4581,7 @@ def register(mcp: FastMCP) -> None:
                         "counts": {
                             "implementing_symbols": len(impl_ids),
                             "downstream": len([n for n in forward if n in view.sym_meta]),
-                            "upstream_callers": len(
-                                [n for n in backward if n in view.sym_meta]
-                            ),
+                            "upstream_callers": len([n for n in backward if n in view.sym_meta]),
                         },
                     }
                 )
@@ -4316,23 +4595,23 @@ def register(mcp: FastMCP) -> None:
             )
             return _out(
                 _attach_payload_warning(
-                {
-                    "spec_id": spec["spec_id"],
-                    "dependent_specs": dep_spec_meta,
-                    "implementing_symbols": impl_page,
-                    "downstream": down_page,
-                    "upstream_callers": up_page,
-                    "counts": {
-                        "implementing_symbols": impl_total,
-                        "downstream": down_total,
-                        "upstream_callers": up_total,
+                    {
+                        "spec_id": spec["spec_id"],
+                        "dependent_specs": dep_spec_meta,
+                        "implementing_symbols": impl_page,
+                        "downstream": down_page,
+                        "upstream_callers": up_page,
+                        "counts": {
+                            "implementing_symbols": impl_total,
+                            "downstream": down_total,
+                            "upstream_callers": up_total,
+                        },
+                        "next_cursor": next(
+                            (c for c in (impl_next, down_next, up_next) if c is not None),
+                            None,
+                        ),
                     },
-                    "next_cursor": next(
-                        (c for c in (impl_next, down_next, up_next) if c is not None),
-                        None,
-                    ),
-                },
-                warn,
+                    warn,
                 )
             )
         return mcp_error(
@@ -4364,10 +4643,11 @@ def register(mcp: FastMCP) -> None:
           but is the opposite of "what is this repo's core". No opt-out;
           the ones that outranked the returned top-N are listed by
           qualified name in `test_symbols_filtered`."""
-        return compute_project_overview(
-            get_state(workspace),
-            include_infrastructure,
-            include_structural_patterns,
+        st = get_state(workspace)
+        return _attach_external_edges(
+            compute_project_overview(st, include_infrastructure, include_structural_patterns),
+            st,
+            st.project_id,
         )
 
     @mcp.tool(annotations={"readOnlyHint": True, "idempotentHint": True})
@@ -4718,23 +4998,16 @@ def register(mcp: FastMCP) -> None:
                     if parent_class_qname in spring_stereotype_classes:
                         _drop("infrastructure")
                         continue
-                    if (
-                        meta["name"] in _NG_LIFECYCLE_HOOKS
-                        and parent_class_qname in ng_any_classes
-                    ):
+                    if meta["name"] in _NG_LIFECYCLE_HOOKS and parent_class_qname in ng_any_classes:
                         _drop("infrastructure")
                         continue
 
             filtered.append(meta)
 
         corroboration: dict[str, Any] | None = None
-        graph_path, corroboration_hint = _resolve_corroboration_source(
-            st, corroborate_with
-        )
+        graph_path, corroboration_hint = _resolve_corroboration_source(st, corroborate_with)
         if graph_path:
-            filtered, corroboration = _corroborate_dead_code(
-                filtered, st=st, graph_path=graph_path
-            )
+            filtered, corroboration = _corroborate_dead_code(filtered, st=st, graph_path=graph_path)
             if corroboration.get("isError"):
                 return corroboration
 
@@ -4807,10 +5080,27 @@ def register(mcp: FastMCP) -> None:
     @mcp.tool(annotations={"readOnlyHint": True, "idempotentHint": True})
     def find_endpoints(
         framework: Literal[
-            "flask", "fastapi", "click", "pytest", "fastmcp", "celery", "django",
-            "nextjs", "fresh", "sveltekit", "remix", "spring", "angular",
-            "hono", "express", "gin", "echo", "chi", "nethttp",
-        ] | None = None,
+            "flask",
+            "fastapi",
+            "click",
+            "pytest",
+            "fastmcp",
+            "celery",
+            "django",
+            "nextjs",
+            "fresh",
+            "sveltekit",
+            "remix",
+            "spring",
+            "angular",
+            "hono",
+            "express",
+            "gin",
+            "echo",
+            "chi",
+            "nethttp",
+        ]
+        | None = None,
         limit: int = 200,
         cursor: int = 0,
         summary_only: bool = False,
@@ -4873,11 +5163,7 @@ def register(mcp: FastMCP) -> None:
         _attach_endpoints_not_swept(payload, st=st, framework=framework, total=total)
         # Spring (and other decorator frameworks) stay project-scoped. In a
         # group_db, agents often call from the hub repo — hint sibling roots.
-        if (
-            framework == "spring"
-            and total == 0
-            and st.settings.grouped
-        ):
+        if framework == "spring" and total == 0 and st.settings.grouped:
             java_elsewhere = st.conn.execute(
                 """SELECT p.name AS project, COUNT(*) AS files
                    FROM file f JOIN project p ON p.id=f.project_id
@@ -4895,8 +5181,7 @@ def register(mcp: FastMCP) -> None:
                     f"framework='spring'). Found: {names}"
                 )
                 payload["group_java_projects"] = [
-                    {"project": r["project"], "java_files": int(r["files"])}
-                    for r in java_elsewhere
+                    {"project": r["project"], "java_files": int(r["files"])} for r in java_elsewhere
                 ]
         if summary_only:
             return payload
@@ -4960,12 +5245,13 @@ def register(mcp: FastMCP) -> None:
         if summary_only:
             payload["legacy_servers_sample"] = servers[:10]
             payload["orphan_clients_sample"] = clients[:10]
+            _attach_external_edges(payload, st, st.project_id)
             return payload
         page = flows[cursor : cursor + limit]
         next_cursor = cursor + limit if cursor + limit < total else None
         payload["flows"] = page
         payload["next_cursor"] = next_cursor
-        return payload
+        return _attach_external_edges(payload, st, st.project_id)
 
     @mcp.tool(annotations={"readOnlyHint": True, "idempotentHint": True})
     @_workspace_note
@@ -5050,7 +5336,7 @@ def register(mcp: FastMCP) -> None:
             }
             if cov.get("snapshot_warning"):
                 out["warning"] = cov["snapshot_warning"]
-            return out
+            return _attach_external_edges(out, st, st.project_id)
 
         cur_map = cursors or {}
 
@@ -5096,7 +5382,7 @@ def register(mcp: FastMCP) -> None:
         }
         if cov.get("snapshot_warning"):
             payload["warning"] = cov["snapshot_warning"]
-        return payload
+        return _attach_external_edges(payload, st, st.project_id)
 
     @mcp.tool(annotations={"readOnlyHint": True, "idempotentHint": True})
     @_workspace_note
@@ -5152,10 +5438,7 @@ def register(mcp: FastMCP) -> None:
         # Count test files even when Jest/vitest only leave `kind=module`
         # (anonymous `test("…", () => {})` callbacks are not function symbols).
         all_file_paths = [
-            r["path"]
-            for r in st.conn.execute(
-                "SELECT path FROM file WHERE project_id=?", (pid,)
-            )
+            r["path"] for r in st.conn.execute("SELECT path FROM file WHERE project_id=?", (pid,))
         ]
         test_file_paths = [p for p in all_file_paths if is_test_path(p)]
         test_files_count = len(test_file_paths)
@@ -5202,9 +5485,7 @@ def register(mcp: FastMCP) -> None:
 
             sid = int(r["id"])
             descendants = (
-                descendants_within(view.g, sid, max_depth, min_weight)
-                if sid in view.g
-                else set()
+                descendants_within(view.g, sid, max_depth, min_weight) if sid in view.g else set()
             )
             reaches_prod = False
             for did in descendants:
@@ -5226,18 +5507,18 @@ def register(mcp: FastMCP) -> None:
                 reasons.append("harness_indirection")
                 confidence = min(confidence, 0.3)
 
-            orphans.append({
-                "qualified_name": r["qualified_name"],
-                "file_path": fp,
-                "kind": r["kind"],
-                "reason": reasons[0],
-                "reasons": reasons,
-                "confidence": confidence,
-            })
+            orphans.append(
+                {
+                    "qualified_name": r["qualified_name"],
+                    "file_path": fp,
+                    "kind": r["kind"],
+                    "reason": reasons[0],
+                    "reasons": reasons,
+                    "confidence": confidence,
+                }
+            )
         corroboration: dict[str, Any] | None = None
-        graph_path, corroboration_hint = _resolve_corroboration_source(
-            st, corroborate_with
-        )
+        graph_path, corroboration_hint = _resolve_corroboration_source(st, corroborate_with)
         if graph_path:
             orphans, corroboration = _corroborate_orphan_tests(
                 orphans, st=st, graph_path=graph_path
@@ -5269,12 +5550,12 @@ def register(mcp: FastMCP) -> None:
                 "extractor coverage, not proof their suites have none."
             )
         if summary_only:
-            return payload
+            return _attach_external_edges(payload, st, st.project_id)
         page = orphans[cursor : cursor + limit]
         next_cursor = cursor + limit if cursor + limit < total else None
         payload["orphan_tests"] = page
         payload["next_cursor"] = next_cursor
-        return payload
+        return _attach_external_edges(payload, st, st.project_id)
 
     @mcp.tool(annotations={"readOnlyHint": True, "idempotentHint": True})
     def git_diff_impact(
@@ -5352,14 +5633,16 @@ def register(mcp: FastMCP) -> None:
             for r in rows:
                 sid = int(r["id"])
                 changed_sym_ids.add(sid)
-                changed_symbol_meta.append({
-                    "id": sid,
-                    "qualified_name": r["qualified_name"],
-                    "kind": r["kind"],
-                    "file_path": path,
-                    "start_line": r["start_line"],
-                    "end_line": r["end_line"],
-                })
+                changed_symbol_meta.append(
+                    {
+                        "id": sid,
+                        "qualified_name": r["qualified_name"],
+                        "kind": r["kind"],
+                        "file_path": path,
+                        "start_line": r["start_line"],
+                        "end_line": r["end_line"],
+                    }
+                )
 
         # Backward cone: every symbol that transitively calls a changed symbol
         impacted: set[int] = set()
@@ -5455,7 +5738,7 @@ def register(mcp: FastMCP) -> None:
             base["changed_files_sample"] = changed_paths[:_SAMPLE]
             base["changed_files_indexed_sample"] = sorted(indexed_paths)[:_SAMPLE]
             base["changed_files_unindexed_sample"] = unindexed_paths[:_SAMPLE]
-            return base
+            return _attach_external_edges(base, st, pid)
         base["changed_files"] = changed_paths
         base["changed_files_indexed"] = sorted(indexed_paths)
         base["changed_files_unindexed"] = unindexed_paths
@@ -5468,6 +5751,7 @@ def register(mcp: FastMCP) -> None:
         base["changed_symbols"] = changed_symbol_meta
         base["impacted_callers"] = page
         base["next_cursor"] = next_cursor
+        _attach_external_edges(base, st, pid)
         return _attach_payload_warning(
             base,
             _payload_warning(
@@ -5518,4 +5802,3 @@ def register(mcp: FastMCP) -> None:
             per_file_limit=per_file_limit,
             fts_prefilter=fts_prefilter,
         )
-

@@ -114,16 +114,18 @@ def measure(conn: sqlite3.Connection, qnames: list[str]) -> list[dict]:
         baseline = _file_tokens(files)
         closure = payload["budget"]["estimated_tokens"]
 
-        out.append({
-            "qname": qname,
-            "closure_tokens": closure,
-            "file_tokens": baseline,
-            "files_opened": len(files),
-            "saving": round(1 - closure / baseline, 3) if baseline else None,
-            "degraded": payload["budget"]["degraded"],
-            "unresolved": len(payload["unresolved_types"]),
-            "covered": bool(payload["covered_by"]),
-        })
+        out.append(
+            {
+                "qname": qname,
+                "closure_tokens": closure,
+                "file_tokens": baseline,
+                "files_opened": len(files),
+                "saving": round(1 - closure / baseline, 3) if baseline else None,
+                "degraded": payload["budget"]["degraded"],
+                "unresolved": len(payload["unresolved_types"]),
+                "covered": bool(payload["covered_by"]),
+            }
+        )
     return out
 
 
@@ -161,9 +163,7 @@ def main() -> int:
     if args.refresh or not args.sample.exists():
         qnames = pick_sample(conn)
         args.sample.parent.mkdir(parents=True, exist_ok=True)
-        args.sample.write_text(
-            json.dumps({"symbols": qnames}, indent=2) + "\n", encoding="utf-8"
-        )
+        args.sample.write_text(json.dumps({"symbols": qnames}, indent=2) + "\n", encoding="utf-8")
         print(f"froze {len(qnames)} symbols into {args.sample}", file=sys.stderr)
     else:
         qnames = json.loads(args.sample.read_text(encoding="utf-8"))["symbols"]
@@ -179,18 +179,26 @@ def main() -> int:
     if summary["missing_from_index"]:
         print(f"  !! {summary['missing_from_index']} frozen symbols are no longer indexed")
     print()
-    print(f"  closure tokens   median {summary['closure_tokens_median']}"
-          f"  p90 {summary['closure_tokens_p90']}  max {summary['closure_tokens_max']}")
-    print(f"  under 2k budget  {summary['under_2k_budget']}/{summary['symbols']}"
-          f"   degraded: {summary['degraded']}")
+    print(
+        f"  closure tokens   median {summary['closure_tokens_median']}"
+        f"  p90 {summary['closure_tokens_p90']}  max {summary['closure_tokens_max']}"
+    )
+    print(
+        f"  under 2k budget  {summary['under_2k_budget']}/{summary['symbols']}"
+        f"   degraded: {summary['degraded']}"
+    )
     if summary["median_saving_vs_files"] is not None:
-        print(f"  vs reading the files an agent would open:"
-              f"  median {summary['median_saving_vs_files']:.0%} fewer tokens"
-              f"  (worst case {summary['worst_saving']:.0%})")
+        print(
+            f"  vs reading the files an agent would open:"
+            f"  median {summary['median_saving_vs_files']:.0%} fewer tokens"
+            f"  (worst case {summary['worst_saving']:.0%})"
+        )
     print()
     print(f"  closures with a real type gap:  {summary['with_unresolved_types']}")
-    print(f"  symbols no test in the index covers:  "
-          f"{summary['without_covering_tests']}/{summary['symbols']}")
+    print(
+        f"  symbols no test in the index covers:  "
+        f"{summary['without_covering_tests']}/{summary['symbols']}"
+    )
     print()
     print("  Token count is half of F1. The other half — success rate — needs a")
     print("  human running real tasks; this cannot measure it and does not try.")

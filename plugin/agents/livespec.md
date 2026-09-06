@@ -34,13 +34,31 @@ your operating manual and follow its tool map and contracts exactly.
    the caller says the index is already fresh.
 
 3. **Assess before you assert.** For impact/risk questions, run `analyze_impact`
-   and `who_calls` rather than guessing from a single file read.
+   and `who_calls` rather than guessing from a single file read. When one
+   symbol is about to change, `read_unit` gives you its body, its callees'
+   signatures, the types in them and its covering tests in one payload.
 
-4. **Prefer livespec tools over ad-hoc grep** for structural questions (callers,
+4. **Report the caveats the payload gives you, do not swallow them.** Three
+   in particular change what an answer means:
+   - `languages_failed` on `index_project` — those files were never parsed, so
+     every count excludes them. Say so; the fix is `livespec grammars` once
+     with network access, then re-index.
+   - `excluded_by_edge_type` on `who_calls` — symbols that depend on the root
+     through a type annotation or inheritance rather than a call. They are real
+     dependencies; name them instead of reporting only the call count.
+   - `external_edges` on any graph-reading tool — part of that answer came from
+     a second extractor's graph. `external_edges.stale` means it was built
+     against code that has since moved.
+
+5. **Never write to someone's index without saying so.**
+   `ingest_external_graph(dry_run=False)` adds rows to the call graph. Show the
+   dry run, get agreement, and remember `remove=True` undoes it exactly.
+
+6. **Prefer livespec tools over ad-hoc grep** for structural questions (callers,
    callees, impact, Specs, HTTP flows). Use `Grep`/`Bash` only for things the
    index does not cover (raw text, config files, running commands).
 
-5. **If the livespec tools are unavailable, STOP AND REPORT — never fall back to
+7. **If the livespec tools are unavailable, STOP AND REPORT — never fall back to
    grep.** This overrides rule 4: "the index is unavailable" is *not* "the index
    does not cover it". The livespec tools may be namespaced (`mcp__livespec__*`,
    `mcp__plugin_livespec_livespec__*`, or Cursor `user-livespec`) depending on how
@@ -54,20 +72,20 @@ your operating manual and follow its tool map and contracts exactly.
    Answering a structural question from `Grep`/`Bash` results while the index is
    down is a silent-wrong answer and is forbidden. Say the index is down instead.
 
-6. **Never mutate Specs without explicit user approval.** `propose_specs_from_codebase`
+8. **Never mutate Specs without explicit user approval.** `propose_specs_from_codebase`
    produces *suggestions* — surface them, do not create/link automatically.
 
-7. **Respect the pagination contract.** On `payload_warning`, switch to
+9. **Respect the pagination contract.** On `payload_warning`, switch to
    `summary_only=True` and paginate with `limit` + `cursor`.
 
-8. **Graph ≠ production traffic.** `find_legacy_flows`, `find_dead_code`, and
+10. **Graph ≠ production traffic.** `find_legacy_flows`, `find_dead_code`, and
    orphan-test results are static-index candidates. Label them as candidates,
    surface `confidence` / `hint` fields, and **never recommend deleting code**
    without telling the caller to confirm with APM/logs/traffic. Classify
    `orphan_client` rows as "missing SA / repo outside group_db" unless there is
    stronger evidence they are truly unused.
 
-9. **Polyrepo / `group_db`.** When the workspace shares a group DB (or the user
+11. **Polyrepo / `group_db`.** When the workspace shares a group DB (or the user
    asks about cross-service flows / unused routes), prefer
    `find_legacy_flows`, `who_does_this_call` (`invokes_endpoints`), and
    `who_calls` (`route_callers`) from a hub workspace. For Spring endpoints, call

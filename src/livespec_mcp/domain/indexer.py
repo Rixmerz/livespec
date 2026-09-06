@@ -35,9 +35,26 @@ from livespec_mcp.storage.db import (
 )
 
 DEFAULT_IGNORES = {
-    ".git", ".hg", ".svn", "node_modules", "__pycache__", ".venv", "venv",
-    "dist", "build", ".tox", ".mypy_cache", ".pytest_cache", ".ruff_cache",
-    ".idea", ".vscode", "target", ".next", ".nuxt", ".turbo", ".cache",
+    ".git",
+    ".hg",
+    ".svn",
+    "node_modules",
+    "__pycache__",
+    ".venv",
+    "venv",
+    "dist",
+    "build",
+    ".tox",
+    ".mypy_cache",
+    ".pytest_cache",
+    ".ruff_cache",
+    ".idea",
+    ".vscode",
+    "target",
+    ".next",
+    ".nuxt",
+    ".turbo",
+    ".cache",
     ".mcp-docs",
 }
 
@@ -54,6 +71,12 @@ class IndexStats:
     manual_links_restored: int = 0
     languages: dict[str, int] = None  # type: ignore
     languages_unsupported: dict[str, int] = None  # type: ignore  # mapped ext, no extractor
+    # language -> file count that could not be indexed because the tree-sitter
+    # GRAMMAR would not load (language-pack 1.x downloads grammars on first
+    # use). Distinct from `languages_unsupported`, which is a language livespec
+    # deliberately has no extractor for. This one is recoverable: run
+    # `livespec grammars` once with network and re-index.
+    languages_failed: dict[str, int] = None  # type: ignore
     repo_config: dict[str, Any] | None = None  # echo of .livespec.toml, if present
 
     def __post_init__(self) -> None:
@@ -61,6 +84,8 @@ class IndexStats:
             self.languages = {}
         if self.languages_unsupported is None:
             self.languages_unsupported = {}
+        if self.languages_failed is None:
+            self.languages_failed = {}
 
 
 def _hash_bytes(b: bytes) -> str:
@@ -178,9 +203,7 @@ def index_project(
     if needs_reextract:
         force = True
 
-    run_id = conn.execute(
-        "INSERT INTO index_run(project_id) VALUES(?)", (project_id,)
-    ).lastrowid
+    run_id = conn.execute("INSERT INTO index_run(project_id) VALUES(?)", (project_id,)).lastrowid
 
     stats = IndexStats()
     repo_cfg = load_repo_config(settings.workspace)
@@ -260,6 +283,19 @@ def index_project(
                 stats.files_skipped += 1
                 continue
             _, result = extract(p, source, settings.workspace)
+            if result.grammar_missing:
+                # The grammar never loaded, so this file was not read at all.
+                # Persisting it would store zero symbols AND advance the
+                # content hash, and the next run would skip it as unchanged —
+                # one offline index turning a polyglot repo permanently
+                # Python-only. Leave the row (and any existing symbols) alone
+                # so a later run with the grammar present re-extracts it.
+                stats.files_changed -= 1  # undo the increment above
+                stats.files_skipped += 1
+                stats.languages_failed[result.grammar_missing] = (
+                    stats.languages_failed.get(result.grammar_missing, 0) + 1
+                )
+                continue
             # C4: a transient parse failure (file saved mid-edit) must NOT wipe
             # the file's existing symbols — the cascade would take their
             # spec_symbol links with them and the restore can't re-resolve a
@@ -312,10 +348,7 @@ def index_project(
                 (project_id,),
             ).fetchone()["c"]
             use_targeted = (
-                not force
-                and not files_deleted
-                and bool(changed_file_ids)
-                and int(prior_runs) > 0
+                not force and not files_deleted and bool(changed_file_ids) and int(prior_runs) > 0
             )
             _resolve_refs(
                 conn,
@@ -330,9 +363,8 @@ def index_project(
             # (INSERT OR IGNORE), and prevents traceability from going silently
             # stale when an edited symbol's old spec_symbol row is cascaded away.
             from livespec_mcp.domain.matcher import scan_annotations
-            stats.spec_links_created = scan_annotations(
-                conn, project_id=project_id
-            ).created
+
+            stats.spec_links_created = scan_annotations(conn, project_id=project_id).created
 
             # Restore manual spec_symbol links wiped by the symbol cascade. We
             # re-resolve symbol qname → new symbol_id and INSERT OR IGNORE,
@@ -388,7 +420,13 @@ def index_project(
                SET finished_at = datetime('now'),
                    files_total = ?, files_changed = ?, symbols_total = ?, edges_total = ?
                WHERE id = ?""",
-            (stats.files_total, stats.files_changed, stats.symbols_total, stats.edges_total, run_id),
+            (
+                stats.files_total,
+                stats.files_changed,
+                stats.symbols_total,
+                stats.edges_total,
+                run_id,
+            ),
         )
         if needs_reextract:
             clear_reextract_flag(conn)
@@ -397,9 +435,7 @@ def index_project(
 
 def _file_has_symbols(conn: sqlite3.Connection, file_id: int) -> bool:
     return (
-        conn.execute(
-            "SELECT 1 FROM symbol WHERE file_id=? LIMIT 1", (file_id,)
-        ).fetchone()
+        conn.execute("SELECT 1 FROM symbol WHERE file_id=? LIMIT 1", (file_id,)).fetchone()
         is not None
     )
 
@@ -448,6 +484,7 @@ def _replace_symbols(conn: sqlite3.Connection, *, file_id: int, result: ExtractR
     branch-active definition in source order.
     """
     import json as _json
+
     qname_to_id: dict[str, int] = {}
     seen_keys: set[tuple[str, int]] = set()
     for s in result.symbols:
@@ -458,7 +495,8 @@ def _replace_symbols(conn: sqlite3.Connection, *, file_id: int, result: ExtractR
         body_hash = xxhash.xxh3_128_hexdigest(s.body_hash_seed.encode("utf-8", errors="replace"))
         sig_hash = (
             xxhash.xxh3_128_hexdigest(s.signature.encode("utf-8", errors="replace"))
-            if s.signature else None
+            if s.signature
+            else None
         )
         decorators_json = _json.dumps(s.decorators) if s.decorators else None
         cur = conn.execute(
@@ -467,9 +505,19 @@ def _replace_symbols(conn: sqlite3.Connection, *, file_id: int, result: ExtractR
                 visibility, start_line, end_line)
                VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (
-                file_id, None, s.name, s.qualified_name, s.kind,
-                s.signature, sig_hash, s.docstring, body_hash, decorators_json,
-                s.visibility, s.start_line, s.end_line,
+                file_id,
+                None,
+                s.name,
+                s.qualified_name,
+                s.kind,
+                s.signature,
+                sig_hash,
+                s.docstring,
+                body_hash,
+                decorators_json,
+                s.visibility,
+                s.start_line,
+                s.end_line,
             ),
         )
         qname_to_id[s.qualified_name] = int(cur.lastrowid)
@@ -534,19 +582,13 @@ def _resolve_routes(conn: sqlite3.Connection) -> int:
     new symbol ids.
     """
     servers: dict[str, list[tuple[int, str | None]]] = {}
-    for r in conn.execute(
-        "SELECT symbol_id, method, norm_path FROM route_ref WHERE role='server'"
-    ):
+    for r in conn.execute("SELECT symbol_id, method, norm_path FROM route_ref WHERE role='server'"):
         if r["norm_path"]:
-            servers.setdefault(r["norm_path"], []).append(
-                (int(r["symbol_id"]), r["method"])
-            )
+            servers.setdefault(r["norm_path"], []).append((int(r["symbol_id"]), r["method"]))
     if not servers:
         return 0
     edge_count = 0
-    for c in conn.execute(
-        "SELECT symbol_id, method, norm_path FROM route_ref WHERE role='client'"
-    ):
+    for c in conn.execute("SELECT symbol_id, method, norm_path FROM route_ref WHERE role='client'"):
         for server_id, server_method in servers.get(c["norm_path"], []):
             src_id = int(c["symbol_id"])
             if server_id == src_id:

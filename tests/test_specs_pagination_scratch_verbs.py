@@ -37,15 +37,11 @@ async def test_list_specs_paginates_with_cursor(workspace):
         assert page1["truncated"] is True
         assert page1["next_cursor"] == 2
 
-        page2 = (
-            await c.call_tool("list_specs", {"limit": 2, "cursor": page1["next_cursor"]})
-        ).data
+        page2 = (await c.call_tool("list_specs", {"limit": 2, "cursor": page1["next_cursor"]})).data
         assert len(page2["specs"]) == 2
         assert page2["next_cursor"] == 4
 
-        page3 = (
-            await c.call_tool("list_specs", {"limit": 2, "cursor": page2["next_cursor"]})
-        ).data
+        page3 = (await c.call_tool("list_specs", {"limit": 2, "cursor": page2["next_cursor"]})).data
         assert len(page3["specs"]) == 1
         assert page3["next_cursor"] is None
         assert page3["truncated"] is False

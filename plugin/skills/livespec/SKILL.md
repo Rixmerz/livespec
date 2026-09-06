@@ -106,7 +106,48 @@ it is not a background watcher you should lean on while editing.
 | Orphan tests | `find_orphan_tests()` — check `test_files_count` / `test_function_symbols` + `hint` (Jest anonymous `test()` → honest zero) |
 | HTTP/CLI entry points | `find_endpoints(framework=None)` — see the Hono trap below; prefer `summary_only=True` if JSON is huge |
 | Project snapshot | `get_project_overview()` — test-file symbols are excluded from `top_symbols` |
+| Everything needed to change one symbol | `read_unit(qname, depth=1, token_budget=2000)` — body + callee signatures + the types in them + what it raises + covering tests, in one payload |
+| Stack trace / file:line → symbol | `resolve_location(path, line)` — the inverse of `read_unit` |
+| "Did I just write this twice?" | `search_similar(code or qname)` — before a write; normalised-AST hash + k-gram winnowing, no embeddings |
+| Frozen duplication debt | `debt_baseline_capture()` / `debt_baseline_status()` — accepted duplication stays quiet, new copies do not |
 | Static Spec Explorer bundle | `export_explorer(base?, head?, framework?)` — docs plugin; unlock with `LIVESPEC_PLUGINS=docs` or `index_project(explorer=True)` |
+
+### A second extractor (Graphify) — optional, zero LLM
+
+livespec's blind spots are known and specific: **type-position use**
+(`def f(x: Base)`), **inheritance** (`class A extends B`), and cross-file calls
+the resolver could not disambiguate. None of them produce an edge, so a base
+class or an interface used only as a type reads as referenced by nothing.
+
+A second AST extractor has *different* blind spots, which is what makes it
+worth reading. [Graphify](https://github.com/Graphify-Labs/graphify)'s code
+pass is tree-sitter with **no LLM and no API key** (`graphify update <repo>`
+writes `graphify-out/graph.json`; measured `input_tokens: 0`).
+
+| Intent | Tool |
+|--------|------|
+| Fewer false "dead" / "orphan" verdicts, writing nothing | `find_dead_code(corroborate_with="graphify-out/graph.json")`, same on `find_orphan_tests` |
+| Put the missing edges in the call graph for real | `ingest_external_graph(graph_path=..., dry_run=True)` then `dry_run=False` |
+| Take them back out | `ingest_external_graph(remove=True)` |
+
+Rules that matter when you use it:
+
+- **The symbol table stays livespec's.** An edge is ingested only when *both*
+  endpoints already resolve to livespec symbols. Nothing else is created.
+- **`dry_run=True` is the default.** Read `edges_to_add`, `already_known` (the
+  cross-validation number) and `sample` before applying.
+- **Ingested edges are labelled.** `who_calls` marks depth-1 neighbours with
+  `via_external_edge`, and every graph-reading tool carries an
+  `external_edges` block naming the origins in play.
+- **A type reference is not a caller.** `who_calls` counts invocation edges
+  only; ingested `references` / `inherits` rows are reported under
+  `excluded_by_edge_type`. Pass `edge_types=["calls","references"]` to include
+  them, or use `analyze_impact`, which counts every dependency.
+- **Re-run after an `index_project` that changed files.** A re-extract deletes
+  the symbols those edges pointed at. The payload says so under
+  `external_edges.stale`; `[graph] auto_ingest = true` refreshes automatically.
+- **Never treat it as traffic.** Two extractors agreeing is still static
+  analysis.
 
 **`find_endpoints` — Hono / Express.** Call-style `router.get/post` routes
 are included in the **default** sweep (`framework=None`). Pass
@@ -238,11 +279,14 @@ For the full annotation grammar and examples, fetch the MCP prompt `agent_playbo
 
 1. **Orient** — `get_project_overview`; index if the DB is stale/missing.
 2. **Locate** — `find_symbol` → `quick_orient`.
-3. **Assess** — `analyze_impact` / `who_calls` before touching anything risky.
+3. **Assess** — `analyze_impact` / `who_calls` before touching anything risky;
+   `read_unit` when you need the whole contract in one payload.
 4. **Cross-repo flows** (if `group_db`) — `find_legacy_flows(summary_only=True)`;
    classify orphan clients as missing-SA vs candidate-dead before recommending work.
 5. **Specs** (if adopted) — `list_specs`, `get_spec_implementation`, `audit_coverage(summary_only=True)`.
-6. **After edits** — `git_diff_impact(summary_only=True)`; re-`index_project` if
+6. **Before writing a new helper** — `search_similar` on the body you are about
+   to add; a hit means edit the existing one instead.
+7. **After edits** — `git_diff_impact(summary_only=True)`; re-`index_project` if
    `hint` says unindexed/non-code paths or results look empty.
 
 ## Do not
@@ -262,3 +306,12 @@ For the full annotation grammar and examples, fetch the MCP prompt `agent_playbo
   the indexed `group_db`.
 - Do not call `embed_chunks` / `agent_scratch*` — removed (FTS5-only search;
   scratch dropped from the surface).
+- Do not read `who_calls` as complete on a repo whose `index_project` reported
+  `languages_failed` — those files were never parsed, so their callers do not
+  exist in the graph at all. Run `livespec grammars` once with network access
+  and re-index.
+- Do not report a `who_calls` count as "callers" when the payload carries
+  `excluded_by_edge_type` without saying what was excluded.
+- Do not run `ingest_external_graph(dry_run=False)` on someone's index without
+  telling them: it writes rows into `symbol_edge`. `remove=True` undoes it
+  exactly.

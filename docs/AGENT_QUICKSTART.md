@@ -136,6 +136,47 @@ default. `__main__` guards, list-stored callbacks (registries,
 migration tables), and middleware lifecycle hooks are also recognized
 as referenced.
 
+## 8.1 Three payload fields that change what an answer means
+
+- **`languages_failed` on `index_project`.** `tree-sitter-language-pack`
+  downloads grammars on first use, so an offline or proxied machine indexes
+  Python and skips everything else. Those files are left unindexed on purpose
+  so a later run retries them, but every count until then excludes them. Run
+  `livespec grammars` once with network access, then re-index.
+- **`excluded_by_edge_type` on `who_calls`.** Symbols that depend on the root
+  through a type annotation or inheritance rather than a call. Real
+  dependencies, deliberately not counted as callers. Widen with
+  `edge_types=["calls","references"]`, or use `analyze_impact`.
+- **`external_edges` on any graph-reading tool.** Part of that answer came from
+  an ingested second-extractor graph. An `external_edges.stale` block means it
+  was built against code that has since moved.
+
+## 8.2 Borrowing a second extractor (optional, zero LLM)
+
+livespec does not model type-position use or inheritance, so a base class or an
+interface used only as a type reads as referenced by nothing.
+[Graphify](https://github.com/Graphify-Labs/graphify)'s code pass is
+tree-sitter with no LLM (`graphify update <repo>`), and has different blind
+spots:
+
+```
+find_dead_code(corroborate_with="graphify-out/graph.json")   # writes nothing
+ingest_external_graph(graph_path="graphify-out/graph.json")  # dry run first
+ingest_external_graph(graph_path=..., dry_run=False)         # then apply
+ingest_external_graph(remove=True)                           # undo, exactly
+```
+
+## 8.3 Reading and writing one unit
+
+```
+read_unit(qname)              # body + callee signatures + their types + tests
+resolve_location(path, line)  # stack trace -> symbol (the inverse)
+search_similar(qname)         # before adding a helper: did I write this already?
+debt_baseline_capture()       # freeze accepted duplication; new copies still report
+debt_baseline_status()
+scan_annotation_verbs()       # @spec: above code that owns no symbol
+```
+
 ## 9. Common follow-up patterns
 
 Battle-test data shows these 2-call patterns dominate:

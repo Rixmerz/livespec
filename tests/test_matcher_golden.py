@@ -40,19 +40,10 @@ def test_matcher_golden_dataset():
         expected = case["expected"]
         known_ids = case.get("known_ids")
         got = sorted(
-            (
-                _hit_to_dict(h)
-                for h in parse_annotations(text, known_ids=known_ids or ())
-            ),
+            (_hit_to_dict(h) for h in parse_annotations(text, known_ids=known_ids or ())),
             key=lambda d: (d["spec_id"], d["relation"]),
         )
         exp_sorted = sorted(expected, key=lambda d: (d["spec_id"], d["relation"]))
         if got != exp_sorted:
-            failures.append(
-                f"\n  input:    {text!r}"
-                f"\n  expected: {exp_sorted}"
-                f"\n  got:      {got}"
-            )
-    assert not failures, (
-        f"{len(failures)} matcher cases regressed:" + "".join(failures)
-    )
+            failures.append(f"\n  input:    {text!r}\n  expected: {exp_sorted}\n  got:      {got}")
+    assert not failures, f"{len(failures)} matcher cases regressed:" + "".join(failures)

@@ -30,9 +30,7 @@ async def test_did_you_mean_in_who_calls(sample_repo):
     """v0.8 P3.3: who_calls replaces get_call_graph for backward cones."""
     async with Client(mcp) as c:
         await c.call_tool("index_project", {})
-        out = (
-            await c.call_tool("who_calls", {"qname": "verify_xx", "max_depth": 2})
-        ).data
+        out = (await c.call_tool("who_calls", {"qname": "verify_xx", "max_depth": 2})).data
         assert out.get("isError") is True
         qnames = {s["qualified_name"] for s in out["did_you_mean"]}
         assert "pkg.auth.verify" in qnames
@@ -51,18 +49,14 @@ async def test_did_you_mean_in_analyze_impact(sample_repo):
         assert out.get("isError") is True
         qnames = {s["qualified_name"] for s in out["did_you_mean"]}
         # `handle` is the closest match in sample_repo
-        assert any("handle" in q for q in qnames), (
-            f"handle should surface for 'handlx': {qnames}"
-        )
+        assert any("handle" in q for q in qnames), f"handle should surface for 'handlx': {qnames}"
 
 
 @pytest.mark.asyncio
 async def test_did_you_mean_in_link_requirement(sample_repo):
     async with Client(mcp) as c:
         await c.call_tool("index_project", {})
-        await c.call_tool(
-            "create_spec", {"title": "Login", "spec_id": "auth-user-login"}
-        )
+        await c.call_tool("create_spec", {"title": "Login", "spec_id": "auth-user-login"})
         out = (
             await c.call_tool(
                 "link_spec_symbol",

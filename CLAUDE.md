@@ -147,6 +147,12 @@ domain/         Pure business logic, no MCP coupling
                   -- v0.6 P3, ~4s -> µs on cache hit
   matcher.py      @spec: annotation parser (multi-Spec, confidence override,
                   @not_spec negation, verb-anchored level-2 with negation guard)
+  external_graph.py  reads a Graphify graph.json (relation vocabulary, parse
+                  cache keyed by path+mtime+size)
+  external_source.py  pick + load + overlap-gate an external graph. The ONE
+                  place tools/ may reach for; returns failures as data
+                  (GraphProblem) so domain/ never imports the MCP surface
+  external_ingest.py  plan/apply ingestion + provenance (migration 23)
   md_specs.py     markdown spec importer (v0.20, was md_rfs.py)
   rag.py          AST-aware chunking + FTS5 keyword search
   watcher.py      watchdog wrapper used by index_project(watch=True) + atexit
@@ -155,7 +161,7 @@ domain/         Pure business logic, no MCP coupling
 storage/        SQLite persistence
   schema.sql      single-file schema; CREATE TABLE IF NOT EXISTS for everything
   db.py           connection bootstrap + ordered migration framework
-                  (schema_migrations table; MIGRATIONS list append-only, at v20)
+                  (schema_migrations table; MIGRATIONS list append-only, at v23)
 ```
 
 ### Critical contracts (don't break)
@@ -361,6 +367,13 @@ user wants to override.
 - **Don't add a custom error shape.** Use `mcp_error()`. If the existing
   shape doesn't fit, propose extending it (new field), don't bypass it.
 - **Don't bypass the pagination contract** when adding aggregator tools.
+- **Don't let `domain/` import `tools/`.** `tests/test_layering.py` fails on
+  it. If a domain function needs to report a failure, return it as data and let
+  the thin `tools/` wrapper shape it into `mcp_error`.
+- **Don't add a core tool without telling an agent when to call it.**
+  `tests/test_agent_docs_sync.py` requires every core tool to appear in
+  `plugin/skills/livespec/SKILL.md` AND in the shipped `AGENT_PLAYBOOK.md`.
+  Six core tools were invisible to agents before that test existed.
 - **Don't commit without running the full suite** (`uv run pytest -q`).
 - **Don't write `--no-verify`** to skip pre-commit hooks. Fix the
   underlying issue.

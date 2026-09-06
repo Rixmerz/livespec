@@ -152,9 +152,7 @@ class AgentLogMiddleware(Middleware):
             latency_ms = int((time.monotonic() - start) * 1000)
             session_id = None
             if context.fastmcp_context is not None:
-                session_id = getattr(
-                    context.fastmcp_context, "session_id", None
-                )
+                session_id = getattr(context.fastmcp_context, "session_id", None)
             entry = {
                 "timestamp": ts,
                 "ts": ts,

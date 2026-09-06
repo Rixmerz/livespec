@@ -48,12 +48,7 @@ def test_python_extractor_sees_conditionally_defined_symbols():
 def test_python_nested_calls_not_double_attributed():
     """M11: a call inside an inner function is attributed to the inner symbol
     only, not to every enclosing def."""
-    src = (
-        "def outer():\n"
-        "    def inner():\n"
-        "        helper()\n"
-        "    return inner\n"
-    )
+    src = "def outer():\n    def inner():\n        helper()\n    return inner\n"
     res = _py_extract(src, "mod")
     helper_srcs = {r.src_qname for r in res.refs if r.target_name == "helper"}
     assert helper_srcs == {"mod.outer.inner"}, helper_srcs
@@ -79,9 +74,7 @@ def test_matcher_verb_boundary_rejects_prefix_words():
 
 
 def test_matcher_real_prefix_still_matches():
-    hits = parse_annotations(
-        "@spec:auth-user-login", known_ids=["auth-user-login"]
-    )
+    hits = parse_annotations("@spec:auth-user-login", known_ids=["auth-user-login"])
     assert any(h.spec_id == "auth-user-login" and h.confidence == 1.0 for h in hits)
 
 
@@ -117,11 +110,7 @@ def test_md_specs_rejects_native_catalog():
 def test_ts_chained_method_calls_each_recorded(tmp_path: Path):
     """H8: promise.then(h).catch(e) records BOTH `then` and `catch`, not
     `then` twice with `catch` dropped."""
-    src = (
-        "function run() {\n"
-        "  promise.then(handler).catch(onErr);\n"
-        "}\n"
-    )
+    src = "function run() {\n  promise.then(handler).catch(onErr);\n}\n"
     p = tmp_path / "main.ts"
     p.write_text(src, encoding="utf-8")
     _, result = extract(p, src, tmp_path)
@@ -132,12 +121,7 @@ def test_ts_chained_method_calls_each_recorded(tmp_path: Path):
 
 def test_tsx_imports_and_visibility_extracted(tmp_path: Path):
     """H9: a .tsx file gets import scoping and exported visibility, same as .ts."""
-    src = (
-        "import { Widget } from './widget';\n"
-        "export function App() {\n"
-        "  return Widget();\n"
-        "}\n"
-    )
+    src = "import { Widget } from './widget';\nexport function App() {\n  return Widget();\n}\n"
     p = tmp_path / "App.tsx"
     p.write_text(src, encoding="utf-8")
     _, result = extract(p, src, tmp_path)

@@ -11,6 +11,8 @@ from fastmcp import Client
 from livespec_mcp.domain.matcher import parse_annotations
 from livespec_mcp.server import mcp
 
+from .conftest import requires_grammar
+
 
 def test_rf_verb_is_invisible_to_the_real_matcher():
     """Ground truth: confirms the bug this tool exists to catch actually
@@ -49,8 +51,7 @@ async def test_scan_annotation_verbs_flags_token_shape_mismatch(workspace):
     (workspace / "pkg").mkdir()
     (workspace / "pkg" / "__init__.py").write_text("")
     (workspace / "pkg" / "code.py").write_text(
-        '"""\n@spec:BE-RF-080\n"""\n'
-        "def handler():\n    return 1\n"
+        '"""\n@spec:BE-RF-080\n"""\ndef handler():\n    return 1\n'
     )
     async with Client(mcp) as c:
         await c.call_tool("index_project", {})
@@ -68,8 +69,7 @@ async def test_scan_annotation_verbs_skips_consumable_annotations(workspace):
     (workspace / "pkg").mkdir()
     (workspace / "pkg" / "__init__.py").write_text("")
     (workspace / "pkg" / "code.py").write_text(
-        '"""\n@spec:BE-RF-102\n"""\n'
-        "def handler():\n    return 1\n"
+        '"""\n@spec:BE-RF-102\n"""\ndef handler():\n    return 1\n'
     )
     async with Client(mcp) as c:
         await c.call_tool("index_project", {})
@@ -83,6 +83,7 @@ async def test_scan_annotation_verbs_skips_consumable_annotations(workspace):
 async def test_scan_annotation_verbs_finds_annotations_the_extractor_drops(workspace):
     """`@rf:` above a bare Hono route-registration expression must still be
     found even though NO function/handler symbol exists on that line."""
+    requires_grammar("typescript")
     (workspace / "src").mkdir()
     (workspace / "src" / "routes.ts").write_text(
         "import { Hono } from 'hono';\n"

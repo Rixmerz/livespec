@@ -44,7 +44,74 @@ Todo el stack es local-first: 0 servicios externos, 0 API keys obligatorias, 0 D
 
 ## 3. Estado actual
 
-### Unreleased — ingerir aristas de Graphify (no solo corroborar)
+### Unreleased — auditoría post-Graphify, 7 tandas
+
+**HEAD:** rama `claude/graphify-audit-improvements-wiobgd` sobre `f0095ea`.
+**Tools:** 51 (34 core + 12 Spec + 5 docs) — sin cambios, nada nuevo se
+expuso. **Migración:** v23 (`external_ingest`). **Tests nuevos:** 7 archivos,
+~90 casos.
+
+Auditoría pedida sobre la integración con Graphify que se acababa de landear.
+Encontró siete cosas; la más grave no era de Graphify.
+
+**P0 — local-first era falso, y en silencio.** `tree-sitter-language-pack` 1.x
+dejó de traer las gramáticas en el wheel y las descarga en el primer uso.
+`_ts_extract` se tragaba la falla, el indexer persistía el archivo con cero
+símbolos Y avanzaba el content_hash, así que no se reintentaba nunca. Un solo
+index offline convertía un repo políglota en Python-only de forma permanente y
+`find_dead_code` reportaba cada símbolo TS como muerto. Medido acá: 21 archivos
+en 7 lenguajes. Ahora hay `GrammarUnavailableError`, el archivo no se persiste
+(y por eso se reintenta solo), `index_project` reporta `languages_failed`, y
+`livespec grammars [--check]` hace el prefetch. Es también la causa de los 111
+tests rojos en sandboxes sin red.
+
+**P1 — el vocabulario de relaciones se clasificó grepeando la fuente de
+graphifyy 0.9.55**, no su README. Faltaban `implements`/`extends`/
+`specializes`/`embeds` (herencia en Java, C#, Lisp, Go), y sobraba el riesgo de
+`defines`/`exports`, que son `archivo -> símbolo` y habrían vuelto inmatable a
+todo símbolo de esos lenguajes — la misma trampa que `method`. `returns` NO
+entró: no es una relación emitida. `AMBIGUOUS` es ahora un techo, no un
+default. Y la deriva se reporta sola (`unknown_relations`).
+
+**P2 — `who_calls(AppState)` pasó de 2 a 40 tras una ingesta, y 38 eran
+anotaciones de tipo.** El default ahora cuenta sólo aristas de invocación
+(no-op sin ingesta), lo excluido se nombra en `excluded_by_edge_type`, y
+profundidad 1 lleva `edge_type` + `via_external_edge`. El bloque
+`external_edges` sale de nueve tools, no de cuatro, y su chequeo pasó de 0.59
+ms a 0.0053 ms (dos sondas de rango en vez de un scan completo).
+
+**P3 — la ingesta tenía amnesia.** Migración 23 registra de qué grafo salió,
+con qué hash y cuándo. La frescura (`edges_lost` / `graph_changed` /
+`graph_missing`) ahora se responde en cualquier momento, no sólo durante la
+corrida que la causó. Más cache de grafos parseados (1091 → 672 ms),
+`[graph] auto_ingest` y el lock que faltaba.
+
+**P4 — ingesta cross-repo sobre `group_db`.** Un grafo fusionado
+(`graphify merge-graphs`) más un group DB es el único lugar donde livespec
+puede sostener los dos extremos de una dependencia cross-repo que no es HTTP.
+Carril nuevo `cross_repo_callers` / `cross_repo_callees` por SQL directo,
+porque el GraphView es por proyecto.
+
+**P5 — layering.** Los helpers de grafo externo bajaron a
+`domain/external_source.py`; `indexing.py` ya no importa de `analysis.py` y
+`specs.py` perdió su copia privada de cuarenta líneas.
+`tests/test_layering.py` lo sostiene.
+
+**P6 — seis tools core no estaban en ningún manual de agente**, incluidas las
+dos alrededor de las que giraron los últimos releases.
+`tests/test_agent_docs_sync.py` falla si vuelve a pasar.
+
+**P7 — CI y docs.** `ruff format --check` y `uv lock --check` en CI, matriz con
+3.13, y esta sección.
+
+**Sigue abierto:** PR #18 (draft, superado por #19) con el carril
+`external_callers` y `scripts/dogfood_caller_gap.py`; los ~111 tests que sólo
+pasan con gramáticas descargables siguen rojos en un sandbox sin red (conftest
+tiene `requires_grammar()` para marcarlos, aplicado a tres por ahora); y la
+capa de documentación de Graphify (`rationale_for` + nodos de prosa) sigue
+diferida.
+
+### Unreleased previo — ingerir aristas de Graphify (no solo corroborar)
 
 **HEAD:** rama `claude/livespec-graphify-integration-fy5ybs` sobre `a6e57d7`.
 **Tools:** 51 (34 core + 12 Spec + 5 docs). **Migración:** v22

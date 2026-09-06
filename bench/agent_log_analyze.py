@@ -118,14 +118,10 @@ def aggregate(entries: list[dict], known_tools: list[str] | None = None) -> dict
             "workspaces": len(by_workspace),
             "tools_called": len(by_tool),
         },
-        "by_workspace": [
-            {"workspace": ws, "calls": c}
-            for ws, c in by_workspace.most_common()
-        ],
+        "by_workspace": [{"workspace": ws, "calls": c} for ws, c in by_workspace.most_common()],
         "tools": tool_rows,
         "follow_up_pairs": [
-            {"from": a, "to": b, "count": c}
-            for (a, b), c in pairs.most_common(20)
+            {"from": a, "to": b, "count": c} for (a, b), c in pairs.most_common(20)
         ],
         "silent_tools": silent,
     }
@@ -155,9 +151,7 @@ def render_markdown(agg: dict) -> str:
 
     lines.append("## Tools (by call count)")
     lines.append("")
-    lines.append(
-        "| tool | calls | errors | p50 ms | p95 ms | p50 chars | max chars |"
-    )
+    lines.append("| tool | calls | errors | p50 ms | p95 ms | p50 chars | max chars |")
     lines.append("|---|---:|---:|---:|---:|---:|---:|")
     for r in agg["tools"]:
         lines.append(

@@ -53,7 +53,11 @@ async def test_valid_reflects_only_errors_not_warnings(workspace):
         await c.call_tool("index_project", {})
         await c.call_tool(
             "create_spec",
-            {"spec_id": "handmade-rule", "title": "No scenario", "description": "The app SHALL do X."},
+            {
+                "spec_id": "handmade-rule",
+                "title": "No scenario",
+                "description": "The app SHALL do X.",
+            },
         )
         loose = (await c.call_tool("validate_openspec", {})).data
         strict = (await c.call_tool("validate_openspec", {"strict": True})).data
@@ -79,7 +83,14 @@ def test_hygiene_flags_obsolete_marker_and_prefix_mismatch(workspace):
     st.conn.execute(
         """INSERT INTO spec(project_id, spec_id, kind, title, description, status)
            VALUES (?,?,?,?,?,?)""",
-        (pid, "FE-RF-002", "functional_requirement", "Also normal", "The app SHALL work too.", "active"),
+        (
+            pid,
+            "FE-RF-002",
+            "functional_requirement",
+            "Also normal",
+            "The app SHALL work too.",
+            "active",
+        ),
     )
     st.conn.execute(
         """INSERT INTO spec(project_id, spec_id, kind, title, description, status)

@@ -20,28 +20,68 @@ def fake_log(tmp_path: Path) -> Path:
     log = tmp_path / "agent_log.jsonl"
     rows = [
         # Session A in ws1: index_project -> find_symbol -> get_symbol_info
-        {"ts": "2026-05-01T00:00:00", "tool_name": "index_project",
-         "args_redacted": {}, "latency_ms": 100, "result_chars": 200,
-         "error": None, "session_id": "A", "workspace": "/ws1"},
-        {"ts": "2026-05-01T00:00:01", "tool_name": "find_symbol",
-         "args_redacted": {"query": "X"}, "latency_ms": 5, "result_chars": 50,
-         "error": None, "session_id": "A", "workspace": "/ws1"},
-        {"ts": "2026-05-01T00:00:02", "tool_name": "get_symbol_info",
-         "args_redacted": {"identifier": "X"}, "latency_ms": 10,
-         "result_chars": 800, "error": None,
-         "session_id": "A", "workspace": "/ws1"},
+        {
+            "ts": "2026-05-01T00:00:00",
+            "tool_name": "index_project",
+            "args_redacted": {},
+            "latency_ms": 100,
+            "result_chars": 200,
+            "error": None,
+            "session_id": "A",
+            "workspace": "/ws1",
+        },
+        {
+            "ts": "2026-05-01T00:00:01",
+            "tool_name": "find_symbol",
+            "args_redacted": {"query": "X"},
+            "latency_ms": 5,
+            "result_chars": 50,
+            "error": None,
+            "session_id": "A",
+            "workspace": "/ws1",
+        },
+        {
+            "ts": "2026-05-01T00:00:02",
+            "tool_name": "get_symbol_info",
+            "args_redacted": {"identifier": "X"},
+            "latency_ms": 10,
+            "result_chars": 800,
+            "error": None,
+            "session_id": "A",
+            "workspace": "/ws1",
+        },
         # Session B in ws1: same A->B pattern
-        {"ts": "2026-05-01T01:00:00", "tool_name": "find_symbol",
-         "args_redacted": {"query": "Y"}, "latency_ms": 4, "result_chars": 80,
-         "error": None, "session_id": "B", "workspace": "/ws1"},
-        {"ts": "2026-05-01T01:00:01", "tool_name": "get_symbol_info",
-         "args_redacted": {"identifier": "Y"}, "latency_ms": 8,
-         "result_chars": 700, "error": None,
-         "session_id": "B", "workspace": "/ws1"},
+        {
+            "ts": "2026-05-01T01:00:00",
+            "tool_name": "find_symbol",
+            "args_redacted": {"query": "Y"},
+            "latency_ms": 4,
+            "result_chars": 80,
+            "error": None,
+            "session_id": "B",
+            "workspace": "/ws1",
+        },
+        {
+            "ts": "2026-05-01T01:00:01",
+            "tool_name": "get_symbol_info",
+            "args_redacted": {"identifier": "Y"},
+            "latency_ms": 8,
+            "result_chars": 700,
+            "error": None,
+            "session_id": "B",
+            "workspace": "/ws1",
+        },
         # Session C in ws2: error case
-        {"ts": "2026-05-01T02:00:00", "tool_name": "find_symbol",
-         "args_redacted": {"query": "Z"}, "latency_ms": 3, "result_chars": 0,
-         "error": "ValueError: bad", "session_id": "C", "workspace": "/ws2"},
+        {
+            "ts": "2026-05-01T02:00:00",
+            "tool_name": "find_symbol",
+            "args_redacted": {"query": "Z"},
+            "latency_ms": 3,
+            "result_chars": 0,
+            "error": "ValueError: bad",
+            "session_id": "C",
+            "workspace": "/ws2",
+        },
     ]
     text = "\n".join(json.dumps(r) for r in rows) + "\nNOT-JSON-LINE\n\n"
     log.write_text(text)
@@ -58,11 +98,21 @@ def test_load_logs_resolves_workspace_dir(tmp_path):
     ws = tmp_path / "ws"
     (ws / ".mcp-docs").mkdir(parents=True)
     log = ws / ".mcp-docs" / "agent_log.jsonl"
-    _write_jsonl(log, [
-        {"ts": "t", "tool_name": "x", "args_redacted": {},
-         "latency_ms": 0, "result_chars": 0, "error": None,
-         "session_id": "s", "workspace": str(ws)}
-    ])
+    _write_jsonl(
+        log,
+        [
+            {
+                "ts": "t",
+                "tool_name": "x",
+                "args_redacted": {},
+                "latency_ms": 0,
+                "result_chars": 0,
+                "error": None,
+                "session_id": "s",
+                "workspace": str(ws),
+            }
+        ],
+    )
     entries = load_logs([ws])
     assert len(entries) == 1
     assert entries[0]["tool_name"] == "x"
@@ -100,15 +150,13 @@ def test_aggregate_follow_up_pairs(fake_log):
 
 
 def test_aggregate_silent_tools(fake_log):
-    known = ["find_symbol", "get_symbol_info", "index_project",
-             "audit_coverage", "quick_orient"]
+    known = ["find_symbol", "get_symbol_info", "index_project", "audit_coverage", "quick_orient"]
     agg = aggregate(load_logs([fake_log]), known_tools=known)
     assert agg["silent_tools"] == ["audit_coverage", "quick_orient"]
 
 
 def test_render_markdown_smoke(fake_log):
-    agg = aggregate(load_logs([fake_log]),
-                    known_tools=["find_symbol", "audit_coverage"])
+    agg = aggregate(load_logs([fake_log]), known_tools=["find_symbol", "audit_coverage"])
     md = render_markdown(agg)
     assert "# Agent Log Aggregate" in md
     assert "find_symbol" in md

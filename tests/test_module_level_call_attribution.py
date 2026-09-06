@@ -51,27 +51,14 @@ def test_array_callback_call_attributed():
 
 
 def test_iife_call_attributed():
-    src = (
-        "(function () {\n"
-        "  doSetup();\n"
-        "})();\n"
-        "(() => {\n"
-        "  doOtherSetup();\n"
-        "})();\n"
-    )
+    src = "(function () {\n  doSetup();\n})();\n(() => {\n  doOtherSetup();\n})();\n"
     result = _ts_extract(src, "typescript", "mod")
     assert _refs_to(result, "doSetup")
     assert _refs_to(result, "doOtherSetup")
 
 
 def test_object_method_shorthand_gets_named_symbol():
-    src = (
-        "const handlers = {\n"
-        "  async handler(c) {\n"
-        "    return callSvc(c);\n"
-        "  },\n"
-        "};\n"
-    )
+    src = "const handlers = {\n  async handler(c) {\n    return callSvc(c);\n  },\n};\n"
     result = _ts_extract(src, "typescript", "mod")
     sym = next((s for s in result.symbols if s.name == "handler"), None)
     assert sym is not None
@@ -92,13 +79,7 @@ def test_object_arrow_property_call_attributed_but_mints_no_symbol():
     inverted from `getDb` to a mock property. The call must survive; the
     symbol must not exist.
     """
-    src = (
-        "const handlers = {\n"
-        "  handler: async (c) => {\n"
-        "    return callSvc(c);\n"
-        "  },\n"
-        "};\n"
-    )
+    src = "const handlers = {\n  handler: async (c) => {\n    return callSvc(c);\n  },\n};\n"
     result = _ts_extract(src, "typescript", "mod")
     assert not [s for s in result.symbols if s.name == "handler"], (
         "object-literal property keys must not become symbols"
@@ -111,15 +92,7 @@ def test_function_nested_in_object_property_is_not_swallowed():
     descended into the property body and a named function declared inside it
     vanished along with all of its calls — a silent drop of the exact class
     this module pass exists to fix."""
-    src = (
-        "const o = {\n"
-        "  h: () => {\n"
-        "    function inner() {\n"
-        "      deep();\n"
-        "    }\n"
-        "  },\n"
-        "};\n"
-    )
+    src = "const o = {\n  h: () => {\n    function inner() {\n      deep();\n    }\n  },\n};\n"
     result = _ts_extract(src, "typescript", "mod")
     assert any(s.name == "inner" for s in result.symbols), "nested named function lost"
     assert _refs_to(result, "deep"), "call inside the nested function was dropped"
@@ -164,14 +137,7 @@ def test_nested_named_const_arrow_not_double_counted():
     """A named `const` arrow nested inside a named function must own its own
     calls exclusively — not also attributed to the enclosing function (this
     was a latent double-count the boundary-skip fix also closes)."""
-    src = (
-        "function outer() {\n"
-        "  const inner = () => {\n"
-        "    innerCall();\n"
-        "  };\n"
-        "  outerCall();\n"
-        "}\n"
-    )
+    src = "function outer() {\n  const inner = () => {\n    innerCall();\n  };\n  outerCall();\n}\n"
     result = _ts_extract(src, "typescript", "mod")
     inner_refs = _refs_to(result, "innerCall")
     outer_refs = _refs_to(result, "outerCall")
@@ -187,9 +153,7 @@ def test_nested_named_const_arrow_not_double_counted():
 @pytest.mark.asyncio
 async def test_who_calls_finds_inline_handler_caller(workspace):
     (workspace / "inbound-email.service.ts").write_text(
-        "export async function ingestInboundEmail(c: any) {\n"
-        "  return { ok: true };\n"
-        "}\n"
+        "export async function ingestInboundEmail(c: any) {\n  return { ok: true };\n}\n"
     )
     (workspace / "inbound-email.ts").write_text(
         "import { Hono } from 'hono';\n"
@@ -207,22 +171,16 @@ async def test_who_calls_finds_inline_handler_caller(workspace):
     async with Client(mcp) as c:
         await c.call_tool("index_project", {})
         out = (
-            await c.call_tool(
-                "who_calls", {"qname": "inbound-email.service.ingestInboundEmail"}
-            )
+            await c.call_tool("who_calls", {"qname": "inbound-email.service.ingestInboundEmail"})
         ).data
         assert out["count"] >= 1, out
-        assert any(
-            caller["file_path"] == "inbound-email.ts" for caller in out["callers"]
-        ), out
+        assert any(caller["file_path"] == "inbound-email.ts" for caller in out["callers"]), out
 
 
 @pytest.mark.asyncio
 async def test_find_dead_code_no_false_positive_for_inline_handler_callee(workspace):
     (workspace / "svc.ts").write_text(
-        "export async function createUser(c: any) {\n"
-        "  return { ok: true };\n"
-        "}\n"
+        "export async function createUser(c: any) {\n  return { ok: true };\n}\n"
     )
     (workspace / "routes.ts").write_text(
         "import { Hono } from 'hono';\n"

@@ -29,9 +29,7 @@ def _unwrap_null_union(prop: dict[str, Any]) -> dict[str, Any]:
         any_of = current.get("anyOf")
         if not isinstance(any_of, list) or len(any_of) != 2:
             break
-        non_null = [
-            x for x in any_of if not (isinstance(x, dict) and x.get("type") == "null")
-        ]
+        non_null = [x for x in any_of if not (isinstance(x, dict) and x.get("type") == "null")]
         nulls = [x for x in any_of if isinstance(x, dict) and x.get("type") == "null"]
         if len(non_null) != 1 or len(nulls) != 1:
             break

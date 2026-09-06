@@ -143,9 +143,7 @@ def _bench_repo(workspace: Path) -> dict[str, Any]:
         "warm_ms": round(warm_ms, 1),
         "partial": partial,
         "db_mb": round(db_size_mb, 2),
-        "loc_per_sec": (
-            round(cold.symbols_total * 1000 / cold_ms, 0) if cold_ms > 0 else 0
-        ),
+        "loc_per_sec": (round(cold.symbols_total * 1000 / cold_ms, 0) if cold_ms > 0 else 0),
         "memory": memory,
     }
 

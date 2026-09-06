@@ -21,15 +21,10 @@ PARAM_DESCRIPTIONS: dict[str, str] = {
         "are accepted interchangeably."
     ),
     "symbol_qname": "Fully-qualified symbol name to link (or unlink).",
-    "max_depth": (
-        "How many call-graph / dependency hops to walk "
-        "(1 = direct neighbors only)."
-    ),
+    "max_depth": ("How many call-graph / dependency hops to walk (1 = direct neighbors only)."),
     "limit": "Max items to return in this page (pagination; counts stay exact).",
     "cursor": "Offset into the full result list; pass prior ``next_cursor`` to continue.",
-    "summary_only": (
-        "If true, return counts/meta only (no item arrays) — use on huge repos."
-    ),
+    "summary_only": ("If true, return counts/meta only (no item arrays) — use on huge repos."),
     "min_weight": (
         "Drop call edges below this resolver weight. Default 0.6 skips ambiguous "
         "fan-out (weight 0.5). Pass 0.0 for the unfiltered cone."
@@ -55,8 +50,7 @@ PARAM_DESCRIPTIONS: dict[str, str] = {
         "are normally kept out of dead-code candidates."
     ),
     "include_non_python": (
-        "Also sweep non-Python symbols for dead-code candidates "
-        "(auto-enabled on TS/JS-only repos)."
+        "Also sweep non-Python symbols for dead-code candidates (auto-enabled on TS/JS-only repos)."
     ),
     "include_ts_framework_routes": (
         "Treat TS/JS framework route handlers as entry points when sweeping dead code."
@@ -121,8 +115,7 @@ PARAM_DESCRIPTIONS: dict[str, str] = {
         "List of ``{spec_id, symbol_qname, relation?, confidence?}`` objects to link in bulk."
     ),
     "spec_id": (
-        "OpenSpec requirement id — the slug derived from its heading, e.g. "
-        "``auth-user-login``."
+        "OpenSpec requirement id — the slug derived from its heading, e.g. ``auth-user-login``."
     ),
     "parent_spec_id": "Parent Spec id for a Spec→Spec dependency edge.",
     "child_spec_id": "Child Spec id for a Spec→Spec dependency edge.",
@@ -134,9 +127,7 @@ PARAM_DESCRIPTIONS: dict[str, str] = {
     "module_depth": "Directory depth used to group modules when proposing Specs.",
     "min_symbols_per_group": "Skip module groups smaller than this when proposing Specs.",
     "max_proposals": "Maximum Spec proposals to return.",
-    "skip_already_covered": (
-        "Skip module groups that already have any Spec-linked symbol."
-    ),
+    "skip_already_covered": ("Skip module groups that already have any Spec-linked symbol."),
     "sample_per_group": "Max annotation samples to return per verb/group.",
     "out_dir": "Output directory for the OpenSpec tree (default under the workspace).",
     "out_subdir": "Subdirectory under the workspace for exported documentation.",
@@ -191,8 +182,7 @@ TOOL_PARAM_DESCRIPTIONS: dict[tuple[str, str], str] = {
         "since the last capture."
     ),
     ("search_similar", "touched_files"): (
-        "Files this session already edited. Only meaningful with "
-        "``boy_scout``; ignored otherwise."
+        "Files this session already edited. Only meaningful with ``boy_scout``; ignored otherwise."
     ),
     ("search_similar", "boy_scout"): (
         "Also report frozen debt when it lives in a file this session already "
@@ -205,7 +195,7 @@ TOOL_PARAM_DESCRIPTIONS: dict[tuple[str, str], str] = {
     ),
     ("search_similar", "threshold"): (
         "Minimum structural overlap for a near-duplicate (level 1). Default "
-        "0.80 is deliberately high — a wrong \"this already exists\" blocks "
+        '0.80 is deliberately high — a wrong "this already exists" blocks '
         "work that was right, and gets the check switched off."
     ),
     ("read_unit", "depth"): (
@@ -225,8 +215,7 @@ TOOL_PARAM_DESCRIPTIONS: dict[tuple[str, str], str] = {
         "1-indexed line number. The innermost symbol spanning it is returned."
     ),
     ("find_symbol", "query"): (
-        "Substring or qualified name to search. Separators ``::``, ``.``, and ``#`` "
-        "are normalized."
+        "Substring or qualified name to search. Separators ``::``, ``.``, and ``#`` are normalized."
     ),
     ("find_symbol", "kind"): (
         "Optional symbol kind filter (``function``, ``class``, ``method``, …)."
@@ -235,9 +224,7 @@ TOOL_PARAM_DESCRIPTIONS: dict[tuple[str, str], str] = {
     ("grep_in_indexed_files", "kind"): (
         "Optional symbol-kind filter when restricting grep to symbol bodies."
     ),
-    ("list_specs", "kind"): (
-        "Spec kind filter: ``functional_requirement``, ``adr``, ``nfr``, …"
-    ),
+    ("list_specs", "kind"): ("Spec kind filter: ``functional_requirement``, ``adr``, ``nfr``, …"),
     ("create_spec", "kind"): (
         "Spec kind: ``functional_requirement``, ``adr``, ``nfr``, or other taxonomy value."
     ),

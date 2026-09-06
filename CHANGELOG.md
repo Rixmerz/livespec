@@ -6,6 +6,159 @@ follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed — a tree-sitter grammar that will not load is no longer an empty file
+
+`tree-sitter-language-pack` 1.x stopped bundling grammars in the wheel and
+downloads each one from GitHub on first use. On a machine with no network,
+behind a proxy whose CA its native downloader does not trust, or in an
+air-gapped build, `get_parser` fails for every language except Python (which
+uses the stdlib `ast`).
+
+`_ts_extract` swallowed that and returned an empty result, which the indexer
+persisted: **zero symbols recorded AND the content hash advanced**, so the next
+run treated the file as unchanged and never retried it. One offline index
+turned a polyglot repo permanently Python-only, and `find_dead_code` then
+reported every TypeScript symbol in it as dead — with nothing in any payload
+saying why. Measured on this repo in a sandbox with no egress: 21 files across
+7 languages entered the index with no symbols and no way to find out.
+
+- New `GrammarUnavailableError` — a missing grammar and an unparseable file are
+  different claims and are now distinguishable.
+- The indexer **does not persist** such a file: it counts it under
+  `languages_failed`, leaves no row, and so the next run retries it without
+  `force=True`.
+- `index_project` reports `languages_failed` plus a hint saying the counts
+  exclude those files entirely. Silent when there are none.
+- New CLI `livespec grammars [--check] [lang ...]` prefetches the 9 grammars
+  livespec extracts (not the pack's several hundred). `--check` exits 1 when
+  any is missing, so a Dockerfile or provisioning script fails loudly instead
+  of shipping an image that will quietly index Python only.
+- README's "100% local, zero external services" was false for the first index.
+  It now says so and documents the prefetch.
+
+### Changed — `who_calls` counts callers, not mentions
+
+Ingestion put `references` and `inherits` rows into `symbol_edge` next to
+livespec's own `calls`. Those are real dependencies and belong in
+`analyze_impact` — a type annotation does break when you change the type — but
+`who_calls` did not distinguish edge types, so all of them arrived as
+"callers". Measured on this repo against a Graphify graph of its own tree:
+`who_calls` for one class went from **2 to 40** after an ingest, and 38 of the
+40 were methods taking it as a parameter type.
+
+- `who_calls` / `who_does_this_call` walk invocation edges by default
+  (`calls`, `invokes_route` — exactly what livespec's own extraction writes),
+  so this is a no-op on any index nobody has ingested into. New `edge_types`
+  argument widens it.
+- Filtering happens **during** the traversal: a node reachable only through an
+  excluded edge is not a caller either.
+- What the filter left out is reported under `excluded_by_edge_type`, with the
+  argument that reveals it. A filter that silently drops the reference would
+  trade one lie for another.
+- Depth-1 neighbours carry `edge_type`, plus `via_external_edge` when the edge
+  was ingested.
+- The `external_edges` disclosure now comes from **nine** tools instead of four
+  (`find_orphan_tests`, `audit_coverage`, `git_diff_impact`, `quick_orient`,
+  `get_project_overview`, `read_unit` and `find_legacy_flows` join it),
+  including their `summary_only` paths.
+- That disclosure got ~100x cheaper: `origin <> 'livespec'` cannot use
+  `idx_edge_origin`, so it degraded to a full scan of `symbol_edge` — 465K
+  edges on Django, per read tool, per call, on an index nobody had ingested
+  into. Split into two range probes around the constant it is a b-tree seek:
+  **0.59 ms → 0.0053 ms**, and logarithmic rather than linear.
+
+### Added — `external_ingest` provenance (migration 23) + freshness
+
+Ingestion was reversible and idempotent, and amnesiac: nothing recorded which
+graph the rows came from. So the only moment anyone could learn that ingested
+edges no longer matched the code was the `index_project` run that destroyed
+some of them — and the rows it did *not* destroy are the dangerous half, still
+answering `who_calls` from a graph built against code that has moved.
+
+- One row per (project, origin) with the graph path, mtime, size, content hash,
+  relations, edge count and timestamp. An ingest replaces its own provenance
+  the way it replaces its own edges.
+- Every graph-reading tool's `external_edges` block now carries `stale` when
+  applicable, distinguishing `edges_lost` (a re-extract cascaded rows away),
+  `graph_changed` (the file is not the one that was ingested) and
+  `graph_missing`.
+- Hashed by content, not trusted by mtime: `graphify update` / `graphify watch`
+  rewrite `graph.json` every run, and crying stale on every watcher tick would
+  train the reader to ignore the field.
+- New `[graph] auto_ingest` (off by default) re-applies the recorded ingest
+  after an index run that changed files. Off by default because an ingest
+  writes rows, and a write that happens because someone saved a file is not
+  something to opt anyone into silently. Never fatal.
+- Parsed external graphs are cached by (path, mtime, size). `[graph] external`
+  makes corroboration a repo's default, and then every `find_dead_code`
+  re-parsed the file: **1091 ms → 672 ms** on this repo's 3.8 MB graph.
+- `ingest_external_graph` apply/remove now run under the same `st.lock()` as
+  `index_project`. A re-extract landing between the DELETE and the INSERT
+  cascaded the symbols away and the INSERT failed on a foreign key.
+
+### Added — cross-repo ingestion over a `group_db`
+
+`graphify merge-graphs` fuses several `graph.json` files into one, and a group
+DB is the only place livespec can hold both ends of a **non-HTTP** cross-repo
+dependency. The ingest looked at `st.project_id` alone, so every such edge
+landed in `skipped.endpoint_not_indexed` with its other end three rows away in
+the same database.
+
+- Node mapping and edge deletion span `group_project_ids()`. Identical
+  behaviour on an ungrouped workspace, where that is `[project_id]`.
+- `who_calls` / `who_does_this_call` gain `cross_repo_callers` /
+  `cross_repo_callees`, a direct-SQL lane like the existing `route_callers` —
+  the per-project NetworkX view cannot hold an edge whose ends are in two
+  repos. Reported separately, never folded into a count that means "within
+  this repo". Silent on every ungrouped workspace.
+- New `ambiguous_cross_project` counter: two repos of a group both store
+  `src/index.ts` relative to their own root, so one node key matches both.
+  Still dropped — a wrong edge is worse than a missing one — but the payload
+  now names the cause instead of leaving someone hunting for a bad graph.
+
+### Changed — the external relation vocabulary, checked against the source
+
+Classified by grepping Graphify 0.9.55's own emission sites rather than its
+README.
+
+- **Added as evidence and ingestible:** `implements`, `extends`, `specializes`,
+  `embeds` (inheritance in Java/C# interfaces, CommonLisp, Go embedding),
+  `instantiates` (a constructor call), `accesses`, `reads_from`, `requires`,
+  `depends_on`, `uses_static_prop`, `uses_component`, `references_constant`,
+  `binds_method`, `bound_to`, `includes`.
+- **Added as structural:** `defines` and `exports` — both emitted
+  `file_node -> symbol`, so every symbol in those languages has one.
+  `evidence_for` looks only at the relation of an inbound edge, never at
+  whether its source maps, so an unlisted containment relation makes every
+  symbol in that language un-killable. Exactly what `method` did before the
+  14-repo sweep caught it.
+- `returns` was **not** added: it appears in Graphify's source as a tree-sitter
+  field name and a query context, never as an emitted relation.
+- `AMBIGUOUS` confidence is now a **ceiling**, not a default: it maps to 0.5,
+  which `min_weight=0.6` filters, and a high `confidence_score` cannot lift it
+  past the filter built to catch guesses.
+- Vocabulary drift now reports itself. Unrecognised relations are counted and
+  surfaced as `unknown_relations` in both the corroboration and ingest
+  payloads, instead of being silently ignored by both consumers.
+- `DEFAULT_RELATIONS` is derived (`RELATION_EDGE_TYPE - IMPORT_RELATIONS`)
+  rather than maintained as a parallel list.
+
+### Changed — internal layering, and the docs an agent actually reads
+
+- The external-graph helpers moved to `domain/external_source.py`.
+  `tools/indexing.py` imported them back out of `tools/analysis.py`, and by the
+  time a third consumer arrived, `propose_specs_from_codebase` had a forty-line
+  private copy of load-and-gate that had drifted. New `tests/test_layering.py`
+  keeps `domain/` free of `tools/` imports and stops anyone bypassing the
+  overlap gate.
+- `read_unit`, `resolve_location`, `search_similar`, `debt_baseline_capture`,
+  `debt_baseline_status` and `ingest_external_graph` were core tools that
+  appeared nowhere in the Skill an agent loads or in the `agent_playbook`
+  prompt. All six are documented now, along with the whole external-graph
+  workflow, and `tests/test_agent_docs_sync.py` fails if a core tool is ever
+  added without telling an agent when to call it.
+
+
 ### Added — ingest an external extractor's edges into the call graph
 
 `ingest_external_graph(graph_path=None, dry_run=True, remove=False,

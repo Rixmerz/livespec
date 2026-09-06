@@ -79,11 +79,7 @@ async def test_signature_drift_marks_doc_stale(sample_repo):
         assert text != new, "fixture must contain the original verify signature"
         auth_path.write_text(new)
         await c.call_tool("index_project", {"force": True})
-        stale = (
-            await c.call_tool("list_docs", {"target_type": "symbol", "only_stale": True})
-        ).data
+        stale = (await c.call_tool("list_docs", {"target_type": "symbol", "only_stale": True})).data
         targets = {s["target"]: s["drift"] for s in stale["stale"]}
         assert "pkg.auth.verify" in targets, f"signature drift not detected: {stale}"
         assert "signature" in targets["pkg.auth.verify"]
-
-

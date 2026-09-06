@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from functools import lru_cache
 from pathlib import Path
 
 # v0.8 P3.4/P3.5: force every plugin to register so tests see the full
@@ -15,7 +16,40 @@ os.environ.setdefault("LIVESPEC_PLUGINS", "all")
 import pytest
 
 from livespec_mcp import state as state_module
+from livespec_mcp.domain.external_graph import clear_external_graph_cache
 from livespec_mcp.domain.graph import invalidate_graph_cache
+
+
+@lru_cache(maxsize=32)
+def _grammar_available(language: str) -> bool:
+    from livespec_mcp.domain.languages import GrammarUnavailableError, get_parser
+
+    try:
+        get_parser(language)
+    except GrammarUnavailableError:
+        return False
+    except Exception:  # pragma: no cover - any other failure is a real bug
+        return False
+    return True
+
+
+def requires_grammar(*languages: str) -> None:
+    """Skip the calling test unless every named tree-sitter grammar loads.
+
+    `tree-sitter-language-pack` 1.x downloads grammars on first use, so a test
+    that indexes a `.ts` / `.rs` / `.go` fixture cannot run on a machine with
+    no network for it. Without this, such a test fails with an assertion about
+    symbol counts, which reads as a livespec bug and is not one.
+
+    Call it from tests whose subject is polyglot behaviour, so an offline run
+    reports an honest skip instead of a misleading failure.
+    """
+    missing = [lang for lang in languages if not _grammar_available(lang)]
+    if missing:
+        pytest.skip(
+            f"tree-sitter grammar(s) unavailable here: {', '.join(missing)} "
+            "(run `livespec grammars` with network access)"
+        )
 
 
 @pytest.fixture
@@ -34,9 +68,11 @@ def _bind_workspace_for_tests(workspace: Path, monkeypatch):
         return real(path if path is not None else workspace)
 
     monkeypatch.setattr(state_module, "_resolve_workspace", _resolve)
+    clear_external_graph_cache()
     yield
     state_module.reset_state()
     invalidate_graph_cache()
+    clear_external_graph_cache()
 
 
 @pytest.fixture

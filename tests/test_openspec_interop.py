@@ -48,10 +48,7 @@ Superseded by the new theming engine.
 
 def test_fresh_db_has_openspec_tables(tmp_path):
     conn = connect(tmp_path / "fresh.db")
-    tables = {
-        r["name"]
-        for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
-    }
+    tables = {r["name"] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
     assert {"spec_scenario", "spec_change", "spec_change_delta"} <= tables
     conn.close()
 
@@ -95,11 +92,7 @@ async def test_import_persists_scenarios(sample_repo):
         by_id = {r["spec_id"]: r for r in listed["specs"]}
         assert by_id["theme-selection"]["scenario_count"] == 1
 
-        impl = (
-            await c.call_tool(
-                "get_spec_implementation", {"spec_id": "theme-selection"}
-            )
-        ).data
+        impl = (await c.call_tool("get_spec_implementation", {"spec_id": "theme-selection"})).data
         assert impl["coverage"]["scenario_count"] == 1
         assert impl["scenarios"][0]["name"] == "User toggles dark mode"
         assert "WHEN" in impl["scenarios"][0]["body"]
@@ -113,16 +106,10 @@ async def test_native_reimport_rejects_legacy_catalog(sample_repo):
     async with Client(mcp) as c:
         await c.call_tool("index_project", {})
         await c.call_tool("import_specs_from_markdown", {"path": "os.md"})
-        native = (
-            await c.call_tool("import_specs_from_markdown", {"path": "native.md"})
-        ).data
+        native = (await c.call_tool("import_specs_from_markdown", {"path": "native.md"})).data
         assert native.get("isError") is True
         assert "SPEC-NNN" in native["error"]
-        impl = (
-            await c.call_tool(
-                "get_spec_implementation", {"spec_id": "theme-selection"}
-            )
-        ).data
+        impl = (await c.call_tool("get_spec_implementation", {"spec_id": "theme-selection"})).data
         assert impl["coverage"]["scenario_count"] == 1
 
 
@@ -138,7 +125,11 @@ async def test_validate_openspec_flags_missing_scenario(sample_repo):
         # Add a spec with no scenario via create_spec.
         await c.call_tool(
             "create_spec",
-            {"title": "No scenario", "description": "The app SHALL do X.", "spec_id": "handmade-rule"},
+            {
+                "title": "No scenario",
+                "description": "The app SHALL do X.",
+                "spec_id": "handmade-rule",
+            },
         )
         loose = (await c.call_tool("validate_openspec", {})).data
         assert "handmade-rule" in loose["specs_without_scenarios"]
@@ -208,9 +199,7 @@ async def test_export_preserves_slug_spec_id(sample_repo):
         listed = (await c.call_tool("list_specs", {})).data
         ids = {s["spec_id"] for s in listed["specs"]}
         assert "auth-user-login" in ids
-        assert not any(
-            s.startswith("indexing-") and s != "auth-user-login" for s in ids
-        )
+        assert not any(s.startswith("indexing-") and s != "auth-user-login" for s in ids)
 
 
 # ---------- change lifecycle ----------
@@ -236,17 +225,13 @@ async def test_change_lifecycle(sample_repo):
         assert changes[0]["status"] == "proposed"
         assert changes[0]["delta_count"] == 2
 
-        detail = (
-            await c.call_tool("get_spec_change", {"name": "add-high-contrast"})
-        ).data
+        detail = (await c.call_tool("get_spec_change", {"name": "add-high-contrast"})).data
         assert "accessibility" in detail["proposal"]
         ops = {d["operation"] for d in detail["deltas"]}
         assert ops == {"added", "removed"}
 
         # Apply: adds high-contrast, deprecates theme-selection.
-        applied = (
-            await c.call_tool("apply_spec_change", {"name": "add-high-contrast"})
-        ).data
+        applied = (await c.call_tool("apply_spec_change", {"name": "add-high-contrast"})).data
         assert applied["applied"]["added"] == 1
         assert applied["applied"]["removed"] == 1
 
@@ -255,15 +240,11 @@ async def test_change_lifecycle(sample_repo):
         assert "theming-high-contrast-mode" in active_ids
         assert "theming-theme-selection" not in active_ids
 
-        deprecated = (
-            await c.call_tool("list_specs", {"status": "deprecated"})
-        ).data["specs"]
+        deprecated = (await c.call_tool("list_specs", {"status": "deprecated"})).data["specs"]
         assert any(s["spec_id"] == "theming-theme-selection" for s in deprecated)
 
         # Archive.
-        arch = (
-            await c.call_tool("archive_spec_change", {"name": "add-high-contrast"})
-        ).data
+        arch = (await c.call_tool("archive_spec_change", {"name": "add-high-contrast"})).data
         assert arch["status"] == "archived"
         listed = (await c.call_tool("list_spec_changes", {"status": "archived"})).data
         assert len(listed["changes"]) == 1
@@ -290,11 +271,7 @@ async def test_scenario_level_traceability(sample_repo):
         ).data
         assert linked["linked"] is True
 
-        impl = (
-            await c.call_tool(
-                "get_spec_implementation", {"spec_id": "theme-selection"}
-            )
-        ).data
+        impl = (await c.call_tool("get_spec_implementation", {"spec_id": "theme-selection"})).data
         scen = impl["scenarios"][0]
         assert scen["verified"] is True
         assert scen["symbols"][0]["qualified_name"] == "pkg.auth.login"
@@ -302,11 +279,7 @@ async def test_scenario_level_traceability(sample_repo):
 
         # Re-import must PRESERVE the scenario link (upsert, not delete+insert).
         await c.call_tool("import_specs_from_markdown", {"path": "spec.md"})
-        impl2 = (
-            await c.call_tool(
-                "get_spec_implementation", {"spec_id": "theme-selection"}
-            )
-        ).data
+        impl2 = (await c.call_tool("get_spec_implementation", {"spec_id": "theme-selection"})).data
         assert impl2["scenarios"][0]["verified"] is True
 
         # Unlink.
@@ -319,11 +292,7 @@ async def test_scenario_level_traceability(sample_repo):
                 "unlink": True,
             },
         )
-        impl3 = (
-            await c.call_tool(
-                "get_spec_implementation", {"spec_id": "theme-selection"}
-            )
-        ).data
+        impl3 = (await c.call_tool("get_spec_implementation", {"spec_id": "theme-selection"})).data
         assert impl3["scenarios"][0]["verified"] is False
 
 
@@ -438,9 +407,7 @@ async def test_rename_migrates_links(sample_repo):
         assert "theming-theme-selection" not in ids  # old spec is gone
 
         impl = (
-            await c.call_tool(
-                "get_spec_implementation", {"spec_id": "theming-theme-picker"}
-            )
+            await c.call_tool("get_spec_implementation", {"spec_id": "theming-theme-picker"})
         ).data
         # The code link AND the scenario migrated from the old spec.
         assert any(s["qualified_name"] == "pkg.auth.login" for s in impl["symbols"])
@@ -530,9 +497,7 @@ async def test_apply_dry_run_and_warnings(sample_repo):
         await c.call_tool("sync_openspec", {})
 
         dry = (
-            await c.call_tool(
-                "apply_spec_change", {"name": "mod-missing", "dry_run": True}
-            )
+            await c.call_tool("apply_spec_change", {"name": "mod-missing", "dry_run": True})
         ).data
         assert dry["dry_run"] is True
         assert dry["plan"]["modified"] == 1
@@ -545,9 +510,7 @@ async def test_apply_dry_run_and_warnings(sample_repo):
         assert changes[0]["status"] == "proposed"
 
         # Real apply creates it and still surfaces the warning.
-        applied = (
-            await c.call_tool("apply_spec_change", {"name": "mod-missing"})
-        ).data
+        applied = (await c.call_tool("apply_spec_change", {"name": "mod-missing"})).data
         assert applied["applied"]["modified"] == 1
         assert applied["warnings"]
 
@@ -598,9 +561,7 @@ async def test_sweep_leaves_hand_made_specs_alone(sample_repo):
     (tree / "spec.md").write_text(CANONICAL)
     async with Client(mcp) as c:
         await c.call_tool("index_project", {})
-        await c.call_tool(
-            "create_spec", {"title": "Handmade rule", "spec_id": "handmade-rule"}
-        )
+        await c.call_tool("create_spec", {"title": "Handmade rule", "spec_id": "handmade-rule"})
         synced = (await c.call_tool("sync_openspec", {})).data
         assert "retired" not in synced["specs"], synced
 
@@ -644,9 +605,9 @@ async def test_dropping_a_legacy_id_marker_keeps_the_spec_and_its_links(sample_r
         assert "SPEC-042" not in after
         assert after["theming-theme-selection"]["link_count"] == 1
 
-        impl = (await c.call_tool(
-            "get_spec_implementation", {"spec_id": "theming-theme-selection"}
-        )).data
+        impl = (
+            await c.call_tool("get_spec_implementation", {"spec_id": "theming-theme-selection"})
+        ).data
         assert [s["qualified_name"] for s in impl["symbols"]] == ["pkg.auth.login"]
 
 

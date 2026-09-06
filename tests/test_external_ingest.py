@@ -52,9 +52,7 @@ def _repo(workspace: Path) -> None:
     pkg.mkdir()
     (pkg / "__init__.py").write_text("")
     (pkg / "models.py").write_text(
-        "class Base:\n"
-        "    def tag(self) -> str:\n"
-        "        return 'base'\n"
+        "class Base:\n    def tag(self) -> str:\n        return 'base'\n"
     )
     (pkg / "service.py").write_text(
         "from pkg.models import Base\n"
@@ -240,9 +238,7 @@ async def test_remove_restores_the_livespec_only_graph_exactly(workspace: Path):
         await c.call_tool("index_project", {})
         before = _edge_rows(workspace)
         graph_path = _graph(workspace, [TYPE_POSITION_LINK])
-        await c.call_tool(
-            "ingest_external_graph", {"graph_path": graph_path, "dry_run": False}
-        )
+        await c.call_tool("ingest_external_graph", {"graph_path": graph_path, "dry_run": False})
         assert len(_edge_rows(workspace)) == len(before) + 1
         removed = (await c.call_tool("ingest_external_graph", {"remove": True})).data
     assert removed["removed"] == 1
@@ -278,9 +274,7 @@ async def test_a_second_dry_run_still_predicts_the_work(workspace: Path):
     async with Client(mcp) as c:
         await c.call_tool("index_project", {})
         graph_path = _graph(workspace, [TYPE_POSITION_LINK])
-        await c.call_tool(
-            "ingest_external_graph", {"graph_path": graph_path, "dry_run": False}
-        )
+        await c.call_tool("ingest_external_graph", {"graph_path": graph_path, "dry_run": False})
         again = (await c.call_tool("ingest_external_graph", {"graph_path": graph_path})).data
     assert again["edges_to_add"] == 1
     assert again["already_known"] == 0
@@ -292,10 +286,23 @@ async def test_a_second_dry_run_still_predicts_the_work(workspace: Path):
 
 
 @pytest.mark.asyncio
-async def test_who_calls_gains_the_caller_and_says_where_it_came_from(
+async def test_a_type_position_use_is_reported_but_not_as_a_caller(
     workspace: Path,
 ):
-    """The whole point, and the honesty tax that comes with it."""
+    """The whole point, and the honesty tax that comes with it.
+
+    `describe(item: Base)` does not CALL `Base`; it names it in a parameter
+    annotation. That is a real dependency — changing `Base` can break
+    `describe` — and it is exactly the blind spot the ingest exists to fill.
+    But putting it in a list labelled "callers" makes `who_calls` lie, and the
+    first version of this feature did: measured on livespec itself, one class
+    went from 2 callers to 40 after an ingest, 38 of them methods taking it as
+    a parameter type. An agent reading "40 callers" cannot tell which two
+    actually call it.
+
+    So the default answer is unchanged by the ingest, and the dependency is
+    reported next to it with the argument that reveals it.
+    """
     _repo(workspace)
     async with Client(mcp) as c:
         await c.call_tool("index_project", {})
@@ -307,12 +314,43 @@ async def test_who_calls_gains_the_caller_and_says_where_it_came_from(
             {"graph_path": _graph(workspace, [TYPE_POSITION_LINK]), "dry_run": False},
         )
         after = (await c.call_tool("who_calls", {"qname": "pkg.models.Base"})).data
+        widened = (
+            await c.call_tool(
+                "who_calls",
+                {"qname": "pkg.models.Base", "edge_types": ["calls", "references"]},
+            )
+        ).data
+
+    # Default: not a caller, but impossible to miss.
+    assert after["count"] == 0
+    assert after["excluded_by_edge_type"] == {"references": 1}
+    assert "edge_types" in after["excluded_by_edge_type_hint"]
+    assert after["external_edges"]["by_origin"] == {EXTERNAL_ORIGIN: 1}
+
+    # Opted in: there it is, labelled with the edge and with whose claim it is.
+    assert widened["count"] == 1
+    caller = widened["callers"][0]
+    assert caller["qualified_name"] == "pkg.service.describe"
+    assert caller["edge_type"] == "references"
+    assert caller["via_external_edge"] == EXTERNAL_ORIGIN
+
+
+@pytest.mark.asyncio
+async def test_an_ingested_call_edge_does_become_a_caller(workspace: Path):
+    """The filter must not throw the baby out. A `calls` relation livespec's
+    resolver missed is a caller, and arrives as one by default."""
+    _repo(workspace)
+    async with Client(mcp) as c:
+        await c.call_tool("index_project", {})
+        graph_path = _graph(workspace, [("pkg.service.main", "pkg.models.Base.tag", "calls")])
+        await c.call_tool("ingest_external_graph", {"graph_path": graph_path, "dry_run": False})
+        after = (await c.call_tool("who_calls", {"qname": "pkg.models.Base.tag"})).data
 
     assert after["count"] == 1
-    caller = after["callers"][0]
-    assert caller["qualified_name"] == "pkg.service.describe"
-    assert caller["via_external_edge"] == EXTERNAL_ORIGIN
-    assert after["external_edges"]["by_origin"] == {EXTERNAL_ORIGIN: 1}
+    assert after["callers"][0]["qualified_name"] == "pkg.service.main"
+    assert after["callers"][0]["edge_type"] == "calls"
+    assert after["callers"][0]["via_external_edge"] == EXTERNAL_ORIGIN
+    assert "excluded_by_edge_type" not in after
 
 
 @pytest.mark.asyncio
@@ -380,9 +418,7 @@ async def test_an_import_is_not_ingested_as_a_caller_by_default(workspace: Path)
     _repo(workspace)
     async with Client(mcp) as c:
         await c.call_tool("index_project", {})
-        graph_path = _graph(
-            workspace, [("pkg.service.main", "pkg.models.Base", "imports")]
-        )
+        graph_path = _graph(workspace, [("pkg.service.main", "pkg.models.Base", "imports")])
         default = (await c.call_tool("ingest_external_graph", {"graph_path": graph_path})).data
         opted_in = (
             await c.call_tool(
@@ -445,9 +481,7 @@ async def test_a_graph_of_a_different_repo_is_refused(workspace: Path):
     )
     async with Client(mcp) as c:
         await c.call_tool("index_project", {})
-        out = (
-            await c.call_tool("ingest_external_graph", {"graph_path": str(foreign)})
-        ).data
+        out = (await c.call_tool("ingest_external_graph", {"graph_path": str(foreign)})).data
     assert out["isError"] is True
     assert "almost no files" in out["error"]
 
@@ -530,9 +564,7 @@ async def test_our_own_resolver_reclaims_an_edge_it_later_derives(workspace: Pat
     from livespec_mcp.state import get_state
 
     st = get_state(str(workspace))
-    src, dst, edge_type, origin = next(
-        r for r in _edge_rows(workspace) if r[3] == EXTERNAL_ORIGIN
-    )
+    src, dst, edge_type, origin = next(r for r in _edge_rows(workspace) if r[3] == EXTERNAL_ORIGIN)
     assert origin == EXTERNAL_ORIGIN
 
     # Verbatim the upsert `_resolve_refs` runs for every edge it derives.
@@ -593,10 +625,26 @@ def test_a_node_two_symbols_both_claim_is_dropped_not_guessed(tmp_path: Path):
         {"id": 1, "name": "handler", "start_line": 10, "file_path": "app.py"},
         {"id": 2, "name": "handler", "start_line": 10, "file_path": "app.py"},
     ]
-    mapping, ambiguous = map_nodes_to_symbols(graph, both)
+    mapping, ambiguous, cross_project = map_nodes_to_symbols(graph, both)
     assert mapping == {}
     assert ambiguous == 1
+    # Both claimants are in the same project here, so this is the fallible-
+    # position case, not the colliding-paths-across-a-group case.
+    assert cross_project == 0
 
-    mapping, ambiguous = map_nodes_to_symbols(graph, both[:1])
+    mapping, ambiguous, cross_project = map_nodes_to_symbols(graph, both[:1])
     assert mapping == {"shared": 1}
     assert ambiguous == 0
+    assert cross_project == 0
+
+    # Two repos of a group DB, each storing `app.py` relative to its own root.
+    # Still dropped — writing the edge into the wrong repo is worse — but the
+    # cause is reported separately, because no amount of re-running fixes it.
+    grouped = [
+        {**both[0], "project_id": 1},
+        {**both[1], "project_id": 2},
+    ]
+    mapping, ambiguous, cross_project = map_nodes_to_symbols(graph, grouped)
+    assert mapping == {}
+    assert ambiguous == 1
+    assert cross_project == 1

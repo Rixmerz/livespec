@@ -140,9 +140,7 @@ async def _seed(client: Client, workspace: str) -> dict[str, Any]:
     seed: dict[str, Any] = {"workspace": workspace}
     overview = await _call(client, "get_project_overview", {"workspace": workspace})
     seed["overview"] = overview
-    ov_raw = (
-        await client.call_tool("get_project_overview", {"workspace": workspace})
-    ).data
+    ov_raw = (await client.call_tool("get_project_overview", {"workspace": workspace})).data
     tops = ov_raw.get("top_symbols") or []
     for s in tops:
         if s.get("kind") in ("function", "method", "class") and s.get("qualified_name"):
@@ -185,7 +183,7 @@ async def _seed(client: Client, workspace: str) -> dict[str, Any]:
         "list_specs",
         {"workspace": workspace, "limit": 5, "summary_only": False},
     )
-    specs = (_data(ls).get("specs") or [])
+    specs = _data(ls).get("specs") or []
     if specs:
         seed["spec_id"] = specs[0].get("spec_id") or specs[0].get("id")
         # Prefer a Spec that already has scenarios (link_scenario_symbol)
@@ -221,7 +219,7 @@ async def _seed(client: Client, workspace: str) -> dict[str, Any]:
             except Exception:
                 pass
     lsc = await client.call_tool("list_spec_changes", {"workspace": workspace})
-    changes = (_data(lsc).get("changes") or _data(lsc).get("spec_changes") or [])
+    changes = _data(lsc).get("changes") or _data(lsc).get("spec_changes") or []
     proposed = [c for c in changes if (c.get("status") or "") != "archived"]
     if proposed:
         seed["change_name"] = proposed[0].get("name") or proposed[0].get("id")
@@ -258,11 +256,17 @@ def _cases(seed: dict[str, Any], *, mode: str) -> list[tuple[str, dict[str, Any]
 
     cases: list[tuple[str, dict[str, Any]]] = [
         ("get_project_overview", {"workspace": ws, "include_structural_patterns": False}),
-        ("find_symbol", {"workspace": ws, "query": seed.get("find_symbol_query") or "list", "limit": 10}),
+        (
+            "find_symbol",
+            {"workspace": ws, "query": seed.get("find_symbol_query") or "list", "limit": 10},
+        ),
         ("quick_orient", {"workspace": ws, "qname": qname}),
         ("get_symbol_source", {"workspace": ws, "qname": qname}),
         ("who_calls", {"workspace": ws, "qname": qname, "limit": LIMIT, "summary_only": True}),
-        ("who_does_this_call", {"workspace": ws, "qname": qname, "limit": LIMIT, "summary_only": True}),
+        (
+            "who_does_this_call",
+            {"workspace": ws, "qname": qname, "limit": LIMIT, "summary_only": True},
+        ),
         (
             "analyze_impact",
             {
@@ -378,9 +382,7 @@ def _cases(seed: dict[str, Any], *, mode: str) -> list[tuple[str, dict[str, Any]
 
     if change:
         cases.append(("get_spec_change", {"workspace": ws, "name": change}))
-        cases.append(
-            ("apply_spec_change", {"workspace": ws, "name": change, "dry_run": True})
-        )
+        cases.append(("apply_spec_change", {"workspace": ws, "name": change, "dry_run": True}))
         cases.append(("archive_spec_change", {"workspace": ws, "name": change}))
 
     if scenario and seed.get("spec_id"):
@@ -523,9 +525,13 @@ async def _run_mode(client: Client, workspace: str, mode: str) -> dict[str, Any]
     for name, args in _cases(seed, mode=mode):
         # Deduplicate tool name tracking but allow multiple arg variants
         row = await _call(client, name, args)
-        row["variant"] = ",".join(f"{k}={args[k]!r}" for k in args if k not in ("workspace",) and k in (
-            "framework", "project", "target_type", "summary_only", "dry_run", "force", "unlink"
-        ))
+        row["variant"] = ",".join(
+            f"{k}={args[k]!r}"
+            for k in args
+            if k not in ("workspace",)
+            and k
+            in ("framework", "project", "target_type", "summary_only", "dry_run", "force", "unlink")
+        )
         results.append(row)
         seen_tools.add(name)
 

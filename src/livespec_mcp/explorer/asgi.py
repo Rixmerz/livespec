@@ -161,9 +161,7 @@ def create_explorer_app(
         return FileResponse(bundle_dir / "index.html")
 
     routes: list[Route] = [
-        *_playground_routes(
-            ws, enabled=playground, mode=playground_mode_value
-        ),
+        *_playground_routes(ws, enabled=playground, mode=playground_mode_value),
         Route("/", index, methods=["GET", "HEAD"]),
         Route("/data.json", data_json, methods=["GET", "HEAD"]),
         Route("/{path:path}", spa, methods=["GET", "HEAD"]),

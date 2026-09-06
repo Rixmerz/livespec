@@ -42,9 +42,7 @@ async def test_filtered_out_attributes_test_skips(workspace):
     (workspace / "pkg" / "__init__.py").write_text("")
     (workspace / "pkg" / "core.py").write_text("def _unused_helper():\n    return 1\n")
     (workspace / "tests").mkdir()
-    (workspace / "tests" / "test_thing.py").write_text(
-        "def _unused_test_helper():\n    return 2\n"
-    )
+    (workspace / "tests" / "test_thing.py").write_text("def _unused_test_helper():\n    return 2\n")
 
     async with Client(mcp) as c:
         await c.call_tool("index_project", {})
@@ -65,9 +63,7 @@ async def test_filtered_out_survives_summary_only(workspace):
     (workspace / "pkg" / "__init__.py").write_text("")
     (workspace / "pkg" / "core.py").write_text("def _unused_helper():\n    return 1\n")
     (workspace / "tests").mkdir()
-    (workspace / "tests" / "test_thing.py").write_text(
-        "def _unused_test_helper():\n    return 2\n"
-    )
+    (workspace / "tests" / "test_thing.py").write_text("def _unused_test_helper():\n    return 2\n")
 
     async with Client(mcp) as c:
         await c.call_tool("index_project", {})
@@ -89,17 +85,13 @@ async def test_flipping_the_flag_moves_candidates_out_of_filtered_out(workspace)
     (workspace / "pkg" / "__init__.py").write_text("")
     (workspace / "pkg" / "core.py").write_text("def _unused_helper():\n    return 1\n")
     (workspace / "tests").mkdir()
-    (workspace / "tests" / "test_thing.py").write_text(
-        "def _unused_test_helper():\n    return 2\n"
-    )
+    (workspace / "tests" / "test_thing.py").write_text("def _unused_test_helper():\n    return 2\n")
 
     async with Client(mcp) as c:
         await c.call_tool("index_project", {})
         default = (await c.call_tool("find_dead_code", {"summary_only": True})).data
         with_tests = (
-            await c.call_tool(
-                "find_dead_code", {"include_tests": True, "summary_only": True}
-            )
+            await c.call_tool("find_dead_code", {"include_tests": True, "summary_only": True})
         ).data
 
         skipped_tests = default["filtered_out"]["tests"]
@@ -151,13 +143,10 @@ async def test_links_seed_replay_elides_noop_rows_but_keeps_counts(workspace):
     (workspace / "docs").mkdir(exist_ok=True)
     (workspace / "docs" / "requirements").mkdir(parents=True, exist_ok=True)
     (workspace / "docs" / "requirements" / "spec-links.json").write_text(
-        json.dumps(
-            [{"spec_id": "core-handle-a-thing", "qname": "pkg.core.handler"}]
-        )
+        json.dumps([{"spec_id": "core-handle-a-thing", "qname": "pkg.core.handler"}])
     )
     (workspace / ".livespec.toml").write_text(
-        '[specs]\nopenspec_dir = "openspec"\n'
-        'links_seed = "docs/requirements/spec-links.json"\n'
+        '[specs]\nopenspec_dir = "openspec"\nlinks_seed = "docs/requirements/spec-links.json"\n'
     )
 
     async with Client(mcp) as c:
@@ -185,21 +174,15 @@ async def test_explicit_bulk_link_tool_still_reports_every_row(workspace):
 
     async with Client(mcp) as c:
         await c.call_tool("index_project", {})
-        await c.call_tool(
-            "create_spec", {"spec_id": "core-handle", "title": "Handle a thing"}
-        )
+        await c.call_tool("create_spec", {"spec_id": "core-handle", "title": "Handle a thing"})
 
         mappings = [{"spec_id": "core-handle", "symbol_qname": "pkg.core.handler"}]
-        first = (
-            await c.call_tool("bulk_link_spec_symbols", {"mappings": mappings})
-        ).data
+        first = (await c.call_tool("bulk_link_spec_symbols", {"mappings": mappings})).data
         assert first["linked"] == 1
         assert len(first["results"]) == 1
 
         # Re-linking is a no-op, but the explicit tool still itemises it.
-        again = (
-            await c.call_tool("bulk_link_spec_symbols", {"mappings": mappings})
-        ).data
+        again = (await c.call_tool("bulk_link_spec_symbols", {"mappings": mappings})).data
         assert again["skipped"] == 1
         assert len(again["results"]) == 1
         assert again["results"][0]["linked"] is False
@@ -230,9 +213,7 @@ def test_flow_host_mounts_repo_whose_metadata_predates_its_bundle(tmp_path: Path
     (flow_dir / "index.html").write_text("<h1>flow</h1>")
     # Exported BEFORE the bundle existed: local_explorer is null.
     (flow_dir / "data.json").write_text(
-        json.dumps(
-            {"projects": [{"name": "svc-a", "root": str(repo), "local_explorer": None}]}
-        )
+        json.dumps({"projects": [{"name": "svc-a", "root": str(repo), "local_explorer": None}]})
     )
 
     _app, mounted = create_flow_host_app(flow_dir)
@@ -249,9 +230,7 @@ def test_flow_host_still_skips_repo_with_no_bundle_on_disk(tmp_path: Path):
     flow_dir.mkdir()
     (flow_dir / "index.html").write_text("<h1>flow</h1>")
     (flow_dir / "data.json").write_text(
-        json.dumps(
-            {"projects": [{"name": "svc-b", "root": str(repo), "local_explorer": None}]}
-        )
+        json.dumps({"projects": [{"name": "svc-b", "root": str(repo), "local_explorer": None}]})
     )
 
     _app, mounted = create_flow_host_app(flow_dir)
@@ -274,9 +253,7 @@ def test_flow_host_prefers_recorded_path_when_it_is_valid(tmp_path: Path):
                     {
                         "name": "svc-c",
                         "root": str(repo),
-                        "local_explorer": str(
-                            repo / ".mcp-docs" / "explorer" / "index.html"
-                        ),
+                        "local_explorer": str(repo / ".mcp-docs" / "explorer" / "index.html"),
                     }
                 ]
             }

@@ -22,9 +22,7 @@ from dataclasses import dataclass, field
 # `#### Scenario: <name>` is a requirement's atomic WHEN/THEN behaviour block.
 _OSPEC_REQ_RE = re.compile(r"^###\s+Requirement:\s*(?P<name>.+?)\s*$")
 # Stable id written by export_openspec — prefer over title slug on re-import.
-_LIVESPEC_ID_RE = re.compile(
-    r"^<!--\s*livespec:id=(?P<sid>[^\s>]+)\s*-->\s*$", re.IGNORECASE
-)
+_LIVESPEC_ID_RE = re.compile(r"^<!--\s*livespec:id=(?P<sid>[^\s>]+)\s*-->\s*$", re.IGNORECASE)
 _OSPEC_DELTA_RE = re.compile(
     r"^##\s+(?P<verb>ADDED|MODIFIED|REMOVED|RENAMED)\s+Requirements\b", re.IGNORECASE
 )
@@ -32,13 +30,9 @@ _OSPEC_SCENARIO_RE = re.compile(r"^####\s+Scenario:\s*(?P<name>.+?)\s*$")
 _OSPEC_PURPOSE_RE = re.compile(r"^##\s+Purpose\s*$", re.IGNORECASE)
 # `## RENAMED Requirements` uses FROM/TO bullets. The name may be bare or wrapped
 # as `### Requirement: <name>` (optionally backticked).
-_OSPEC_RENAME_RE = re.compile(
-    r"^\s*[-*]\s*(?P<dir>FROM|TO)\s*:\s*(?P<val>.+?)\s*$", re.IGNORECASE
-)
+_OSPEC_RENAME_RE = re.compile(r"^\s*[-*]\s*(?P<dir>FROM|TO)\s*:\s*(?P<val>.+?)\s*$", re.IGNORECASE)
 # Detected only to reject — the native catalog dialect is gone.
-_LEGACY_SPEC_HEADER_RE = re.compile(
-    r"^##+\s+SPEC[-_]?\d+\s*[:\-]\s*.+?\s*$", re.IGNORECASE
-)
+_LEGACY_SPEC_HEADER_RE = re.compile(r"^##+\s+SPEC[-_]?\d+\s*[:\-]\s*.+?\s*$", re.IGNORECASE)
 
 
 class UnsupportedSpecCatalogError(ValueError):
@@ -218,9 +212,7 @@ def extract_scenarios(description: str) -> list[tuple[str, str]]:
     return scenarios
 
 
-def parse_openspec_markdown(
-    text: str, *, capability: str | None = None
-) -> list[ParsedSpec]:
+def parse_openspec_markdown(text: str, *, capability: str | None = None) -> list[ParsedSpec]:
     """Parse an OpenSpec-format markdown file into ``ParsedSpec`` objects.
 
     Anchors on ``### Requirement: <name>`` headings. The prose + any

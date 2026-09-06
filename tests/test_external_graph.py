@@ -34,9 +34,7 @@ from livespec_mcp.domain.external_graph import (
 )
 from livespec_mcp.server import mcp
 
-FIXTURE = (
-    Path(__file__).parent / "fixtures" / "external_graph" / "graphify-graph.json"
-)
+FIXTURE = Path(__file__).parent / "fixtures" / "external_graph" / "graphify-graph.json"
 
 
 # --------------------------------------------------------------------------
@@ -106,14 +104,21 @@ def test_a_file_node_never_satisfies_a_symbol_lookup(tmp_path: Path):
                 "directed": True,
                 "nodes": [
                     # File node first, so it claims (a.ts, 1) in by_position.
-                    {"id": "f", "label": "a.ts", "source_file": "src/a.ts",
-                     "source_location": "L1"},
-                    {"id": "s", "label": "handler", "source_file": "src/a.ts",
-                     "source_location": "L1", "_callable": True},
+                    {
+                        "id": "f",
+                        "label": "a.ts",
+                        "source_file": "src/a.ts",
+                        "source_location": "L1",
+                    },
+                    {
+                        "id": "s",
+                        "label": "handler",
+                        "source_file": "src/a.ts",
+                        "source_location": "L1",
+                        "_callable": True,
+                    },
                 ],
-                "links": [
-                    {"source": "other", "target": "f", "relation": "imports_from"}
-                ],
+                "links": [{"source": "other", "target": "f", "relation": "imports_from"}],
             }
         )
     )
@@ -142,12 +147,15 @@ def test_malformed_rows_are_skipped_not_raised(tmp_path: Path):
         json.dumps(
             {
                 "nodes": [
-                    {"id": "ok", "label": "Ok", "source_file": "a.py",
-                     "source_location": "L1"},
+                    {"id": "ok", "label": "Ok", "source_file": "a.py", "source_location": "L1"},
                     {"no_id": True},
                     "not even an object",
-                    {"id": "weird", "label": "W", "source_file": "a.py",
-                     "source_location": "not-a-line"},
+                    {
+                        "id": "weird",
+                        "label": "W",
+                        "source_file": "a.py",
+                        "source_location": "not-a-line",
+                    },
                 ],
                 "links": [
                     {"source": "ok", "target": "weird", "relation": "calls"},
@@ -181,8 +189,18 @@ def test_unreadable_graphs_raise_rather_than_return_empty(
 
 def test_overlap_ratio_detects_a_graph_of_a_different_repo():
     g = load_external_graph(FIXTURE)
-    assert overlap_ratio(g, {"src/util/error.ts", "src/common/httpResponse.ts",
-                             "src/common/axiosCommon.ts", "src/util/orphan.ts"}) == 1.0
+    assert (
+        overlap_ratio(
+            g,
+            {
+                "src/util/error.ts",
+                "src/common/httpResponse.ts",
+                "src/common/axiosCommon.ts",
+                "src/util/orphan.ts",
+            },
+        )
+        == 1.0
+    )
     assert overlap_ratio(g, {"totally/other/tree.py"}) == 0.0
 
 
@@ -261,9 +279,7 @@ async def test_corroboration_drops_candidates_the_other_extractor_still_sees(
             ],
         )
         out = (
-            await c.call_tool(
-                "find_dead_code", {"summary_only": True, "corroborate_with": graph}
-            )
+            await c.call_tool("find_dead_code", {"summary_only": True, "corroborate_with": graph})
         ).data
         assert out["count"] == base["count"] - 1
         report = out["corroboration"]
@@ -293,9 +309,7 @@ async def test_structural_edges_alone_never_rescue_a_candidate(workspace: Path):
             ],
         )
         out = (
-            await c.call_tool(
-                "find_dead_code", {"summary_only": True, "corroborate_with": graph}
-            )
+            await c.call_tool("find_dead_code", {"summary_only": True, "corroborate_with": graph})
         ).data
         assert out["count"] == base["count"]
         assert out["corroboration"]["dropped_as_referenced"] == 0
@@ -328,9 +342,7 @@ async def test_graph_of_a_different_repo_is_refused(workspace: Path):
             [{"label": "Whatever", "file": "some/other/repo/file.ts", "line": 3}],
         )
         out = (
-            await c.call_tool(
-                "find_dead_code", {"summary_only": True, "corroborate_with": graph}
-            )
+            await c.call_tool("find_dead_code", {"summary_only": True, "corroborate_with": graph})
         ).data
         assert out["isError"] is True
         assert "shares almost no files" in out["error"]
@@ -394,9 +406,7 @@ async def test_a_graph_at_the_default_path_announces_itself(workspace: Path):
 async def test_config_makes_corroboration_the_default_for_a_repo(workspace: Path):
     _min_repo(workspace)
     _graph_covering(workspace, workspace / "graphify-out" / "graph.json")
-    (workspace / ".livespec.toml").write_text(
-        '[graph]\nexternal = "graphify-out/graph.json"\n'
-    )
+    (workspace / ".livespec.toml").write_text('[graph]\nexternal = "graphify-out/graph.json"\n')
     async with Client(mcp) as c:
         await c.call_tool("index_project", {})
         out = (await c.call_tool("find_dead_code", {"summary_only": True})).data
@@ -419,9 +429,7 @@ async def test_explicit_argument_beats_config(workspace: Path):
     _min_repo(workspace)
     _graph_covering(workspace, workspace / "graphify-out" / "graph.json")
     _graph_covering(workspace, workspace / "other.json")
-    (workspace / ".livespec.toml").write_text(
-        '[graph]\nexternal = "graphify-out/graph.json"\n'
-    )
+    (workspace / ".livespec.toml").write_text('[graph]\nexternal = "graphify-out/graph.json"\n')
     async with Client(mcp) as c:
         await c.call_tool("index_project", {})
         out = (
@@ -508,9 +516,7 @@ def _repo_with_an_orphan_test(workspace: Path) -> None:
     (tests / "__init__.py").write_text("")
     # Reaches production only through a name the static cone cannot follow.
     (tests / "test_thing.py").write_text(
-        "def test_via_indirection():\n"
-        "    fn = globals().get('missing')\n"
-        "    assert fn is None\n"
+        "def test_via_indirection():\n    fn = globals().get('missing')\n    assert fn is None\n"
     )
 
 
@@ -530,9 +536,7 @@ async def test_orphan_dropped_when_external_graph_shows_it_reaching_production(
                 "find_orphan_tests",
                 {
                     "summary_only": True,
-                    "corroborate_with": _orphan_graph(
-                        workspace, target, "src/prod.py"
-                    ),
+                    "corroborate_with": _orphan_graph(workspace, target, "src/prod.py"),
                 },
             )
         ).data
@@ -557,9 +561,7 @@ async def test_reaching_only_another_test_file_is_not_a_rescue(workspace: Path):
                 "find_orphan_tests",
                 {
                     "summary_only": True,
-                    "corroborate_with": _orphan_graph(
-                        workspace, target, "tests/helpers.py"
-                    ),
+                    "corroborate_with": _orphan_graph(workspace, target, "tests/helpers.py"),
                 },
             )
         ).data
@@ -613,10 +615,7 @@ def _two_module_repo(workspace: Path) -> None:
         d = workspace / "src" / mod
         d.mkdir(parents=True)
         (d / "checkout.py").write_text(
-            "\n\n".join(
-                f"def {mod}_step{i}():\n    return {i}" for i in range(1, 5)
-            )
-            + "\n"
+            "\n\n".join(f"def {mod}_step{i}():\n    return {i}" for i in range(1, 5)) + "\n"
         )
     (workspace / "src" / "__init__.py").write_text("")
 
@@ -638,8 +637,7 @@ def _community_graph_for(workspace: Path, community: int = 4) -> str:
         }
         for i, r in enumerate(
             db.execute(
-                "SELECT s.name, s.start_line, f.path FROM symbol s "
-                "JOIN file f ON f.id=s.file_id"
+                "SELECT s.name, s.start_line, f.path FROM symbol s JOIN file f ON f.id=s.file_id"
             )
         )
     ]
@@ -771,11 +769,7 @@ async def test_proposals_refuse_a_graph_of_a_different_repo(workspace: Path):
                 }
             )
         )
-        out = (
-            await c.call_tool(
-                "propose_specs_from_codebase", {"community_graph": str(p)}
-            )
-        ).data
+        out = (await c.call_tool("propose_specs_from_codebase", {"community_graph": str(p)})).data
         assert out["isError"] is True
         assert "shares almost no files" in out["error"]
 

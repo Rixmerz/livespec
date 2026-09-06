@@ -216,11 +216,13 @@ def register(mcp: FastMCP) -> None:
         ]
         total = len(rows)
         page = rows[:_LIST_SPECS_RESOURCE_CAP]
-        return json.dumps({
-            "specs": page,
-            "total": total,
-            "truncated": total > len(page),
-        })
+        return json.dumps(
+            {
+                "specs": page,
+                "total": total,
+                "truncated": total > len(page),
+            }
+        )
 
     @mcp.resource("project://specs/{spec_id}", mime_type="application/json")
     def spec(spec_id: str) -> str:
@@ -296,7 +298,9 @@ def register(mcp: FastMCP) -> None:
             (pid, qname),
         ).fetchone()
         if not row:
-            return f"# No doc for `{qname}`\n\nRun `generate_docs(target_type='symbol', ...)` first."
+            return (
+                f"# No doc for `{qname}`\n\nRun `generate_docs(target_type='symbol', ...)` first."
+            )
         return row["content"]
 
     @mcp.resource("doc://spec/{spec_id}", mime_type="text/markdown")
@@ -311,7 +315,9 @@ def register(mcp: FastMCP) -> None:
             (pid, spec_id),
         ).fetchone()
         if not row:
-            return f"# No doc for `{spec_id}`\n\nRun `generate_docs(target_type='spec', ...)` first."
+            return (
+                f"# No doc for `{spec_id}`\n\nRun `generate_docs(target_type='spec', ...)` first."
+            )
         return row["content"]
 
     @mcp.resource("code://symbol/{qname*}", mime_type="text/plain")

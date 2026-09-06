@@ -38,9 +38,7 @@ async def test_search_fts_finds_symbol_by_keyword(sample_repo):
 async def test_search_scope_code(sample_repo):
     async with Client(mcp) as c:
         await c.call_tool("index_project", {})
-        out = (
-            await c.call_tool("search", {"query": "verify", "scope": "code"})
-        ).data
+        out = (await c.call_tool("search", {"query": "verify", "scope": "code"})).data
         for r in out["results"]:
             assert r["text_kind"] == "code"
 

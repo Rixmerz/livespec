@@ -15,36 +15,40 @@ from typing import Any
 
 # Shared with Flow Explorer — infra / docs / UI paths cross-match every service
 # and are not product flows. Exact match OR prefix (see ``is_infra_route_path``).
-INFRA_ROUTE_PATHS = frozenset({
-    "/health",
-    "/liveness",
-    "/readiness",
-    "/ready",
-    "/ping",
-    "/metrics",
-    "/actuator/health",
-    "/actuator/info",
-    # Docs / operator UI (audit: dominated legacy_server noise on a real polyrepo)
-    "/api-docs",
-    "/v3/api-docs",
-    "/openapi.yaml",
-    "/openapi.json",
-    "/swagger",
-    "/swagger-ui",
-    "/ui",
-    "/playground",
-    "/info",
-})
+INFRA_ROUTE_PATHS = frozenset(
+    {
+        "/health",
+        "/liveness",
+        "/readiness",
+        "/ready",
+        "/ping",
+        "/metrics",
+        "/actuator/health",
+        "/actuator/info",
+        # Docs / operator UI (audit: dominated legacy_server noise on a real polyrepo)
+        "/api-docs",
+        "/v3/api-docs",
+        "/openapi.yaml",
+        "/openapi.json",
+        "/swagger",
+        "/swagger-ui",
+        "/ui",
+        "/playground",
+        "/info",
+    }
+)
 
 # Prefixes: `/metrics/cache`, `/actuator/...`, swagger subpaths.
-INFRA_ROUTE_PREFIXES = frozenset({
-    "/metrics/",
-    "/actuator/",
-    "/api-docs/",
-    "/v3/api-docs/",
-    "/swagger-ui/",
-    "/swagger/",
-})
+INFRA_ROUTE_PREFIXES = frozenset(
+    {
+        "/metrics/",
+        "/actuator/",
+        "/api-docs/",
+        "/v3/api-docs/",
+        "/swagger-ui/",
+        "/swagger/",
+    }
+)
 
 _HINT = (
     "Likely-unused = no invokes_route hop from indexed clients in this DB. "
@@ -122,19 +126,21 @@ def _list_server_routes(
         path = r["path"] or r["norm_path"] or "/"
         if not include_infra_routes and is_infra_route_path(path):
             continue
-        out.append({
-            "kind": "server",
-            "project": r["project_name"],
-            "project_root": r["project_root"],
-            "qualified_name": r["qualified_name"],
-            "symbol_id": int(r["symbol_id"]),
-            "file_path": r["file_path"],
-            "start_line": r["start_line"],
-            "end_line": r["end_line"],
-            "method": r["method"],
-            "path": r["path"],
-            "norm_path": r["norm_path"],
-        })
+        out.append(
+            {
+                "kind": "server",
+                "project": r["project_name"],
+                "project_root": r["project_root"],
+                "qualified_name": r["qualified_name"],
+                "symbol_id": int(r["symbol_id"]),
+                "file_path": r["file_path"],
+                "start_line": r["start_line"],
+                "end_line": r["end_line"],
+                "method": r["method"],
+                "path": r["path"],
+                "norm_path": r["norm_path"],
+            }
+        )
     return out
 
 
@@ -168,19 +174,21 @@ def _list_client_routes(
         path = r["path"] or r["norm_path"] or "/"
         if not include_infra_routes and is_infra_route_path(path):
             continue
-        out.append({
-            "kind": "client",
-            "project": r["project_name"],
-            "project_root": r["project_root"],
-            "qualified_name": r["qualified_name"],
-            "symbol_id": int(r["symbol_id"]),
-            "file_path": r["file_path"],
-            "start_line": r["start_line"],
-            "end_line": r["end_line"],
-            "method": r["method"],
-            "path": r["path"],
-            "norm_path": r["norm_path"],
-        })
+        out.append(
+            {
+                "kind": "client",
+                "project": r["project_name"],
+                "project_root": r["project_root"],
+                "qualified_name": r["qualified_name"],
+                "symbol_id": int(r["symbol_id"]),
+                "file_path": r["file_path"],
+                "start_line": r["start_line"],
+                "end_line": r["end_line"],
+                "method": r["method"],
+                "path": r["path"],
+                "norm_path": r["norm_path"],
+            }
+        )
     return out
 
 
