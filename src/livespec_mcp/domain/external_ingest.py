@@ -58,27 +58,60 @@ EXTERNAL_ORIGIN = "external:graphify"
 #: already documented in `schema.sql` (`calls | imports | inherits |
 #: references`); nothing new is invented, so existing edge_type consumers keep
 #: working.
+#:
+#: Kept explicit (not derived from `EVIDENCE_RELATIONS`) because ingestion
+#: WRITES a row: an unrecognised relation must land in
+#: `skipped.unknown_relation` and be reported, never be guessed onto an
+#: edge_type. Corroboration can afford a broader, more forgiving set — it only
+#: removes candidates.
 RELATION_EDGE_TYPE: dict[str, str] = {
+    # invocation
     "calls": "calls",
     "indirect_call": "calls",
+    # constructing a type runs its constructor; livespec models `Foo()` as a
+    # call, so this is the same claim in another extractor's spelling.
+    "instantiates": "calls",
+    # inheritance / type hierarchy — one class depending on another's shape.
+    # The last four are per-language spellings Graphify 0.9.55 emits for Java
+    # and C# interfaces, Go struct embedding and CommonLisp specialisation.
     "inherits": "inherits",
     "mixes_in": "inherits",
+    "implements": "inherits",
+    "extends": "inherits",
+    "specializes": "inherits",
+    "embeds": "inherits",
+    # usage, including type position — the blind spot livespec does not model
+    # at all and the single biggest reason to read a second extractor.
     "uses": "references",
     "references": "references",
+    "accesses": "references",
+    "reads_from": "references",
+    "requires": "references",
+    "depends_on": "references",
+    "uses_static_prop": "references",
+    "uses_component": "references",
+    "references_constant": "references",
+    "binds_method": "references",
+    "bound_to": "references",
+    # module wiring — off by default, see DEFAULT_RELATIONS
     "imports": "imports",
     "imports_from": "imports",
     "re_exports": "imports",
+    "includes": "imports",
 }
+
+#: The module-wiring relations. Excluded from the default ingest set: they
+#: describe which file pulls in which, they mostly land on Graphify's per-file
+#: nodes (which never map to a livespec symbol anyway), and treating "imported
+#: by" as "called by" would make `who_calls` lie in order to improve a
+#: different tool.
+IMPORT_RELATIONS: frozenset[str] = frozenset(
+    {"imports", "imports_from", "re_exports", "includes"}
+)
 
 #: Ingested unless the caller asks otherwise. These are the relations that mean
 #: "this symbol depends on that one" — exactly the claim a backward cone makes.
-#: The three import relations are excluded: they describe module wiring, they
-#: mostly land on Graphify's per-file nodes (which never map to a livespec
-#: symbol anyway), and treating "imported by" as "called by" would make
-#: `who_calls` lie in order to improve a different tool.
-DEFAULT_RELATIONS: frozenset[str] = frozenset(
-    {"calls", "indirect_call", "inherits", "mixes_in", "uses", "references"}
-)
+DEFAULT_RELATIONS: frozenset[str] = frozenset(RELATION_EDGE_TYPE) - IMPORT_RELATIONS
 
 #: An external claim about our symbols never earns 1.0. That value means "our
 #: resolver saw this call and disambiguated it", and a second extractor working
@@ -87,7 +120,15 @@ DEFAULT_RELATIONS: frozenset[str] = frozenset(
 #: should be filtered by the same `min_weight` that filters our guesses.
 _WEIGHT_MAX = 0.9
 _WEIGHT_MIN = 0.5
-_CONFIDENCE_WEIGHT = {"EXTRACTED": 0.9, "INFERRED": 0.6}
+_CONFIDENCE_WEIGHT = {"EXTRACTED": 0.9, "INFERRED": 0.6, "AMBIGUOUS": _WEIGHT_MIN}
+
+#: Confidence labels that cap the weight no matter what `confidence_score`
+#: says. `AMBIGUOUS` (Graphify 0.9.55) is the other tool stating outright that
+#: it could not disambiguate the edge, which is exactly what livespec's own
+#: 0.5 means — and 0.5 is the value `min_weight=0.6` filters. Letting a high
+#: numeric score lift it above that would smuggle a guess past the filter
+#: built to catch guesses.
+_CONFIDENCE_CEILING = {"AMBIGUOUS": _WEIGHT_MIN}
 
 
 @dataclass(frozen=True)
@@ -133,13 +174,22 @@ class IngestPlan:
 
 
 def _weight_for(relation: str, confidence: object, score: object) -> float:
+    """Map an external edge's confidence onto livespec's weight ladder.
+
+    The numeric `confidence_score` refines, the `confidence` label bounds: a
+    label saying the other extractor could not disambiguate wins over any score
+    that disagrees with it (see `_CONFIDENCE_CEILING`).
+    """
+    label = confidence.upper() if isinstance(confidence, str) else ""
     if isinstance(score, (int, float)) and not isinstance(score, bool):
         w = float(score)
-    elif isinstance(confidence, str):
-        w = _CONFIDENCE_WEIGHT.get(confidence.upper(), _WEIGHT_MIN)
+    elif label:
+        w = _CONFIDENCE_WEIGHT.get(label, _WEIGHT_MIN)
     else:
         w = _WEIGHT_MIN
-    return max(_WEIGHT_MIN, min(_WEIGHT_MAX, w))
+    w = max(_WEIGHT_MIN, min(_WEIGHT_MAX, w))
+    ceiling = _CONFIDENCE_CEILING.get(label)
+    return min(w, ceiling) if ceiling is not None else w
 
 
 def map_nodes_to_symbols(

@@ -3121,6 +3121,26 @@ def _attach_external_edges(payload: dict[str, Any], st: AppState, project_id: in
     return payload
 
 
+def _attach_unknown_relations(report: dict[str, Any], graph: Any) -> None:
+    """Name the relations this graph carries that livespec has no rule for.
+
+    Both consumers of an external graph fail *quietly* when the other tool
+    grows vocabulary: corroboration ignores the relation, so a real reference
+    stops rescuing a candidate, and ingestion skips it, so an edge livespec
+    lacks never arrives. Neither is an error. The two most recent additions to
+    that vocabulary were found by reading Graphify's source during an audit,
+    which is not a maintenance strategy — this line is.
+    """
+    if not getattr(graph, "unknown_relations", None):
+        return
+    report["unknown_relations"] = dict(sorted(graph.unknown_relations.items()))
+    report["unknown_relations_hint"] = (
+        "This graph uses relations livespec classifies as neither structural "
+        "nor evidence, so they were ignored. If any of them means one symbol "
+        "depends on another, livespec is under-counting; please report them."
+    )
+
+
 def _corroborate_orphan_tests(
     candidates: list[dict[str, Any]],
     *,
@@ -3190,6 +3210,7 @@ def _corroborate_orphan_tests(
             "is individually checkable."
         ),
     }
+    _attach_unknown_relations(report, graph)
     if graph.has_non_ast_origin:
         report["warning"] = (
             "Some external edges are not marked `_origin: ast` — this graph "
@@ -3261,6 +3282,7 @@ def _corroborate_dead_code(
             "deleting."
         ),
     }
+    _attach_unknown_relations(report, graph)
     if graph.has_non_ast_origin:
         # Graphify's code pass is pure tree-sitter; its semantic pass over
         # docs/media can involve an LLM. Say so rather than let a

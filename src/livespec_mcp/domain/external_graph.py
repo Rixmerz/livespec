@@ -56,25 +56,80 @@ from typing import Any
 # made every method of every class un-killable and was responsible for 98 of
 # 223 dead-code rescues across that sweep — nearly half the measured effect was
 # an artifact of this line.
-STRUCTURAL_RELATIONS = frozenset({"contains", "rationale_for", "method"})
+#
+# `defines` and `exports` are the same trap wearing different names, found by
+# reading Graphify 0.9.55's extractors rather than by waiting for another
+# sweep: both are emitted `file_node -> symbol`, so every symbol in a file has
+# one. `evidence_for` looks only at the relation of an inbound edge, not at
+# whether its SOURCE maps to anything, so an unlisted containment relation
+# rescues every symbol in the language that emits it.
+STRUCTURAL_RELATIONS = frozenset(
+    {"contains", "rationale_for", "method", "defines", "exports"}
+)
 
 # Relations accepted as evidence that a symbol is reachable. `imports` and
 # `imports_from` are weaker than `calls` (importing a name is not calling it)
 # but still contradict "nothing in this repo refers to it", which is the claim
 # `find_dead_code` actually makes.
+#
+# Widened for Graphify 0.9.55 (2026-09-06) from the six-relation set the v0.32
+# work saw on Python and TypeScript trees. The additions are per-language
+# spellings of relations already accepted here — `implements`/`extends`/
+# `specializes`/`embeds` are inheritance in Java, C#, CommonLisp and Go;
+# `instantiates` is a constructor call; `accesses`/`reads_from`/`requires` are
+# usage. Missing them meant a Java interface implemented ten times over still
+# read as referenced by nothing, which is precisely the blind spot this whole
+# feature exists to cover.
 EVIDENCE_RELATIONS = frozenset(
     {
+        # invocation
         "calls",
         "indirect_call",
+        "instantiates",
+        # inheritance / type hierarchy
         "inherits",
         "mixes_in",
+        "implements",
+        "extends",
+        "specializes",
+        "embeds",
+        # usage / type position
         "uses",
         "references",
+        "accesses",
+        "reads_from",
+        "requires",
+        "depends_on",
+        "uses_static_prop",
+        "uses_component",
+        "references_constant",
+        "binds_method",
+        "bound_to",
+        # module wiring
         "imports",
         "imports_from",
         "re_exports",
+        "includes",
     }
 )
+
+
+def classify_relation(relation: str) -> str:
+    """``structural`` | ``evidence`` | ``unknown`` for one external relation.
+
+    Exists so vocabulary drift is *reported* rather than silently dropped. Both
+    consumers of an external graph fail quietly in opposite directions when the
+    other tool grows a relation: corroboration ignores it (a real caller stops
+    rescuing a dead-code candidate) and ingestion skips it (an edge livespec
+    lacks never arrives). Neither shows up as an error, and the last two
+    additions to this vocabulary were found by reading another project's source
+    during an audit. A count in the payload is what makes the next one cheap.
+    """
+    if relation in STRUCTURAL_RELATIONS:
+        return "structural"
+    if relation in EVIDENCE_RELATIONS:
+        return "evidence"
+    return "unknown"
 
 
 @dataclass(frozen=True)
@@ -141,6 +196,11 @@ class ExternalGraph:
     )
     #: Relation histogram over all links, for reporting.
     relation_counts: dict[str, int] = field(default_factory=dict)
+    #: Relations this graph carries that livespec classifies as neither
+    #: structural nor evidence — i.e. vocabulary it does not understand yet.
+    #: Surfaced in every payload so drift in the other tool's output is visible
+    #: the first time it costs something, instead of on the next audit.
+    unknown_relations: dict[str, int] = field(default_factory=dict)
     #: True when any link carries an origin other than deterministic AST.
     has_non_ast_origin: bool = False
     #: Share of this graph's files that the consuming index also has. Set by
@@ -283,6 +343,10 @@ def load_external_graph(
             continue
         graph.edge_count += 1
         graph.relation_counts[relation] = graph.relation_counts.get(relation, 0) + 1
+        if classify_relation(relation) == "unknown":
+            graph.unknown_relations[relation] = (
+                graph.unknown_relations.get(relation, 0) + 1
+            )
         origin = link.get("_origin")
         if isinstance(origin, str) and origin != "ast":
             graph.has_non_ast_origin = True

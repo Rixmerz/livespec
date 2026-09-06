@@ -359,6 +359,7 @@ def register(mcp: FastMCP) -> None:
         from livespec_mcp.domain.external_ingest import (
             DEFAULT_RELATIONS,
             EXTERNAL_ORIGIN,
+            IMPORT_RELATIONS,
             RELATION_EDGE_TYPE,
             plan_ingest,
             sample_edges,
@@ -466,13 +467,16 @@ def register(mcp: FastMCP) -> None:
             "skipped": dict(sorted(plan.skipped.items())),
             "sample": sample_edges(plan, sym_meta),
         }
+        from livespec_mcp.tools.analysis import _attach_unknown_relations
+
+        _attach_unknown_relations(payload, graph)
         if graph.has_non_ast_origin:
             payload["warning"] = (
                 "Some external edges are not marked `_origin: ast` — this graph "
                 "may include LLM-derived (semantic) edges, unlike a code-only "
                 "Graphify run. Those would land in your call graph."
             )
-        if relations and set(relations) & {"imports", "imports_from", "re_exports"}:
+        if relations and set(relations) & IMPORT_RELATIONS:
             payload["import_relations_warning"] = (
                 "Import relations are being ingested. `who_calls` does not "
                 "distinguish edge types, so importers will be reported as "
