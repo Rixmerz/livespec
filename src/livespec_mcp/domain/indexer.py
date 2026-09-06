@@ -54,6 +54,12 @@ class IndexStats:
     manual_links_restored: int = 0
     languages: dict[str, int] = None  # type: ignore
     languages_unsupported: dict[str, int] = None  # type: ignore  # mapped ext, no extractor
+    # language -> file count that could not be indexed because the tree-sitter
+    # GRAMMAR would not load (language-pack 1.x downloads grammars on first
+    # use). Distinct from `languages_unsupported`, which is a language livespec
+    # deliberately has no extractor for. This one is recoverable: run
+    # `livespec grammars` once with network and re-index.
+    languages_failed: dict[str, int] = None  # type: ignore
     repo_config: dict[str, Any] | None = None  # echo of .livespec.toml, if present
 
     def __post_init__(self) -> None:
@@ -61,6 +67,8 @@ class IndexStats:
             self.languages = {}
         if self.languages_unsupported is None:
             self.languages_unsupported = {}
+        if self.languages_failed is None:
+            self.languages_failed = {}
 
 
 def _hash_bytes(b: bytes) -> str:
@@ -260,6 +268,19 @@ def index_project(
                 stats.files_skipped += 1
                 continue
             _, result = extract(p, source, settings.workspace)
+            if result.grammar_missing:
+                # The grammar never loaded, so this file was not read at all.
+                # Persisting it would store zero symbols AND advance the
+                # content hash, and the next run would skip it as unchanged —
+                # one offline index turning a polyglot repo permanently
+                # Python-only. Leave the row (and any existing symbols) alone
+                # so a later run with the grammar present re-extracts it.
+                stats.files_changed -= 1  # undo the increment above
+                stats.files_skipped += 1
+                stats.languages_failed[result.grammar_missing] = (
+                    stats.languages_failed.get(result.grammar_missing, 0) + 1
+                )
+                continue
             # C4: a transient parse failure (file saved mid-edit) must NOT wipe
             # the file's existing symbols — the cascade would take their
             # spec_symbol links with them and the restore can't re-resolve a

@@ -75,7 +75,7 @@ def run_index_pipeline(st: AppState, *, force: bool = False) -> dict[str, Any]:
             chunk_stats: dict[str, Any] = dict(rebuild_chunks(st.conn, st.project_id))
         else:
             chunk_stats = {"skipped": "no file changes"}
-    return {
+    payload: dict[str, Any] = {
         "files_total": stats.files_total,
         "files_changed": stats.files_changed,
         "files_skipped": stats.files_skipped,
@@ -91,6 +91,31 @@ def run_index_pipeline(st: AppState, *, force: bool = False) -> dict[str, Any]:
         "watcher_started": False,
         "chunks": chunk_stats,
     }
+    _attach_grammar_failures(payload, stats)
+    return payload
+
+
+def _attach_grammar_failures(payload: dict[str, Any], stats: Any) -> None:
+    """Say out loud when a language was skipped because its grammar is missing.
+
+    `tree-sitter-language-pack` 1.x downloads grammars on first use, so an
+    offline or proxied machine indexes Python (stdlib `ast`) and nothing else.
+    Reported rather than logged because the number an agent reads next —
+    `find_dead_code`, `audit_coverage`, any count at all — is wrong by the
+    whole of those languages, and nothing else in the payload hints at it.
+    """
+    if not stats.languages_failed:
+        return
+    total = sum(stats.languages_failed.values())
+    payload["languages_failed"] = stats.languages_failed
+    payload["languages_failed_hint"] = (
+        f"{total} file(s) in {len(stats.languages_failed)} language(s) were "
+        "SKIPPED because their tree-sitter grammar could not be loaded "
+        "(tree-sitter-language-pack downloads grammars on first use). Symbol, "
+        "edge and dead-code counts exclude them entirely. Run "
+        "`livespec grammars` once with network access, then re-index — the "
+        "files were left unindexed on purpose so they are retried."
+    )
 
 
 def _should_build_explorer(st: AppState, explorer: bool) -> bool:

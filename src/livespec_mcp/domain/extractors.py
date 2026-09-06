@@ -12,7 +12,11 @@ import re as _re_rs
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from livespec_mcp.domain.languages import detect_language, get_parser
+from livespec_mcp.domain.languages import (
+    GrammarUnavailableError,
+    detect_language,
+    get_parser,
+)
 
 
 @dataclass
@@ -68,6 +72,12 @@ class ExtractResult:
     # e.g. a file saved mid-edit. tree-sitter is error-recovering, so this is
     # effectively Python-only.
     parse_error: bool = False
+    # Set to the language id when the tree-sitter GRAMMAR could not be loaded,
+    # so the file was never parsed at all. Distinct from `parse_error`: there
+    # the file was read and rejected, here it was never read. The indexer must
+    # not persist such a file — doing so records zero symbols AND advances the
+    # content hash, so the next run treats it as unchanged and never retries.
+    grammar_missing: str | None = None
 
 
 # Compound statements whose bodies can hold conditionally-defined symbols.
@@ -1240,7 +1250,12 @@ def _ts_extract(
     out = ExtractResult()
     try:
         parser = get_parser(language)
-    except Exception:
+    except GrammarUnavailableError:
+        # Never silently return zero symbols: the caller persists what we
+        # return, and an empty result for an unread file is indistinguishable
+        # from a genuinely empty one until the whole repo reads as dead code.
+        out.grammar_missing = language
+        out.parse_error = True
         return out
     src_bytes = source.encode("utf-8", errors="replace")
     tree = parser.parse(src_bytes)
@@ -1493,7 +1508,11 @@ def ts_registered_callback_names(source: str, language: str) -> frozenset[str]:
     """
     try:
         parser = get_parser(language)
-    except Exception:
+    except GrammarUnavailableError:
+        # Best-effort enrichment over a file the main extractor already
+        # handled; if the grammar is gone, `_ts_extract` already flagged it on
+        # the index run and the payload said so. Returning empty here only
+        # widens dead-code candidates, it never records anything.
         return frozenset()
     src_bytes = source.encode("utf-8", errors="replace")
     try:
@@ -1615,7 +1634,7 @@ def scan_hono_routes(source: str, language: str) -> list[dict]:
     """
     try:
         parser = get_parser(language)
-    except Exception:
+    except GrammarUnavailableError:
         return []
     src_bytes = source.encode("utf-8", errors="replace")
     try:
@@ -1727,7 +1746,7 @@ def scan_go_routes(source: str) -> list[dict]:
     """
     try:
         parser = get_parser("go")
-    except Exception:
+    except GrammarUnavailableError:
         return []
     src_bytes = source.encode("utf-8", errors="replace")
     try:

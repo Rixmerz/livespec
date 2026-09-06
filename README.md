@@ -19,7 +19,9 @@
 
 **Code intelligence for AI agents** — call graph, impact analysis, and
 bidirectional **Spec ↔ code** traceability (functional requirements, ADRs,
-NFRs, and other spec kinds). Local-first, zero external services.
+NFRs, and other spec kinds). Local-first, zero external services at query
+time (tree-sitter grammars are fetched once on first index — see
+[Stack](#stack)).
 
 <p align="center">
   <img src="docs/assets/spec-explorer.png" alt="livespec Spec Explorer — Spec list, coverage, and linked symbols" width="920" />
@@ -138,7 +140,26 @@ good at. If you wanted "writes my doc comments while I sleep" — not yet.
 - **NetworkX** for call graph and topological impact analysis (cached per
   index run)
 
-100% local, zero external services, zero API keys required.
+Zero external services at query time, zero API keys, ever. One caveat worth
+stating plainly: `tree-sitter-language-pack` 1.x **downloads each grammar from
+GitHub on first use** rather than bundling them in the wheel, so the first
+index on a fresh machine needs network access for the non-Python languages
+(Python itself uses the stdlib `ast` and never needs one). After that,
+indexing is fully offline.
+
+For an air-gapped box, a Docker image or a CI runner without egress, prefetch
+them once:
+
+```bash
+livespec grammars            # download the 9 grammars livespec extracts
+livespec grammars --check    # report what is cached; exit 1 if any is missing
+```
+
+If a grammar cannot be loaded, `index_project` **skips those files and says
+so** in `languages_failed`, and deliberately leaves them unindexed so the next
+run retries. It never records a file as having zero symbols when it was never
+read — that used to make every symbol in an unreadable language look like dead
+code.
 
 ## Language support
 
@@ -189,8 +210,9 @@ The same indexing pipeline without an MCP host — for cron, systemd
 timers, pre-commit hooks, CI:
 
 ```bash
-livespec-mcp index /path/to/repo [--force]             # JSON stats to stdout
-livespec-mcp status /path/to/repo                      # index status JSON
+livespec index /path/to/repo [--force]                 # JSON stats to stdout
+livespec status /path/to/repo                          # index status JSON
+livespec grammars [--check] [lang ...]                 # prefetch tree-sitter grammars
 ```
 
 ### Claude Code / Cursor wiring
