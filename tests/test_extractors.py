@@ -61,7 +61,9 @@ def _call_targets(result):
         ),
     ],
 )
-def test_extractor_basic(fixture_path: Path, must_have_symbols: set[str], must_have_calls: set[str]):
+def test_extractor_basic(
+    fixture_path: Path, must_have_symbols: set[str], must_have_calls: set[str]
+):
     source = fixture_path.read_text(encoding="utf-8")
     _, result = extract(fixture_path, source, fixture_path.parent)
     names = _names(result)
@@ -69,7 +71,9 @@ def test_extractor_basic(fixture_path: Path, must_have_symbols: set[str], must_h
     assert not missing, f"Missing symbols in {fixture_path.name}: {missing}. Got: {names}"
     targets = _call_targets(result)
     missing_calls = must_have_calls - targets
-    assert not missing_calls, f"Missing calls in {fixture_path.name}: {missing_calls}. Got: {targets}"
+    assert not missing_calls, (
+        f"Missing calls in {fixture_path.name}: {missing_calls}. Got: {targets}"
+    )
 
 
 @pytest.mark.parametrize(

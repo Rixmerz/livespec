@@ -61,6 +61,10 @@ async def test_find_endpoints_go_default_and_gin(workspace):
     assert ("*", "/x") in net_paths
     assert ("GET", "/hi") not in net_paths
     # Handler resolved to indexed symbol
-    hi = next(e for e in default["endpoints"] if e.get("http_path") == "/hi" and e.get("http_method") == "GET")
+    hi = next(
+        e
+        for e in default["endpoints"]
+        if e.get("http_path") == "/hi" and e.get("http_method") == "GET"
+    )
     assert hi["qualified_name"].endswith("Hi")
     assert hi.get("handler_resolution") == "handler"

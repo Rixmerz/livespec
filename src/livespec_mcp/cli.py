@@ -100,9 +100,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     from livespec_mcp import __version__
 
-    parser.add_argument(
-        "--version", action="version", version=f"livespec {__version__}"
-    )
+    parser.add_argument("--version", action="version", version=f"livespec {__version__}")
     sub = parser.add_subparsers(dest="cmd", required=True)
 
     sub.add_parser("serve", help="run the MCP server on stdio (same as no arguments)")
@@ -225,9 +223,7 @@ def main(argv: list[str] | None = None) -> int:
                             f"Flow Explorer bundle missing at {flow_dir} — "
                             "run export_flow_explorer first"
                         )
-                    serve_flow_explorer(
-                        flow_dir, host=args.host, port=args.port
-                    )
+                    serve_flow_explorer(flow_dir, host=args.host, port=args.port)
                 else:
                     from livespec_mcp.explorer.asgi import serve_explorer
 
@@ -277,8 +273,7 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     except PermissionError as e:
         print(
-            f"error: cannot write workspace state ({e}). "
-            f"Check permissions on <repo>/.mcp-docs/.",
+            f"error: cannot write workspace state ({e}). Check permissions on <repo>/.mcp-docs/.",
             file=sys.stderr,
         )
         return 1

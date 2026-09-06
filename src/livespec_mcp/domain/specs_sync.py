@@ -69,9 +69,7 @@ def scan_duplicate_spec_markdown_specs(
     return warnings
 
 
-def _sync_spec_scenarios(
-    conn: Any, spec_pk: int, scenarios: list[tuple[str, str]]
-) -> None:
+def _sync_spec_scenarios(conn: Any, spec_pk: int, scenarios: list[tuple[str, str]]) -> None:
     """Reconcile a spec's ``spec_scenario`` rows against a parsed scenario list.
 
     No-op when ``scenarios`` is empty so a re-import that carries no
@@ -334,8 +332,7 @@ def bulk_link_spec_symbols_impl(
                     "ok": False,
                     "linked": False,
                     "error": (
-                        f"invalid relation '{relation}' — must be one of "
-                        f"{sorted(_VALID_RELATIONS)}"
+                        f"invalid relation '{relation}' — must be one of {sorted(_VALID_RELATIONS)}"
                     ),
                 }
             )
@@ -464,11 +461,7 @@ def sync_specs_from_config(st: Any) -> dict[str, Any] | None:
     from livespec_mcp.config import load_repo_config
 
     cfg = load_repo_config(st.settings.workspace)
-    if (
-        not cfg.specs_sync_from
-        and not cfg.specs_links_seed
-        and not cfg.specs_openspec_dir
-    ):
+    if not cfg.specs_sync_from and not cfg.specs_links_seed and not cfg.specs_openspec_dir:
         return None
     result: dict[str, Any] = {"imports": [], "links": None}
     for rel in cfg.specs_sync_from:

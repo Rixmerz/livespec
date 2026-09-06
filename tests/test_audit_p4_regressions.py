@@ -30,9 +30,7 @@ async def test_git_diff_impact_detects_rename(sample_repo: Path):
     async with Client(mcp) as c:
         await c.call_tool("index_project", {})
         result = (
-            await c.call_tool(
-                "git_diff_impact", {"base_ref": "HEAD~1", "head_ref": "HEAD"}
-            )
+            await c.call_tool("git_diff_impact", {"base_ref": "HEAD~1", "head_ref": "HEAD"})
         ).data
         changed = result["changed_files"]
         assert "pkg/auth.py" in changed and "pkg/authn.py" in changed, changed
@@ -51,9 +49,7 @@ def test_legacy_numeric_spec_id_detector():
 async def test_create_spec_rejects_legacy_numeric_id(workspace):
     async with Client(mcp) as c:
         await c.call_tool("index_project", {})
-        res = (
-            await c.call_tool("create_spec", {"title": "A", "spec_id": "SPEC-100"})
-        ).data
+        res = (await c.call_tool("create_spec", {"title": "A", "spec_id": "SPEC-100"})).data
         assert res.get("isError") is True
         assert "PREFIX-NNN" in res["error"]
 
@@ -65,9 +61,7 @@ async def test_create_spec_duplicate_returns_mcp_error(workspace):
         # rejects them clean rather than let get_state() silently create a DB).
         await c.call_tool("index_project", {})
         await c.call_tool("create_spec", {"title": "A", "spec_id": "auth-a"})
-        res = (
-            await c.call_tool("create_spec", {"title": "B", "spec_id": "auth-a"})
-        ).data
+        res = (await c.call_tool("create_spec", {"title": "B", "spec_id": "auth-a"})).data
         assert res.get("isError") is True
         assert "already exists" in res["error"]
 
@@ -147,9 +141,7 @@ async def test_workspace_error_returns_shaped_mcp_error():
     raw protocol error. Uses a real bad path (no conftest binding needed —
     this test does not request the `workspace` fixture)."""
     async with Client(mcp) as c:
-        r = await c.call_tool(
-            "find_symbol", {"query": "x", "workspace": "/no/such/dir/xyz123"}
-        )
+        r = await c.call_tool("find_symbol", {"query": "x", "workspace": "/no/such/dir/xyz123"})
         assert r.data.get("isError") is True
         assert "hint" in r.data
 
@@ -162,8 +154,8 @@ async def test_a_colliding_slug_stays_a_slug(workspace):
         await c.call_tool("index_project", {})
         ids = []
         for _ in range(3):
-            made = (await c.call_tool(
-                "create_spec", {"title": "Theme selection", "module": "ui"}
-            )).data
+            made = (
+                await c.call_tool("create_spec", {"title": "Theme selection", "module": "ui"})
+            ).data
             ids.append(made["spec_id"])
         assert ids == ["ui-theme-selection", "ui-theme-selection-2", "ui-theme-selection-3"]

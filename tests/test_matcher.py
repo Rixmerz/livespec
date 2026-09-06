@@ -17,11 +17,7 @@ def test_level1_prefix_high_confidence():
 
 
 def test_level1_alternate_prefixes():
-    text = (
-        "@implements:auth-session\n"
-        "@tests untested-feature\n"
-        "@see:report-covered\n"
-    )
+    text = "@implements:auth-session\n@tests untested-feature\n@see:report-covered\n"
     hits = parse_annotations(text, known_ids=_KNOWN)
     spec_to_relation = {h.spec_id: h.relation for h in hits}
     assert spec_to_relation == {
@@ -107,9 +103,7 @@ def test_openspec_slug_via_known_ids():
     assert hits[0].spec_id == "auth-user-login"
     assert hits[0].confidence == 1.0
 
-    hits2 = parse_annotations(
-        "This function implements auth-user-login.", known_ids=known
-    )
+    hits2 = parse_annotations("This function implements auth-user-login.", known_ids=known)
     assert len(hits2) == 1
     assert hits2[0].spec_id == "auth-user-login"
     assert hits2[0].confidence == 0.7

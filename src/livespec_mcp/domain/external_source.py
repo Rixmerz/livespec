@@ -70,7 +70,7 @@ def resolve_external_graph_source(
         return None, (
             f"An external code graph is available at {DEFAULT_EXTERNAL_GRAPH}. "
             "Pass corroborate_with to drop candidates a second extractor still "
-            'sees referenced, or set `[graph] external = '
+            "sees referenced, or set `[graph] external = "
             f'"{DEFAULT_EXTERNAL_GRAPH}"` in .livespec.toml to use it by '
             "default."
         )

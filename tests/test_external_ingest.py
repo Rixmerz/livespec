@@ -52,9 +52,7 @@ def _repo(workspace: Path) -> None:
     pkg.mkdir()
     (pkg / "__init__.py").write_text("")
     (pkg / "models.py").write_text(
-        "class Base:\n"
-        "    def tag(self) -> str:\n"
-        "        return 'base'\n"
+        "class Base:\n    def tag(self) -> str:\n        return 'base'\n"
     )
     (pkg / "service.py").write_text(
         "from pkg.models import Base\n"
@@ -240,9 +238,7 @@ async def test_remove_restores_the_livespec_only_graph_exactly(workspace: Path):
         await c.call_tool("index_project", {})
         before = _edge_rows(workspace)
         graph_path = _graph(workspace, [TYPE_POSITION_LINK])
-        await c.call_tool(
-            "ingest_external_graph", {"graph_path": graph_path, "dry_run": False}
-        )
+        await c.call_tool("ingest_external_graph", {"graph_path": graph_path, "dry_run": False})
         assert len(_edge_rows(workspace)) == len(before) + 1
         removed = (await c.call_tool("ingest_external_graph", {"remove": True})).data
     assert removed["removed"] == 1
@@ -278,9 +274,7 @@ async def test_a_second_dry_run_still_predicts_the_work(workspace: Path):
     async with Client(mcp) as c:
         await c.call_tool("index_project", {})
         graph_path = _graph(workspace, [TYPE_POSITION_LINK])
-        await c.call_tool(
-            "ingest_external_graph", {"graph_path": graph_path, "dry_run": False}
-        )
+        await c.call_tool("ingest_external_graph", {"graph_path": graph_path, "dry_run": False})
         again = (await c.call_tool("ingest_external_graph", {"graph_path": graph_path})).data
     assert again["edges_to_add"] == 1
     assert again["already_known"] == 0
@@ -348,12 +342,8 @@ async def test_an_ingested_call_edge_does_become_a_caller(workspace: Path):
     _repo(workspace)
     async with Client(mcp) as c:
         await c.call_tool("index_project", {})
-        graph_path = _graph(
-            workspace, [("pkg.service.main", "pkg.models.Base.tag", "calls")]
-        )
-        await c.call_tool(
-            "ingest_external_graph", {"graph_path": graph_path, "dry_run": False}
-        )
+        graph_path = _graph(workspace, [("pkg.service.main", "pkg.models.Base.tag", "calls")])
+        await c.call_tool("ingest_external_graph", {"graph_path": graph_path, "dry_run": False})
         after = (await c.call_tool("who_calls", {"qname": "pkg.models.Base.tag"})).data
 
     assert after["count"] == 1
@@ -428,9 +418,7 @@ async def test_an_import_is_not_ingested_as_a_caller_by_default(workspace: Path)
     _repo(workspace)
     async with Client(mcp) as c:
         await c.call_tool("index_project", {})
-        graph_path = _graph(
-            workspace, [("pkg.service.main", "pkg.models.Base", "imports")]
-        )
+        graph_path = _graph(workspace, [("pkg.service.main", "pkg.models.Base", "imports")])
         default = (await c.call_tool("ingest_external_graph", {"graph_path": graph_path})).data
         opted_in = (
             await c.call_tool(
@@ -493,9 +481,7 @@ async def test_a_graph_of_a_different_repo_is_refused(workspace: Path):
     )
     async with Client(mcp) as c:
         await c.call_tool("index_project", {})
-        out = (
-            await c.call_tool("ingest_external_graph", {"graph_path": str(foreign)})
-        ).data
+        out = (await c.call_tool("ingest_external_graph", {"graph_path": str(foreign)})).data
     assert out["isError"] is True
     assert "almost no files" in out["error"]
 
@@ -578,9 +564,7 @@ async def test_our_own_resolver_reclaims_an_edge_it_later_derives(workspace: Pat
     from livespec_mcp.state import get_state
 
     st = get_state(str(workspace))
-    src, dst, edge_type, origin = next(
-        r for r in _edge_rows(workspace) if r[3] == EXTERNAL_ORIGIN
-    )
+    src, dst, edge_type, origin = next(r for r in _edge_rows(workspace) if r[3] == EXTERNAL_ORIGIN)
     assert origin == EXTERNAL_ORIGIN
 
     # Verbatim the upsert `_resolve_refs` runs for every edge it derives.

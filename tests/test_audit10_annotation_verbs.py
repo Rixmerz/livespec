@@ -51,8 +51,7 @@ async def test_scan_annotation_verbs_flags_token_shape_mismatch(workspace):
     (workspace / "pkg").mkdir()
     (workspace / "pkg" / "__init__.py").write_text("")
     (workspace / "pkg" / "code.py").write_text(
-        '"""\n@spec:BE-RF-080\n"""\n'
-        "def handler():\n    return 1\n"
+        '"""\n@spec:BE-RF-080\n"""\ndef handler():\n    return 1\n'
     )
     async with Client(mcp) as c:
         await c.call_tool("index_project", {})
@@ -70,8 +69,7 @@ async def test_scan_annotation_verbs_skips_consumable_annotations(workspace):
     (workspace / "pkg").mkdir()
     (workspace / "pkg" / "__init__.py").write_text("")
     (workspace / "pkg" / "code.py").write_text(
-        '"""\n@spec:BE-RF-102\n"""\n'
-        "def handler():\n    return 1\n"
+        '"""\n@spec:BE-RF-102\n"""\ndef handler():\n    return 1\n'
     )
     async with Client(mcp) as c:
         await c.call_tool("index_project", {})

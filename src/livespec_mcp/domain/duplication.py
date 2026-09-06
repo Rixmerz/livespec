@@ -129,14 +129,62 @@ class _Normaliser(ast.NodeVisitor):
 # than numbered. Coarser than the Python path and honest about it — it will
 # miss a structural copy that the Python path would catch.
 _WORD = re.compile(r"[A-Za-z_][A-Za-z0-9_]*|[0-9]+|[^\sA-Za-z0-9_]")
-_KEYWORDS = frozenset({
-    "if", "else", "for", "while", "return", "function", "func", "def", "class",
-    "const", "let", "var", "new", "try", "catch", "finally", "throw", "raise",
-    "import", "from", "export", "public", "private", "static", "void", "int",
-    "string", "bool", "true", "false", "null", "nil", "None", "async", "await",
-    "match", "case", "switch", "break", "continue", "in", "is", "not", "and",
-    "or", "fn", "mut", "pub", "impl", "struct", "enum", "type",
-})
+_KEYWORDS = frozenset(
+    {
+        "if",
+        "else",
+        "for",
+        "while",
+        "return",
+        "function",
+        "func",
+        "def",
+        "class",
+        "const",
+        "let",
+        "var",
+        "new",
+        "try",
+        "catch",
+        "finally",
+        "throw",
+        "raise",
+        "import",
+        "from",
+        "export",
+        "public",
+        "private",
+        "static",
+        "void",
+        "int",
+        "string",
+        "bool",
+        "true",
+        "false",
+        "null",
+        "nil",
+        "None",
+        "async",
+        "await",
+        "match",
+        "case",
+        "switch",
+        "break",
+        "continue",
+        "in",
+        "is",
+        "not",
+        "and",
+        "or",
+        "fn",
+        "mut",
+        "pub",
+        "impl",
+        "struct",
+        "enum",
+        "type",
+    }
+)
 
 
 def _generic_tokens(source: str) -> list[str]:
@@ -194,7 +242,7 @@ def _kgram_hashes(tokens: list[str], k: int = KGRAM) -> list[int]:
         return []
     return [
         int.from_bytes(
-            hashlib.blake2b(" ".join(tokens[i:i + k]).encode("utf-8"), digest_size=8).digest(),
+            hashlib.blake2b(" ".join(tokens[i : i + k]).encode("utf-8"), digest_size=8).digest(),
             "big",
         )
         for i in range(len(tokens) - k + 1)
@@ -218,7 +266,7 @@ def winnow(tokens: list[str], k: int = KGRAM, window: int = WINDOW) -> tuple[int
     picked: list[int] = []
     prev = -1
     for i in range(len(grams) - window + 1):
-        w = grams[i:i + window]
+        w = grams[i : i + window]
         j = i + w.index(min(w))
         if j != prev:
             picked.append(grams[j])
@@ -229,9 +277,7 @@ def winnow(tokens: list[str], k: int = KGRAM, window: int = WINDOW) -> tuple[int
 def fingerprint(source: str, language: str = "python") -> Fingerprint:
     toks = tokenize(source, language)
     return Fingerprint(
-        structural_hash=hashlib.sha256(
-            " ".join(toks).encode("utf-8")
-        ).hexdigest()[:32],
+        structural_hash=hashlib.sha256(" ".join(toks).encode("utf-8")).hexdigest()[:32],
         minhashes=winnow(toks),
         token_count=len(toks),
     )
@@ -255,7 +301,7 @@ def similarity(a: Fingerprint, b: Fingerprint) -> float:
 class Match:
     qualified_name: str
     file_path: str
-    level: int          # 0 structural identity, 1 near-duplicate
+    level: int  # 0 structural identity, 1 near-duplicate
     similarity: float
 
     @property
@@ -314,9 +360,7 @@ def _decode(structural: str, minhashes: str, count: int) -> Fingerprint:
     )
 
 
-def load_corpus(
-    conn, project_ids: tuple[int, ...], root
-) -> list[tuple[str, str, Fingerprint]]:
+def load_corpus(conn, project_ids: tuple[int, ...], root) -> list[tuple[str, str, Fingerprint]]:
     """Every function/method in the index, fingerprinted, reading as little as possible.
 
     Fingerprints are cached in `symbol_fingerprint` keyed by the symbol's
@@ -342,8 +386,7 @@ def load_corpus(
     cached = {
         r[0]: _decode(r[1], r[2], r[3])
         for r in conn.execute(
-            "SELECT body_hash, structural_hash, minhashes, token_count "
-            "FROM symbol_fingerprint"
+            "SELECT body_hash, structural_hash, minhashes, token_count FROM symbol_fingerprint"
         )
     }
 
@@ -360,15 +403,13 @@ def load_corpus(
             path = r["path"]
             if path not in file_lines:
                 try:
-                    file_lines[path] = (root / path).read_text(
-                        encoding="utf-8", errors="replace"
-                    ).splitlines()
+                    file_lines[path] = (
+                        (root / path).read_text(encoding="utf-8", errors="replace").splitlines()
+                    )
                 except OSError:
                     file_lines[path] = []
             lines = file_lines[path]
-            body = "\n".join(
-                lines[max(r["start_line"] - 1, 0):min(r["end_line"], len(lines))]
-            )
+            body = "\n".join(lines[max(r["start_line"] - 1, 0) : min(r["end_line"], len(lines))])
             if not body.strip():
                 continue
             fp = fingerprint(body, language=r["language"] or "python")

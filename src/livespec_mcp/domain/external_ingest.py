@@ -111,9 +111,7 @@ RELATION_EDGE_TYPE: dict[str, str] = {
 #: nodes (which never map to a livespec symbol anyway), and treating "imported
 #: by" as "called by" would make `who_calls` lie in order to improve a
 #: different tool.
-IMPORT_RELATIONS: frozenset[str] = frozenset(
-    {"imports", "imports_from", "re_exports", "includes"}
-)
+IMPORT_RELATIONS: frozenset[str] = frozenset({"imports", "imports_from", "re_exports", "includes"})
 
 #: Ingested unless the caller asks otherwise. These are the relations that mean
 #: "this symbol depends on that one" — exactly the claim a backward cone makes.
@@ -228,9 +226,7 @@ def map_nodes_to_symbols(
     """
     claimed: dict[str, list[dict]] = {}
     for row in symbols:
-        node = graph.lookup(
-            row["file_path"], int(row["start_line"] or 0), row["name"] or ""
-        )
+        node = graph.lookup(row["file_path"], int(row["start_line"] or 0), row["name"] or "")
         if node is None:
             continue
         claimed.setdefault(node.node_id, []).append(row)
@@ -294,9 +290,7 @@ def plan_ingest(
             key = (src_id, dst_id, edge_type)
             if key in existing_edges:
                 plan.agreed += 1
-                plan.agreed_by_relation[relation] = (
-                    plan.agreed_by_relation.get(relation, 0) + 1
-                )
+                plan.agreed_by_relation[relation] = plan.agreed_by_relation.get(relation, 0) + 1
                 continue
             if key in seen:
                 # Two external relations collapsing onto the same edge_type
@@ -320,9 +314,7 @@ def plan_ingest(
     return plan
 
 
-def sample_edges(
-    plan: IngestPlan, sym_meta: dict[int, dict], limit: int = 20
-) -> list[dict]:
+def sample_edges(plan: IngestPlan, sym_meta: dict[int, dict], limit: int = 20) -> list[dict]:
     """A readable slice of what would be added, for the dry-run payload.
 
     An ingest that reports only counts is an ingest nobody can sanity-check

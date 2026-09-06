@@ -67,14 +67,11 @@ def ensure_table(conn: sqlite3.Connection) -> None:
         )"""
     )
     conn.execute(
-        "CREATE INDEX IF NOT EXISTS idx_debt_baseline_hash "
-        "ON debt_baseline(structural_hash)"
+        "CREATE INDEX IF NOT EXISTS idx_debt_baseline_hash ON debt_baseline(structural_hash)"
     )
 
 
-def capture(
-    conn: sqlite3.Connection, corpus: list[tuple[str, str, object]]
-) -> dict[str, int]:
+def capture(conn: sqlite3.Connection, corpus: list[tuple[str, str, object]]) -> dict[str, int]:
     """Freeze the duplication that already exists, not every symbol that exists.
 
     The distinction is the whole feature, and getting it wrong the first time

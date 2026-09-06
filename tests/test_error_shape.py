@@ -57,9 +57,7 @@ async def test_unknown_rf_error_shape(workspace):
     async with Client(mcp) as c:
         await c.call_tool("index_project", {})
         out = (
-            await c.call_tool(
-                "get_spec_implementation", {"spec_id": "Spec-DOES-NOT-EXIST"}
-            )
+            await c.call_tool("get_spec_implementation", {"spec_id": "Spec-DOES-NOT-EXIST"})
         ).data
         _assert_canonical_error(out, must_have_hint=True)
 

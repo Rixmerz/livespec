@@ -44,10 +44,7 @@ def _repo(workspace: Path) -> None:
     (pkg / "__init__.py").write_text("")
     (pkg / "models.py").write_text("class Base:\n    pass\n")
     (pkg / "service.py").write_text(
-        "from pkg.models import Base\n"
-        "\n"
-        "def describe(item: Base) -> str:\n"
-        "    return 'x'\n"
+        "from pkg.models import Base\n\ndef describe(item: Base) -> str:\n    return 'x'\n"
     )
 
 
@@ -117,9 +114,7 @@ async def test_an_applied_ingest_remembers_which_graph_it_read(workspace: Path):
     async with Client(mcp) as c:
         await c.call_tool("index_project", {})
         path = _graph(workspace, [USE_LINK])
-        await c.call_tool(
-            "ingest_external_graph", {"graph_path": path, "dry_run": False}
-        )
+        await c.call_tool("ingest_external_graph", {"graph_path": path, "dry_run": False})
         rows = read_ingest(_state(workspace).conn, _state(workspace).project_id)
 
     assert len(rows) == 1
@@ -138,9 +133,7 @@ async def test_a_dry_run_remembers_nothing(workspace: Path):
     _repo(workspace)
     async with Client(mcp) as c:
         await c.call_tool("index_project", {})
-        await c.call_tool(
-            "ingest_external_graph", {"graph_path": _graph(workspace, [USE_LINK])}
-        )
+        await c.call_tool("ingest_external_graph", {"graph_path": _graph(workspace, [USE_LINK])})
         assert read_ingest(_state(workspace).conn, _state(workspace).project_id) == []
 
 
@@ -153,9 +146,7 @@ async def test_provenance_replaces_itself_rather_than_accumulating(workspace: Pa
         await c.call_tool("index_project", {})
         path = _graph(workspace, [USE_LINK])
         for _ in range(3):
-            await c.call_tool(
-                "ingest_external_graph", {"graph_path": path, "dry_run": False}
-            )
+            await c.call_tool("ingest_external_graph", {"graph_path": path, "dry_run": False})
         rows = read_ingest(_state(workspace).conn, _state(workspace).project_id)
 
     assert len(rows) == 1
@@ -215,9 +206,7 @@ async def test_every_read_tool_learns_the_edges_went_stale(workspace: Path):
             "class Base:\n    def added(self):\n        return 1\n"
         )
         await c.call_tool("index_project", {})
-        payload = (
-            await c.call_tool("find_dead_code", {"summary_only": True})
-        ).data
+        payload = (await c.call_tool("find_dead_code", {"summary_only": True})).data
 
     stale = payload["external_edges"]["stale"][EXTERNAL_ORIGIN]
     assert "edges_lost" in stale["status"]
@@ -232,9 +221,7 @@ async def test_a_rewritten_graph_is_reported_as_changed(workspace: Path):
     async with Client(mcp) as c:
         await c.call_tool("index_project", {})
         path = _graph(workspace, [USE_LINK])
-        await c.call_tool(
-            "ingest_external_graph", {"graph_path": path, "dry_run": False}
-        )
+        await c.call_tool("ingest_external_graph", {"graph_path": path, "dry_run": False})
         # Same path, different content — what `graphify update` produces after
         # the code changed.
         _graph(workspace, [("pkg.service.describe", "pkg.models.Base", "references")])
@@ -257,9 +244,7 @@ async def test_rewriting_the_same_content_is_not_a_change(workspace: Path):
     async with Client(mcp) as c:
         await c.call_tool("index_project", {})
         path = Path(_graph(workspace, [USE_LINK]))
-        await c.call_tool(
-            "ingest_external_graph", {"graph_path": str(path), "dry_run": False}
-        )
+        await c.call_tool("ingest_external_graph", {"graph_path": str(path), "dry_run": False})
         same = path.read_text()
         path.write_text(same)  # new mtime, identical bytes
         st = _state(workspace)
@@ -278,9 +263,7 @@ async def test_a_deleted_graph_says_so_and_offers_the_exit(workspace: Path):
     async with Client(mcp) as c:
         await c.call_tool("index_project", {})
         path = Path(_graph(workspace, [USE_LINK]))
-        await c.call_tool(
-            "ingest_external_graph", {"graph_path": str(path), "dry_run": False}
-        )
+        await c.call_tool("ingest_external_graph", {"graph_path": str(path), "dry_run": False})
         path.unlink()
         payload = (await c.call_tool("who_calls", {"qname": "pkg.models.Base"})).data
 
@@ -343,9 +326,7 @@ async def test_auto_ingest_never_fails_the_index(workspace: Path):
     async with Client(mcp) as c:
         await c.call_tool("index_project", {})
         path = Path(_graph(workspace, [USE_LINK]))
-        await c.call_tool(
-            "ingest_external_graph", {"graph_path": str(path), "dry_run": False}
-        )
+        await c.call_tool("ingest_external_graph", {"graph_path": str(path), "dry_run": False})
         path.unlink()
         (workspace / "pkg" / "models.py").write_text("class Base:\n    x = 1\n")
         result = (await c.call_tool("index_project", {})).data

@@ -28,8 +28,7 @@ def _seed_rf(state) -> None:
 
 def _seed_doc(state) -> None:
     state.conn.execute(
-        "INSERT INTO doc (project_id, target_type, target_key, content)"
-        " VALUES (?, ?, ?, ?)",
+        "INSERT INTO doc (project_id, target_type, target_key, content) VALUES (?, ?, ?, ?)",
         (state.project_id, "symbol", "pkg.x", "body"),
     )
     state.conn.commit()
@@ -79,9 +78,7 @@ def test_env_none_overrides_db_signal(workspace, monkeypatch):
     assert detect_active_plugins(state) == set()
 
 
-def test_env_all_loads_every_known_plugin_even_on_empty_db(
-    workspace, monkeypatch
-):
+def test_env_all_loads_every_known_plugin_even_on_empty_db(workspace, monkeypatch):
     state = get_state(create=True)
     monkeypatch.setenv("LIVESPEC_PLUGINS", "all")
     assert detect_active_plugins(state) == set(KNOWN_PLUGINS)
@@ -101,9 +98,7 @@ def test_env_unknown_plugin_name_is_ignored(workspace, monkeypatch):
     assert detect_active_plugins(state) == {"spec", "docs"}
 
 
-def test_register_active_returns_active_set_and_is_idempotent(
-    workspace, monkeypatch
-):
+def test_register_active_returns_active_set_and_is_idempotent(workspace, monkeypatch):
     state = get_state(create=True)
     _seed_rf(state)
     monkeypatch.delenv("LIVESPEC_PLUGINS", raising=False)
@@ -155,11 +150,15 @@ async def test_rf_plugin_registers_mutation_tools(workspace, monkeypatch):
     # in-source extractor doesn't yet read tags — it is therefore NOT
     # re-registered by the plugin.
     expected_mutation = {
-        "create_spec", "update_spec", "delete_spec",
+        "create_spec",
+        "update_spec",
+        "delete_spec",
         "link_spec_symbol",
-        "link_spec_dependency", "unlink_spec_dependency",
+        "link_spec_dependency",
+        "unlink_spec_dependency",
         "get_spec_dependency_graph",
-        "scan_spec_annotations", "scan_docstrings_for_spec_hints",
+        "scan_spec_annotations",
+        "scan_docstrings_for_spec_hints",
         "import_specs_from_markdown",
     }
     missing = expected_mutation - names

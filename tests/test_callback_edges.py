@@ -21,18 +21,14 @@ async def test_keyword_callback_to_constructor_creates_edge(workspace):
     """The exact dogfood case: `Runner(on_reindex=_cb)` inside a function makes
     `_cb` a callee of that function — a real who_calls edge, not dead."""
     (workspace / "mod.py").write_text(
-        "def _cb():\n"
-        "    return 1\n"
-        "\n"
-        "def setup():\n"
-        "    return Runner(on_reindex=_cb, debounce=2)\n"
+        "def _cb():\n    return 1\n\ndef setup():\n    return Runner(on_reindex=_cb, debounce=2)\n"
     )
     async with Client(mcp) as c:
         await c.call_tool("index_project", {})
         callers = (await c.call_tool("who_calls", {"qname": "mod._cb"})).data
-        assert any(
-            x["qualified_name"] == "mod.setup" for x in callers["callers"]
-        ), f"setup should be a caller of _cb via on_reindex=: {callers}"
+        assert any(x["qualified_name"] == "mod.setup" for x in callers["callers"]), (
+            f"setup should be a caller of _cb via on_reindex=: {callers}"
+        )
         dead = (await c.call_tool("find_dead_code", {})).data
         assert not any("_cb" in d["qualified_name"] for d in dead["dead_symbols"])
 
@@ -52,30 +48,19 @@ async def test_nested_callback_inside_outer_function_creates_edge(workspace):
     )
     async with Client(mcp) as c:
         await c.call_tool("index_project", {})
-        callers = (
-            await c.call_tool(
-                "who_calls", {"qname": "mod.index_project._do_reindex"}
-            )
-        ).data
-        assert any(
-            x["qualified_name"] == "mod.index_project" for x in callers["callers"]
-        ), f"outer fn should call its nested callback via on_reindex=: {callers}"
-        dead = (await c.call_tool("find_dead_code", {})).data
-        assert not any(
-            "_do_reindex" in d["qualified_name"] for d in dead["dead_symbols"]
+        callers = (await c.call_tool("who_calls", {"qname": "mod.index_project._do_reindex"})).data
+        assert any(x["qualified_name"] == "mod.index_project" for x in callers["callers"]), (
+            f"outer fn should call its nested callback via on_reindex=: {callers}"
         )
+        dead = (await c.call_tool("find_dead_code", {})).data
+        assert not any("_do_reindex" in d["qualified_name"] for d in dead["dead_symbols"])
 
 
 @pytest.mark.asyncio
 async def test_atexit_register_positional_creates_edge(workspace):
     """`atexit.register(cleanup)` — a positional arg to a registration call."""
     (workspace / "mod.py").write_text(
-        "import atexit\n"
-        "def cleanup():\n"
-        "    pass\n"
-        "\n"
-        "def install():\n"
-        "    atexit.register(cleanup)\n"
+        "import atexit\ndef cleanup():\n    pass\n\ndef install():\n    atexit.register(cleanup)\n"
     )
     async with Client(mcp) as c:
         await c.call_tool("index_project", {})
@@ -111,12 +96,12 @@ async def test_plain_data_arg_does_not_create_spurious_edge(workspace):
         "def dispatch(x):\n"
         "    return x\n"
         "\n"
-        "def run(handler):\n"           # param named `handler`, shadows the fn
+        "def run(handler):\n"  # param named `handler`, shadows the fn
         "    return dispatch(handler)\n"  # positional, callee 'dispatch' not a reg verb
     )
     async with Client(mcp) as c:
         await c.call_tool("index_project", {})
         callers = (await c.call_tool("who_calls", {"qname": "mod.handler"})).data
-        assert not any(
-            x["qualified_name"] == "mod.run" for x in callers["callers"]
-        ), f"run must NOT spuriously 'call' handler via a data arg: {callers}"
+        assert not any(x["qualified_name"] == "mod.run" for x in callers["callers"]), (
+            f"run must NOT spuriously 'call' handler via a data arg: {callers}"
+        )

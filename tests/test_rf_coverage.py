@@ -24,10 +24,7 @@ async def test_spec_coverage_derived_from_call_graph(workspace):
     pkg = workspace / "pkg"
     pkg.mkdir()
     (pkg / "__init__.py").write_text("")
-    (pkg / "feature.py").write_text(
-        "def implementer():\n"
-        "    return 1\n"
-    )
+    (pkg / "feature.py").write_text("def implementer():\n    return 1\n")
     (workspace / "tests").mkdir()
     (workspace / "tests" / "test_feature.py").write_text(
         "from pkg.feature import implementer\n"
@@ -38,9 +35,7 @@ async def test_spec_coverage_derived_from_call_graph(workspace):
 
     async with Client(mcp) as c:
         await c.call_tool("index_project", {})
-        await c.call_tool(
-            "create_spec", {"spec_id": "auth-user-login", "title": "Feature"}
-        )
+        await c.call_tool("create_spec", {"spec_id": "auth-user-login", "title": "Feature"})
         await c.call_tool(
             "link_spec_symbol",
             {"spec_id": "auth-user-login", "symbol_qname": "pkg.feature.implementer"},
@@ -48,11 +43,11 @@ async def test_spec_coverage_derived_from_call_graph(workspace):
         out = (await c.call_tool("audit_coverage", {})).data
 
     by_id = {r["spec_id"]: r for r in out["spec_coverage"]}
-    assert "auth-user-login" in by_id, f"auth-user-login missing from spec_coverage: {out['spec_coverage']}"
-    entry = by_id["auth-user-login"]
-    assert entry["test_coverage_ratio"] > 0, (
-        f"derived coverage should be > 0: {entry}"
+    assert "auth-user-login" in by_id, (
+        f"auth-user-login missing from spec_coverage: {out['spec_coverage']}"
     )
+    entry = by_id["auth-user-login"]
+    assert entry["test_coverage_ratio"] > 0, f"derived coverage should be > 0: {entry}"
     assert entry["total_symbols"] == 1
     assert entry["tested_symbols"] == 1
     assert entry["coverage_source"] in ("derived", "both"), (
@@ -73,11 +68,7 @@ async def test_spec_coverage_harness_tests_link_credits_all_implements(workspace
     pkg.mkdir()
     (pkg / "__init__.py").write_text("")
     (pkg / "feature.py").write_text(
-        "def implementer_a():\n"
-        "    return 1\n"
-        "\n"
-        "def implementer_b():\n"
-        "    return 2\n"
+        "def implementer_a():\n    return 1\n\ndef implementer_b():\n    return 2\n"
     )
     (workspace / "tests").mkdir()
     (workspace / "tests" / "test_feature.py").write_text(
@@ -87,9 +78,7 @@ async def test_spec_coverage_harness_tests_link_credits_all_implements(workspace
 
     async with Client(mcp) as c:
         await c.call_tool("index_project", {})
-        await c.call_tool(
-            "create_spec", {"spec_id": "SPEC-HARNESS", "title": "Harness"}
-        )
+        await c.call_tool("create_spec", {"spec_id": "SPEC-HARNESS", "title": "Harness"})
         await c.call_tool(
             "link_spec_symbol",
             {"spec_id": "SPEC-HARNESS", "symbol_qname": "pkg.feature.implementer_a"},
@@ -125,10 +114,7 @@ async def test_spec_coverage_explicit_link_without_call_edge(workspace):
     pkg.mkdir()
     (pkg / "__init__.py").write_text("")
     # Impl + a test symbol that does NOT call the impl (no call edge).
-    (pkg / "feature.py").write_text(
-        "def implementer():\n"
-        "    return 1\n"
-    )
+    (pkg / "feature.py").write_text("def implementer():\n    return 1\n")
     (workspace / "tests").mkdir()
     (workspace / "tests" / "test_feature.py").write_text(
         "def test_via_harness():\n"
@@ -139,9 +125,7 @@ async def test_spec_coverage_explicit_link_without_call_edge(workspace):
 
     async with Client(mcp) as c:
         await c.call_tool("index_project", {})
-        await c.call_tool(
-            "create_spec", {"spec_id": "auth-session", "title": "Harness-tested"}
-        )
+        await c.call_tool("create_spec", {"spec_id": "auth-session", "title": "Harness-tested"})
         await c.call_tool(
             "link_spec_symbol",
             {"spec_id": "auth-session", "symbol_qname": "pkg.feature.implementer"},
@@ -160,9 +144,7 @@ async def test_spec_coverage_explicit_link_without_call_edge(workspace):
     by_id = {r["spec_id"]: r for r in out["spec_coverage"]}
     assert "auth-session" in by_id, f"auth-session missing: {out['spec_coverage']}"
     entry = by_id["auth-session"]
-    assert entry["test_coverage_ratio"] > 0, (
-        f"explicit-link coverage should be > 0: {entry}"
-    )
+    assert entry["test_coverage_ratio"] > 0, f"explicit-link coverage should be > 0: {entry}"
     assert entry["coverage_source"] == "explicit", (
         f"coverage_source should be explicit (no call edge from a test): {entry}"
     )
@@ -175,22 +157,14 @@ async def test_spec_coverage_zero_when_nothing_reaches_impl(workspace):
     pkg = workspace / "pkg"
     pkg.mkdir()
     (pkg / "__init__.py").write_text("")
-    (pkg / "feature.py").write_text(
-        "def untested_impl():\n"
-        "    return 42\n"
-    )
+    (pkg / "feature.py").write_text("def untested_impl():\n    return 42\n")
     # A test file exists but exercises something unrelated.
     (workspace / "tests").mkdir()
-    (workspace / "tests" / "test_other.py").write_text(
-        "def test_other():\n"
-        "    assert True\n"
-    )
+    (workspace / "tests" / "test_other.py").write_text("def test_other():\n    assert True\n")
 
     async with Client(mcp) as c:
         await c.call_tool("index_project", {})
-        await c.call_tool(
-            "create_spec", {"spec_id": "untested-feature", "title": "Untested"}
-        )
+        await c.call_tool("create_spec", {"spec_id": "untested-feature", "title": "Untested"})
         await c.call_tool(
             "link_spec_symbol",
             {"spec_id": "untested-feature", "symbol_qname": "pkg.feature.untested_impl"},
@@ -203,9 +177,7 @@ async def test_spec_coverage_zero_when_nothing_reaches_impl(workspace):
     assert entry["test_coverage_ratio"] == 0.0, (
         f"no test reaches the impl, no explicit link → ratio 0: {entry}"
     )
-    assert entry["coverage_source"] == "none", (
-        f"coverage_source should be none: {entry}"
-    )
+    assert entry["coverage_source"] == "none", f"coverage_source should be none: {entry}"
     assert entry["total_symbols"] == 1
     assert entry["tested_symbols"] == 0
 
@@ -215,26 +187,15 @@ async def test_spec_coverage_from_lcov_report_without_static_call_edge(workspace
     """LCOV covers an implementation even when static test reachability cannot."""
     src = workspace / "src"
     src.mkdir()
-    source = (
-        "export function reportCovered(): number {\n"
-        "  return 42;\n"
-        "}\n"
-    )
+    source = "export function reportCovered(): number {\n  return 42;\n}\n"
     (src / "feature.ts").write_text(source)
     coverage = workspace / "coverage"
     coverage.mkdir()
-    (coverage / "lcov.info").write_text(
-        "TN:\n"
-        f"SF:{src / 'feature.ts'}\n"
-        "DA:2,1\n"
-        "end_of_record\n"
-    )
+    (coverage / "lcov.info").write_text(f"TN:\nSF:{src / 'feature.ts'}\nDA:2,1\nend_of_record\n")
 
     async with Client(mcp) as c:
         await c.call_tool("index_project", {})
-        await c.call_tool(
-            "create_spec", {"spec_id": "report-covered", "title": "Report-covered"}
-        )
+        await c.call_tool("create_spec", {"spec_id": "report-covered", "title": "Report-covered"})
         await c.call_tool(
             "link_spec_symbol",
             {"spec_id": "report-covered", "symbol_qname": "src.feature.reportCovered"},
@@ -255,18 +216,12 @@ async def test_spec_coverage_backward_compat_explicit_fields_intact(workspace):
     pkg.mkdir()
     (pkg / "__init__.py").write_text("")
     (pkg / "feature.py").write_text(
-        "def implementer():\n"
-        "    return 1\n"
-        "\n"
-        "def test_runner():\n"
-        "    return implementer() == 1\n"
+        "def implementer():\n    return 1\n\ndef test_runner():\n    return implementer() == 1\n"
     )
 
     async with Client(mcp) as c:
         await c.call_tool("index_project", {})
-        await c.call_tool(
-            "create_spec", {"spec_id": "tested-feature", "title": "Tested"}
-        )
+        await c.call_tool("create_spec", {"spec_id": "tested-feature", "title": "Tested"})
         await c.call_tool(
             "link_spec_symbol",
             {"spec_id": "tested-feature", "symbol_qname": "pkg.feature.implementer"},
@@ -286,8 +241,7 @@ async def test_spec_coverage_backward_compat_explicit_fields_intact(workspace):
         f"explicit specs_with_linked_tests must be intact: {out['counts']}"
     )
     assert any(
-        r["spec_id"] == "tested-feature" and r["test_count"] == 1
-        for r in out["spec_test_coverage"]
+        r["spec_id"] == "tested-feature" and r["test_count"] == 1 for r in out["spec_test_coverage"]
     ), f"tested-feature must still be in spec_test_coverage: {out['spec_test_coverage']}"
     # New auto-derived block coexists.
     by_id = {r["spec_id"]: r for r in out["spec_coverage"]}

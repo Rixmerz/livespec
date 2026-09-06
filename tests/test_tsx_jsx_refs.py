@@ -57,8 +57,7 @@ def test_jsx_self_closing_emits_ref(tmp_path: Path):
     """<Counter /> inside App() must emit a ref to 'Counter'."""
     tsx = tmp_path / "app.tsx"
     tsx.write_text(
-        "function Counter() { return <div />; }\n"
-        "function App() { return <Counter />; }\n"
+        "function Counter() { return <div />; }\nfunction App() { return <Counter />; }\n"
     )
     _, result = extract(tsx, tsx.read_text(), tmp_path)
     assert "Counter" in _ref_targets(result), (
@@ -83,8 +82,7 @@ def test_jsx_member_expression_emits_leftmost(tmp_path: Path):
     """<Form.Field /> must emit a ref to 'Form' (leftmost segment)."""
     tsx = tmp_path / "app.tsx"
     tsx.write_text(
-        "const Form = { Field: () => <input /> };\n"
-        "function App() { return <Form.Field />; }\n"
+        "const Form = { Field: () => <input /> };\nfunction App() { return <Form.Field />; }\n"
     )
     _, result = extract(tsx, tsx.read_text(), tmp_path)
     assert "Form" in _ref_targets(result), (
@@ -95,9 +93,7 @@ def test_jsx_member_expression_emits_leftmost(tmp_path: Path):
 def test_jsx_lowercase_html_no_ref(tmp_path: Path):
     """<div>, <span>, <a> must NOT produce refs (HTML elements)."""
     tsx = tmp_path / "app.tsx"
-    tsx.write_text(
-        'function App() { return <div><span><a href="#">link</a></span></div>; }\n'
-    )
+    tsx.write_text('function App() { return <div><span><a href="#">link</a></span></div>; }\n')
     _, result = extract(tsx, tsx.read_text(), tmp_path)
     html_tags = {"div", "span", "a"}
     leaked = html_tags & _ref_targets(result)
@@ -164,8 +160,7 @@ def test_jsx_member_expression_ref_emitted(tmp_path: Path):
     """
     tsx = tmp_path / "app.tsx"
     tsx.write_text(
-        "function Form() { return <div />; }\n"
-        "function App() { return <Form.Field />; }\n"
+        "function Form() { return <div />; }\nfunction App() { return <Form.Field />; }\n"
     )
     _, result = extract(tsx, tsx.read_text(), tmp_path)
     assert "Form" in _ref_targets(result), (
@@ -175,12 +170,9 @@ def test_jsx_member_expression_ref_emitted(tmp_path: Path):
 
 def test_jsx_member_expression_edge_to_existing_symbol(tmp_path: Path):
     """<Form.Field /> creates an edge to 'Form' when Form is an extractable function."""
-    (tmp_path / "forms.tsx").write_text(
-        "export function Form() { return <div />; }\n"
-    )
+    (tmp_path / "forms.tsx").write_text("export function Form() { return <div />; }\n")
     (tmp_path / "app.tsx").write_text(
-        "import { Form } from './forms';\n"
-        "export function App() { return <Form.Field />; }\n"
+        "import { Form } from './forms';\nexport function App() { return <Form.Field />; }\n"
     )
     settings, conn = _bootstrap(tmp_path)
     index_project(settings, conn)

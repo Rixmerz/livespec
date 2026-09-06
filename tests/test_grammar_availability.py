@@ -68,9 +68,7 @@ def test_a_missing_grammar_is_its_own_error_type(monkeypatch):
         get_parser.cache_clear()
 
 
-def test_extract_reports_the_language_instead_of_an_empty_success(
-    tmp_path: Path, no_grammars
-):
+def test_extract_reports_the_language_instead_of_an_empty_success(tmp_path: Path, no_grammars):
     src = "export function hello() { return 1 }\n"
     p = tmp_path / "a.ts"
     p.write_text(src)
@@ -82,9 +80,7 @@ def test_extract_reports_the_language_instead_of_an_empty_success(
     assert result.symbols == []
 
 
-def test_python_is_unaffected_because_it_does_not_use_tree_sitter(
-    tmp_path: Path, no_grammars
-):
+def test_python_is_unaffected_because_it_does_not_use_tree_sitter(tmp_path: Path, no_grammars):
     """The failure is per-language. A Python-only repo must index normally even
     when no grammar on earth will load."""
     src = "def hello():\n    return 1\n"
@@ -98,9 +94,7 @@ def test_python_is_unaffected_because_it_does_not_use_tree_sitter(
 
 
 @pytest.mark.asyncio
-async def test_index_says_which_languages_it_could_not_read(
-    workspace: Path, no_grammars
-):
+async def test_index_says_which_languages_it_could_not_read(workspace: Path, no_grammars):
     (workspace / "app.py").write_text("def py_fn():\n    return 1\n")
     (workspace / "app.ts").write_text("export function tsFn() { return 1 }\n")
     (workspace / "lib.rs").write_text("pub fn rs_fn() -> i32 { 1 }\n")
@@ -129,9 +123,7 @@ async def test_a_readable_repo_never_mentions_grammar_failures(workspace: Path):
 
 
 @pytest.mark.asyncio
-async def test_the_file_is_left_unindexed_so_the_next_run_retries_it(
-    workspace: Path, monkeypatch
-):
+async def test_the_file_is_left_unindexed_so_the_next_run_retries_it(workspace: Path, monkeypatch):
     """The regression that motivated all of this.
 
     A file skipped for a missing grammar must NOT get a persisted row with an
@@ -174,9 +166,7 @@ def test_prefetch_targets_what_livespec_extracts_not_the_whole_pack(monkeypatch)
     import tree_sitter_language_pack
 
     asked: list[str] = []
-    monkeypatch.setattr(
-        tree_sitter_language_pack, "download", lambda names: asked.extend(names)
-    )
+    monkeypatch.setattr(tree_sitter_language_pack, "download", lambda names: asked.extend(names))
     from livespec_mcp.domain.languages import prefetch_grammars
 
     result = prefetch_grammars()
@@ -205,9 +195,7 @@ def test_grammars_check_exits_nonzero_when_something_is_missing(monkeypatch, cap
     shipping an image that will quietly index Python only."""
     from livespec_mcp import cli
 
-    monkeypatch.setattr(
-        "livespec_mcp.domain.languages.downloaded_grammars", lambda: ["python"]
-    )
+    monkeypatch.setattr("livespec_mcp.domain.languages.downloaded_grammars", lambda: ["python"])
     assert cli.main(["grammars", "--check"]) == 1
     out = capsys.readouterr().out
     assert "missing" in out

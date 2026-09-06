@@ -43,19 +43,33 @@ def detect_language(path: Path) -> str | None:
 # symbol extraction yet — indexing them would parse for zero symbols.
 # v0.14: such files are skipped and reported as `languages_unsupported`
 # in the index_project payload instead of silently producing nothing.
-EXTRACTOR_SUPPORTED: frozenset[str] = frozenset({
-    "python", "javascript", "typescript", "tsx",
-    "go", "java", "rust", "ruby", "php",
-})
+EXTRACTOR_SUPPORTED: frozenset[str] = frozenset(
+    {
+        "python",
+        "javascript",
+        "typescript",
+        "tsx",
+        "go",
+        "java",
+        "rust",
+        "ruby",
+        "php",
+    }
+)
 
 
 # Languages whose extractor populates `symbol.docstring` so the @spec:
 # annotation matcher can find tags. Used by audit_coverage to separate
 # "actually un-covered" from "extractor can't see annotations here yet".
-ANNOTATION_SUPPORTED_LANGUAGES: frozenset[str] = frozenset({
-    "python", "javascript", "typescript", "tsx",
-    "java",
-})
+ANNOTATION_SUPPORTED_LANGUAGES: frozenset[str] = frozenset(
+    {
+        "python",
+        "javascript",
+        "typescript",
+        "tsx",
+        "java",
+    }
+)
 
 
 class GrammarUnavailableError(RuntimeError):
@@ -78,9 +92,7 @@ class GrammarUnavailableError(RuntimeError):
     """
 
     def __init__(self, language: str, cause: BaseException | None = None) -> None:
-        super().__init__(
-            f"tree-sitter grammar for {language!r} is unavailable: {cause}"
-        )
+        super().__init__(f"tree-sitter grammar for {language!r} is unavailable: {cause}")
         self.language = language
         self.cause = cause
 
@@ -101,8 +113,7 @@ def get_parser(language: str):
         from tree_sitter_language_pack import get_parser as _get_parser
     except ImportError as e:  # pragma: no cover - dependency is required
         raise RuntimeError(
-            "tree-sitter-language-pack not installed. "
-            "Run: pip install tree-sitter-language-pack"
+            "tree-sitter-language-pack not installed. Run: pip install tree-sitter-language-pack"
         ) from e
     try:
         return _get_parser(language)

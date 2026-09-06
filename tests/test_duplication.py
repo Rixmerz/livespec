@@ -36,21 +36,21 @@ from livespec_mcp.domain.duplication import (
 # nivel 0 — la copia con los nombres cambiados
 # ---------------------------------------------------------------------------
 
-ORIGINAL = '''
+ORIGINAL = """
 def format_currency(amount, currency):
     if amount is None:
         return ""
     return f"{amount:.2f} {currency}"
-'''
+"""
 
-RENAMED = '''
+RENAMED = """
 def to_money_string(value, unit):
     if value is None:
         return ""
     return f"{value:.2f} {unit}"
-'''
+"""
 
-REFORMATTED = '''
+REFORMATTED = """
 def format_currency(amount, currency):
 
     # normaliza el vacio
@@ -58,13 +58,13 @@ def format_currency(amount, currency):
         return ""
 
     return f"{amount:.2f} {currency}"
-'''
+"""
 
-DIFFERENT = '''
+DIFFERENT = """
 def parse_currency(text):
     parts = text.split(" ")
     return float(parts[0]), parts[1]
-'''
+"""
 
 
 def test_a_copy_with_renamed_identifiers_hashes_the_same():
@@ -119,7 +119,7 @@ def test_a_literal_is_reduced_to_its_type_not_its_value():
 # nivel 1 — el casi-duplicado
 # ---------------------------------------------------------------------------
 
-LONG_A = '''
+LONG_A = """
 def process_batch(items, retries, logger):
     results = []
     for item in items:
@@ -135,9 +135,9 @@ def process_batch(items, retries, logger):
         else:
             logger.error("gave up")
     return results
-'''
+"""
 
-LONG_B_EDITED = '''
+LONG_B_EDITED = """
 def run_items(entries, max_tries, log):
     output = []
     for entry in entries:
@@ -154,7 +154,7 @@ def run_items(entries, max_tries, log):
             log.error("gave up")
     metrics = len(output)
     return output
-'''
+"""
 
 
 def test_a_near_duplicate_scores_above_the_threshold():
@@ -166,7 +166,7 @@ def test_a_near_duplicate_scores_above_the_threshold():
 
 def test_unrelated_code_scores_far_below_the_threshold():
     a = fingerprint(LONG_A)
-    b = fingerprint('''
+    b = fingerprint("""
 def render_template(name, context, engine):
     tpl = engine.load(name)
     for key in sorted(context):
@@ -174,7 +174,7 @@ def render_template(name, context, engine):
     if not tpl:
         raise LookupError("empty template")
     return tpl.strip()
-''')
+""")
     assert similarity(a, b) < NEAR_DUPLICATE_THRESHOLD
 
 
@@ -192,6 +192,7 @@ def test_a_long_body_is_eligible():
 # ---------------------------------------------------------------------------
 # find_duplicates — la pregunta que un llamador hace de verdad
 # ---------------------------------------------------------------------------
+
 
 def _corpus() -> list[tuple[str, str, Fingerprint]]:
     return [
@@ -219,7 +220,7 @@ def test_a_near_duplicate_is_reported_as_level_one():
 
 def test_genuinely_new_code_reports_nothing():
     """El falso positivo es el error caro: dos y se apaga el check."""
-    novel = fingerprint('''
+    novel = fingerprint("""
 def open_socket(host, port, timeout, backlog):
     sock = create(host, port)
     sock.settimeout(timeout)
@@ -227,7 +228,7 @@ def open_socket(host, port, timeout, backlog):
     while not sock.ready():
         sock.poll()
     return sock
-''')
+""")
     assert find_duplicates(novel, _corpus()) == []
 
 
@@ -245,6 +246,7 @@ def test_the_result_is_capped():
 # ---------------------------------------------------------------------------
 # los otros ocho lenguajes
 # ---------------------------------------------------------------------------
+
 
 def test_a_non_python_body_still_produces_a_fingerprint():
     ts = "function addUser(name: string): void {\n  store.push(name);\n}"
@@ -285,6 +287,7 @@ def test_tokenize_never_raises_on_garbage():
 # presupuesto — lo que hace que el check sobreviva a la primera semana
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.parametrize("source", [ORIGINAL, LONG_A])
 def test_fingerprinting_is_fast_enough_to_run_before_a_write(source: str):
     """§6.7: p95 < 150 ms por hook, y esto es solo una parte de ese presupuesto."""
@@ -301,6 +304,7 @@ def test_fingerprinting_is_fast_enough_to_run_before_a_write(source: str):
 # el corpus cacheado — lo que hace que esto sobreviva delante de un write
 # ---------------------------------------------------------------------------
 
+
 def _mini_repo(tmp_path):
     from livespec_mcp.config import Settings
     from livespec_mcp.domain.indexer import index_project
@@ -309,12 +313,14 @@ def _mini_repo(tmp_path):
     (tmp_path / "a.py").write_text(ORIGINAL + LONG_A, encoding="utf-8")
     (tmp_path / "b.py").write_text(DIFFERENT, encoding="utf-8")
     state = tmp_path / ".mcp-docs"
-    st = Settings(workspace=tmp_path, state_dir=state,
-                  db_path=state / "docs.db", docs_dir=state / "docs")
+    st = Settings(
+        workspace=tmp_path, state_dir=state, db_path=state / "docs.db", docs_dir=state / "docs"
+    )
     st.ensure_dirs()
     conn = connect(st.db_path)
     index_project(st, conn, force=True)
     import sqlite3
+
     conn.row_factory = sqlite3.Row
     pids = tuple(r[0] for r in conn.execute("SELECT id FROM project"))
     return conn, pids, tmp_path
@@ -371,9 +377,13 @@ def test_a_changed_body_simply_misses(tmp_path):
     )
     from livespec_mcp.config import Settings
     from livespec_mcp.domain.indexer import index_project
-    st = Settings(workspace=root, state_dir=root / ".mcp-docs",
-                  db_path=root / ".mcp-docs" / "docs.db",
-                  docs_dir=root / ".mcp-docs" / "docs")
+
+    st = Settings(
+        workspace=root,
+        state_dir=root / ".mcp-docs",
+        db_path=root / ".mcp-docs" / "docs.db",
+        docs_dir=root / ".mcp-docs" / "docs",
+    )
     index_project(st, conn, force=True)
     load_corpus(conn, pids, root)
 

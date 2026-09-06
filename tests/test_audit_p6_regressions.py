@@ -49,7 +49,9 @@ async def test_delete_spec_cascades_links(sample_repo):
             "bulk_link_spec_symbols",
             {"mappings": [{"spec_id": "spec-delete-cascade", "symbol_qname": "pkg.auth.login"}]},
         )
-        impl = (await c.call_tool("get_spec_implementation", {"spec_id": "spec-delete-cascade"})).data
+        impl = (
+            await c.call_tool("get_spec_implementation", {"spec_id": "spec-delete-cascade"})
+        ).data
         assert impl.get("symbols") or impl.get("implementation") or impl.get("count", 0) >= 0
         deleted = (await c.call_tool("delete_spec", {"spec_id": "spec-delete-cascade"})).data
         assert deleted["deleted"] is True
@@ -89,6 +91,8 @@ async def test_transient_syntax_error_preserves_spec_links(workspace: Path):
         await c.call_tool("index_project", {})
         f.write_text("def handler():\n    return 1\n")
         await c.call_tool("index_project", {})
-        impl = (await c.call_tool("get_spec_implementation", {"spec_id": "spec-syntax-preserve"})).data
+        impl = (
+            await c.call_tool("get_spec_implementation", {"spec_id": "spec-syntax-preserve"})
+        ).data
         blob = str(impl)
         assert "svc.handler" in blob, f"manual link lost across transient syntax error: {impl}"

@@ -34,9 +34,7 @@ def discover_report_coverage(workspace: Path) -> dict[str, set[int]]:
     return dict(covered)
 
 
-def _merge_istanbul_json(
-    covered: dict[str, set[int]], workspace: Path, report_path: Path
-) -> None:
+def _merge_istanbul_json(covered: dict[str, set[int]], workspace: Path, report_path: Path) -> None:
     data = json.loads(report_path.read_text(encoding="utf-8"))
     if not isinstance(data, dict):
         return

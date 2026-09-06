@@ -64,10 +64,7 @@ async def test_overview_top_symbols_skips_bundler(workspace):
     """top_symbols should not surface symbols from dist/ etc."""
     src = workspace / "src"
     src.mkdir()
-    (src / "a.py").write_text(
-        "def core_fn():\n    helper()\n\n"
-        "def helper():\n    return 1\n"
-    )
+    (src / "a.py").write_text("def core_fn():\n    helper()\n\ndef helper():\n    return 1\n")
     dist = workspace / "dist"
     dist.mkdir()
     (dist / "bundle.py").write_text("def bundled_fn():\n    return 1\n")

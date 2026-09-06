@@ -44,17 +44,11 @@ def test_rebuild_chunks_reuses_rowids_when_unchanged(tmp_path: Path):
     conn, pid = _seed_symbol_db(tmp_path)
     rebuild_chunks(conn, pid)
     ids1 = [
-        r["id"]
-        for r in conn.execute(
-            "SELECT id FROM chunk WHERE project_id=? ORDER BY id", (pid,)
-        )
+        r["id"] for r in conn.execute("SELECT id FROM chunk WHERE project_id=? ORDER BY id", (pid,))
     ]
     rebuild_chunks(conn, pid)  # unchanged -> reuse rows
     ids2 = [
-        r["id"]
-        for r in conn.execute(
-            "SELECT id FROM chunk WHERE project_id=? ORDER BY id", (pid,)
-        )
+        r["id"] for r in conn.execute("SELECT id FROM chunk WHERE project_id=? ORDER BY id", (pid,))
     ]
     assert ids1 == ids2 and len(ids1) >= 2
 
@@ -72,7 +66,5 @@ def test_rebuild_chunks_deletes_stale_source(tmp_path: Path):
             (pid,),
         )
     }
-    a_id = conn.execute("SELECT id FROM symbol WHERE qualified_name='m.a'").fetchone()[
-        "id"
-    ]
+    a_id = conn.execute("SELECT id FROM symbol WHERE qualified_name='m.a'").fetchone()["id"]
     assert remaining == {a_id}

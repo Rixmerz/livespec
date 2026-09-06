@@ -87,18 +87,10 @@ async def test_scan_docstrings_summary_only(workspace):
     pkg = workspace / "pkg"
     pkg.mkdir()
     (pkg / "__init__.py").write_text("")
-    (pkg / "m.py").write_text(
-        "def f():\n"
-        '    """Validates input."""\n'
-        "    return 1\n"
-    )
+    (pkg / "m.py").write_text('def f():\n    """Validates input."""\n    return 1\n')
     async with Client(mcp) as c:
         await c.call_tool("index_project", {})
-        out = (
-            await c.call_tool(
-                "scan_docstrings_for_spec_hints", {"summary_only": True}
-            )
-        ).data
+        out = (await c.call_tool("scan_docstrings_for_spec_hints", {"summary_only": True})).data
     assert "count" in out
     assert "verb_histogram_top" in out
     assert "hints" not in out

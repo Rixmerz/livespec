@@ -59,9 +59,7 @@ def _symbols(workspace: Path) -> dict[str, dict]:
     }
 
 
-def _merged_graph(
-    path: Path, syms: dict[str, dict], links: list[tuple[str, str, str]]
-) -> str:
+def _merged_graph(path: Path, syms: dict[str, dict], links: list[tuple[str, str, str]]) -> str:
     """What `graphify merge-graphs` produces: one graph spanning both trees."""
     wanted = {q for link in links for q in link[:2]}
     path.write_text(
@@ -136,9 +134,7 @@ async def test_an_edge_between_two_repos_of_a_group_is_ingested(tmp_path: Path):
         )
         # Read from the OTHER repo: the dependency is on its symbol.
         seen = (
-            await c.call_tool(
-                "who_calls", {"workspace": str(back), "qname": "pkg.models.Ticket"}
-            )
+            await c.call_tool("who_calls", {"workspace": str(back), "qname": "pkg.models.Ticket"})
         ).data
 
     # It is NOT in the cone: the NetworkX view is built per project
@@ -162,7 +158,9 @@ async def test_remove_takes_the_cross_repo_edges_back_out(tmp_path: Path):
     shared = tmp_path / "grp" / "shared.db"
     back = _repo(tmp_path / "back", "models", "class Ticket:\n    pass\n", group_db=shared)
     front = _repo(
-        tmp_path / "front", "view", "def render(item):\n    return str(item)\n",
+        tmp_path / "front",
+        "view",
+        "def render(item):\n    return str(item)\n",
         group_db=shared,
     )
 
@@ -181,14 +179,10 @@ async def test_remove_takes_the_cross_repo_edges_back_out(tmp_path: Path):
         # Removing from the BACK repo must still reach an edge whose source is
         # in FRONT — same group, one database.
         removed = (
-            await c.call_tool(
-                "ingest_external_graph", {"workspace": str(back), "remove": True}
-            )
+            await c.call_tool("ingest_external_graph", {"workspace": str(back), "remove": True})
         ).data
         after = (
-            await c.call_tool(
-                "who_calls", {"workspace": str(back), "qname": "pkg.models.Ticket"}
-            )
+            await c.call_tool("who_calls", {"workspace": str(back), "qname": "pkg.models.Ticket"})
         ).data
 
     assert removed["removed"] == 1

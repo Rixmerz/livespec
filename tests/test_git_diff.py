@@ -87,9 +87,7 @@ async def test_git_diff_impact_unknown_ref(git_repo):
         ).data
         assert result.get("isError") is True
         # Must be short — no multi-line --help dump
-        assert "\n" not in result["error"], (
-            f"error must be a single line, got: {result['error']!r}"
-        )
+        assert "\n" not in result["error"], f"error must be a single line, got: {result['error']!r}"
         assert len(result["error"]) < 250
         # Must mention the bad ref so the user knows what to fix
         assert "definitely-not-a-ref" in result["error"] or "unknown" in result["error"].lower()
@@ -116,35 +114,23 @@ async def test_git_diff_impact_excludes_test_fixtures(workspace):
     pkg = workspace / "pkg"
     pkg.mkdir()
     (pkg / "__init__.py").write_text("")
-    (pkg / "feature.py").write_text(
-        "def widget():\n"
-        "    return 1\n"
-    )
+    (pkg / "feature.py").write_text("def widget():\n    return 1\n")
 
     tests = workspace / "tests"
     tests.mkdir()
     # Real test runner — should appear in suggested_tests
     (tests / "test_feature.py").write_text(
-        "from pkg.feature import widget\n"
-        "\n"
-        "def test_widget():\n"
-        "    assert widget() == 1\n"
+        "from pkg.feature import widget\n\ndef test_widget():\n    assert widget() == 1\n"
     )
     # Fixture file under tests/fixtures/ — should NOT appear
     fixtures = tests / "fixtures"
     fixtures.mkdir()
     (fixtures / "data_widget.py").write_text(
-        "from pkg.feature import widget\n"
-        "\n"
-        "def make_data():\n"
-        "    return widget()\n"
+        "from pkg.feature import widget\n\ndef make_data():\n    return widget()\n"
     )
     # Helper file inside tests/ but not a test runner — should NOT appear
     (tests / "helpers.py").write_text(
-        "from pkg.feature import widget\n"
-        "\n"
-        "def helper():\n"
-        "    return widget()\n"
+        "from pkg.feature import widget\n\ndef helper():\n    return widget()\n"
     )
 
     _git(workspace, "init", "-q")

@@ -34,9 +34,9 @@ def compute_index_status(st: AppState) -> dict[str, Any]:
     last = st.conn.execute(
         "SELECT * FROM index_run WHERE project_id=? ORDER BY id DESC LIMIT 1", (pid,)
     ).fetchone()
-    files = st.conn.execute(
-        "SELECT COUNT(*) c FROM file WHERE project_id=?", (pid,)
-    ).fetchone()["c"]
+    files = st.conn.execute("SELECT COUNT(*) c FROM file WHERE project_id=?", (pid,)).fetchone()[
+        "c"
+    ]
     syms = st.conn.execute(
         "SELECT COUNT(*) c FROM symbol s JOIN file f ON f.id=s.file_id WHERE f.project_id=?",
         (pid,),
@@ -46,9 +46,9 @@ def compute_index_status(st: AppState) -> dict[str, Any]:
            JOIN file f ON f.id=s.file_id WHERE f.project_id=?""",
         (pid,),
     ).fetchone()["c"]
-    specs = st.conn.execute(
-        "SELECT COUNT(*) c FROM spec WHERE project_id=?", (pid,)
-    ).fetchone()["c"]
+    specs = st.conn.execute("SELECT COUNT(*) c FROM spec WHERE project_id=?", (pid,)).fetchone()[
+        "c"
+    ]
     return {
         "workspace": str(st.settings.workspace),
         "project_id": pid,
@@ -260,9 +260,7 @@ def _maybe_auto_ingest(st: AppState, result: dict[str, Any]) -> None:
     }
 
 
-def _delete_external_edges(
-    st: AppState, project_ids: list[int] | int, origin: str
-) -> int:
+def _delete_external_edges(st: AppState, project_ids: list[int] | int, origin: str) -> int:
     """Delete exactly the edges one external origin wrote into these projects.
 
     The `_resolve_refs` contract forbids DELETEing from `symbol_edge` — refs
@@ -670,9 +668,7 @@ def register(mcp: FastMCP) -> None:
             st, resolved_path=resolved_path, relations=relations, dry_run=dry_run
         )
 
-    ingest_external_graph.__doc__ = (
-        ingest_external_graph.__doc__ or ""
-    ) + WORKSPACE_DOCSTRING_NOTE
+    ingest_external_graph.__doc__ = (ingest_external_graph.__doc__ or "") + WORKSPACE_DOCSTRING_NOTE
 
     # Append the shared workspace note as a real docstring. A bare f-string as
     # the first statement is an expression, not a docstring, so __doc__ would be

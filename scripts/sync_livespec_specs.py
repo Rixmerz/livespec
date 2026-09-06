@@ -20,7 +20,9 @@ from pathlib import Path
 
 
 def main() -> int:
-    workspace = Path(os.environ.get("LIVESPEC_WORKSPACE", sys.argv[1] if len(sys.argv) > 1 else ".")).resolve()
+    workspace = Path(
+        os.environ.get("LIVESPEC_WORKSPACE", sys.argv[1] if len(sys.argv) > 1 else ".")
+    ).resolve()
     from livespec_mcp.config import load_repo_config
     from livespec_mcp.domain.specs_sync import sync_specs_from_config
     from livespec_mcp.state import get_state

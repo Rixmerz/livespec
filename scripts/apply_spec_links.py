@@ -38,10 +38,7 @@ from fastmcp import Client
 from livespec_mcp.server import mcp
 
 DEFAULT_LINKS = (
-    Path(__file__).resolve().parent.parent
-    / "docs"
-    / "requirements"
-    / "livespec-spec-links.json"
+    Path(__file__).resolve().parent.parent / "docs" / "requirements" / "livespec-spec-links.json"
 )
 
 

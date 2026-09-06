@@ -14,9 +14,7 @@ from livespec_mcp.storage.db import MIGRATIONS, _run_migrations, connect
 def test_migrations_recorded_on_first_connect(tmp_path: Path):
     db = tmp_path / "x.db"
     conn = connect(db)
-    rows = conn.execute(
-        "SELECT version, name FROM schema_migrations ORDER BY version"
-    ).fetchall()
+    rows = conn.execute("SELECT version, name FROM schema_migrations ORDER BY version").fetchall()
     versions = [r["version"] for r in rows]
     assert versions == [v for v, _, _ in MIGRATIONS], (
         f"every migration should be recorded on first connect. got {versions}"
@@ -62,10 +60,7 @@ def test_legacy_db_picks_up_missing_migrations(tmp_path: Path):
 
 
 def _table_names(conn: sqlite3.Connection) -> set[str]:
-    return {
-        r["name"]
-        for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
-    }
+    return {r["name"] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
 
 
 def test_fresh_db_has_spec_not_rf(tmp_path: Path):
@@ -90,9 +85,7 @@ def test_v11_rename_rf_to_spec_preserves_data(tmp_path: Path):
     """
     db = tmp_path / "legacy.db"
     conn = connect(db)
-    conn.execute(
-        "INSERT INTO project(id, name, root) VALUES (1, 'p', '/tmp/p')"
-    )
+    conn.execute("INSERT INTO project(id, name, root) VALUES (1, 'p', '/tmp/p')")
     conn.execute(
         "INSERT INTO file(id, project_id, path, language, content_hash, line_count, mtime) "
         "VALUES (1, 1, 'a.py', 'python', 'h', 1, 0.0)"
@@ -133,9 +126,7 @@ def test_v11_rename_rf_to_spec_preserves_data(tmp_path: Path):
     # FK still enforced against the renamed parent table.
     conn.execute("PRAGMA foreign_keys=ON")
     with pytest.raises(sqlite3.IntegrityError):
-        conn.execute(
-            "INSERT INTO spec_symbol(spec_id, symbol_id) VALUES (999, 1)"
-        )
+        conn.execute("INSERT INTO spec_symbol(spec_id, symbol_id) VALUES (999, 1)")
     conn.close()
 
 
@@ -170,8 +161,10 @@ def test_m012_dedupes_preexisting_duplicate_projects(tmp_path: Path):
     conn.execute("DELETE FROM schema_migrations WHERE version IN (12, 13)")
     conn.execute("INSERT INTO project(id, name, root) VALUES (1, 'p', '/tmp/dup')")
     conn.execute("INSERT INTO project(id, name, root) VALUES (2, 'p', '/tmp/dup')")
-    conn.execute("INSERT INTO file(project_id, path, language, content_hash, line_count, mtime)"
-                 " VALUES (2, 'a.py', 'python', 'h', 1, 0.0)")
+    conn.execute(
+        "INSERT INTO file(project_id, path, language, content_hash, line_count, mtime)"
+        " VALUES (2, 'a.py', 'python', 'h', 1, 0.0)"
+    )
     conn.close()
 
     conn = connect(db)  # re-run migrations -> v12 dedupes
@@ -199,9 +192,7 @@ def test_m019_drop_vec_tables_tolerates_missing_vec0_module(tmp_path: Path):
 
     # Happy path: ordinary tables drop fine.
     _m019_drop_vector_search(conn)
-    names = {r[0] for r in conn.execute(
-        "SELECT name FROM sqlite_master WHERE type='table'"
-    )}
+    names = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
     assert "chunk_vec_code" not in names
     assert "chunk_vec_text" not in names
     conn.close()
@@ -247,9 +238,7 @@ def test_m020_adds_spec_source_to_an_existing_db(tmp_path: Path):
     db = tmp_path / "existing.db"
     conn = connect(db)
     conn.execute("INSERT INTO project(id, name, root) VALUES(1, 'p', '/p')")
-    conn.execute(
-        "INSERT INTO spec(project_id, spec_id, title) VALUES(1, 'SPEC-001', 'Legacy')"
-    )
+    conn.execute("INSERT INTO spec(project_id, spec_id, title) VALUES(1, 'SPEC-001', 'Legacy')")
     conn.commit()
     conn.execute("DELETE FROM schema_migrations WHERE version=20")
     conn.execute("ALTER TABLE spec DROP COLUMN source")
@@ -288,8 +277,7 @@ def test_m022_adds_origin_to_an_existing_db(tmp_path: Path):
         "(2, 1, 'b', 'b', 'function', 2, 2)"
     )
     conn.execute(
-        "INSERT INTO symbol_edge(src_symbol_id, dst_symbol_id, edge_type) "
-        "VALUES(1, 2, 'calls')"
+        "INSERT INTO symbol_edge(src_symbol_id, dst_symbol_id, edge_type) VALUES(1, 2, 'calls')"
     )
     conn.commit()
     # Rewind to a pre-22 database: no origin column, no index on it, and the
@@ -323,14 +311,14 @@ def test_schema_sql_never_indexes_a_column_a_migration_adds():
     """
     import re
 
-    db_src = (Path(__file__).resolve().parents[1] / "src" / "livespec_mcp"
-              / "storage" / "db.py").read_text(encoding="utf-8")
-    schema_src = (Path(__file__).resolve().parents[1] / "src" / "livespec_mcp"
-                  / "storage" / "schema.sql").read_text(encoding="utf-8")
+    db_src = (
+        Path(__file__).resolve().parents[1] / "src" / "livespec_mcp" / "storage" / "db.py"
+    ).read_text(encoding="utf-8")
+    schema_src = (
+        Path(__file__).resolve().parents[1] / "src" / "livespec_mcp" / "storage" / "schema.sql"
+    ).read_text(encoding="utf-8")
 
-    added = re.findall(
-        r"_try_add_column\(\s*conn,\s*[\"'](\w+)[\"'],\s*[\"'](\w+)[\"']", db_src
-    )
+    added = re.findall(r"_try_add_column\(\s*conn,\s*[\"'](\w+)[\"'],\s*[\"'](\w+)[\"']", db_src)
     assert added, "no _try_add_column calls found — did the helper get renamed?"
 
     offenders = []

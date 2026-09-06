@@ -31,9 +31,7 @@ def _write_flask_app(workspace: Path) -> None:
         "    return verify(user, password)\n"
     )
     (pkg / "lib.py").write_text(
-        '"""Auth helpers."""\n'
-        "def verify(user, password):\n"
-        "    return True\n"
+        '"""Auth helpers."""\ndef verify(user, password):\n    return True\n'
     )
 
 
@@ -79,9 +77,7 @@ async def test_no_bundle_no_flag_does_not_create_one(workspace: Path):
 async def test_fastapi_workspace_autobuilds_explorer_on_first_index(workspace: Path):
     """FastAPI entry autodetect: first index_project builds the bundle without
     explorer=True (same path as export_explorer autowire)."""
-    (workspace / "main.py").write_text(
-        "from fastapi import FastAPI\n\napp = FastAPI()\n"
-    )
+    (workspace / "main.py").write_text("from fastapi import FastAPI\n\napp = FastAPI()\n")
     explorer_dir = workspace / ".mcp-docs" / "explorer"
     data_path = explorer_dir / "data.json"
     html_path = explorer_dir / "index.html"

@@ -10,6 +10,7 @@ holds every install on an old server while the repo, the changelog and the
 plugin version all claim otherwise — the same declared-vs-actual gap the pin
 exists to close. So the pin is asserted against `pyproject.toml`, not trusted.
 """
+
 from __future__ import annotations
 
 import json
@@ -25,7 +26,7 @@ def _package_version() -> str:
     # as a test dependency to read one string would be the heavier fix.
     text = (REPO / "pyproject.toml").read_text(encoding="utf-8")
     m = re.search(r'(?m)^version\s*=\s*"([^"]+)"', text)
-    assert m, "no `version = \"...\"` line found in pyproject.toml"
+    assert m, 'no `version = "..."` line found in pyproject.toml'
     return m.group(1)
 
 

@@ -24,10 +24,7 @@ def _make_fanout_repo(workspace: Path) -> None:
     # 12 callers, each in its own file, each calling target() directly
     for i in range(12):
         (pkg / f"caller_{i:02d}.py").write_text(
-            f"from lib.target import target\n"
-            f"\n"
-            f"def call_{i:02d}():\n"
-            f"    return target()\n"
+            f"from lib.target import target\n\ndef call_{i:02d}():\n    return target()\n"
         )
 
 

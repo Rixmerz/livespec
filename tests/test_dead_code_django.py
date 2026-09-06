@@ -29,8 +29,7 @@ async def test_non_python_files_skipped_by_default(workspace):
     (pkg / "code.py").write_text("def python_dead():\n    return 1\n")
     # A vendored JS file — its symbols must NOT appear in default output
     (pkg / "vendored.js").write_text(
-        "function jsDead() {\n  return 1;\n}\n"
-        "function jsAlsoDead() {\n  return 2;\n}\n"
+        "function jsDead() {\n  return 1;\n}\nfunction jsAlsoDead() {\n  return 2;\n}\n"
     )
     async with Client(mcp) as c:
         await c.call_tool("index_project", {})
@@ -42,11 +41,7 @@ async def test_non_python_files_skipped_by_default(workspace):
         assert not any("jsDead" in q for q in qnames)
         assert not any("jsAlsoDead" in q for q in qnames)
 
-        opted_in = (
-            await c.call_tool(
-                "find_dead_code", {"include_non_python": True}
-            )
-        ).data
+        opted_in = (await c.call_tool("find_dead_code", {"include_non_python": True})).data
         opted_qnames = {d["qualified_name"] for d in opted_in["dead_symbols"]}
         assert any("jsDead" in q for q in opted_qnames)
 
@@ -58,15 +53,8 @@ async def test_dotted_path_string_protects_class(workspace):
     apps = workspace / "myapp"
     apps.mkdir()
     (apps / "__init__.py").write_text("")
-    (apps / "apps.py").write_text(
-        "class MyConfig:\n"
-        "    name = 'myapp'\n"
-    )
-    (workspace / "settings.py").write_text(
-        "INSTALLED_APPS = [\n"
-        "    'myapp.apps.MyConfig',\n"
-        "]\n"
-    )
+    (apps / "apps.py").write_text("class MyConfig:\n    name = 'myapp'\n")
+    (workspace / "settings.py").write_text("INSTALLED_APPS = [\n    'myapp.apps.MyConfig',\n]\n")
     async with Client(mcp) as c:
         await c.call_tool("index_project", {})
         out = (await c.call_tool("find_dead_code", {})).data

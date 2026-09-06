@@ -28,10 +28,7 @@ def _make_short_name_fanout(workspace: Path) -> None:
     # Caller doesn't import anything; `obj.helper()` style — resolver
     # has no scope, falls back to short-name match weight 0.5 against
     # both helper symbols.
-    (pkg / "caller.py").write_text(
-        "def driver(obj):\n"
-        "    return obj.helper()\n"
-    )
+    (pkg / "caller.py").write_text("def driver(obj):\n    return obj.helper()\n")
 
 
 @pytest.mark.asyncio
@@ -65,9 +62,7 @@ async def test_who_calls_filters_resolver_fanout_by_default(workspace):
                     },
                 )
             ).data
-            assert "lib.caller.driver" in {
-                n["qualified_name"] for n in relax["callers"]
-            }
+            assert "lib.caller.driver" in {n["qualified_name"] for n in relax["callers"]}
 
 
 @pytest.mark.asyncio
@@ -97,12 +92,8 @@ async def test_quick_orient_top_callers_clean_under_default(workspace):
     _make_short_name_fanout(workspace)
     async with Client(mcp) as c:
         await c.call_tool("index_project", {})
-        alpha = (
-            await c.call_tool("quick_orient", {"qname": "lib.alpha.helper"})
-        ).data
-        beta = (
-            await c.call_tool("quick_orient", {"qname": "lib.beta.helper"})
-        ).data
+        alpha = (await c.call_tool("quick_orient", {"qname": "lib.alpha.helper"})).data
+        beta = (await c.call_tool("quick_orient", {"qname": "lib.beta.helper"})).data
         alpha_callers = {c["qualified_name"] for c in alpha["top_callers"]}
         beta_callers = {c["qualified_name"] for c in beta["top_callers"]}
         # The two symbols should not share the same ambiguous caller —
@@ -144,7 +135,4 @@ async def test_analyze_impact_min_weight_param_respected(workspace):
             )
         ).data
         # Filter must be monotonic — strict count <= relaxed count
-        assert (
-            strict["counts"]["impacted_callers"]
-            <= relaxed["counts"]["impacted_callers"]
-        )
+        assert strict["counts"]["impacted_callers"] <= relaxed["counts"]["impacted_callers"]

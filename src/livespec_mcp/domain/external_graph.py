@@ -63,9 +63,7 @@ from typing import Any
 # one. `evidence_for` looks only at the relation of an inbound edge, not at
 # whether its SOURCE maps to anything, so an unlisted containment relation
 # rescues every symbol in the language that emits it.
-STRUCTURAL_RELATIONS = frozenset(
-    {"contains", "rationale_for", "method", "defines", "exports"}
-)
+STRUCTURAL_RELATIONS = frozenset({"contains", "rationale_for", "method", "defines", "exports"})
 
 # Relations accepted as evidence that a symbol is reachable. `imports` and
 # `imports_from` are weaker than `calls` (importing a name is not calling it)
@@ -172,9 +170,7 @@ class ExternalGraph:
     #: Every node id that carries a usable (file, line) position.
     by_position: dict[tuple[str, int], ExternalNode] = field(default_factory=dict)
     #: file -> lowercased bare label -> nodes (fallback when lines drift).
-    by_file_name: dict[tuple[str, str], list[ExternalNode]] = field(
-        default_factory=dict
-    )
+    by_file_name: dict[tuple[str, str], list[ExternalNode]] = field(default_factory=dict)
     #: node id -> inbound relations, structural ones already dropped.
     inbound: dict[str, list[str]] = field(default_factory=dict)
     #: node id -> (relation, target node id), structural ones already dropped.
@@ -191,9 +187,7 @@ class ExternalGraph:
     #: evidence relation is the whole signal) and must not pay for it: on a
     #: large monorepo graph this is one small dict per edge, which is real
     #: memory for a field nobody in that path would touch.
-    link_meta: dict[tuple[str, str, str], dict[str, Any]] = field(
-        default_factory=dict
-    )
+    link_meta: dict[tuple[str, str, str], dict[str, Any]] = field(default_factory=dict)
     #: Relation histogram over all links, for reporting.
     relation_counts: dict[str, int] = field(default_factory=dict)
     #: Relations this graph carries that livespec classifies as neither
@@ -302,9 +296,7 @@ def clear_external_graph_cache() -> None:
     _GRAPH_CACHE.clear()
 
 
-def load_external_graph(
-    path: str | Path, *, keep_link_meta: bool = False
-) -> ExternalGraph:
+def load_external_graph(path: str | Path, *, keep_link_meta: bool = False) -> ExternalGraph:
     """Parse a Graphify-style node-link graph.
 
     Raises ``FileNotFoundError`` if the path does not exist and ``ValueError``
@@ -375,9 +367,7 @@ def load_external_graph(
         graph.edge_count += 1
         graph.relation_counts[relation] = graph.relation_counts.get(relation, 0) + 1
         if classify_relation(relation) == "unknown":
-            graph.unknown_relations[relation] = (
-                graph.unknown_relations.get(relation, 0) + 1
-            )
+            graph.unknown_relations[relation] = graph.unknown_relations.get(relation, 0) + 1
         origin = link.get("_origin")
         if isinstance(origin, str) and origin != "ast":
             graph.has_non_ast_origin = True
@@ -409,9 +399,7 @@ def overlap_ratio(graph: ExternalGraph, indexed_files: set[str]) -> float:
     absolute paths against a relative index), and corroborating against it would
     silently vouch for nothing. Callers refuse rather than report a clean sweep.
     """
-    external_files = {
-        node.source_file for node in graph.by_position.values() if node.source_file
-    }
+    external_files = {node.source_file for node in graph.by_position.values() if node.source_file}
     if not external_files:
         return 0.0
     return len(external_files & indexed_files) / len(external_files)

@@ -46,15 +46,9 @@ async def test_find_dead_code_basic(workspace):
 async def test_find_dead_code_skips_entry_points(workspace):
     """Symbols under tests/, scripts/, bin/ are not flagged even with no callers."""
     (workspace / "tests").mkdir()
-    (workspace / "tests" / "test_thing.py").write_text(
-        "def test_one():\n"
-        "    assert True\n"
-    )
+    (workspace / "tests" / "test_thing.py").write_text("def test_one():\n    assert True\n")
     (workspace / "scripts").mkdir()
-    (workspace / "scripts" / "deploy.py").write_text(
-        "def run():\n"
-        "    return 0\n"
-    )
+    (workspace / "scripts" / "deploy.py").write_text("def run():\n    return 0\n")
 
     async with Client(mcp) as c:
         await c.call_tool("index_project", {})
@@ -81,10 +75,7 @@ async def test_audit_coverage_signals(workspace):
         '    """@spec:auth-user-login"""\n'
         "    return 1\n"
     )
-    (pkg / "unlinked.py").write_text(
-        "def alone():\n"
-        "    return 0\n"
-    )
+    (pkg / "unlinked.py").write_text("def alone():\n    return 0\n")
 
     async with Client(mcp) as c:
         await c.call_tool("index_project", {})
@@ -131,10 +122,7 @@ async def test_audit_coverage_transitive_split(workspace):
     pkg.mkdir()
     (pkg / "__init__.py").write_text("")
     # Data layer — NO @spec: annotation
-    (pkg / "store.py").write_text(
-        "def query():\n"
-        "    return [1, 2, 3]\n"
-    )
+    (pkg / "store.py").write_text("def query():\n    return [1, 2, 3]\n")
     # API — annotated, calls into store
     (pkg / "api.py").write_text(
         "from pkg.store import query\n"
@@ -144,16 +132,11 @@ async def test_audit_coverage_transitive_split(workspace):
         "    return query()\n"
     )
     # Truly orphan — no @spec:, nobody calls it either
-    (pkg / "junk.py").write_text(
-        "def standalone():\n"
-        "    return 'nobody cares'\n"
-    )
+    (pkg / "junk.py").write_text("def standalone():\n    return 'nobody cares'\n")
 
     async with Client(mcp) as c:
         await c.call_tool("index_project", {})
-        await c.call_tool(
-            "create_spec", {"spec_id": "api-surface", "title": "API surface"}
-        )
+        await c.call_tool("create_spec", {"spec_id": "api-surface", "title": "API surface"})
         await c.call_tool("scan_spec_annotations", {})
         out = (await c.call_tool("audit_coverage", {})).data
 
@@ -166,9 +149,7 @@ async def test_audit_coverage_transitive_split(workspace):
     assert any("junk.py" in p for p in truly), (
         f"pkg/junk.py should be truly orphan (no callers, no @spec:): {out}"
     )
-    assert not any("junk.py" in p for p in implicit), (
-        f"junk.py is NOT implicitly covered: {out}"
-    )
+    assert not any("junk.py" in p for p in implicit), f"junk.py is NOT implicitly covered: {out}"
 
 
 @pytest.mark.asyncio
@@ -180,10 +161,7 @@ async def test_audit_coverage_excludes_package_markers(workspace):
     pkg.mkdir()
     (pkg / "__init__.py").write_text("")  # empty package marker
     (pkg / "feature.py").write_text(
-        '"""@spec:api-surface"""\n'
-        "def implementer():\n"
-        '    """@spec:api-surface"""\n'
-        "    return 1\n"
+        '"""@spec:api-surface"""\ndef implementer():\n    """@spec:api-surface"""\n    return 1\n'
     )
     sub = pkg / "subpkg"
     sub.mkdir()
@@ -191,9 +169,7 @@ async def test_audit_coverage_excludes_package_markers(workspace):
 
     async with Client(mcp) as c:
         await c.call_tool("index_project", {})
-        await c.call_tool(
-            "create_spec", {"spec_id": "api-surface", "title": "Feature"}
-        )
+        await c.call_tool("create_spec", {"spec_id": "api-surface", "title": "Feature"})
         await c.call_tool("scan_spec_annotations", {})
         out = (await c.call_tool("audit_coverage", {})).data
 
@@ -216,18 +192,12 @@ async def test_audit_coverage_credits_test_coverage(workspace):
     pkg.mkdir()
     (pkg / "__init__.py").write_text("")
     (pkg / "feature.py").write_text(
-        "def implementer():\n"
-        "    return 1\n"
-        "\n"
-        "def test_runner():\n"
-        "    return implementer() == 1\n"
+        "def implementer():\n    return 1\n\ndef test_runner():\n    return implementer() == 1\n"
     )
 
     async with Client(mcp) as c:
         await c.call_tool("index_project", {})
-        await c.call_tool(
-            "create_spec", {"spec_id": "tested-feature", "title": "Tested"}
-        )
+        await c.call_tool("create_spec", {"spec_id": "tested-feature", "title": "Tested"})
         # Link the implementer (relation=implements, default)
         await c.call_tool(
             "link_spec_symbol",
@@ -248,8 +218,7 @@ async def test_audit_coverage_credits_test_coverage(workspace):
         f"expected tested-feature with 1 test, got counts: {out['counts']}"
     )
     assert any(
-        r["spec_id"] == "tested-feature" and r["test_count"] == 1
-        for r in out["spec_test_coverage"]
+        r["spec_id"] == "tested-feature" and r["test_count"] == 1 for r in out["spec_test_coverage"]
     ), f"tested-feature should appear in spec_test_coverage: {out['spec_test_coverage']}"
 
 
@@ -516,20 +485,11 @@ async def test_find_orphan_tests(workspace):
     """A test file whose calls only reach other tests is reported orphan."""
     (workspace / "src").mkdir()
     (workspace / "src" / "__init__.py").write_text("")
-    (workspace / "src" / "real.py").write_text(
-        "def production_fn():\n"
-        "    return 1\n"
-    )
+    (workspace / "src" / "real.py").write_text("def production_fn():\n    return 1\n")
     (workspace / "tests").mkdir()
-    (workspace / "tests" / "test_helper.py").write_text(
-        "def test_helper():\n"
-        "    return None\n"
-    )
+    (workspace / "tests" / "test_helper.py").write_text("def test_helper():\n    return None\n")
     (workspace / "tests" / "test_connected.py").write_text(
-        "from src.real import production_fn\n"
-        "\n"
-        "def test_real():\n"
-        "    assert production_fn() == 1\n"
+        "from src.real import production_fn\n\ndef test_real():\n    assert production_fn() == 1\n"
     )
     (workspace / "tests" / "test_orphan.py").write_text(
         "from tests.test_helper import test_helper\n"
@@ -543,12 +503,8 @@ async def test_find_orphan_tests(workspace):
         out = (await c.call_tool("find_orphan_tests", {})).data
 
     qnames = {o["qualified_name"] for o in out["orphan_tests"]}
-    assert any(
-        "test_only_uses_other_tests" in q for q in qnames
-    ), f"orphan test not flagged: {out}"
-    assert not any(
-        "test_real" in q for q in qnames
-    ), f"connected test wrongly flagged: {out}"
+    assert any("test_only_uses_other_tests" in q for q in qnames), f"orphan test not flagged: {out}"
+    assert not any("test_real" in q for q in qnames), f"connected test wrongly flagged: {out}"
 
 
 @pytest.mark.asyncio
@@ -583,9 +539,7 @@ async def test_find_endpoints_detects_plugin_decorator_alias(workspace):
     async with Client(mcp) as c:
         await c.call_tool("index_project", {})
         default = (await c.call_tool("find_endpoints", {})).data
-        mcp_eps = (
-            await c.call_tool("find_endpoints", {"framework": "fastmcp"})
-        ).data
+        mcp_eps = (await c.call_tool("find_endpoints", {"framework": "fastmcp"})).data
 
     assert not default["endpoints"], default
     qnames = {e["qualified_name"] for e in mcp_eps["endpoints"]}
@@ -605,22 +559,15 @@ async def test_find_orphan_tests_payload_carries_caveat(workspace):
     through an indirection the static call graph can't follow (e.g. an
     in-process MCP `Client(mcp)` harness). Present in both modes."""
     (workspace / "tests").mkdir()
-    (workspace / "tests" / "test_solo.py").write_text(
-        "def test_solo():\n"
-        "    assert True\n"
-    )
+    (workspace / "tests" / "test_solo.py").write_text("def test_solo():\n    assert True\n")
 
     async with Client(mcp) as c:
         await c.call_tool("index_project", {})
         full = (await c.call_tool("find_orphan_tests", {})).data
-        summ = (
-            await c.call_tool("find_orphan_tests", {"summary_only": True})
-        ).data
+        summ = (await c.call_tool("find_orphan_tests", {"summary_only": True})).data
 
     assert full.get("caveat"), f"caveat missing in full payload: {full}"
     assert "Client(mcp)" in full["caveat"], (
         f"caveat should name the MCP Client indirection: {full['caveat']}"
     )
-    assert summ.get("caveat"), (
-        f"caveat missing in summary payload: {summ}"
-    )
+    assert summ.get("caveat"), f"caveat missing in summary payload: {summ}"

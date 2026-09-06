@@ -63,4 +63,3 @@ def test_cross_repo_guide_file_loads():
     text = _load_cross_repo_guide()
     assert "xrepo-" in text
     assert "group_db" in text
-

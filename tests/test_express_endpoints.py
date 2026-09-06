@@ -54,23 +54,15 @@ EXPRESS_DEFAULT_EXPORT_PROJECT = {
         "router.get('/details/:hotel', wrap(details));\n"
         "export default router;\n"
     ),
-    "src/util/wrap.ts": (
-        "export function wrap(fn: any) { return fn; }\n"
-    ),
+    "src/util/wrap.ts": ("export function wrap(fn: any) { return fn; }\n"),
     "src/controllers/liveness.ts": (
-        "export default async (ctx: any): Promise<void> => {\n"
-        "  ctx.status = 200;\n"
-        "};\n"
+        "export default async (ctx: any): Promise<void> => {\n  ctx.status = 200;\n};\n"
     ),
     "src/controllers/details.ts": (
-        "export default async (ctx: any): Promise<void> => {\n"
-        "  ctx.body = {};\n"
-        "};\n"
+        "export default async (ctx: any): Promise<void> => {\n  ctx.body = {};\n};\n"
     ),
     # Name collision: a different `details` elsewhere must NOT win.
-    "src/services/suppliers.ts": (
-        "export function details() { return 'wrong'; }\n"
-    ),
+    "src/services/suppliers.ts": ("export function details() { return 'wrong'; }\n"),
 }
 
 
@@ -106,9 +98,7 @@ def test_scan_looks_past_trailing_arrow_to_the_named_handler():
     argument is the answer. Stopping at the trailing arrow instead pointed
     `/health` at nothing on a real service.
     """
-    routes = {r["path"]: r for r in scan_hono_routes(
-        EXPRESS_TRAILING_ARROWS, "javascript"
-    )}
+    routes = {r["path"]: r for r in scan_hono_routes(EXPRESS_TRAILING_ARROWS, "javascript")}
     assert routes["/search"]["handler_name"] == "getFlights", routes["/search"]
     assert routes["/search"]["handler_import"] == "searchController"
     assert routes["/health"]["handler_name"] == "check", routes["/health"]
@@ -125,10 +115,7 @@ def test_scan_skips_non_router_receivers():
 
 
 def test_scan_resolves_member_and_wrap_handlers():
-    routes = {
-        r["path"]: r
-        for r in scan_hono_routes(EXPRESS_ROUTES, "javascript")
-    }
+    routes = {r["path"]: r for r in scan_hono_routes(EXPRESS_ROUTES, "javascript")}
     assert routes["/health"]["handler_name"] == "check"
     assert routes["/health"]["handler_import"] == "healthController"
     assert routes["/live"]["handler_name"] == "liveness"
@@ -138,9 +125,7 @@ def test_scan_resolves_member_and_wrap_handlers():
 def test_default_export_anonymous_gets_basename_symbol(tmp_path):
     p = tmp_path / "src" / "controllers" / "liveness.ts"
     p.parent.mkdir(parents=True)
-    p.write_text(
-        "export default async (ctx: any): Promise<void> => { ctx.status = 200; };\n"
-    )
+    p.write_text("export default async (ctx: any): Promise<void> => { ctx.status = 200; };\n")
     _, result = extract(p, p.read_text(), tmp_path)
     names = {s.name for s in result.symbols}
     assert "liveness" in names
@@ -152,8 +137,7 @@ async def test_find_endpoints_express(workspace):
     (workspace / "routes.js").write_text(EXPRESS_ROUTES)
     (workspace / "controller").mkdir()
     (workspace / "controller" / "healthController.js").write_text(
-        "function check(req, res) { res.send('ok'); }\n"
-        "module.exports = { check };\n"
+        "function check(req, res) { res.send('ok'); }\nmodule.exports = { check };\n"
     )
     async with Client(mcp) as c:
         await c.call_tool("index_project", {})
@@ -162,7 +146,10 @@ async def test_find_endpoints_express(workspace):
         assert out["count"] >= 4
         assert "not_swept" not in out
         routes = {
-            (e.get("express_method") or e.get("http_method"), e.get("express_path") or e.get("http_path"))
+            (
+                e.get("express_method") or e.get("http_method"),
+                e.get("express_path") or e.get("http_path"),
+            )
             for e in out["endpoints"]
         }
         assert ("GET", "/health") in routes, routes
@@ -176,9 +163,7 @@ async def test_find_endpoints_express(workspace):
         assert ("GET", "/live") in routes
         assert ("GET", "/list") in routes
         assert ("POST", "/search") in routes
-        by_route = {
-            (e["express_method"], e["express_path"]): e for e in out["endpoints"]
-        }
+        by_route = {(e["express_method"], e["express_path"]): e for e in out["endpoints"]}
         assert by_route[("GET", "/list")]["qualified_name"].endswith("listHotels")
         assert by_route[("GET", "/list")]["http_framework"] == "express"
         assert by_route[("GET", "/health")]["qualified_name"].endswith("check")
@@ -231,8 +216,7 @@ async def test_inline_arrow_route_id_is_navigable(workspace):
     (workspace / "routes.js").write_text(EXPRESS_INLINE_ARROW)
     (workspace / "service").mkdir()
     (workspace / "service" / "hotels.js").write_text(
-        "async function searchHotels(id) { return { id }; }\n"
-        "module.exports = { searchHotels };\n"
+        "async function searchHotels(id) { return { id }; }\nmodule.exports = { searchHotels };\n"
     )
     async with Client(mcp) as c:
         await c.call_tool("index_project", {})
@@ -259,8 +243,7 @@ async def test_resolved_handler_is_labelled_as_such(workspace):
     (workspace / "routes.js").write_text(EXPRESS_ROUTES)
     (workspace / "controller").mkdir()
     (workspace / "controller" / "healthController.js").write_text(
-        "function check(req, res) { res.send('ok'); }\n"
-        "module.exports = { check };\n"
+        "function check(req, res) { res.send('ok'); }\nmodule.exports = { check };\n"
     )
     async with Client(mcp) as c:
         await c.call_tool("index_project", {})

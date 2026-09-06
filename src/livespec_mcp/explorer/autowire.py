@@ -12,9 +12,7 @@ _FASTAPI_APP = re.compile(
     re.MULTILINE,
 )
 _MOUNT_MARKER = "livespec_mcp.explorer"
-_SKIP_DIRS = frozenset(
-    {".venv", "venv", "node_modules", ".git", "dist", "build", "__pycache__"}
-)
+_SKIP_DIRS = frozenset({".venv", "venv", "node_modules", ".git", "dist", "build", "__pycache__"})
 _ENTRY_NAMES = ("main.py", "app.py")
 
 
@@ -69,9 +67,7 @@ def wire_explorer_mount(
         return AutowireResult(wired=False, file=rel, reason=str(e))
 
     if _already_wired(text):
-        return AutowireResult(
-            wired=False, file=rel, app_var=app_var, reason="already_wired"
-        )
+        return AutowireResult(wired=False, file=rel, app_var=app_var, reason="already_wired")
 
     block = (
         "\n\n"

@@ -17,13 +17,9 @@ def _make_repo(root: Path, pkg_mod: str, func: str, *, group_db: Path | None) ->
     """Create a tiny 1-function Python repo, optionally in a shared group DB."""
     (root / "pkg").mkdir(parents=True)
     (root / "pkg" / "__init__.py").write_text("")
-    (root / "pkg" / f"{pkg_mod}.py").write_text(
-        f"def {func}(x):\n    return x\n"
-    )
+    (root / "pkg" / f"{pkg_mod}.py").write_text(f"def {func}(x):\n    return x\n")
     if group_db is not None:
-        (root / ".livespec.toml").write_text(
-            f'[workspace]\ngroup_db = "{group_db}"\n'
-        )
+        (root / ".livespec.toml").write_text(f'[workspace]\ngroup_db = "{group_db}"\n')
     return root
 
 
@@ -114,9 +110,7 @@ async def test_find_symbol_says_which_db_and_where_the_repo_lives(tmp_path):
         for repo in (back, front, solo):
             await c.call_tool("index_project", {"workspace": str(repo)})
 
-        out = (
-            await c.call_tool("find_symbol", {"workspace": str(back), "query": "caller"})
-        ).data
+        out = (await c.call_tool("find_symbol", {"workspace": str(back), "query": "caller"})).data
         assert out["grouped"] is True
         assert out["group_db"] == str(shared)
         foreign = next(m for m in out["matches"] if m["qualified_name"].endswith(".caller"))

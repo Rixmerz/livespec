@@ -32,7 +32,11 @@ async def test_link_and_walk_dependencies(workspace):
         out = (
             await c.call_tool(
                 "link_spec_dependency",
-                {"parent_spec_id": "report-covered", "child_spec_id": "auth-session", "kind": "extends"},
+                {
+                    "parent_spec_id": "report-covered",
+                    "child_spec_id": "auth-session",
+                    "kind": "extends",
+                },
             )
         ).data
         assert out["linked"] is True
@@ -66,8 +70,12 @@ async def test_cycle_is_rejected(workspace):
     async with Client(mcp) as c:
         await c.call_tool("index_project", {})
         await _create_rfs(c, "Spec-A", "Spec-B", "Spec-C")
-        await c.call_tool("link_spec_dependency", {"parent_spec_id": "Spec-A", "child_spec_id": "Spec-B"})
-        await c.call_tool("link_spec_dependency", {"parent_spec_id": "Spec-B", "child_spec_id": "Spec-C"})
+        await c.call_tool(
+            "link_spec_dependency", {"parent_spec_id": "Spec-A", "child_spec_id": "Spec-B"}
+        )
+        await c.call_tool(
+            "link_spec_dependency", {"parent_spec_id": "Spec-B", "child_spec_id": "Spec-C"}
+        )
         # Now Spec-A -> Spec-B -> Spec-C; adding Spec-C -> Spec-A would create a cycle
         out = (
             await c.call_tool(
@@ -127,9 +135,7 @@ async def test_analyze_impact_cascades_through_dependents(workspace):
     pkg.mkdir()
     (pkg / "__init__.py").write_text("")
     (pkg / "auth.py").write_text(
-        "def verify():\n"
-        '    """@spec:auth-user-login"""\n'
-        "    return True\n"
+        'def verify():\n    """@spec:auth-user-login"""\n    return True\n'
     )
     (pkg / "api.py").write_text(
         "from pkg.auth import verify\n"

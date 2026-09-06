@@ -51,32 +51,140 @@ MAX_TYPE_DEF_LINES = 14
 # module docstring. Deliberately conservative: anything not listed here and not
 # in the index is reported as unresolved, because a false "missing" is cheap and
 # a false "fine" is not.
-_KNOWN_EXTERNAL: frozenset[str] = frozenset({
-    # Python builtins and typing
-    "str", "int", "float", "bool", "bytes", "bytearray", "complex", "object",
-    "list", "dict", "set", "frozenset", "tuple", "type", "None", "NoneType",
-    "Any", "Optional", "Union", "Literal", "Callable", "Iterable", "Iterator",
-    "Sequence", "Mapping", "MutableMapping", "Generator", "AsyncGenerator",
-    "Awaitable", "Coroutine", "TypeVar", "ClassVar", "Final", "Annotated",
-    "Self", "Never", "NoReturn", "Protocol", "TypedDict", "NamedTuple",
-    "Exception", "BaseException", "ValueError", "TypeError", "KeyError",
-    "IndexError", "RuntimeError", "OSError", "IOError", "StopIteration",
-    "NotImplementedError", "AttributeError", "ImportError", "AssertionError",
-    # stdlib types that show up constantly in signatures
-    "Path", "PurePath", "PurePosixPath", "datetime", "date", "time",
-    "timedelta", "timezone", "Decimal", "Enum", "IntEnum", "StrEnum",
-    "UUID", "Connection", "Cursor", "Thread", "Lock", "Queue", "Counter",
-    "OrderedDict", "defaultdict", "deque", "Fraction", "Pattern", "Match",
-    # TypeScript / JS
-    "string", "number", "boolean", "unknown", "never", "void", "undefined",
-    "null", "Promise", "Array", "Record", "Partial", "Required", "Readonly",
-    "Pick", "Omit", "Map", "Set", "Date", "Error", "RegExp", "JSON", "Object",
-    "React", "ReactNode", "ReactElement", "JSX", "Props",
-    # Go / Rust / Java surface that appears in extracted signatures
-    "error", "rune", "byte", "interface", "struct",
-    "String", "Vec", "Option", "Result", "Box", "Arc", "Rc", "HashMap",
-    "Integer", "Long", "Double", "Boolean", "List", "Void",
-})
+_KNOWN_EXTERNAL: frozenset[str] = frozenset(
+    {
+        # Python builtins and typing
+        "str",
+        "int",
+        "float",
+        "bool",
+        "bytes",
+        "bytearray",
+        "complex",
+        "object",
+        "list",
+        "dict",
+        "set",
+        "frozenset",
+        "tuple",
+        "type",
+        "None",
+        "NoneType",
+        "Any",
+        "Optional",
+        "Union",
+        "Literal",
+        "Callable",
+        "Iterable",
+        "Iterator",
+        "Sequence",
+        "Mapping",
+        "MutableMapping",
+        "Generator",
+        "AsyncGenerator",
+        "Awaitable",
+        "Coroutine",
+        "TypeVar",
+        "ClassVar",
+        "Final",
+        "Annotated",
+        "Self",
+        "Never",
+        "NoReturn",
+        "Protocol",
+        "TypedDict",
+        "NamedTuple",
+        "Exception",
+        "BaseException",
+        "ValueError",
+        "TypeError",
+        "KeyError",
+        "IndexError",
+        "RuntimeError",
+        "OSError",
+        "IOError",
+        "StopIteration",
+        "NotImplementedError",
+        "AttributeError",
+        "ImportError",
+        "AssertionError",
+        # stdlib types that show up constantly in signatures
+        "Path",
+        "PurePath",
+        "PurePosixPath",
+        "datetime",
+        "date",
+        "time",
+        "timedelta",
+        "timezone",
+        "Decimal",
+        "Enum",
+        "IntEnum",
+        "StrEnum",
+        "UUID",
+        "Connection",
+        "Cursor",
+        "Thread",
+        "Lock",
+        "Queue",
+        "Counter",
+        "OrderedDict",
+        "defaultdict",
+        "deque",
+        "Fraction",
+        "Pattern",
+        "Match",
+        # TypeScript / JS
+        "string",
+        "number",
+        "boolean",
+        "unknown",
+        "never",
+        "void",
+        "undefined",
+        "null",
+        "Promise",
+        "Array",
+        "Record",
+        "Partial",
+        "Required",
+        "Readonly",
+        "Pick",
+        "Omit",
+        "Map",
+        "Set",
+        "Date",
+        "Error",
+        "RegExp",
+        "JSON",
+        "Object",
+        "React",
+        "ReactNode",
+        "ReactElement",
+        "JSX",
+        "Props",
+        # Go / Rust / Java surface that appears in extracted signatures
+        "error",
+        "rune",
+        "byte",
+        "interface",
+        "struct",
+        "String",
+        "Vec",
+        "Option",
+        "Result",
+        "Box",
+        "Arc",
+        "Rc",
+        "HashMap",
+        "Integer",
+        "Long",
+        "Double",
+        "Boolean",
+        "List",
+        "Void",
+    }
+)
 
 # A CapWords-ish token inside a signature. Deliberately not a type parser: the
 # index stores signatures as text across nine languages, and a real parse per
@@ -199,8 +307,7 @@ class Closure:
         if self.unresolved:
             out += [
                 "",
-                "## types NOT RESOLVED — not in the index, read them before "
-                "relying on their shape",
+                "## types NOT RESOLVED — not in the index, read them before relying on their shape",
                 "  " + ", ".join(self.unresolved),
             ]
         if self.raises:
@@ -222,8 +329,7 @@ class Closure:
             "end_line": self.end_line,
             "body": self.body,
             "calls": [
-                {"qualified_name": c.qualified_name, "signature": c.signature}
-                for c in self.calls
+                {"qualified_name": c.qualified_name, "signature": c.signature} for c in self.calls
             ],
             "types": [
                 {
@@ -259,7 +365,7 @@ def _read_slice(root: Path, path: str, start: int, end: int) -> str:
         lines = fp.read_text(encoding="utf-8", errors="replace").splitlines()
     except OSError:
         return ""
-    return "\n".join(lines[max(start - 1, 0):min(end, len(lines))])
+    return "\n".join(lines[max(start - 1, 0) : min(end, len(lines))])
 
 
 def _distance(a: str, b: str) -> int:
@@ -370,9 +476,7 @@ def _covering_tests(conn: sqlite3.Connection, symbol_id: int) -> list[str]:
         "WHERE e.dst_symbol_id = ? AND e.edge_type = 'calls'",
         (symbol_id,),
     ).fetchall()
-    return sorted({
-        r["qualified_name"] for r in rows if _is_test(r["path"], r["name"])
-    })
+    return sorted({r["qualified_name"] for r in rows if _is_test(r["path"], r["name"])})
 
 
 def build_closure(
@@ -413,10 +517,7 @@ def build_closure(
 
     # --- types named across the surface -----------------------------------
     surface = " ".join([cl.signature, *(c.signature for c in cl.calls)])
-    pending = [
-        t for t in dict.fromkeys(_TYPE_TOKEN.findall(surface))
-        if t not in _KNOWN_EXTERNAL
-    ]
+    pending = [t for t in dict.fromkeys(_TYPE_TOKEN.findall(surface)) if t not in _KNOWN_EXTERNAL]
     resolved: set[str] = set()
 
     for _level in range(depth):
@@ -443,7 +544,8 @@ def build_closure(
                 )
             )
             nxt += [
-                t for t in _TYPE_TOKEN.findall(text)
+                t
+                for t in _TYPE_TOKEN.findall(text)
                 if t not in _KNOWN_EXTERNAL and t not in resolved
             ]
         pending = nxt

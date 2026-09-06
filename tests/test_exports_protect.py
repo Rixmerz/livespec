@@ -23,14 +23,8 @@ async def test_init_reexport_protects_class(workspace):
     """`from .impl import PublicClass` in __init__.py keeps PublicClass alive."""
     pkg = workspace / "mylib"
     pkg.mkdir()
-    (pkg / "__init__.py").write_text(
-        "from .impl import PublicClass\n"
-    )
-    (pkg / "impl.py").write_text(
-        "class PublicClass:\n"
-        "    def do_thing(self):\n"
-        "        return 1\n"
-    )
+    (pkg / "__init__.py").write_text("from .impl import PublicClass\n")
+    (pkg / "impl.py").write_text("class PublicClass:\n    def do_thing(self):\n        return 1\n")
     async with Client(mcp) as c:
         await c.call_tool("index_project", {})
         out = (await c.call_tool("find_dead_code", {})).data
@@ -45,13 +39,8 @@ async def test_init_reexport_with_alias_protects(workspace):
     """`from .impl import Foo as Bar` protects Foo (original name)."""
     pkg = workspace / "mylib"
     pkg.mkdir()
-    (pkg / "__init__.py").write_text(
-        "from .impl import OriginalName as Renamed\n"
-    )
-    (pkg / "impl.py").write_text(
-        "class OriginalName:\n"
-        "    pass\n"
-    )
+    (pkg / "__init__.py").write_text("from .impl import OriginalName as Renamed\n")
+    (pkg / "impl.py").write_text("class OriginalName:\n    pass\n")
     async with Client(mcp) as c:
         await c.call_tool("index_project", {})
         out = (await c.call_tool("find_dead_code", {})).data
@@ -96,10 +85,7 @@ async def test_unimported_class_still_dead(workspace):
     pkg = workspace / "mylib"
     pkg.mkdir()
     (pkg / "__init__.py").write_text("")  # empty, no re-exports
-    (pkg / "impl.py").write_text(
-        "class TrulyDead:\n"
-        "    pass\n"
-    )
+    (pkg / "impl.py").write_text("class TrulyDead:\n    pass\n")
     async with Client(mcp) as c:
         await c.call_tool("index_project", {})
         out = (await c.call_tool("find_dead_code", {})).data

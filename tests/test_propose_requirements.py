@@ -92,12 +92,8 @@ async def test_propose_requirements_spec_ids_unique_and_continuous(workspace):
     _make_layered_repo(workspace)
     async with Client(mcp) as c:
         await c.call_tool("index_project", {})
-        await c.call_tool(
-            "create_spec", {"spec_id": "auth-auth", "title": "Auth"}
-        )
-        await c.call_tool(
-            "create_spec", {"spec_id": "payments-payments", "title": "Payments"}
-        )
+        await c.call_tool("create_spec", {"spec_id": "auth-auth", "title": "Auth"})
+        await c.call_tool("create_spec", {"spec_id": "payments-payments", "title": "Payments"})
         await c.call_tool("create_spec", {"spec_id": "auth-session", "title": "y"})
         out = (
             await c.call_tool(
@@ -189,8 +185,9 @@ async def test_humanize_title_avoids_generic_segments(workspace):
     assert any("Auth Service" in t for t in titles), f"titles: {titles}"
 
     # Underscore -> space, title-cased
-    assert "auth_service" not in {t.lower().replace(" ", "_") for t in titles} or \
-           any("Auth Service" == t for t in titles)
+    assert "auth_service" not in {t.lower().replace(" ", "_") for t in titles} or any(
+        "Auth Service" == t for t in titles
+    )
 
 
 @pytest.mark.asyncio
@@ -285,9 +282,7 @@ async def test_default_module_depth_does_not_collapse_deep_tree(workspace):
 
     assert out["module_depth"] == 3, "default module_depth must be 3"
     proposals = out["proposals"]
-    assert len(proposals) > 1, (
-        f"deep tree collapsed into a single Spec: {proposals}"
-    )
+    assert len(proposals) > 1, f"deep tree collapsed into a single Spec: {proposals}"
     keys = {p["module_key"] for p in proposals}
     # No proposal should be the shallow `src.pkg` that absorbs the whole tree.
     assert "src.pkg" not in keys, f"deep tree absorbed by src.pkg: {keys}"

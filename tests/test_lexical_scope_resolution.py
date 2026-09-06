@@ -68,7 +68,7 @@ def _index(tmp_path: Path, source: str) -> sqlite3.Connection:
 # 1. scope léxico
 # ---------------------------------------------------------------------------
 
-_TWO_CLOSURES = '''
+_TWO_CLOSURES = """
 def outer_a(node):
     def text(n):
         return str(n)
@@ -87,7 +87,7 @@ def outer_b(node):
         return text(n)
 
     return walk(node)
-'''
+"""
 
 
 def test_a_nested_helper_binds_to_its_own_enclosing_scope(tmp_path: Path):
@@ -115,7 +115,9 @@ def test_the_scoped_edge_is_unambiguous(tmp_path: Path):
 
 def test_the_nearest_enclosing_scope_wins_over_an_outer_one(tmp_path: Path):
     """Sombreado: el `helper` interno gana al del módulo, como en el lenguaje."""
-    conn = _index(tmp_path, '''
+    conn = _index(
+        tmp_path,
+        """
 def helper(x):
     return x
 
@@ -128,7 +130,8 @@ def outer(node):
         return helper(n)
 
     return use(node)
-''')
+""",
+    )
     assert _callees(conn, "mod.outer.use") == ["mod.outer.helper"], (
         "el helper del módulo quedó sombreado por el interno"
     )
@@ -152,8 +155,11 @@ def test_genuine_cross_file_ambiguity_is_still_kept(tmp_path: Path):
 # 2. parámetro del llamador
 # ---------------------------------------------------------------------------
 
+
 def test_calling_a_parameter_emits_no_edge(tmp_path: Path):
-    conn = _index(tmp_path, '''
+    conn = _index(
+        tmp_path,
+        """
 def owner(node):
     def text(n):
         return str(n)
@@ -163,7 +169,8 @@ def owner(node):
 
 def uses_param(node, text):
     return text(node)
-''')
+""",
+    )
     assert _callees(conn, "mod.uses_param") == [], (
         "`text` es un parámetro: el callee es lo que le pasaron, no el closure "
         "homónimo de otra función"
@@ -175,7 +182,9 @@ def uses_param(node, text):
 
 def test_a_parameter_named_like_a_module_function_does_not_shadow_others(tmp_path: Path):
     """Solo se descarta para el llamador que tiene ese parámetro."""
-    conn = _index(tmp_path, '''
+    conn = _index(
+        tmp_path,
+        """
 def render(x):
     return str(x)
 
@@ -186,7 +195,8 @@ def takes_render(x, render):
 
 def calls_render(x):
     return render(x)
-''')
+""",
+    )
     assert _callees(conn, "mod.takes_render") == []
     assert _callees(conn, "mod.calls_render") == ["mod.render"]
 
@@ -194,6 +204,7 @@ def calls_render(x):
 # ---------------------------------------------------------------------------
 # el parser de firmas, directo
 # ---------------------------------------------------------------------------
+
 
 def test_is_caller_parameter_handles_every_signature_shape():
     f = _is_caller_parameter
@@ -223,6 +234,7 @@ def test_a_type_argument_is_not_a_parameter_name():
 # 3. import que apunta fuera del proyecto
 # ---------------------------------------------------------------------------
 
+
 def test_a_stdlib_attribute_call_emits_no_edge(tmp_path: Path):
     """`os.walk(...)` no es ninguno de los `walk` del proyecto.
 
@@ -231,7 +243,8 @@ def test_a_stdlib_attribute_call_emits_no_edge(tmp_path: Path):
     en este repo. Pero el ref sí conserva `scope_module='os'`, y ese import es
     la evidencia de que ninguna de las seis es el destino.
     """
-    (tmp_path / "mod.py").write_text('''
+    (tmp_path / "mod.py").write_text(
+        """
 import os
 
 
@@ -248,13 +261,14 @@ def other(node):
 def scan(root):
     for dirpath, dirnames, filenames in os.walk(root):
         yield dirpath
-''', encoding="utf-8")
+""",
+        encoding="utf-8",
+    )
     settings, conn = _bootstrap(tmp_path)
     index_project(settings, conn, force=True)
 
     assert _callees(conn, "mod.scan") == [], (
-        "os.walk resolvió a un walk del proyecto: el scope_module decía que el "
-        "destino está fuera"
+        "os.walk resolvió a un walk del proyecto: el scope_module decía que el destino está fuera"
     )
 
 

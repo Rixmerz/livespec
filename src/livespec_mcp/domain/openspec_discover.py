@@ -99,9 +99,7 @@ def sync_openspec_tree(st: Any, root: Path) -> dict[str, Any]:
         specs_result = import_specs_from_markdown_file(
             st, specs_dir, fmt="openspec", check_duplicates=False, source="openspec"
         )
-        retired = _retire_specs_absent_from_tree(
-            st, specs_result.pop("spec_ids", [])
-        )
+        retired = _retire_specs_absent_from_tree(st, specs_result.pop("spec_ids", []))
         if retired:
             specs_result["retired"] = retired
     else:

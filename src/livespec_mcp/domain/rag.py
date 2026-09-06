@@ -4,6 +4,7 @@ Chunks preserve symbol/Spec boundaries. ``search`` (via ``keyword_search`` /
 ``hybrid_search`` alias) is FTS5-only — dense vectors / sqlite-vec / fastembed
 were removed.
 """
+
 from __future__ import annotations
 
 import re
@@ -168,6 +169,7 @@ def chunk_spec(spec_row: sqlite3.Row) -> list[Chunk]:
 
 # ---------- Persistence ----------
 
+
 def upsert_chunks(conn: sqlite3.Connection, project_id: int, chunks: Iterable[Chunk]) -> list[int]:
     """Replace a source's chunks only when its full chunk set changed.
 
@@ -221,7 +223,6 @@ def upsert_chunks(conn: sqlite3.Connection, project_id: int, chunks: Iterable[Ch
     return ids
 
 
-
 def rebuild_chunks(conn: sqlite3.Connection, project_id: int) -> dict[str, int]:
     """Re-chunk every symbol and Spec for the project. Idempotent.
 
@@ -250,15 +251,13 @@ def rebuild_chunks(conn: sqlite3.Connection, project_id: int) -> dict[str, int]:
         by_file.setdefault(r["file_path"], []).append(r)
     for file_path, file_rows in by_file.items():
         try:
-            lines = (workspace / file_path).read_text(
-                encoding="utf-8", errors="replace"
-            ).splitlines()
+            lines = (
+                (workspace / file_path).read_text(encoding="utf-8", errors="replace").splitlines()
+            )
         except OSError:
             lines = []
         for r in file_rows:
-            body = "\n".join(
-                lines[max(r["start_line"] - 1, 0) : min(r["end_line"], len(lines))]
-            )
+            body = "\n".join(lines[max(r["start_line"] - 1, 0) : min(r["end_line"], len(lines))])
             chunks = chunk_symbol(r, body)
             kept_ids.extend(upsert_chunks(conn, project_id, chunks))
             sym_count += len(chunks)
@@ -315,8 +314,7 @@ def _fts_match_expr(query: str) -> tuple[str, str]:
     parts: list[str] = []
     for ph in phrases:
         clean = " ".join(
-            _fts_query_tokens(ph)
-            or [t for t in ph.replace('"', "").split() if t.isalnum()]
+            _fts_query_tokens(ph) or [t for t in ph.replace('"', "").split() if t.isalnum()]
         )
         if clean:
             parts.append(f'"{clean}"')
@@ -370,9 +368,7 @@ def fts_search(
     return out
 
 
-def chunks_index_fresh(
-    conn: sqlite3.Connection, project_id: int, workspace: Path
-) -> dict:
+def chunks_index_fresh(conn: sqlite3.Connection, project_id: int, workspace: Path) -> dict:
     """Whether chunk source files still match indexed ``file.content_hash``."""
     from livespec_mcp.domain.indexer import _hash_bytes
 
@@ -415,17 +411,19 @@ def keyword_search(
     fts = fts_search(conn, project_id, query, limit, scope)
     out = []
     for cid, score, payload in fts[:limit]:
-        out.append({
-            "chunk_id": cid,
-            "score": round(float(score), 6),
-            "source_type": payload.get("source_type"),
-            "source_id": payload.get("source_id"),
-            "text_kind": payload.get("text_kind"),
-            "file_path": payload.get("file_path"),
-            "start_line": payload.get("start_line"),
-            "end_line": payload.get("end_line"),
-            "snippet": payload.get("snippet"),
-        })
+        out.append(
+            {
+                "chunk_id": cid,
+                "score": round(float(score), 6),
+                "source_type": payload.get("source_type"),
+                "source_id": payload.get("source_id"),
+                "text_kind": payload.get("text_kind"),
+                "file_path": payload.get("file_path"),
+                "start_line": payload.get("start_line"),
+                "end_line": payload.get("end_line"),
+                "snippet": payload.get("snippet"),
+            }
+        )
     return out, mode
 
 

@@ -57,9 +57,7 @@ async def _core_tools() -> set[str]:
 async def test_every_core_tool_is_named_in_the_agent_manual(doc: str):
     text = (REPO / doc).read_text(encoding="utf-8")
     missing = sorted(
-        name
-        for name in await _core_tools()
-        if not re.search(rf"\b{re.escape(name)}\b", text)
+        name for name in await _core_tools() if not re.search(rf"\b{re.escape(name)}\b", text)
     )
 
     assert missing == [], (
@@ -74,9 +72,7 @@ def test_the_playbook_ships_identically_in_the_wheel_and_the_docs():
     same document, and a fix applied to one of them only is worse than one
     copy: the agent reads the wheel's, the human reads the repo's, and they
     quietly disagree about how the tool behaves."""
-    shipped = (REPO / "src/livespec_mcp/templates/AGENT_PLAYBOOK.md").read_text(
-        encoding="utf-8"
-    )
+    shipped = (REPO / "src/livespec_mcp/templates/AGENT_PLAYBOOK.md").read_text(encoding="utf-8")
     documented = (REPO / "docs/AGENT_PLAYBOOK.md").read_text(encoding="utf-8")
 
     assert shipped == documented, (

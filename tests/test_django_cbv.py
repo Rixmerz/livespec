@@ -40,9 +40,7 @@ async def test_find_endpoints_django_includes_cbv(workspace):
     _write_views(workspace)
     async with Client(mcp) as c:
         await c.call_tool("index_project", {})
-        out = (
-            await c.call_tool("find_endpoints", {"framework": "django"})
-        ).data
+        out = (await c.call_tool("find_endpoints", {"framework": "django"})).data
         qnames = {e["qualified_name"] for e in out["endpoints"]}
         assert "myapp.views.ProfileView" in qnames, (
             f"LoginRequiredMixin-protected CBV must be detected: {qnames}"
@@ -58,9 +56,7 @@ async def test_find_endpoints_django_cbv_carries_base_label(workspace):
     _write_views(workspace)
     async with Client(mcp) as c:
         await c.call_tool("index_project", {})
-        out = (
-            await c.call_tool("find_endpoints", {"framework": "django"})
-        ).data
+        out = (await c.call_tool("find_endpoints", {"framework": "django"})).data
         by_qname = {e["qualified_name"]: e for e in out["endpoints"]}
         profile = by_qname.get("myapp.views.ProfileView")
         assert profile is not None
@@ -88,8 +84,6 @@ async def test_find_endpoints_flask_does_not_surface_django_cbv(workspace):
     _write_views(workspace)
     async with Client(mcp) as c:
         await c.call_tool("index_project", {})
-        out = (
-            await c.call_tool("find_endpoints", {"framework": "flask"})
-        ).data
+        out = (await c.call_tool("find_endpoints", {"framework": "flask"})).data
         qnames = {e["qualified_name"] for e in out["endpoints"]}
         assert "myapp.views.ProfileView" not in qnames

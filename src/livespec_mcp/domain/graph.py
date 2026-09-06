@@ -117,9 +117,13 @@ def load_graph(conn: sqlite3.Connection, project_id: int) -> GraphView:
         # is. Carried as an attribute rather than filtered here: an ingested
         # edge is an ordinary edge for traversal, and the tools that report it
         # are the ones that should say where it came from.
-        g.add_edge(int(r["src_symbol_id"]), int(r["dst_symbol_id"]),
-                   edge_type=r["edge_type"], weight=float(r["weight"]),
-                   origin=r["origin"] or "livespec")
+        g.add_edge(
+            int(r["src_symbol_id"]),
+            int(r["dst_symbol_id"]),
+            edge_type=r["edge_type"],
+            weight=float(r["weight"]),
+            origin=r["origin"] or "livespec",
+        )
 
     view = GraphView(g=g, sym_meta=sym_meta)
     with _GRAPH_CACHE_LOCK:
@@ -226,9 +230,7 @@ def ancestors_within(
     min_weight: float = 0.0,
     edge_types: frozenset[str] | set[str] | None = None,
 ) -> set[int]:
-    return descendants_within(
-        g.reverse(copy=False), source, max_depth, min_weight, edge_types
-    )
+    return descendants_within(g.reverse(copy=False), source, max_depth, min_weight, edge_types)
 
 
 def page_rank(g: nx.DiGraph, personalization: dict[int, float] | None = None) -> dict[int, float]:
@@ -301,9 +303,7 @@ def _has_any_external_edge(conn: sqlite3.Connection) -> bool:
     return False
 
 
-def external_edge_summary(
-    conn: sqlite3.Connection, project_id: int
-) -> dict[str, int] | None:
+def external_edge_summary(conn: sqlite3.Connection, project_id: int) -> dict[str, int] | None:
     """Ingested-edge counts by origin for a project, or None when there are none.
 
     Read tools call this to say, in their own payload, that part of the answer

@@ -43,12 +43,7 @@ def test_ts_exported_class_decorator(tmp_path):
 
 
 def test_ts_unexported_injectable(tmp_path):
-    src = (
-        "@Injectable({ providedIn: 'root' })\n"
-        "class AuthService {\n"
-        "  login(): void {}\n"
-        "}\n"
-    )
+    src = "@Injectable({ providedIn: 'root' })\nclass AuthService {\n  login(): void {}\n}\n"
     p = tmp_path / "auth.service.ts"
     p.write_text(src)
     _, result = extract(p, src, tmp_path)
@@ -77,22 +72,22 @@ def test_java_spring_annotations(tmp_path):
         "import org.springframework.web.bind.annotation.*;\n"
         "\n"
         "@RestController\n"
-        "@RequestMapping(\"/api/users\")\n"
+        '@RequestMapping("/api/users")\n'
         "public class UserController {\n"
         "\n"
         "    @GetMapping\n"
         "    public String list() {\n"
-        "        return \"[]\";\n"
+        '        return "[]";\n'
         "    }\n"
         "\n"
-        "    @PostMapping(\"/create\")\n"
+        '    @PostMapping("/create")\n'
         "    public String create() {\n"
-        "        return \"ok\";\n"
+        '        return "ok";\n'
         "    }\n"
         "\n"
         "    @Override\n"
         "    public String toString() {\n"
-        "        return \"UserController\";\n"
+        '        return "UserController";\n'
         "    }\n"
         "}\n"
     )

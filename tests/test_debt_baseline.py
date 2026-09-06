@@ -43,6 +43,7 @@ def _corpus(*items: tuple[str, str, str]):
 # sin baseline: todo reporta, que es lo honesto
 # ---------------------------------------------------------------------------
 
+
 def test_with_no_baseline_everything_reports(conn):
     m = [Match("mod.otro", "mod.py", 0, 1.0)]
     v = debt.judge(conn, fingerprint(NUEVO).structural_hash, m)
@@ -63,12 +64,16 @@ def test_status_of_an_empty_baseline(conn):
 # con baseline: la deuda vieja calla
 # ---------------------------------------------------------------------------
 
+
 def test_capture_freezes_only_shapes_that_repeat(conn):
     copia = "def otro_helper(p, q):\n    return p + q\n"
-    stats = debt.capture(conn, _corpus(
-        ("mod.helper_viejo", "mod.py", VIEJO),
-        ("otro.otro_helper", "otro.py", copia),
-    ))
+    stats = debt.capture(
+        conn,
+        _corpus(
+            ("mod.helper_viejo", "mod.py", VIEJO),
+            ("otro.otro_helper", "otro.py", copia),
+        ),
+    )
     assert stats["frozen"] == 2
     assert debt.has_baseline(conn)
 
@@ -85,13 +90,17 @@ def test_capture_is_idempotent(conn):
 def test_a_shape_already_duplicated_at_capture_goes_quiet(conn):
     """El caso que el baseline existe para callar: deuda que ya estaba, por duplicado."""
     copia = "def otro_helper(p, q):\n    return p + q\n"
-    debt.capture(conn, _corpus(
-        ("mod.helper_viejo", "mod.py", VIEJO),
-        ("otro.otro_helper", "otro.py", copia),
-    ))
+    debt.capture(
+        conn,
+        _corpus(
+            ("mod.helper_viejo", "mod.py", VIEJO),
+            ("otro.otro_helper", "otro.py", copia),
+        ),
+    )
 
     v = debt.judge(
-        conn, fingerprint(VIEJO).structural_hash,
+        conn,
+        fingerprint(VIEJO).structural_hash,
         [Match("mod.helper_viejo", "mod.py", 0, 1.0)],
     )
     assert v.allowed
@@ -110,7 +119,8 @@ def test_a_lone_symbol_is_not_a_violation_so_a_new_copy_still_reports(conn):
     )
 
     v = debt.judge(
-        conn, fingerprint(VIEJO).structural_hash,
+        conn,
+        fingerprint(VIEJO).structural_hash,
         [Match("mod.helper_viejo", "mod.py", 0, 1.0)],
     )
     assert v.gated
@@ -118,11 +128,16 @@ def test_a_lone_symbol_is_not_a_violation_so_a_new_copy_still_reports(conn):
 
 def test_new_code_duplicating_new_code_reports(conn):
     otra = "def a(i, j):\n    return i - j\n"
-    debt.capture(conn, _corpus(
-        ("mod.x", "mod.py", VIEJO), ("mod.y", "mod.py", VIEJO),
-    ))
+    debt.capture(
+        conn,
+        _corpus(
+            ("mod.x", "mod.py", VIEJO),
+            ("mod.y", "mod.py", VIEJO),
+        ),
+    )
     v = debt.judge(
-        conn, fingerprint(otra).structural_hash,
+        conn,
+        fingerprint(otra).structural_hash,
         [Match("mod.recien", "nuevo.py", 0, 1.0)],
     )
     assert v.gated
@@ -131,10 +146,14 @@ def test_new_code_duplicating_new_code_reports(conn):
 
 def test_capture_reports_how_many_shapes_it_froze(conn):
     copia = "def otro_helper(p, q):\n    return p + q\n"
-    stats = debt.capture(conn, _corpus(
-        ("mod.a", "a.py", VIEJO), ("mod.b", "b.py", copia),
-        ("mod.solo", "c.py", NUEVO),
-    ))
+    stats = debt.capture(
+        conn,
+        _corpus(
+            ("mod.a", "a.py", VIEJO),
+            ("mod.b", "b.py", copia),
+            ("mod.solo", "c.py", NUEVO),
+        ),
+    )
     assert stats["scanned"] == 3
     assert stats["shapes_frozen"] == 1, "solo una forma estaba duplicada"
     assert stats["frozen"] == 2, "las dos copias de esa forma"
@@ -144,20 +163,26 @@ def test_capture_reports_how_many_shapes_it_froze(conn):
 # la regla del boy scout — opcional a propósito
 # ---------------------------------------------------------------------------
 
+
 def _con_deuda(conn):
     copia = "def otro_helper(p, q):\n    return p + q\n"
-    debt.capture(conn, _corpus(
-        ("mod.helper_viejo", "mod.py", VIEJO),
-        ("otro.otro_helper", "otro.py", copia),
-    ))
+    debt.capture(
+        conn,
+        _corpus(
+            ("mod.helper_viejo", "mod.py", VIEJO),
+            ("otro.otro_helper", "otro.py", copia),
+        ),
+    )
 
 
 def test_boy_scout_off_leaves_frozen_debt_alone(conn):
     _con_deuda(conn)
     v = debt.judge(
-        conn, fingerprint(VIEJO).structural_hash,
+        conn,
+        fingerprint(VIEJO).structural_hash,
         [Match("mod.helper_viejo", "mod.py", 0, 1.0)],
-        touched_files=frozenset({"mod.py"}), boy_scout=False,
+        touched_files=frozenset({"mod.py"}),
+        boy_scout=False,
     )
     assert v.allowed
 
@@ -166,9 +191,11 @@ def test_boy_scout_on_reports_frozen_debt_in_a_touched_file(conn):
     """Editar un archivo desprolijo convierte el desprolijo en tu problema."""
     _con_deuda(conn)
     v = debt.judge(
-        conn, fingerprint(VIEJO).structural_hash,
+        conn,
+        fingerprint(VIEJO).structural_hash,
         [Match("mod.helper_viejo", "mod.py", 0, 1.0)],
-        touched_files=frozenset({"mod.py"}), boy_scout=True,
+        touched_files=frozenset({"mod.py"}),
+        boy_scout=True,
     )
     assert v.gated
     assert "already opened" in v.reason
@@ -177,9 +204,11 @@ def test_boy_scout_on_reports_frozen_debt_in_a_touched_file(conn):
 def test_boy_scout_does_not_reach_untouched_files(conn):
     _con_deuda(conn)
     v = debt.judge(
-        conn, fingerprint(VIEJO).structural_hash,
+        conn,
+        fingerprint(VIEJO).structural_hash,
         [Match("mod.helper_viejo", "mod.py", 0, 1.0)],
-        touched_files=frozenset({"nada_que_ver.py"}), boy_scout=True,
+        touched_files=frozenset({"nada_que_ver.py"}),
+        boy_scout=True,
     )
     assert v.allowed
 
@@ -187,6 +216,7 @@ def test_boy_scout_does_not_reach_untouched_files(conn):
 # ---------------------------------------------------------------------------
 # reset
 # ---------------------------------------------------------------------------
+
 
 def test_clear_drops_the_snapshot(conn):
     copia = "def otro_helper(p, q):\n    return p + q\n"
@@ -199,16 +229,22 @@ def test_recapturing_without_reset_accepts_what_landed_since(conn):
     """Documentado como trampa: por eso `reset` existe y hay que decirlo."""
     copia = "def otro_helper(p, q):\n    return p + q\n"
     debt.capture(conn, _corpus(("mod.a", "a.py", VIEJO), ("mod.b", "b.py", copia)))
-    stats = debt.capture(conn, _corpus(
-        ("mod.a", "a.py", VIEJO), ("mod.b", "b.py", copia),
-        ("mod.c", "c.py", NUEVO), ("mod.d", "d.py", NUEVO),
-    ))
+    stats = debt.capture(
+        conn,
+        _corpus(
+            ("mod.a", "a.py", VIEJO),
+            ("mod.b", "b.py", copia),
+            ("mod.c", "c.py", NUEVO),
+            ("mod.d", "d.py", NUEVO),
+        ),
+    )
     assert stats["added"] == 2, "la duplicación que llegó después queda aceptada"
 
 
 # ---------------------------------------------------------------------------
 # integración con search_similar
 # ---------------------------------------------------------------------------
+
 
 def _repo(tmp_path: Path):
     from livespec_mcp.config import Settings
@@ -222,8 +258,9 @@ def _repo(tmp_path: Path):
         "def otro_helper(p, q):\n    return p + q\n", encoding="utf-8"
     )
     state = tmp_path / ".mcp-docs"
-    st = Settings(workspace=tmp_path, state_dir=state,
-                  db_path=state / "docs.db", docs_dir=state / "docs")
+    st = Settings(
+        workspace=tmp_path, state_dir=state, db_path=state / "docs.db", docs_dir=state / "docs"
+    )
     st.ensure_dirs()
     c = connect(st.db_path)
     index_project(st, c, force=True)
@@ -242,6 +279,7 @@ def _tools():
             def deco(fn):
                 self.t[fn.__name__] = fn
                 return fn
+
             return deco
 
     m = _Fake()

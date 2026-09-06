@@ -22,7 +22,7 @@ SPRING_SRC = (
     "import org.springframework.web.bind.annotation.*;\n"
     "\n"
     "@RestController\n"
-    "@RequestMapping(\"/api/users\")\n"
+    '@RequestMapping("/api/users")\n'
     "public class UserController {\n"
     "\n"
     "    @GetMapping\n"
@@ -30,13 +30,13 @@ SPRING_SRC = (
     "        return helper();\n"
     "    }\n"
     "\n"
-    "    @PostMapping(\"/create\")\n"
+    '    @PostMapping("/create")\n'
     "    public String create() {\n"
-    "        return \"ok\";\n"
+    '        return "ok";\n'
     "    }\n"
     "\n"
     "    private String helper() {\n"
-    "        return \"[]\";\n"
+    '        return "[]";\n'
     "    }\n"
     "}\n"
 )
@@ -49,14 +49,14 @@ SPRING_MULTI_SRC = (
     "@RestController\n"
     "public class HotelController {\n"
     "\n"
-    "    @GetMapping(\"/hotels\")\n"
-    "    public String list() { return \"[]\"; }\n"
+    '    @GetMapping("/hotels")\n'
+    '    public String list() { return "[]"; }\n'
     "\n"
-    "    @PostMapping(\"/hotels/search\")\n"
-    "    public String search() { return \"[]\"; }\n"
+    '    @PostMapping("/hotels/search")\n'
+    '    public String search() { return "[]"; }\n'
     "\n"
-    "    @DeleteMapping(\"/hotels/{id}\")\n"
-    "    public String remove() { return \"ok\"; }\n"
+    '    @DeleteMapping("/hotels/{id}")\n'
+    '    public String remove() { return "ok"; }\n'
     "}\n"
 )
 
@@ -79,9 +79,7 @@ async def test_find_endpoints_spring(workspace):
         await c.call_tool("index_project", {})
         out = (await c.call_tool("find_endpoints", {"framework": "spring"})).data
         by_qname = {e["qualified_name"]: e for e in out["endpoints"]}
-        controller = next(
-            (e for q, e in by_qname.items() if q.endswith("UserController")), None
-        )
+        controller = next((e for q, e in by_qname.items() if q.endswith("UserController")), None)
         assert controller is not None, f"controller missing: {by_qname.keys()}"
         assert "RestController" in controller["decorators"]
         assert any(q.endswith("list") for q in by_qname)
@@ -103,17 +101,13 @@ async def test_find_endpoints_spring_carries_method_and_path(workspace):
         await c.call_tool("index_project", {})
         out = (await c.call_tool("find_endpoints", {"framework": "spring"})).data
     routes = {
-        (e.get("http_method"), e.get("http_path"))
-        for e in out["endpoints"]
-        if e.get("http_path")
+        (e.get("http_method"), e.get("http_path")) for e in out["endpoints"] if e.get("http_path")
     }
     assert ("GET", "/hotels") in routes, out["endpoints"]
     assert ("POST", "/hotels/search") in routes, out["endpoints"]
     assert ("DELETE", "/hotels/{id}") in routes, out["endpoints"]
     handlers = {
-        e["qualified_name"].rsplit(".", 1)[-1]: e
-        for e in out["endpoints"]
-        if e.get("http_path")
+        e["qualified_name"].rsplit(".", 1)[-1]: e for e in out["endpoints"] if e.get("http_path")
     }
     # Each handler keeps its OWN route — a nearby-annotation scan used to give
     # every method in the controller the first handler's route.
@@ -145,7 +139,7 @@ async def test_java_javadoc_spec_annotation_links_method(workspace):
             "public class UserService {\n"
             "    /** @spec:auth-user-login */\n"
             "    public String lookup() {\n"
-            "        return \"user\";\n"
+            '        return "user";\n'
             "    }\n"
             "}\n"
         )
@@ -174,15 +168,13 @@ async def test_dead_code_spring_protection(workspace):
     (workspace / "Orphan.java").write_text(
         "public class Orphan {\n"
         "    public static String unusedHelper() {\n"
-        "        return \"dead\";\n"
+        '        return "dead";\n'
         "    }\n"
         "}\n"
     )
     async with Client(mcp) as c:
         await c.call_tool("index_project", {})
-        out = (
-            await c.call_tool("find_dead_code", {"include_non_python": True})
-        ).data
+        out = (await c.call_tool("find_dead_code", {"include_non_python": True})).data
         qnames = {d["qualified_name"] for d in out["dead_symbols"]}
         # Annotated controller + mapped methods protected
         assert not any("UserController" in q and q.endswith("list") for q in qnames)
@@ -213,9 +205,7 @@ async def test_dead_code_angular_protection(workspace):
     )
     async with Client(mcp) as c:
         await c.call_tool("index_project", {})
-        out = (
-            await c.call_tool("find_dead_code", {"include_non_python": True})
-        ).data
+        out = (await c.call_tool("find_dead_code", {"include_non_python": True})).data
         qnames = {d["qualified_name"] for d in out["dead_symbols"]}
         # Component class + its methods (template-bound) + lifecycle: protected
         assert not any("DashComponent" in q for q in qnames), qnames
@@ -241,9 +231,7 @@ async def test_dead_code_spring_service_methods_protected(workspace):
         "}\n"
     )
     (workspace / "Orphan.java").write_text(
-        "public class Orphan {\n"
-        "    public static String unusedHelper() { return \"dead\"; }\n"
-        "}\n"
+        'public class Orphan {\n    public static String unusedHelper() { return "dead"; }\n}\n'
     )
     async with Client(mcp) as c:
         await c.call_tool("index_project", {})
@@ -272,14 +260,10 @@ async def test_dead_code_angular_injectable_methods_protected(workspace):
         "  ngOnDestroy(): void {}\n"
         "}\n"
     )
-    (workspace / "util.ts").write_text(
-        "function localDead(): number { return 2; }\n"
-    )
+    (workspace / "util.ts").write_text("function localDead(): number { return 2; }\n")
     async with Client(mcp) as c:
         await c.call_tool("index_project", {})
-        out = (
-            await c.call_tool("find_dead_code", {"include_non_python": True})
-        ).data
+        out = (await c.call_tool("find_dead_code", {"include_non_python": True})).data
     qnames = {d["qualified_name"] for d in out["dead_symbols"]}
     assert not any("ApiService" in q for q in qnames), qnames
     assert any(q.endswith("localDead") for q in qnames), qnames
@@ -304,12 +288,12 @@ async def test_find_endpoints_spring_excludes_di_beans(workspace):
         "@Configuration\n"
         "class AppConfig {\n"
         "    @Bean\n"
-        "    public String greeting() { return \"hi\"; }\n"
+        '    public String greeting() { return "hi"; }\n'
         "}\n"
         "\n"
         "@Service\n"
         "class UserService {\n"
-        "    public String lookup() { return \"x\"; }\n"
+        '    public String lookup() { return "x"; }\n'
         "}\n"
         "\n"
         "@Component\n"
@@ -341,14 +325,11 @@ async def test_find_dead_code_skips_java_src_test_by_default(workspace):
     (main / "Prod.java").write_text(
         "package com.ex;\n"
         "public class Prod {\n"
-        "    public static String unusedProd() { return \"p\"; }\n"
+        '    public static String unusedProd() { return "p"; }\n'
         "}\n"
     )
     (test / "ProdTest.java").write_text(
-        "package com.ex;\n"
-        "public class ProdTest {\n"
-        "    public void testUnused() { }\n"
-        "}\n"
+        "package com.ex;\npublic class ProdTest {\n    public void testUnused() { }\n}\n"
     )
     async with Client(mcp) as c:
         await c.call_tool("index_project", {})
@@ -405,9 +386,7 @@ async def test_dead_code_fastapi_routes_and_lifespan_protected(workspace):
     async with Client(mcp) as c:
         await c.call_tool("index_project", {})
         out = (await c.call_tool("find_dead_code", {})).data
-        endpoints = (
-            await c.call_tool("find_endpoints", {"framework": "fastapi"})
-        ).data
+        endpoints = (await c.call_tool("find_endpoints", {"framework": "fastapi"})).data
     qnames = {d["qualified_name"] for d in out["dead_symbols"]}
     ep_qnames = {e["qualified_name"] for e in endpoints["endpoints"]}
     assert any(q.endswith("list_items") for q in ep_qnames), ep_qnames

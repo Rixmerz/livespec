@@ -52,9 +52,7 @@ async def test_find_endpoints_hono(workspace):
         assert ("GET", "/health") in routes
         assert ("PURGE", "/cache") in routes
         # Named handler resolves to its symbol
-        by_route = {
-            (e["hono_method"], e["hono_path"]): e for e in out["endpoints"]
-        }
+        by_route = {(e["hono_method"], e["hono_path"]): e for e in out["endpoints"]}
         assert by_route[("GET", "/users")]["qualified_name"].endswith("listUsers")
         assert by_route[("GET", "/users")]["handler_resolution"] == "handler"
         # An inline arrow has no symbol: the route resolves to the scope that
@@ -70,9 +68,7 @@ async def test_dead_code_hono_handlers_protected(workspace):
     (workspace / "server.ts").write_text(HONO_APP)
     async with Client(mcp) as c:
         await c.call_tool("index_project", {})
-        out = (
-            await c.call_tool("find_dead_code", {"include_non_python": True})
-        ).data
+        out = (await c.call_tool("find_dead_code", {"include_non_python": True})).data
         qnames = {d["qualified_name"] for d in out["dead_symbols"]}
         # Registered at module level — protected by the TS runtime scan
         assert not any(q.endswith("listUsers") for q in qnames), qnames

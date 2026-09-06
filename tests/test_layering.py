@@ -43,9 +43,7 @@ def _imported_modules(path: Path) -> set[str]:
     return out
 
 
-@pytest.mark.parametrize(
-    "path", sorted(DOMAIN.glob("*.py")), ids=lambda p: p.name
-)
+@pytest.mark.parametrize("path", sorted(DOMAIN.glob("*.py")), ids=lambda p: p.name)
 def test_domain_never_imports_the_mcp_surface(path: Path):
     """Business logic must be callable without an MCP host in the room.
 
@@ -70,9 +68,9 @@ def test_the_external_graph_helpers_live_in_domain():
     ):
         assert hasattr(external_source, name), name
 
-    assert "livespec_mcp.tools.analysis" not in _imported_modules(
-        TOOLS / "indexing.py"
-    ), "indexing.py is importing helpers back out of a sibling tool module"
+    assert "livespec_mcp.tools.analysis" not in _imported_modules(TOOLS / "indexing.py"), (
+        "indexing.py is importing helpers back out of a sibling tool module"
+    )
 
 
 def test_every_external_graph_consumer_goes_through_the_shared_gate():

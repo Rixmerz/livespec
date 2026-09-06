@@ -71,7 +71,9 @@ def _symbol_prompt(sym: dict, source: str) -> str:
 
 
 def _spec_prompt(spec: dict, symbols: list[dict]) -> str:
-    syms = "\n".join(f"- `{s['qualified_name']}` ({s['kind']}) -> {s['file_path']}" for s in symbols)
+    syms = "\n".join(
+        f"- `{s['qualified_name']}` ({s['kind']}) -> {s['file_path']}" for s in symbols
+    )
     return (
         f"Genera una ficha técnica de la Especificación `{spec['spec_id']}` en Markdown.\n"
         f"Incluye: descripción funcional, criterios de aceptación inferidos del código, "
@@ -263,12 +265,14 @@ def register(mcp: FastMCP) -> None:
                 ):
                     drift.append("signature")
                 if drift:
-                    stale.append({
-                        "type": "symbol",
-                        "target": r["qualified_name"],
-                        "drift": "+".join(drift) + " changed",
-                        "generated_at": r["generated_at"],
-                    })
+                    stale.append(
+                        {
+                            "type": "symbol",
+                            "target": r["qualified_name"],
+                            "drift": "+".join(drift) + " changed",
+                            "generated_at": r["generated_at"],
+                        }
+                    )
         if target_type in ("spec", "all"):
             for r in st.conn.execute(
                 """SELECT d.target_key, d.generated_at, r.updated_at, r.spec_id
@@ -277,12 +281,14 @@ def register(mcp: FastMCP) -> None:
                      AND r.updated_at > d.generated_at""",
                 (pid, pid),
             ):
-                stale.append({
-                    "type": "spec",
-                    "target": r["spec_id"],
-                    "drift": "spec updated after doc generation",
-                    "generated_at": r["generated_at"],
-                })
+                stale.append(
+                    {
+                        "type": "spec",
+                        "target": r["spec_id"],
+                        "drift": "spec updated after doc generation",
+                        "generated_at": r["generated_at"],
+                    }
+                )
         return {"stale": stale, "count": len(stale)}
 
     @mcp.tool(annotations={"readOnlyHint": False, "idempotentHint": True})

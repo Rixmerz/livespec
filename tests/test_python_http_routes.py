@@ -105,9 +105,7 @@ async def test_export_explorer_fastapi_paths_in_data_json(workspace):
         await c.call_tool("export_explorer", {})
 
     data = json.loads(
-        (workspace / ".mcp-docs" / "explorer" / "data.json").read_text(
-            encoding="utf-8"
-        )
+        (workspace / ".mcp-docs" / "explorer" / "data.json").read_text(encoding="utf-8")
     )
     by_handler = {e["handler"]: e for e in data["endpoints"]}
     users = by_handler["api.main.list_users"]

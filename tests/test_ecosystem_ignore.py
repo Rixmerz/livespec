@@ -41,7 +41,7 @@ def test_deno_jsonc_comments_and_trailing_commas_tolerated(tmp_path: Path):
     _write_source_and_build_output(tmp_path)
     (tmp_path / "deno.jsonc").write_text(
         "{\n"
-        '  // build output, not source\n'
+        "  // build output, not source\n"
         '  "exclude": [\n'
         '    "**/_fresh/*", // Fresh build dir\n'
         "  ],\n"
@@ -72,9 +72,7 @@ def test_tsconfig_exclude_bare_name_and_trailing_slash(tmp_path: Path):
     (tmp_path / "dist" / "bundle.py").write_text("y = 1\n", encoding="utf-8")
     (tmp_path / "build").mkdir()
     (tmp_path / "build" / "out.py").write_text("z = 1\n", encoding="utf-8")
-    (tmp_path / "tsconfig.json").write_text(
-        '{"exclude": ["dist", "build/"]}', encoding="utf-8"
-    )
+    (tmp_path / "tsconfig.json").write_text('{"exclude": ["dist", "build/"]}', encoding="utf-8")
     names = _names(tmp_path)
     assert "src/main.py" in names
     assert not any(n.startswith("dist/") for n in names)

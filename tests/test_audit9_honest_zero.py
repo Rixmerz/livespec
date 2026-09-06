@@ -28,9 +28,7 @@ async def test_find_dead_code_ts_only_repo_auto_includes_non_python(workspace):
     """TS-only repos auto-enable include_non_python (silent Python-only zero
     was an audit false negative on Express hubs)."""
     (workspace / "src").mkdir()
-    (workspace / "src" / "code.ts").write_text(
-        "function deadFn() {\n  return 1;\n}\n"
-    )
+    (workspace / "src" / "code.ts").write_text("function deadFn() {\n  return 1;\n}\n")
     async with Client(mcp) as c:
         await c.call_tool("index_project", {})
         out = (await c.call_tool("find_dead_code", {"summary_only": True})).data
@@ -38,9 +36,7 @@ async def test_find_dead_code_ts_only_repo_auto_includes_non_python(workspace):
         assert "include_non_python" in (out.get("auto_enabled") or [])
         # Explicit False still forces the old Python-only path via... we can't
         # pass False to undo auto. Documented: zero-python ⇒ auto on.
-        opted = (
-            await c.call_tool("find_dead_code", {"include_non_python": True})
-        ).data
+        opted = (await c.call_tool("find_dead_code", {"include_non_python": True})).data
         assert opted["count"] >= 1
 
 
@@ -56,9 +52,7 @@ async def test_find_dead_code_public_only_reports_not_swept(workspace):
     async with Client(mcp) as c:
         await c.call_tool("index_project", {})
         out = (
-            await c.call_tool(
-                "find_dead_code", {"include_non_python": True, "summary_only": True}
-            )
+            await c.call_tool("find_dead_code", {"include_non_python": True, "summary_only": True})
         ).data
         assert out["count"] == 0
         assert "public" in out["not_swept"]
@@ -99,15 +93,11 @@ async def test_find_endpoints_default_includes_hono(workspace):
     (workspace / "src" / "app.ts").write_text(HONO_APP)
     async with Client(mcp) as c:
         await c.call_tool("index_project", {})
-        out = (
-            await c.call_tool("find_endpoints", {"summary_only": True})
-        ).data
+        out = (await c.call_tool("find_endpoints", {"summary_only": True})).data
         assert out["count"] >= 1
         assert "not_swept" not in out
 
-        hono_out = (
-            await c.call_tool("find_endpoints", {"framework": "hono"})
-        ).data
+        hono_out = (await c.call_tool("find_endpoints", {"framework": "hono"})).data
         assert hono_out["count"] >= 1
         assert "not_swept" not in hono_out
 

@@ -43,17 +43,34 @@ _UNKNOWN_SAMPLE_MAX = 20
 # wherever that vocabulary is needed elsewhere (e.g. specs.scan_annotation_verbs) —
 # never re-declare the verb list.
 RECOGNIZED_PREFIX_VERBS: tuple[str, ...] = (
-    "not_spec", "!spec", "spec", "implements?", "tests?", "see", "references?",
+    "not_spec",
+    "!spec",
+    "spec",
+    "implements?",
+    "tests?",
+    "see",
+    "references?",
 )
 # Human-readable expansion of the pattern forms above, for did-you-mean
 # suggestions. Cosmetic only — it does not affect what the regex matches.
-RECOGNIZED_PREFIX_VERBS_DISPLAY: frozenset[str] = frozenset({
-    "spec", "implement", "implements", "test", "tests", "see",
-    "reference", "references", "not_spec",
-})
+RECOGNIZED_PREFIX_VERBS_DISPLAY: frozenset[str] = frozenset(
+    {
+        "spec",
+        "implement",
+        "implements",
+        "test",
+        "tests",
+        "see",
+        "reference",
+        "references",
+        "not_spec",
+    }
+)
 _PREFIX_HEAD_RE = re.compile(
     r"""^\s*[#*]?\s*                       # optional comment leader
-        @(?P<verb>""" + "|".join(RECOGNIZED_PREFIX_VERBS) + r""")
+        @(?P<verb>"""
+    + "|".join(RECOGNIZED_PREFIX_VERBS)
+    + r""")
         (?=[:=\s]|$)                       # verb boundary: reject @specifically,
                                            # @testsuite, @seed (prefix-of-a-word)
         \s*[:=]?\s*
@@ -109,10 +126,12 @@ def derive_spec_prefixes(spec_ids: Iterable[str]) -> tuple[str, ...]:
             prefixes.add(prefix.upper())
     return tuple(sorted(prefixes))
 
+
 # Optional `:confidence` suffix at the end of a prefix payload. Accepts
 # `:0.85`, `:.85`, `:1.0`, `:1`. Anchored to end so it doesn't eat digits
 # from SPEC tokens.
 _CONF_SUFFIX_RE = re.compile(r"\s*:\s*(0?\.\d+|1\.0+|1)\s*$")
+
 
 # Level 2: `<verb> PREFIX-NNN` when the store still has that shape.
 # Negation guard: must NOT be preceded by "not"/"no"/… within last 12 chars.
@@ -153,9 +172,9 @@ VERB_TO_RELATION = {
 
 @dataclass
 class AnnotationHit:
-    spec_id: str         # store id (OpenSpec slug, or unmigrated PREFIX-NNN)
-    relation: str        # implements | tests | references
-    confidence: float    # 1.0 (level 1) | 0.7 (level 2) | override (level 1 + suffix)
+    spec_id: str  # store id (OpenSpec slug, or unmigrated PREFIX-NNN)
+    relation: str  # implements | tests | references
+    confidence: float  # 1.0 (level 1) | 0.7 (level 2) | override (level 1 + suffix)
 
 
 def _normalize_match(m: re.Match[str]) -> str:
@@ -171,7 +190,9 @@ def _normalize_spec(raw: str, token_re: re.Pattern[str] = _SPEC_TOKEN_RE) -> str
 
 
 def _relation_for(verb: str) -> str:
-    return VERB_TO_RELATION.get(verb.lower().rstrip("s"), VERB_TO_RELATION.get(verb.lower(), "implements"))
+    return VERB_TO_RELATION.get(
+        verb.lower().rstrip("s"), VERB_TO_RELATION.get(verb.lower(), "implements")
+    )
 
 
 def _parse_prefix_payload(
@@ -250,9 +271,7 @@ def parse_annotations(
     for m in _PREFIX_HEAD_RE.finditer(text):
         verb = m.group("verb").lower()
         rest = m.group("rest")
-        spec_ids, conf_override = _parse_prefix_payload(
-            rest, token_re, known_ids=known or None
-        )
+        spec_ids, conf_override = _parse_prefix_payload(rest, token_re, known_ids=known or None)
         if not spec_ids:
             continue
         if verb in ("not_spec", "!spec"):
@@ -386,9 +405,7 @@ def scan_annotations(conn: sqlite3.Connection, project_id: int) -> ScanResult:
 
     spec_map: dict[str, int] = {
         r["spec_id"]: int(r["id"])
-        for r in conn.execute(
-            "SELECT id, spec_id FROM spec WHERE project_id = ?", (project_id,)
-        )
+        for r in conn.execute("SELECT id, spec_id FROM spec WHERE project_id = ?", (project_id,))
     }
     prefixes = derive_spec_prefixes(spec_map.keys())
     known_ids = tuple(spec_map.keys())
@@ -402,11 +419,13 @@ def scan_annotations(conn: sqlite3.Connection, project_id: int) -> ScanResult:
             if missing not in unknown:
                 unknown.append(missing)
             if len(sample) < _UNKNOWN_SAMPLE_MAX:
-                sample.append({
-                    "spec_id": missing,
-                    "qualified_name": r["qualified_name"],
-                    "file_path": r["file_path"],
-                })
+                sample.append(
+                    {
+                        "spec_id": missing,
+                        "qualified_name": r["qualified_name"],
+                        "file_path": r["file_path"],
+                    }
+                )
         for hit in parse_annotations(doc, prefixes, known_ids=known_ids):
             spec_pk = spec_map.get(hit.spec_id)
             if spec_pk is None:

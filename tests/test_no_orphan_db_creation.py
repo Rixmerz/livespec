@@ -92,9 +92,7 @@ def test_db_connect_create_false_never_creates_file(tmp_path: Path):
 def test_db_connect_create_false_opens_existing_readonly(tmp_path: Path):
     db_path = tmp_path / "docs.db"
     conn = connect(db_path, create=True)
-    conn.execute(
-        "INSERT INTO project(name, root) VALUES (?, ?)", ("x", str(tmp_path))
-    )
+    conn.execute("INSERT INTO project(name, root) VALUES (?, ?)", ("x", str(tmp_path)))
     conn.close()
 
     ro = connect(db_path, create=False)

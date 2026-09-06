@@ -149,9 +149,7 @@ async def main() -> int:
             )
 
         # list_specs (dogfood has Specs)
-        lr = await client.call_tool(
-            "list_specs", {"workspace": str(WS)}
-        )
+        lr = await client.call_tool("list_specs", {"workspace": str(WS)})
         lrp = lr.structured_content or {}
         if lrp.get("isError"):
             fail("list_specs", str(lrp))
@@ -160,23 +158,19 @@ async def main() -> int:
             ok("list_specs", f"{len(specs)} Specs")
 
         # export_explorer refresh
-        ex = await client.call_tool(
-            "export_explorer", {"workspace": str(WS)}
-        )
+        ex = await client.call_tool("export_explorer", {"workspace": str(WS)})
         exp = ex.structured_content or {}
         if exp.get("isError"):
             fail("export_explorer", str(exp))
         else:
-            aw = (exp.get("autowire") or {})
+            aw = exp.get("autowire") or {}
             ok(
                 "export_explorer",
                 f"autowire wired={aw.get('wired')} reason={aw.get('reason')}",
             )
 
         # find_endpoints — MCP tools should appear
-        fe = await client.call_tool(
-            "find_endpoints", {"workspace": str(WS), "limit": 20}
-        )
+        fe = await client.call_tool("find_endpoints", {"workspace": str(WS), "limit": 20})
         fep = fe.structured_content or {}
         if fep.get("isError"):
             fail("find_endpoints", str(fep))

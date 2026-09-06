@@ -49,7 +49,9 @@ def _symbols(tmp_path: Path, source: str, kind: str | None = None) -> dict[str, 
 
 
 def test_an_annotated_alias_becomes_a_symbol(tmp_path: Path):
-    found = _symbols(tmp_path, '''
+    found = _symbols(
+        tmp_path,
+        """
 from typing import Annotated
 
 QName = Annotated[str, "a qualified name"]
@@ -58,7 +60,8 @@ Limit = Annotated[int, "how many"]
 
 def get_symbol(qname: QName, limit: Limit) -> str:
     return qname
-''')
+""",
+    )
     assert found.get("QName") == "type_alias"
     assert found.get("Limit") == "type_alias"
 
@@ -76,9 +79,7 @@ def test_the_signature_carries_what_the_alias_expands_to(tmp_path: Path):
     )
     settings, conn = _bootstrap(tmp_path)
     index_project(settings, conn, force=True)
-    row = conn.execute(
-        "SELECT signature FROM symbol WHERE name='QName'"
-    ).fetchone()
+    row = conn.execute("SELECT signature FROM symbol WHERE name='QName'").fetchone()
     assert row is not None
     assert "Annotated" in row["signature"]
 
@@ -87,32 +88,41 @@ def test_the_signature_carries_what_the_alias_expands_to(tmp_path: Path):
 # lo que NO debe entrar — el radio de impacto es dead-code
 # ---------------------------------------------------------------------------
 
+
 def test_ordinary_constants_stay_out(tmp_path: Path):
     """Un `MAX_ENTRIES = 500` en el índice es un falso positivo de dead code."""
-    found = _symbols(tmp_path, '''
+    found = _symbols(
+        tmp_path,
+        """
 MAX_ENTRIES = 500
 _CACHE = {}
 DEFAULT_NAME = "x"
 timeout = 30
-''')
+""",
+    )
     for name in ("MAX_ENTRIES", "_CACHE", "DEFAULT_NAME", "timeout"):
         assert name not in found, f"{name} no es un alias de tipo"
 
 
 def test_a_capworded_value_is_not_a_type(tmp_path: Path):
     """CapWords sola no alcanza: tiene que estar ligada a una expresión de tipo."""
-    found = _symbols(tmp_path, '''
+    found = _symbols(
+        tmp_path,
+        """
 Registry = dict()
 Instance = SomeClass()
 Total = 1 + 2
-''')
+""",
+    )
     assert "Registry" not in found, "una llamada es un valor, no un tipo"
     assert "Instance" not in found
 
 
 def test_an_alias_inside_a_function_or_class_stays_out(tmp_path: Path):
     """Solo nivel de módulo: un local con nombre CapWords no es vocabulario público."""
-    found = _symbols(tmp_path, '''
+    found = _symbols(
+        tmp_path,
+        """
 from typing import Annotated
 
 
@@ -123,14 +133,17 @@ def f():
 
 class C:
     Member = Annotated[str, "y"]
-''')
+""",
+    )
     assert "Local" not in found
     assert "Member" not in found
 
 
 def test_functions_and_classes_are_untouched(tmp_path: Path):
     """La regla nueva no debe alterar lo que ya se extraía."""
-    found = _symbols(tmp_path, '''
+    found = _symbols(
+        tmp_path,
+        """
 from typing import Annotated
 
 Name = Annotated[str, "n"]
@@ -143,7 +156,8 @@ class Thing:
 
 def func(x: Name) -> int:
     return 1
-''')
+""",
+    )
     assert found.get("Thing") == "class"
     assert found.get("method") == "method"
     assert found.get("func") == "function"

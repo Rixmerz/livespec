@@ -69,9 +69,7 @@ def test_level2_verb_anchored_custom_prefix():
 def test_slug_only_store_uses_known_ids():
     """Slug stores: no PREFIX-NNN match without known_ids."""
     assert parse_annotations("@spec:auth-user-login") == []
-    hits = parse_annotations(
-        "@spec:auth-user-login", known_ids=["auth-user-login"]
-    )
+    hits = parse_annotations("@spec:auth-user-login", known_ids=["auth-user-login"])
     assert len(hits) == 1
     assert hits[0].spec_id == "auth-user-login"
 
@@ -97,9 +95,7 @@ async def test_scan_spec_annotations_links_custom_prefix(workspace):
             'def suspend_tenant():\n    """@spec:BE-RF-102"""\n    return 1\n'
         )
         await c.call_tool("index_project", {})
-        await c.call_tool(
-            "create_spec", {"title": "Suspend tenant", "spec_id": "BE-RF-102"}
-        )
+        await c.call_tool("create_spec", {"title": "Suspend tenant", "spec_id": "BE-RF-102"})
         await c.call_tool("index_project", {"force": True})
         out = (await c.call_tool("list_specs", {})).data
         specs_by_id = {s["spec_id"]: s for s in out["specs"]}
@@ -128,15 +124,13 @@ async def test_scan_reports_ids_no_spec_answers_to(workspace):
         (workspace / "pkg" / "__init__.py").write_text("")
         (workspace / "pkg" / "code.py").write_text(
             'def login():\n    """@spec:auth-user-login"""\n    return 1\n'
-            '\n'
+            "\n"
             'def signout():\n    """@spec:auth-user-signout"""\n    return 2\n'
-            '\n'
+            "\n"
             'def helper():\n    """@see the README for details"""\n    return 3\n'
         )
         await c.call_tool("index_project", {})
-        await c.call_tool(
-            "create_spec", {"title": "User login", "spec_id": "auth-user-login"}
-        )
+        await c.call_tool("create_spec", {"title": "User login", "spec_id": "auth-user-login"})
 
         out = (await c.call_tool("scan_spec_annotations", {})).data
         assert out["links_created"] == 1
@@ -155,9 +149,7 @@ async def test_scan_stays_quiet_when_every_annotation_resolves(workspace):
             'def login():\n    """@spec:auth-user-login"""\n    return 1\n'
         )
         await c.call_tool("index_project", {})
-        await c.call_tool(
-            "create_spec", {"title": "User login", "spec_id": "auth-user-login"}
-        )
+        await c.call_tool("create_spec", {"title": "User login", "spec_id": "auth-user-login"})
         out = (await c.call_tool("scan_spec_annotations", {})).data
         assert out["links_created"] == 1
         assert "unknown_annotation_ids" not in out, out

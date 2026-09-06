@@ -120,7 +120,7 @@ async def call_playground_tool(
         return 403, {
             "error": (
                 f"tool {tool_name!r} is not read-only; "
-                "set [explorer] playground_mode = \"all\" "
+                'set [explorer] playground_mode = "all" '
                 f"(or {_ENV_MODE}=all) to allow mutations"
             ),
             "isError": True,

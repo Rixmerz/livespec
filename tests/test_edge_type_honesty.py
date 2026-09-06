@@ -75,10 +75,7 @@ def test_the_filter_composes_with_min_weight():
     g.add_edge(3, 1, edge_type="calls", weight=1.0, origin="livespec")
 
     assert ancestors_within(g, 1, 1, min_weight=0.6) == {3}
-    assert (
-        ancestors_within(g, 1, 1, min_weight=0.6, edge_types=frozenset({"calls"}))
-        == {3}
-    )
+    assert ancestors_within(g, 1, 1, min_weight=0.6, edge_types=frozenset({"calls"})) == {3}
     assert ancestors_within(g, 1, 1, edge_types=frozenset({"references"})) == set()
 
 
@@ -107,10 +104,7 @@ def _repo(workspace: Path) -> None:
     (pkg / "__init__.py").write_text("")
     (pkg / "models.py").write_text("class Base:\n    pass\n")
     (pkg / "service.py").write_text(
-        "from pkg.models import Base\n"
-        "\n"
-        "def describe(item: Base) -> str:\n"
-        "    return 'x'\n"
+        "from pkg.models import Base\n\ndef describe(item: Base) -> str:\n    return 'x'\n"
     )
 
 
@@ -192,9 +186,7 @@ async def test_the_excluded_dependency_is_named_and_recoverable(workspace: Path)
         )
         default = (await c.call_tool("who_calls", {"qname": "pkg.models.Base"})).data
         summary = (
-            await c.call_tool(
-                "who_calls", {"qname": "pkg.models.Base", "summary_only": True}
-            )
+            await c.call_tool("who_calls", {"qname": "pkg.models.Base", "summary_only": True})
         ).data
 
     assert default["count"] == 0
@@ -289,8 +281,7 @@ async def test_saying_so_costs_nothing_on_an_index_without_an_ingest(
     plan = [
         r[3]
         for r in st.conn.execute(
-            "EXPLAIN QUERY PLAN "
-            "SELECT 1 FROM symbol_edge WHERE origin < 'livespec' LIMIT 1"
+            "EXPLAIN QUERY PLAN SELECT 1 FROM symbol_edge WHERE origin < 'livespec' LIMIT 1"
         )
     ]
     assert any("idx_edge_origin" in step for step in plan), plan

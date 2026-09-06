@@ -95,9 +95,7 @@ def _ensure_migrations_table(conn: sqlite3.Connection) -> None:
 
 
 def _has_column(conn: sqlite3.Connection, table: str, column: str) -> bool:
-    return any(
-        r["name"] == column for r in conn.execute(f"PRAGMA table_info({table})")
-    )
+    return any(r["name"] == column for r in conn.execute(f"PRAGMA table_info({table})"))
 
 
 def _table_exists(conn: sqlite3.Connection, table: str) -> bool:
@@ -280,16 +278,24 @@ def _m011_rename_rf_to_spec(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE spec_dependency RENAME COLUMN child_rf_id TO child_spec_id")
 
         for old_index in (
-            "idx_rf_status", "idx_rf_module", "idx_rfsym_rf", "idx_rfsym_sym",
-            "idx_rfdep_parent", "idx_rfdep_child",
+            "idx_rf_status",
+            "idx_rf_module",
+            "idx_rfsym_rf",
+            "idx_rfsym_sym",
+            "idx_rfdep_parent",
+            "idx_rfdep_child",
         ):
             conn.execute(f"DROP INDEX IF EXISTS {old_index}")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_spec_status ON spec(project_id, status)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_spec_module ON spec(module_id)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_specsym_spec ON spec_symbol(spec_id)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_specsym_sym ON spec_symbol(symbol_id)")
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_specdep_parent ON spec_dependency(parent_spec_id)")
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_specdep_child ON spec_dependency(child_spec_id)")
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_specdep_parent ON spec_dependency(parent_spec_id)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_specdep_child ON spec_dependency(child_spec_id)"
+        )
 
         conn.execute("UPDATE doc SET target_type='spec' WHERE target_type='requirement'")
         conn.execute("UPDATE chunk SET source_type='spec' WHERE source_type='requirement'")
@@ -328,8 +334,14 @@ def _m012_unique_project_root(conn: sqlite3.Connection) -> None:
     ).fetchall()
     # Child tables that carry a project_id and could have been split.
     child_tables = (
-        "file", "module", "spec", "doc", "chunk", "index_run",
-        "agent_scratch", "spec_coverage_snapshot",
+        "file",
+        "module",
+        "spec",
+        "doc",
+        "chunk",
+        "index_run",
+        "agent_scratch",
+        "spec_coverage_snapshot",
     )
     for row in dupes:
         root, keep_id = row["root"], int(row["keep_id"])
@@ -347,9 +359,7 @@ def _m012_unique_project_root(conn: sqlite3.Connection) -> None:
                         (keep_id, other_id),
                     )
             conn.execute("DELETE FROM project WHERE id=?", (other_id,))
-    conn.execute(
-        "CREATE UNIQUE INDEX IF NOT EXISTS idx_project_root ON project(root)"
-    )
+    conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_project_root ON project(root)")
 
 
 def _m013_chunk_au_guard(conn: sqlite3.Connection) -> None:
@@ -385,12 +395,8 @@ def _m014_route_ref(conn: sqlite3.Connection) -> None:
             line INTEGER
         )"""
     )
-    conn.execute(
-        "CREATE INDEX IF NOT EXISTS idx_route_ref_symbol ON route_ref(symbol_id)"
-    )
-    conn.execute(
-        "CREATE INDEX IF NOT EXISTS idx_route_ref_match ON route_ref(role, norm_path)"
-    )
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_route_ref_symbol ON route_ref(symbol_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_route_ref_match ON route_ref(role, norm_path)")
     # Only queue a re-extract on a DB that already has symbols (an existing
     # project). A brand-new DB runs every migration inside the first connect()
     # before any indexing — no need to force anything there.
@@ -417,9 +423,7 @@ def _m015_spec_scenario(conn: sqlite3.Connection) -> None:
             UNIQUE(spec_id, name)
         )"""
     )
-    conn.execute(
-        "CREATE INDEX IF NOT EXISTS idx_spec_scenario_spec ON spec_scenario(spec_id)"
-    )
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_spec_scenario_spec ON spec_scenario(spec_id)")
 
 
 def _m016_spec_change(conn: sqlite3.Connection) -> None:
@@ -591,15 +595,11 @@ def _m022_symbol_edge_origin(conn: sqlite3.Connection) -> None:
     upgrade path on a real v0.32 database; every other test builds a fresh one,
     where schema.sql creates the column itself and the bug is invisible."""
     if not _has_column(conn, "symbol_edge", "origin"):
-        _try_add_column(
-            conn, "symbol_edge", "origin", "TEXT NOT NULL DEFAULT 'livespec'"
-        )
+        _try_add_column(conn, "symbol_edge", "origin", "TEXT NOT NULL DEFAULT 'livespec'")
     # Unconditional (and idempotent): on a fresh DB the column came from
     # schema.sql, so the branch above is skipped and this is the only thing
     # that creates the index.
-    conn.execute(
-        "CREATE INDEX IF NOT EXISTS idx_edge_origin ON symbol_edge(origin)"
-    )
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_edge_origin ON symbol_edge(origin)")
 
 
 def _m023_external_ingest(conn: sqlite3.Connection) -> None:
@@ -672,10 +672,7 @@ MIGRATIONS: list[Migration] = [
 
 def _run_migrations(conn: sqlite3.Connection) -> None:
     _ensure_migrations_table(conn)
-    applied = {
-        int(r["version"])
-        for r in conn.execute("SELECT version FROM schema_migrations")
-    }
+    applied = {int(r["version"]) for r in conn.execute("SELECT version FROM schema_migrations")}
     for version, name, fn in MIGRATIONS:
         if version in applied:
             continue
@@ -707,9 +704,7 @@ def consume_reextract_flag(conn: sqlite3.Connection) -> bool:
 
 def peek_reextract_flag(conn: sqlite3.Connection) -> bool:
     """True if a migration queued a forced re-extract, WITHOUT clearing it."""
-    row = conn.execute(
-        "SELECT value FROM _migration_state WHERE key='needs_reextract'"
-    ).fetchone()
+    row = conn.execute("SELECT value FROM _migration_state WHERE key='needs_reextract'").fetchone()
     return bool(row and row["value"] == "1")
 
 
@@ -740,9 +735,7 @@ def get_or_create_project(conn: sqlite3.Connection, name: str, root: str) -> int
     # project that would silently split all project-scoped data. ORDER BY id
     # makes the resolution deterministic even on a pre-v12 DB with existing
     # duplicates that the migration hasn't yet deduped.
-    conn.execute(
-        "INSERT OR IGNORE INTO project(name, root) VALUES (?, ?)", (name, root)
-    )
+    conn.execute("INSERT OR IGNORE INTO project(name, root) VALUES (?, ?)", (name, root))
     row = conn.execute(
         "SELECT id FROM project WHERE root = ? ORDER BY id LIMIT 1", (root,)
     ).fetchone()

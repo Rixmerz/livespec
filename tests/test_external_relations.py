@@ -178,9 +178,7 @@ def test_an_unrecognised_relation_is_counted_not_dropped(tmp_path: Path):
 
 
 def test_a_graph_we_fully_understand_reports_no_drift(tmp_path: Path):
-    graph = load_external_graph(
-        _graph_file(tmp_path, ["calls", "implements", "contains"])
-    )
+    graph = load_external_graph(_graph_file(tmp_path, ["calls", "implements", "contains"]))
 
     assert graph.unknown_relations == {}
 
@@ -236,9 +234,7 @@ async def test_the_ingest_payload_names_the_vocabulary_it_did_not_understand(
                 }
             )
         )
-        payload = (
-            await c.call_tool("ingest_external_graph", {"graph_path": str(graph)})
-        ).data
+        payload = (await c.call_tool("ingest_external_graph", {"graph_path": str(graph)})).data
 
     assert payload["unknown_relations"] == {"teleports_to": 1}
     assert "unknown_relations_hint" in payload

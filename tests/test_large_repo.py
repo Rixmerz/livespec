@@ -23,21 +23,25 @@ def _build_python_module(root: Path, idx: int, n_funcs: int) -> None:
     (pkg / "__init__.py").write_text("")
     body = ['"""Auto-generated module."""', "", "def fn_0(x):", "    return x + 1", ""]
     for i in range(1, n_funcs):
-        body.extend([
-            f"def fn_{i}(x):",
-            f"    return fn_{i - 1}(x) * 2",
+        body.extend(
+            [
+                f"def fn_{i}(x):",
+                f"    return fn_{i - 1}(x) * 2",
+                "",
+            ]
+        )
+    body.extend(
+        [
+            f"class Helper_{idx}:",
+            '    """Class with a few methods.\n\n    @spec:Spec-AUTO\n    """',
+            "    def step(self, x):",
+            f"        return fn_{n_funcs - 1}(x)",
             "",
-        ])
-    body.extend([
-        f"class Helper_{idx}:",
-        '    """Class with a few methods.\n\n    @spec:Spec-AUTO\n    """',
-        "    def step(self, x):",
-        f"        return fn_{n_funcs - 1}(x)",
-        "",
-        "    def double_step(self, x):",
-        "        return self.step(self.step(x))",
-        "",
-    ])
+            "    def double_step(self, x):",
+            "        return self.step(self.step(x))",
+            "",
+        ]
+    )
     (pkg / "core.py").write_text("\n".join(body))
 
 
@@ -135,7 +139,8 @@ async def test_large_repo_pagerank_consistent(large_repo):
         # (across all 5 pkgs, fn_0 is a sink for many callers).
         # Use loose check — in any of the 5 pkgs, fn_0 ranks above fn_9.
         wins = sum(
-            1 for i in range(5)
+            1
+            for i in range(5)
             if ranks.get(f"pkg_{i:02d}.core.fn_0", 0) > ranks.get(f"pkg_{i:02d}.core.fn_9", 0)
         )
         assert wins >= 3, f"PageRank ordering broke: {ranks}"

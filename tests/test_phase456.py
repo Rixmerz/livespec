@@ -48,13 +48,13 @@ async def test_detect_stale_docs(sample_repo):
 
     async with Client(mcp, sampling_handler=sampling_handler) as c:
         await c.call_tool("index_project", {})
-        await c.call_tool("generate_docs", {"target_type": "symbol", "identifier": "pkg.auth.login"})
+        await c.call_tool(
+            "generate_docs", {"target_type": "symbol", "identifier": "pkg.auth.login"}
+        )
 
         # Mutate the source so body_hash drifts
         login_path = sample_repo / "pkg" / "auth.py"
-        login_path.write_text(
-            login_path.read_text() + "\n\ndef extra():\n    return 0\n"
-        )
+        login_path.write_text(login_path.read_text() + "\n\ndef extra():\n    return 0\n")
         # Re-index to refresh body hashes
         await c.call_tool("index_project", {"force": True})
         # The login function body wasn't actually edited; only a new function was
@@ -63,9 +63,7 @@ async def test_detect_stale_docs(sample_repo):
         login_path.write_text(text)
         await c.call_tool("index_project", {"force": True})
 
-        stale = (
-            await c.call_tool("list_docs", {"target_type": "symbol", "only_stale": True})
-        ).data
+        stale = (await c.call_tool("list_docs", {"target_type": "symbol", "only_stale": True})).data
         targets = {s["target"] for s in stale["stale"]}
         assert "pkg.auth.login" in targets
 
@@ -116,11 +114,11 @@ async def test_export_documentation(sample_repo, tmp_path):
 
     async with Client(mcp, sampling_handler=sampling_handler) as c:
         await c.call_tool("index_project", {})
-        await c.call_tool("generate_docs", {"target_type": "symbol", "identifier": "pkg.auth.login"})
+        await c.call_tool(
+            "generate_docs", {"target_type": "symbol", "identifier": "pkg.auth.login"}
+        )
         out = (
-            await c.call_tool(
-                "export_documentation", {"format": "json", "out_subdir": "export"}
-            )
+            await c.call_tool("export_documentation", {"format": "json", "out_subdir": "export"})
         ).data
         assert out["exported"] >= 1
         # Json file should exist on disk

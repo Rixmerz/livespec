@@ -103,9 +103,25 @@ def _levenshtein(a: str, b: str) -> int:
 
 _DOC_FIRST_SENT_RE = re.compile(r"(?<=[.!?])\s+")
 _GENERIC_MODULE_NAMES = {
-    "src", "lib", "core", "common", "utils", "util", "helpers", "helper",
-    "tests", "test", "internal", "main", "mod", "index", "init", "__init__",
-    "app", "crates", "pkg",
+    "src",
+    "lib",
+    "core",
+    "common",
+    "utils",
+    "util",
+    "helpers",
+    "helper",
+    "tests",
+    "test",
+    "internal",
+    "main",
+    "mod",
+    "index",
+    "init",
+    "__init__",
+    "app",
+    "crates",
+    "pkg",
 }
 
 
@@ -156,9 +172,7 @@ def _default_spec_id(conn, project_id: int, title: str, module: str | None) -> s
     """OpenSpec-shaped slug, numbered rather than renamed when it collides."""
     from livespec_mcp.domain.md_specs import _ospec_spec_id
 
-    return disambiguated_slug_id(
-        _ospec_spec_id(title, module), _SpecIdsInProject(conn, project_id)
-    )
+    return disambiguated_slug_id(_ospec_spec_id(title, module), _SpecIdsInProject(conn, project_id))
 
 
 def _noop_decorator(**_kwargs: Any):
@@ -173,7 +187,6 @@ def _noop_decorator(**_kwargs: Any):
         return fn
 
     return _wrap
-
 
 
 def _workspace_note(fn):
@@ -192,6 +205,7 @@ def _workspace_note(fn):
     """
     fn.__doc__ = (fn.__doc__ or "") + WORKSPACE_DOCSTRING_NOTE
     return fn
+
 
 def register(
     mcp: FastMCP,
@@ -299,8 +313,11 @@ def register(
         sets: list[str] = []
         args: list[Any] = []
         for col, val in [
-            ("title", title), ("description", description), ("kind", kind),
-            ("status", status), ("priority", priority),
+            ("title", title),
+            ("description", description),
+            ("kind", kind),
+            ("status", status),
+            ("priority", priority),
         ]:
             if val is not None:
                 sets.append(f"{col}=?")
@@ -310,7 +327,9 @@ def register(
                 "SELECT id FROM module WHERE project_id=? AND name=?", (pid, module)
             ).fetchone()
             if not r:
-                cur = st.conn.execute("INSERT INTO module(project_id, name) VALUES(?,?)", (pid, module))
+                cur = st.conn.execute(
+                    "INSERT INTO module(project_id, name) VALUES(?,?)", (pid, module)
+                )
                 module_id = int(cur.lastrowid)
             else:
                 module_id = int(r["id"])
@@ -374,9 +393,7 @@ def register(
         # existed beyond the limit.
         if has_implementation is not None:
             op = ">" if has_implementation else "="
-            where.append(
-                f"(SELECT COUNT(*) FROM spec_symbol ss WHERE ss.spec_id=sp.id) {op} 0"
-            )
+            where.append(f"(SELECT COUNT(*) FROM spec_symbol ss WHERE ss.spec_id=sp.id) {op} 0")
         where_sql = " AND ".join(where)
 
         if summary_only:
@@ -726,7 +743,9 @@ def register(
                 hint="path is resolved relative to the workspace root if not absolute",
             )
 
-    @mutation_tool(annotations={"readOnlyHint": False, "idempotentHint": True, "destructiveHint": True})
+    @mutation_tool(
+        annotations={"readOnlyHint": False, "idempotentHint": True, "destructiveHint": True}
+    )
     def delete_spec(spec_id: str, workspace: Workspace | None = None) -> dict[str, Any]:
         """Permanently delete a Spec and its spec_symbol links (cascade).
 
@@ -734,9 +753,7 @@ def register(
         """
         st = get_state(workspace)
         pid = st.project_id
-        cur = st.conn.execute(
-            "DELETE FROM spec WHERE project_id=? AND spec_id=?", (pid, spec_id)
-        )
+        cur = st.conn.execute("DELETE FROM spec WHERE project_id=? AND spec_id=?", (pid, spec_id))
         return {"spec_id": spec_id, "deleted": cur.rowcount > 0}
 
     @agentic_tool(annotations={"readOnlyHint": True, "idempotentHint": True})
@@ -823,9 +840,7 @@ def register(
             # reached two call sites out of three.
             indexed_files = {
                 r["path"]
-                for r in st.conn.execute(
-                    "SELECT path FROM file WHERE project_id=?", (pid,)
-                )
+                for r in st.conn.execute("SELECT path FROM file WHERE project_id=?", (pid,))
             }
             ext_graph, _overlap, problem = load_gated_external_graph(
                 st.settings.workspace, community_graph, indexed_files
@@ -872,6 +887,7 @@ def register(
                 continue
             # Skip non-actionable noise (dunders/registers/DI helpers)
             from livespec_mcp.tools.analysis import _is_implicit_entry_point
+
             if _is_implicit_entry_point(meta):
                 continue
             if _is_test_path(meta.get("file_path") or ""):
@@ -905,9 +921,7 @@ def register(
 
         existing_ids = {
             r["spec_id"]
-            for r in st.conn.execute(
-                "SELECT spec_id FROM spec WHERE project_id=?", (pid,)
-            )
+            for r in st.conn.execute("SELECT spec_id FROM spec WHERE project_id=?", (pid,))
         }
         used_ids: set[str] = set()
 
@@ -941,9 +955,7 @@ def register(
                 if seg_counts:
                     title_seg = max(seg_counts.items(), key=lambda kv: (kv[1], kv[0]))[0]
                 else:
-                    title_seg = (
-                        (syms[0][2].get("qualified_name") or "group").split(".")[-1]
-                    )
+                    title_seg = (syms[0][2].get("qualified_name") or "group").split(".")[-1]
             else:
                 segments = group_key.split(".")
                 title_seg = segments[-1]
@@ -960,31 +972,33 @@ def register(
             ).fetchone()
             description: str | None = None
             if doc_row and doc_row["docstring"]:
-                first = _DOC_FIRST_SENT_RE.split(
-                    doc_row["docstring"].strip(), maxsplit=1
-                )[0].strip()
+                first = _DOC_FIRST_SENT_RE.split(doc_row["docstring"].strip(), maxsplit=1)[
+                    0
+                ].strip()
                 if first and not first.startswith("@"):
                     description = first[:200]
 
             score = sum(s for _, s, _ in top)
 
-            proposals.append({
-                "proposed_spec_id": "",  # assigned after sort by score
-                "title": title,
-                "description": description,
-                "module_key": group_key,
-                "symbol_count": len(syms),
-                "score": round(float(score), 6),
-                "suggested_symbols": [
-                    {
-                        "qualified_name": m["qualified_name"],
-                        "kind": m["kind"],
-                        "file_path": m["file_path"],
-                        "pagerank": round(float(s), 6),
-                    }
-                    for _, s, m in top
-                ],
-            })
+            proposals.append(
+                {
+                    "proposed_spec_id": "",  # assigned after sort by score
+                    "title": title,
+                    "description": description,
+                    "module_key": group_key,
+                    "symbol_count": len(syms),
+                    "score": round(float(score), 6),
+                    "suggested_symbols": [
+                        {
+                            "qualified_name": m["qualified_name"],
+                            "kind": m["kind"],
+                            "file_path": m["file_path"],
+                            "pagerank": round(float(s), 6),
+                        }
+                        for _, s, m in top
+                    ],
+                }
+            )
 
         proposals.sort(key=lambda p: p["score"], reverse=True)
         proposals = proposals[:max_proposals]
@@ -996,9 +1010,7 @@ def register(
             # on the clustering run, so `community-4-checkout` would become
             # `community-7-checkout` on the next graph build — a Spec id that
             # changes under you is worse than a slightly less specific one.
-            module_hint = (
-                None if key.startswith("community:") else (key.split(".")[-1] or None)
-            )
+            module_hint = None if key.startswith("community:") else (key.split(".")[-1] or None)
             sid = disambiguated_slug_id(
                 _ospec_spec_id(p["title"], module_hint), existing_ids | used_ids
             )
@@ -1074,8 +1086,18 @@ def register(
 
         # Strip trivial non-actionable hints
         _STOP_FIRST_WORDS = {
-            "this", "the", "a", "an", "returns", "true", "false", "none",
-            "todo", "fixme", "deprecated", "internal",
+            "this",
+            "the",
+            "a",
+            "an",
+            "returns",
+            "true",
+            "false",
+            "none",
+            "todo",
+            "fixme",
+            "deprecated",
+            "internal",
         }
         _SENT_END = re.compile(r"(?<=[.!?])\s+")
 
@@ -1100,25 +1122,23 @@ def register(
             if first_word in _STOP_FIRST_WORDS or len(first_word) < 3:
                 continue
             verb_histogram[first_word] = verb_histogram.get(first_word, 0) + 1
-            hints.append({
-                "qualified_name": r["qualified_name"],
-                "kind": r["kind"],
-                "file_path": r["file_path"],
-                "start_line": r["start_line"],
-                "first_sentence": first_sent,
-                "leading_word": first_word,
-            })
+            hints.append(
+                {
+                    "qualified_name": r["qualified_name"],
+                    "kind": r["kind"],
+                    "file_path": r["file_path"],
+                    "start_line": r["start_line"],
+                    "first_sentence": first_sent,
+                    "leading_word": first_word,
+                }
+            )
 
         # Top verbs descending
-        top_verbs = sorted(
-            verb_histogram.items(), key=lambda kv: kv[1], reverse=True
-        )[:25]
+        top_verbs = sorted(verb_histogram.items(), key=lambda kv: kv[1], reverse=True)[:25]
 
         out: dict[str, Any] = {
             "count": len(hints),
-            "verb_histogram_top": [
-                {"word": w, "n": n} for w, n in top_verbs
-            ],
+            "verb_histogram_top": [{"word": w, "n": n} for w, n in top_verbs],
         }
         if not hints and rows:
             out["hint"] = (
@@ -1205,9 +1225,7 @@ def register(
         st = get_state(workspace)
         pid = st.project_id
         ws = st.settings.workspace
-        file_rows = st.conn.execute(
-            "SELECT path FROM file WHERE project_id=?", (pid,)
-        ).fetchall()
+        file_rows = st.conn.execute("SELECT path FROM file WHERE project_id=?", (pid,)).fetchall()
 
         recognized = matcher.RECOGNIZED_PREFIX_VERBS_DISPLAY
         recognized_sorted = sorted(recognized)
@@ -1241,14 +1259,17 @@ def register(
                     continue  # the real matcher DOES consume this one
                 total_findings += 1
                 key = f"@{verb}"
-                g = groups.setdefault(key, {
-                    "verb": key,
-                    "count": 0,
-                    "reason": "unrecognized_verb" if not verb_ok else "token_shape",
-                    "did_you_mean": None,
-                    "did_you_mean_reason": None,
-                    "sample": [],
-                })
+                g = groups.setdefault(
+                    key,
+                    {
+                        "verb": key,
+                        "count": 0,
+                        "reason": "unrecognized_verb" if not verb_ok else "token_shape",
+                        "did_you_mean": None,
+                        "did_you_mean_reason": None,
+                        "sample": [],
+                    },
+                )
                 g["count"] += 1
                 if not verb_ok and g["did_you_mean"] is None:
                     if _LIKELY_SPEC_ID_RE.search(rest):
@@ -1270,7 +1291,8 @@ def register(
                     line = src[: m.start()].count("\n") + 1
                     if symbols is None:
                         symbols = [
-                            dict(sr) for sr in st.conn.execute(
+                            dict(sr)
+                            for sr in st.conn.execute(
                                 """SELECT qualified_name, start_line, end_line FROM symbol s
                                    JOIN file f ON f.id=s.file_id
                                    WHERE f.project_id=? AND f.path=?""",
@@ -1279,17 +1301,20 @@ def register(
                         ]
                     qname = next(
                         (
-                            s["qualified_name"] for s in symbols
+                            s["qualified_name"]
+                            for s in symbols
                             if s["start_line"] <= line <= s["end_line"]
                         ),
                         None,
                     )
-                    g["sample"].append({
-                        "qualified_name": qname,
-                        "file_path": path,
-                        "line": line,
-                        "token_candidate": rest.strip()[:40],
-                    })
+                    g["sample"].append(
+                        {
+                            "qualified_name": qname,
+                            "file_path": path,
+                            "line": line,
+                            "token_candidate": rest.strip()[:40],
+                        }
+                    )
 
         groups_out = sorted(groups.values(), key=lambda g: g["count"], reverse=True)
         return {
@@ -1420,7 +1445,9 @@ def register(
             "kind": kind,
         }
 
-    @mutation_tool(annotations={"readOnlyHint": False, "idempotentHint": True, "destructiveHint": True})
+    @mutation_tool(
+        annotations={"readOnlyHint": False, "idempotentHint": True, "destructiveHint": True}
+    )
     def unlink_spec_dependency(
         parent_spec_id: str,
         child_spec_id: str,
@@ -1513,11 +1540,13 @@ def register(
             if key in edge_keys:
                 continue
             edge_keys.add(key)
-            edge_payload.append({
-                "parent": spec_meta.get(p, {}).get("spec_id"),
-                "child": spec_meta.get(c, {}).get("spec_id"),
-                "kind": k,
-            })
+            edge_payload.append(
+                {
+                    "parent": spec_meta.get(p, {}).get("spec_id"),
+                    "child": spec_meta.get(c, {}).get("spec_id"),
+                    "kind": k,
+                }
+            )
 
         return {
             "root": spec_id,

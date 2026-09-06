@@ -110,9 +110,7 @@ async def test_import_openspec_file(sample_repo):
     md.write_text(OPENSPEC_SAMPLE)
     async with Client(mcp) as c:
         await c.call_tool("index_project", {})
-        result = (
-            await c.call_tool("import_specs_from_markdown", {"path": "spec.md"})
-        ).data
+        result = (await c.call_tool("import_specs_from_markdown", {"path": "spec.md"})).data
         assert result["parsed"] == 3
         assert result["created"] == 3
 
@@ -129,11 +127,7 @@ async def test_import_openspec_tree(sample_repo):
     (tree / "spec.md").write_text(OPENSPEC_SAMPLE)
     async with Client(mcp) as c:
         await c.call_tool("index_project", {})
-        result = (
-            await c.call_tool(
-                "import_specs_from_markdown", {"path": "openspec"}
-            )
-        ).data
+        result = (await c.call_tool("import_specs_from_markdown", {"path": "openspec"})).data
         assert result["created"] == 3
         listed = (await c.call_tool("list_specs", {})).data
         by_id = {r["spec_id"]: r for r in listed["specs"]}
@@ -168,9 +162,7 @@ async def test_import_rejects_bad_fmt(sample_repo):
     (sample_repo / "spec.md").write_text(OPENSPEC_SAMPLE)
     async with Client(mcp) as c:
         result = (
-            await c.call_tool(
-                "import_specs_from_markdown", {"path": "spec.md", "fmt": "livespec"}
-            )
+            await c.call_tool("import_specs_from_markdown", {"path": "spec.md", "fmt": "livespec"})
         ).data
         assert result.get("isError") is True
 

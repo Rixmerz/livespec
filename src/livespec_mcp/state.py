@@ -185,8 +185,7 @@ def get_state(workspace: str | Path | None = None, *, create: bool = False) -> A
         db_path = group_db if group_db is not None else workspace_db_path(ws)
         if not create and not db_path.is_file():
             raise WorkspaceNotIndexedError(
-                f"workspace not indexed: {ws}. "
-                f"run index_project(workspace='{ws}') first."
+                f"workspace not indexed: {ws}. run index_project(workspace='{ws}') first."
             )
         settings = Settings(
             workspace=ws,
@@ -248,5 +247,3 @@ def reset_state() -> None:
             except Exception:
                 pass
         _cache.clear()
-
-
