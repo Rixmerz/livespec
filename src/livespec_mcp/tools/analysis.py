@@ -46,6 +46,7 @@ from livespec_mcp.domain.test_coverage_reports import discover_report_coverage
 from livespec_mcp.state import AppState, get_state
 from livespec_mcp.tool_params import (
     Cursor,
+    EdgeTypes,
     Limit,
     MaxDepth,
     MinWeight,
@@ -3141,6 +3142,87 @@ def _attach_unknown_relations(report: dict[str, Any], graph: Any) -> None:
     )
 
 
+def _resolve_edge_types(edge_types: list[str] | None) -> frozenset[str]:
+    """Caller-supplied edge kinds, or the invocation set when unspecified."""
+    from livespec_mcp.domain.graph import INVOCATION_EDGE_TYPES
+
+    if edge_types is None:
+        return INVOCATION_EDGE_TYPES
+    return frozenset(edge_types)
+
+
+def _label_direct_edges(
+    page: list[dict[str, Any]], view: Any, sid: int, *, incoming: bool
+) -> list[dict[str, Any]]:
+    """Put the edge that made each depth-1 neighbour a neighbour on its row.
+
+    Only depth 1: past one hop "which edge made this a caller" has no single
+    answer, and a label that is sometimes about a different edge is worse than
+    none. Rows are copied, never mutated in place — these dicts belong to the
+    cached GraphView and are shared by every caller of `load_graph`.
+    """
+    if sid not in view.g:
+        return page
+    direct = view.g.predecessors(sid) if incoming else view.g.successors(sid)
+    edges = {
+        n: (view.g[n][sid] if incoming else view.g[sid][n]) for n in direct
+    }
+    out: list[dict[str, Any]] = []
+    for meta in page:
+        data = edges.get(meta.get("id"))
+        if data is None:
+            out.append(meta)
+            continue
+        row = {**meta, "edge_type": data.get("edge_type", "calls")}
+        origin = data.get("origin", "livespec")
+        if origin != "livespec":
+            row["via_external_edge"] = origin
+        out.append(row)
+    return out
+
+
+def _note_excluded_edge_types(
+    payload: dict[str, Any],
+    view: Any,
+    sid: int,
+    *,
+    incoming: bool,
+    edge_types: frozenset[str],
+    min_weight: float,
+) -> None:
+    """Say how many direct neighbours the edge-type filter left out, and why.
+
+    Without this the filter trades one silence for another: before, 38
+    type-position references were reported as callers; after, they would simply
+    be gone. Both are wrong. The count plus the argument that reveals them is
+    the honest answer — these symbols do depend on the root, they just do not
+    call it.
+    """
+    if sid not in view.g:
+        return
+    direct = view.g.predecessors(sid) if incoming else view.g.successors(sid)
+    excluded: dict[str, int] = {}
+    for n in direct:
+        data = view.g[n][sid] if incoming else view.g[sid][n]
+        if min_weight > 0.0 and float(data.get("weight", 1.0)) < min_weight:
+            continue
+        et = data.get("edge_type", "calls")
+        if et not in edge_types:
+            excluded[et] = excluded.get(et, 0) + 1
+    if not excluded:
+        return
+    total = sum(excluded.values())
+    payload["excluded_by_edge_type"] = dict(sorted(excluded.items()))
+    payload["excluded_by_edge_type_hint"] = (
+        f"{total} more symbol(s) depend on this one through edges that are not "
+        "calls (type position, inheritance, imports) and were left out of the "
+        "count. Pass edge_types=["
+        + ", ".join(f'"{et}"' for et in sorted(set(edge_types) | set(excluded)))
+        + "] to include them, or use analyze_impact, which counts every "
+        "dependency because a type annotation does break when the type changes."
+    )
+
+
 def _corroborate_orphan_tests(
     candidates: list[dict[str, Any]],
     *,
@@ -3587,7 +3669,7 @@ def register(mcp: FastMCP) -> None:
         out = closure.as_dict()
         if st.settings.grouped and sym.get("project_root"):
             out["project_root"] = sym["project_root"]
-        return out
+        return _attach_external_edges(out, st, st.project_id)
 
     @mcp.tool(annotations={"idempotentHint": False})
     @_workspace_note
@@ -3815,6 +3897,7 @@ def register(mcp: FastMCP) -> None:
         cursor: Cursor = 0,
         summary_only: SummaryOnly = False,
         min_weight: MinWeight = 0.6,
+        edge_types: EdgeTypes = None,
         workspace: Workspace | None = None,
     ) -> dict[str, Any]:
         """Symbols that call `qname` (transitive backward cone up to max_depth).
@@ -3835,6 +3918,18 @@ def register(mcp: FastMCP) -> None:
         fan-out edges that the static analyzer couldn't disambiguate
         (weight 0.5 — multiple short-name candidates, no scope match).
         Pass ``min_weight=0.0`` to see the unfiltered cone (legacy).
+
+        Unreleased: ``edge_types`` decides what counts as a call. The default
+        is invocation only (``calls`` / ``invokes_route``), which is every edge
+        livespec itself derives — so this changes nothing on an index nobody
+        has run `ingest_external_graph` on. On one that has, it keeps ingested
+        ``references`` / ``inherits`` rows out of a list labelled "callers":
+        a type-position use is a real dependency but it is not a call. Those
+        are reported separately under ``excluded_by_edge_type``, and
+        `analyze_impact` still counts every one of them.
+
+        Depth-1 callers carry ``edge_type``, plus ``via_external_edge`` when
+        the edge came from an ingested graph rather than livespec's resolver.
         """
         st = get_state(workspace)
         pids = st.group_project_ids()
@@ -3844,8 +3939,11 @@ def register(mcp: FastMCP) -> None:
         graph_pid = _graph_project_id(sym, st.project_id)
         view = load_graph(st.conn, graph_pid)
         sid = int(sym["id"])
+        wanted_types = _resolve_edge_types(edge_types)
         callers = (
-            ancestors_within(view.g, sid, max_depth, min_weight=min_weight)
+            ancestors_within(
+                view.g, sid, max_depth, min_weight=min_weight, edge_types=wanted_types
+            )
             if sid in view.g
             else set()
         )
@@ -3854,6 +3952,7 @@ def register(mcp: FastMCP) -> None:
             return {
                 "root": sym["qualified_name"],
                 "max_depth": max_depth,
+                "edge_types": sorted(wanted_types),
                 "count": total,
             }
         meta_sorted = sorted(
@@ -3862,30 +3961,23 @@ def register(mcp: FastMCP) -> None:
         )
         page = meta_sorted[cursor : cursor + limit]
         next_cursor = cursor + limit if cursor + limit < len(meta_sorted) else None
-        # Depth-1 callers whose edge into the root was ingested rather than
-        # extracted. Only depth 1 is labelled: past one hop "which edge made
-        # this a caller" has no single answer, and a label that is sometimes
-        # about a different edge is worse than none. Copied, never mutated in
-        # place — these dicts belong to the cached GraphView.
-        external_direct = {
-            n
-            for n in (view.g.predecessors(sid) if sid in view.g else ())
-            if view.g[n][sid].get("origin", "livespec") != "livespec"
-        }
-        if external_direct:
-            page = [
-                {**m, "via_external_edge": view.g[m["id"]][sid]["origin"]}
-                if m.get("id") in external_direct
-                else m
-                for m in page
-            ]
+        page = _label_direct_edges(page, view, sid, incoming=True)
         payload = {
             "root": sym["qualified_name"],
             "max_depth": max_depth,
+            "edge_types": sorted(wanted_types),
             "callers": page,
             "count": total,
             "next_cursor": next_cursor,
         }
+        _note_excluded_edge_types(
+            payload,
+            view,
+            sid,
+            incoming=True,
+            edge_types=wanted_types,
+            min_weight=min_weight,
+        )
         _attach_external_edges(payload, st, graph_pid)
         # v0.21 P2: cross-repo route callers — frontend call sites that hit this
         # symbol as an HTTP endpoint (invokes_route edges). Direct symbol_edge
@@ -3906,6 +3998,7 @@ def register(mcp: FastMCP) -> None:
         cursor: Cursor = 0,
         summary_only: SummaryOnly = False,
         min_weight: MinWeight = 0.6,
+        edge_types: EdgeTypes = None,
         workspace: Workspace | None = None,
     ) -> dict[str, Any]:
         """Symbols that `qname` calls (transitive forward cone up to max_depth).
@@ -3913,6 +4006,9 @@ def register(mcp: FastMCP) -> None:
         Forward-direction counterpart of `who_calls`. Same v0.9 P2
         pagination contract: ``limit`` / ``cursor`` / ``summary_only``.
         Same v0.9 P3 fan-out filter: ``min_weight=0.6`` by default.
+        Same ``edge_types`` default as `who_calls`: invocation edges only, so
+        an ingested type-position reference is reported under
+        ``excluded_by_edge_type`` rather than as something this symbol calls.
         """
         st = get_state(workspace)
         pids = st.group_project_ids()
@@ -3922,8 +4018,11 @@ def register(mcp: FastMCP) -> None:
         graph_pid = _graph_project_id(sym, st.project_id)
         view = load_graph(st.conn, graph_pid)
         sid = int(sym["id"])
+        wanted_types = _resolve_edge_types(edge_types)
         callees = (
-            descendants_within(view.g, sid, max_depth, min_weight=min_weight)
+            descendants_within(
+                view.g, sid, max_depth, min_weight=min_weight, edge_types=wanted_types
+            )
             if sid in view.g
             else set()
         )
@@ -3932,6 +4031,7 @@ def register(mcp: FastMCP) -> None:
             return {
                 "root": sym["qualified_name"],
                 "max_depth": max_depth,
+                "edge_types": sorted(wanted_types),
                 "count": total,
             }
         meta_sorted = sorted(
@@ -3943,7 +4043,8 @@ def register(mcp: FastMCP) -> None:
         payload = {
             "root": sym["qualified_name"],
             "max_depth": max_depth,
-            "callees": page,
+            "edge_types": sorted(wanted_types),
+            "callees": _label_direct_edges(page, view, sid, incoming=False),
             "count": total,
             "next_cursor": next_cursor,
         }
@@ -3952,18 +4053,14 @@ def register(mcp: FastMCP) -> None:
         endpoints = _route_edge_peers(st.conn, sid, incoming=False)
         if endpoints:
             payload["invokes_endpoints"] = endpoints
-        external_direct = {
-            n
-            for n in (view.g.successors(sid) if sid in view.g else ())
-            if view.g[sid][n].get("origin", "livespec") != "livespec"
-        }
-        if external_direct:
-            payload["callees"] = [
-                {**m, "via_external_edge": view.g[sid][m["id"]]["origin"]}
-                if m.get("id") in external_direct
-                else m
-                for m in page
-            ]
+        _note_excluded_edge_types(
+            payload,
+            view,
+            sid,
+            incoming=False,
+            edge_types=wanted_types,
+            min_weight=min_weight,
+        )
         return _attach_external_edges(payload, st, graph_pid)
 
     @mcp.tool(annotations={"readOnlyHint": True, "idempotentHint": True})
@@ -4057,22 +4154,26 @@ def register(mcp: FastMCP) -> None:
             except (json.JSONDecodeError, TypeError):
                 pass
 
-        return {
-            "qualified_name": sym["qualified_name"],
-            "kind": sym["kind"],
-            "signature": sym["signature"],
-            "file_path": sym["file_path"],
-            "start_line": sym["start_line"],
-            "end_line": sym["end_line"],
-            "docstring_lead": docstring_lead,
-            "is_entry_point": is_entry_point,
-            "framework_decorators": framework_decorators,
-            "callers_count": len(callers_all),
-            "callees_count": len(callees_all),
-            "top_callers": _topn(callers_all),
-            "top_callees": _topn(callees_all),
-            "specs": [dict(r) for r in specs],
-        }
+        return _attach_external_edges(
+            {
+                "qualified_name": sym["qualified_name"],
+                "kind": sym["kind"],
+                "signature": sym["signature"],
+                "file_path": sym["file_path"],
+                "start_line": sym["start_line"],
+                "end_line": sym["end_line"],
+                "docstring_lead": docstring_lead,
+                "is_entry_point": is_entry_point,
+                "framework_decorators": framework_decorators,
+                "callers_count": len(callers_all),
+                "callees_count": len(callees_all),
+                "top_callers": _topn(callers_all),
+                "top_callees": _topn(callees_all),
+                "specs": [dict(r) for r in specs],
+            },
+            st,
+            graph_pid,
+        )
 
     @mcp.tool(annotations={"readOnlyHint": True, "idempotentHint": True})
     def analyze_impact(
@@ -4386,10 +4487,13 @@ def register(mcp: FastMCP) -> None:
           but is the opposite of "what is this repo's core". No opt-out;
           the ones that outranked the returned top-N are listed by
           qualified name in `test_symbols_filtered`."""
-        return compute_project_overview(
-            get_state(workspace),
-            include_infrastructure,
-            include_structural_patterns,
+        st = get_state(workspace)
+        return _attach_external_edges(
+            compute_project_overview(
+                st, include_infrastructure, include_structural_patterns
+            ),
+            st,
+            st.project_id,
         )
 
     @mcp.tool(annotations={"readOnlyHint": True, "idempotentHint": True})
@@ -4982,12 +5086,13 @@ def register(mcp: FastMCP) -> None:
         if summary_only:
             payload["legacy_servers_sample"] = servers[:10]
             payload["orphan_clients_sample"] = clients[:10]
+            _attach_external_edges(payload, st, st.project_id)
             return payload
         page = flows[cursor : cursor + limit]
         next_cursor = cursor + limit if cursor + limit < total else None
         payload["flows"] = page
         payload["next_cursor"] = next_cursor
-        return payload
+        return _attach_external_edges(payload, st, st.project_id)
 
     @mcp.tool(annotations={"readOnlyHint": True, "idempotentHint": True})
     @_workspace_note
@@ -5072,7 +5177,7 @@ def register(mcp: FastMCP) -> None:
             }
             if cov.get("snapshot_warning"):
                 out["warning"] = cov["snapshot_warning"]
-            return out
+            return _attach_external_edges(out, st, st.project_id)
 
         cur_map = cursors or {}
 
@@ -5118,7 +5223,7 @@ def register(mcp: FastMCP) -> None:
         }
         if cov.get("snapshot_warning"):
             payload["warning"] = cov["snapshot_warning"]
-        return payload
+        return _attach_external_edges(payload, st, st.project_id)
 
     @mcp.tool(annotations={"readOnlyHint": True, "idempotentHint": True})
     @_workspace_note
@@ -5291,12 +5396,12 @@ def register(mcp: FastMCP) -> None:
                 "extractor coverage, not proof their suites have none."
             )
         if summary_only:
-            return payload
+            return _attach_external_edges(payload, st, st.project_id)
         page = orphans[cursor : cursor + limit]
         next_cursor = cursor + limit if cursor + limit < total else None
         payload["orphan_tests"] = page
         payload["next_cursor"] = next_cursor
-        return payload
+        return _attach_external_edges(payload, st, st.project_id)
 
     @mcp.tool(annotations={"readOnlyHint": True, "idempotentHint": True})
     def git_diff_impact(
@@ -5477,7 +5582,7 @@ def register(mcp: FastMCP) -> None:
             base["changed_files_sample"] = changed_paths[:_SAMPLE]
             base["changed_files_indexed_sample"] = sorted(indexed_paths)[:_SAMPLE]
             base["changed_files_unindexed_sample"] = unindexed_paths[:_SAMPLE]
-            return base
+            return _attach_external_edges(base, st, pid)
         base["changed_files"] = changed_paths
         base["changed_files_indexed"] = sorted(indexed_paths)
         base["changed_files_unindexed"] = unindexed_paths
@@ -5490,6 +5595,7 @@ def register(mcp: FastMCP) -> None:
         base["changed_symbols"] = changed_symbol_meta
         base["impacted_callers"] = page
         base["next_cursor"] = next_cursor
+        _attach_external_edges(base, st, pid)
         return _attach_payload_warning(
             base,
             _payload_warning(

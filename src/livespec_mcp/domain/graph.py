@@ -153,11 +153,29 @@ def invalidate_graph_cache(project_id: int | None = None) -> int:
         return len(keys)
 
 
+#: Edge types that mean "this symbol invokes that one" — the claim `who_calls`
+#: and `who_does_this_call` actually make. livespec's own extraction only ever
+#: writes these two (`_resolve_refs` -> `calls`, route joining ->
+#: `invokes_route`), so filtering a traversal by them is a no-op on any index
+#: nobody has ingested into, and filters exactly the rows that came from
+#: somewhere else.
+#:
+#: This exists because ingestion (v0.33) put `references` and `inherits` rows
+#: into the same table. Those are real dependencies and belong in
+#: `analyze_impact` — a type annotation DOES break when you change the type —
+#: but calling them "callers" is false. Measured on this repo: `who_calls`
+#: for one class went from 2 to 40 after an ingest, and 38 of the 40 were
+#: methods taking it as a type-position parameter. An agent reading "40
+#: callers" has no way to tell which two actually call it.
+INVOCATION_EDGE_TYPES: frozenset[str] = frozenset({"calls", "invokes_route"})
+
+
 def descendants_within(
     g: nx.DiGraph,
     source: int,
     max_depth: int,
     min_weight: float = 0.0,
+    edge_types: frozenset[str] | set[str] | None = None,
 ) -> set[int]:
     """BFS up to max_depth, collect descendants (forward slicing).
 
@@ -166,6 +184,12 @@ def descendants_within(
     can't disambiguate) lands at weight 0.5; pass ``min_weight=0.6`` to
     drop that noise from the traversal. Default 0.0 keeps the legacy
     behavior (every edge counted).
+
+    Unreleased: ``edge_types`` restricts the walk to edges of those types.
+    ``None`` (the default) walks every edge, so every existing caller of this
+    function is unaffected. Filtering happens during the walk, not after it: a
+    node reachable only *through* an excluded edge is not a caller either, and
+    counting it would reintroduce the same lie one hop further out.
     """
     # True BFS (FIFO) so every node is first reached by its SHORTEST path.
     # A LIFO frontier (DFS) with a global `seen` set marked at enqueue time
@@ -184,9 +208,11 @@ def descendants_within(
         for succ in g.successors(node):
             if succ in seen or succ == source:
                 continue
-            if min_weight > 0.0:
+            if min_weight > 0.0 or edge_types is not None:
                 ed = g.get_edge_data(node, succ) or {}
-                if float(ed.get("weight", 1.0)) < min_weight:
+                if min_weight > 0.0 and float(ed.get("weight", 1.0)) < min_weight:
+                    continue
+                if edge_types is not None and ed.get("edge_type") not in edge_types:
                     continue
             seen.add(succ)
             frontier.append((succ, d + 1))
@@ -198,8 +224,11 @@ def ancestors_within(
     source: int,
     max_depth: int,
     min_weight: float = 0.0,
+    edge_types: frozenset[str] | set[str] | None = None,
 ) -> set[int]:
-    return descendants_within(g.reverse(copy=False), source, max_depth, min_weight)
+    return descendants_within(
+        g.reverse(copy=False), source, max_depth, min_weight, edge_types
+    )
 
 
 def page_rank(g: nx.DiGraph, personalization: dict[int, float] | None = None) -> dict[int, float]:
@@ -250,6 +279,28 @@ def _pagerank_pure(
     return rank
 
 
+def _has_any_external_edge(conn: sqlite3.Connection) -> bool:
+    """Cheap existence probe: does this DB hold a non-livespec edge at all?
+
+    Two range scans on `idx_edge_origin`, each O(log n), instead of the
+    three-table join below. `origin <> 'livespec'` cannot use that index — an
+    inequality on a single value is not a range — so it degrades to a full scan
+    of `symbol_edge`, which on Django (465K edges) is real time paid by every
+    read tool on every call, on an index nobody has ever ingested into.
+
+    Splitting it into the two ranges around the constant makes it a b-tree
+    seek. Unscoped by project on purpose: the summary below is what needs to be
+    exact per project, and this only decides whether asking is worth it.
+    """
+    for op in ("<", ">"):
+        row = conn.execute(
+            f"SELECT 1 FROM symbol_edge WHERE origin {op} 'livespec' LIMIT 1"
+        ).fetchone()
+        if row is not None:
+            return True
+    return False
+
+
 def external_edge_summary(
     conn: sqlite3.Connection, project_id: int
 ) -> dict[str, int] | None:
@@ -257,10 +308,14 @@ def external_edge_summary(
 
     Read tools call this to say, in their own payload, that part of the answer
     came from a second extractor. An agent that cannot tell an ingested edge
-    from an extracted one cannot calibrate what it is reading, and the cost of
-    saying so is one indexed COUNT on a column that is `'livespec'` for every
-    row on an index nobody has ingested into.
+    from an extracted one cannot calibrate what it is reading.
+
+    Costs an index seek on every index nobody has ingested into — which is
+    every default install — and only pays for the exact per-project count on
+    one that has, where the caller opted into it.
     """
+    if not _has_any_external_edge(conn):
+        return None
     rows = conn.execute(
         """SELECT e.origin, COUNT(*) AS c
            FROM symbol_edge e

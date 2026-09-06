@@ -82,3 +82,16 @@ MinWeight = Annotated[
         le=1.0,
     ),
 ]
+
+EdgeTypes = Annotated[
+    list[str] | None,
+    Field(
+        description=(
+            "Which edge kinds count as a call. Default (null) = invocation only "
+            "('calls', 'invokes_route'), which is every edge livespec itself "
+            "derives. Pass e.g. ['calls','references','inherits'] to include "
+            "dependency edges ingested from another extractor — those are real "
+            "dependencies but they are not callers."
+        ),
+    ),
+]
