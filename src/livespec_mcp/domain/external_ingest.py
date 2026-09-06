@@ -43,8 +43,14 @@ subsumes the other.
 
 from __future__ import annotations
 
+import json
+import sqlite3
+import time
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from pathlib import Path
+from typing import TYPE_CHECKING, Any
+
+import xxhash
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from livespec_mcp.domain.external_graph import ExternalGraph
@@ -313,4 +319,190 @@ def sample_edges(
                 "weight": round(edge.weight, 3),
             }
         )
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Provenance: which graph, in which state, when (migration 23)
+# ---------------------------------------------------------------------------
+#
+# Ingestion was reversible and idempotent from day one, but amnesiac. The rows
+# carried `origin` and nothing recorded the file they came from. So the only
+# moment anyone could learn that ingested edges had gone stale was the
+# `index_project` run that destroyed some of them — and the rows that run did
+# NOT destroy are the dangerous half: still in the graph, still answering
+# `who_calls`, derived from a graph.json built against code that has moved.
+
+
+def _graph_stat(path: Path) -> tuple[float | None, int | None]:
+    try:
+        st = path.stat()
+    except OSError:
+        return None, None
+    return st.st_mtime, st.st_size
+
+
+def _graph_hash(path: Path) -> str | None:
+    """Content hash of a graph file, or None if it cannot be read.
+
+    Hashed rather than trusted by mtime because `graphify update` and
+    `graphify watch` rewrite `graph.json` on every run, so mtime moves
+    constantly while the content very often does not. Reporting a stale ingest
+    every time a watcher fired would train the reader to ignore the field.
+    """
+    h = xxhash.xxh3_128()
+    try:
+        with path.open("rb") as fh:
+            for block in iter(lambda: fh.read(1024 * 1024), b""):
+                h.update(block)
+    except OSError:
+        return None
+    return h.hexdigest()
+
+
+def record_ingest(
+    conn: sqlite3.Connection,
+    project_id: int,
+    *,
+    origin: str,
+    graph_path: str,
+    relations: frozenset[str] | set[str],
+    edges_written: int,
+) -> None:
+    """Remember what this ingest was, replacing this origin's previous row.
+
+    One row per (project, origin), for the same reason the ingest deletes its
+    own edges first: the state after an ingest must depend only on the current
+    graph and the current index, never on how many times it has run.
+    """
+    path = Path(graph_path)
+    mtime, size = _graph_stat(path)
+    conn.execute(
+        """INSERT INTO external_ingest(
+               project_id, origin, graph_path, graph_mtime, graph_size,
+               graph_hash, relations, edges_written, ingested_at)
+           VALUES(?,?,?,?,?,?,?,?,?)
+           ON CONFLICT(project_id, origin) DO UPDATE SET
+               graph_path=excluded.graph_path,
+               graph_mtime=excluded.graph_mtime,
+               graph_size=excluded.graph_size,
+               graph_hash=excluded.graph_hash,
+               relations=excluded.relations,
+               edges_written=excluded.edges_written,
+               ingested_at=excluded.ingested_at""",
+        (
+            project_id,
+            origin,
+            str(path),
+            mtime,
+            size,
+            _graph_hash(path),
+            json.dumps(sorted(relations)),
+            int(edges_written),
+            time.time(),
+        ),
+    )
+
+
+def clear_ingest(conn: sqlite3.Connection, project_id: int, origin: str) -> None:
+    conn.execute(
+        "DELETE FROM external_ingest WHERE project_id=? AND origin=?",
+        (project_id, origin),
+    )
+
+
+def read_ingest(
+    conn: sqlite3.Connection, project_id: int, origin: str | None = None
+) -> list[dict[str, Any]]:
+    """Provenance rows for a project. Tolerant of a DB predating migration 23."""
+    sql = "SELECT * FROM external_ingest WHERE project_id=?"
+    params: list[Any] = [project_id]
+    if origin is not None:
+        sql += " AND origin=?"
+        params.append(origin)
+    try:
+        return [dict(r) for r in conn.execute(sql, params)]
+    except sqlite3.OperationalError:
+        return []
+
+
+#: Memoises "is the file at this (path, mtime, size) still the one we ingested?"
+#: so a `graphify watch` rewriting graph.json does not make every read tool
+#: re-hash a multi-megabyte file.
+_HASH_MEMO: dict[tuple[str, float, int], str | None] = {}
+_HASH_MEMO_MAX = 8
+
+
+def _hash_memoised(path: Path, mtime: float, size: int) -> str | None:
+    key = (str(path), mtime, size)
+    if key not in _HASH_MEMO:
+        if len(_HASH_MEMO) >= _HASH_MEMO_MAX:
+            _HASH_MEMO.pop(next(iter(_HASH_MEMO)), None)
+        _HASH_MEMO[key] = _graph_hash(path)
+    return _HASH_MEMO[key]
+
+
+def ingest_freshness(
+    conn: sqlite3.Connection, project_id: int, live_counts: dict[str, int]
+) -> dict[str, Any]:
+    """Per-origin verdict on whether ingested edges still describe this code.
+
+    `live_counts` is what `external_edge_summary` found now. Three ways an
+    ingest goes stale, and they need different words:
+
+    - **edges_lost**: a re-extract cascaded some rows away. The survivors are
+      the worry, not the casualties.
+    - **graph_changed**: the file on disk is not the one that was ingested, so
+      re-running would produce different edges.
+    - **graph_missing**: it is gone entirely; `remove=True` is the only clean
+      exit left.
+
+    Cheap by construction: one indexed row, one `stat`, and a content hash only
+    when the stat says something moved — memoised so a watcher rewriting the
+    file does not make every read tool re-hash it.
+    """
+    out: dict[str, Any] = {}
+    for row in read_ingest(conn, project_id):
+        origin = row["origin"]
+        path = Path(row["graph_path"])
+        status: list[str] = []
+        live = int(live_counts.get(origin, 0))
+        written = int(row["edges_written"] or 0)
+        if live < written:
+            status.append("edges_lost")
+        mtime, size = _graph_stat(path)
+        if mtime is None:
+            status.append("graph_missing")
+        elif mtime != row["graph_mtime"] or size != row["graph_size"]:
+            if _hash_memoised(path, mtime, size) != row["graph_hash"]:
+                status.append("graph_changed")
+        if not status:
+            continue
+        detail: dict[str, Any] = {
+            "status": status,
+            "graph_path": row["graph_path"],
+            "ingested_at": row["ingested_at"],
+            "edges_written": written,
+            "edges_now": live,
+        }
+        if "edges_lost" in status:
+            detail["hint"] = (
+                f"{written - live} of {written} ingested edges were removed by a "
+                "re-extract (the FK cascade takes them with the symbols they "
+                f"pointed at). The {live} that survive were derived from the "
+                "same graph and may no longer match the code."
+            )
+        if "graph_changed" in status:
+            detail["hint"] = (
+                "The graph file has changed since these edges were ingested, so "
+                "re-running would produce a different set. Run "
+                "ingest_external_graph(dry_run=False) to refresh."
+            )
+        if "graph_missing" in status:
+            detail["hint"] = (
+                "The graph these edges came from no longer exists on disk, so "
+                "they cannot be refreshed or checked. "
+                "ingest_external_graph(remove=True) takes them back out."
+            )
+        out[origin] = detail
     return out

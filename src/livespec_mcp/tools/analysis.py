@@ -3041,13 +3041,19 @@ def _resolve_corroboration_source(
 
 def _load_corroborating_graph(
     st: AppState, graph_path: str, *, keep_link_meta: bool = False
-) -> tuple[Any, dict[str, Any] | None]:
+) -> tuple[Any, float, dict[str, Any] | None]:
     """Shared load + sanity gate for both corroboration paths.
 
-    Returns ``(graph, None)`` or ``(None, mcp_error)``. The overlap guard is the
-    important half: a graph whose paths don't line up matches nothing, and
-    "nothing matched" would otherwise be reported as "nothing to drop", which
-    reads as a clean bill of health for candidates nobody actually checked.
+    Returns ``(graph, overlap, None)`` or ``(None, 0.0, mcp_error)``. The
+    overlap guard is the important half: a graph whose paths don't line up
+    matches nothing, and "nothing matched" would otherwise be reported as
+    "nothing to drop", which reads as a clean bill of health for candidates
+    nobody actually checked.
+
+    The overlap is RETURNED rather than stored on the graph. Parsed graphs are
+    cached and shared across calls and workspaces, and overlap is a fact about
+    (this graph, one index) — writing it onto the shared object let one
+    project's sanity gate report another project's number.
     """
     from livespec_mcp.domain.external_graph import (
         load_external_graph,
@@ -3061,7 +3067,7 @@ def _load_corroborating_graph(
     try:
         graph = load_external_graph(resolved, keep_link_meta=keep_link_meta)
     except FileNotFoundError:
-        return None, mcp_error(
+        return None, 0.0, mcp_error(
             f"External graph not found: {resolved}",
             hint=(
                 "Generate one with `/graphify <repo>` (writes "
@@ -3069,7 +3075,7 @@ def _load_corroborating_graph(
             ),
         )
     except (ValueError, OSError, UnicodeDecodeError) as exc:
-        return None, mcp_error(
+        return None, 0.0, mcp_error(
             f"Could not read external graph {resolved}: {exc}",
             hint="Expected Graphify's NetworkX node-link graph.json.",
         )
@@ -3082,7 +3088,7 @@ def _load_corroborating_graph(
     }
     overlap = overlap_ratio(graph, indexed_files)
     if overlap < 0.1:
-        return None, mcp_error(
+        return None, 0.0, mcp_error(
             f"External graph {resolved} shares almost no files with this index "
             f"({overlap:.0%} of its files are indexed here).",
             hint=(
@@ -3091,8 +3097,7 @@ def _load_corroborating_graph(
                 "against it would vouch for nothing."
             ),
         )
-    graph.file_overlap = overlap
-    return graph, None
+    return graph, overlap, None
 
 
 def _attach_external_edges(payload: dict[str, Any], st: AppState, project_id: int) -> dict[str, Any]:
@@ -3106,12 +3111,24 @@ def _attach_external_edges(payload: dict[str, Any], st: AppState, project_id: in
     every index nobody has ingested into, and attached to the tools whose
     numbers the ingest actually moved.
     """
+    from livespec_mcp.domain.external_ingest import ingest_freshness
     from livespec_mcp.domain.graph import external_edge_summary
 
-    summary = external_edge_summary(st.conn, project_id)
-    if not summary:
+    summary = external_edge_summary(st.conn, project_id) or {}
+    # Provenance (migration 23) turns "these edges are borrowed" into "these
+    # edges are borrowed AND the thing they were borrowed from has moved",
+    # which is the version that tells the reader to do something.
+    #
+    # Read even when the live count is zero, and that case is the reason this
+    # is not an early return: a re-extract that cascaded away EVERY ingested
+    # edge leaves nothing to count, so keying the block on the live count made
+    # the disclosure vanish in precisely the worst state — an agent who ran an
+    # ingest, believes the graph still carries it, and is now reading a payload
+    # that mentions nothing.
+    stale = ingest_freshness(st.conn, project_id, summary)
+    if not summary and not stale:
         return payload
-    payload["external_edges"] = {
+    block: dict[str, Any] = {
         "by_origin": summary,
         "hint": (
             "Part of this answer rests on edges ingested from another "
@@ -3119,6 +3136,9 @@ def _attach_external_edges(payload: dict[str, Any], st: AppState, project_id: in
             "or ingest_external_graph(remove=True) for a livespec-only graph."
         ),
     }
+    if stale:
+        block["stale"] = stale
+    payload["external_edges"] = block
     return payload
 
 
@@ -3237,7 +3257,7 @@ def _corroborate_orphan_tests(
     ``find_orphan_tests`` makes and exactly what an in-process harness or a
     string-dispatched call breaks.
     """
-    graph, err = _load_corroborating_graph(st, graph_path)
+    graph, overlap, err = _load_corroborating_graph(st, graph_path)
     if err is not None:
         return candidates, err
 
@@ -3280,7 +3300,7 @@ def _corroborate_orphan_tests(
     report: dict[str, Any] = {
         "source": graph.path,
         "external_nodes": graph.node_count,
-        "file_overlap": round(graph.file_overlap, 3),
+        "file_overlap": round(overlap, 3),
         "candidates_before": len(candidates),
         "candidates_matched": matched,
         "dropped_as_reaching_production": len(dropped),
@@ -3314,7 +3334,7 @@ def _corroborate_dead_code(
     mismatched external file must never be reported as "nothing to corroborate",
     which would read as a clean bill of health.
     """
-    graph, err = _load_corroborating_graph(st, graph_path)
+    graph, overlap, err = _load_corroborating_graph(st, graph_path)
     if err is not None:
         return candidates, err
 
@@ -3350,7 +3370,7 @@ def _corroborate_dead_code(
         "source": graph.path,
         "external_nodes": graph.node_count,
         "external_edges": graph.edge_count,
-        "file_overlap": round(graph.file_overlap, 3),
+        "file_overlap": round(overlap, 3),
         "candidates_before": len(candidates),
         "candidates_matched": matched,
         "dropped_as_referenced": len(dropped),

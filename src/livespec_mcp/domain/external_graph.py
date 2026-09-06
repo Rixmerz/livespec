@@ -203,9 +203,10 @@ class ExternalGraph:
     unknown_relations: dict[str, int] = field(default_factory=dict)
     #: True when any link carries an origin other than deterministic AST.
     has_non_ast_origin: bool = False
-    #: Share of this graph's files that the consuming index also has. Set by
-    #: the caller's sanity gate; 0.0 until then.
-    file_overlap: float = 0.0
+    #: Deliberately NOT a field any more. Overlap is a property of (this
+    #: graph, one index), and graphs are cached across calls and workspaces —
+    #: storing it here meant one project's sanity gate overwrote another's on a
+    #: shared object. `_load_corroborating_graph` returns it alongside instead.
 
     def lookup(self, file_path: str, line: int, name: str) -> ExternalNode | None:
         """Position first, then bare name within the same file.
@@ -274,6 +275,33 @@ def _parse_line(location: Any) -> int | None:
         return None
 
 
+#: Parsed graphs, keyed by (path, mtime, size, keep_link_meta). Small because
+#: each entry is a full parse of a multi-megabyte file: on this repo's own
+#: 3.8 MB graph, 3573 nodes and 6097 links cost ~45 ms and a proportional
+#: amount of memory.
+#:
+#: The cache exists because `[graph] external` makes corroboration the default
+#: for a repo, and then EVERY `find_dead_code` re-parses the file: measured at
+#: 522 ms per call here, and this graph is small. Keying on (mtime, size) means
+#: a `graphify update` invalidates it by writing the file, which is exactly
+#: when the parse should be redone — no explicit invalidation to forget.
+_GRAPH_CACHE: dict[tuple[str, float, int, bool], ExternalGraph] = {}
+_GRAPH_CACHE_MAX = 4
+
+
+def _cache_key(path: Path, keep_link_meta: bool) -> tuple[str, float, int, bool] | None:
+    try:
+        st = path.stat()
+    except OSError:
+        return None
+    return (str(path), st.st_mtime, st.st_size, keep_link_meta)
+
+
+def clear_external_graph_cache() -> None:
+    """Drop every parsed graph. For tests, and for a caller that knows better."""
+    _GRAPH_CACHE.clear()
+
+
 def load_external_graph(
     path: str | Path, *, keep_link_meta: bool = False
 ) -> ExternalGraph:
@@ -285,6 +313,9 @@ def load_external_graph(
     silently: one bad row must not cost the caller the whole file.
     """
     p = Path(path)
+    key = _cache_key(p, keep_link_meta)
+    if key is not None and key in _GRAPH_CACHE:
+        return _GRAPH_CACHE[key]
     raw = p.read_text(encoding="utf-8")
     try:
         data = json.loads(raw)
@@ -364,6 +395,10 @@ def load_external_graph(
                     },
                 )
 
+    if key is not None:
+        if len(_GRAPH_CACHE) >= _GRAPH_CACHE_MAX:
+            _GRAPH_CACHE.pop(next(iter(_GRAPH_CACHE)), None)
+        _GRAPH_CACHE[key] = graph
     return graph
 
 

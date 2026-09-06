@@ -602,6 +602,46 @@ def _m022_symbol_edge_origin(conn: sqlite3.Connection) -> None:
     )
 
 
+def _m023_external_ingest(conn: sqlite3.Connection) -> None:
+    """v0.33: remember WHICH graph an ingest came from, and when.
+
+    Ingestion was reversible and idempotent from the start, but amnesiac: the
+    rows carried `origin`, and nothing anywhere recorded the file they came
+    from, its state at the time, or how many rows were written. Two things were
+    impossible as a result.
+
+    First, freshness. `index_project` reported `external_edges_stale` only on
+    the run that destroyed edges, because it sampled the count before and
+    after. Every later call — every `who_calls` reading those rows — had no way
+    to know the surviving edges were derived from a graph.json built against
+    code that has since moved. The rows most likely to be wrong are exactly the
+    ones the cascade did NOT delete.
+
+    Second, automation. Re-running an ingest after a re-extract needs to know
+    which graph, with which relations, without asking the user to retype it.
+
+    One row per (project, origin): an ingest replaces its own rows, so its
+    provenance replaces its own row too, and the table cannot grow with
+    history. `edges_written` is what the ingest claimed; the live COUNT is what
+    survived. The gap between them is the staleness, and it is now answerable
+    at any time instead of only during the run that caused it.
+    """
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS external_ingest (
+            project_id INTEGER NOT NULL REFERENCES project(id) ON DELETE CASCADE,
+            origin TEXT NOT NULL,
+            graph_path TEXT NOT NULL,
+            graph_mtime REAL,
+            graph_size INTEGER,
+            graph_hash TEXT,
+            relations TEXT NOT NULL,
+            edges_written INTEGER NOT NULL,
+            ingested_at REAL NOT NULL,
+            PRIMARY KEY (project_id, origin)
+        )"""
+    )
+
+
 # Ordered registry. Append-only — never reuse a version number.
 MIGRATIONS: list[Migration] = [
     (1, "drop_dead_tables", _m001_drop_dead_tables),
@@ -626,6 +666,7 @@ MIGRATIONS: list[Migration] = [
     (20, "spec_source", _m020_spec_source),
     (21, "symbol_fingerprint", _m021_symbol_fingerprint),
     (22, "symbol_edge_origin", _m022_symbol_edge_origin),
+    (23, "external_ingest", _m023_external_ingest),
 ]
 
 

@@ -16,6 +16,7 @@ os.environ.setdefault("LIVESPEC_PLUGINS", "all")
 import pytest
 
 from livespec_mcp import state as state_module
+from livespec_mcp.domain.external_graph import clear_external_graph_cache
 from livespec_mcp.domain.graph import invalidate_graph_cache
 
 
@@ -67,9 +68,11 @@ def _bind_workspace_for_tests(workspace: Path, monkeypatch):
         return real(path if path is not None else workspace)
 
     monkeypatch.setattr(state_module, "_resolve_workspace", _resolve)
+    clear_external_graph_cache()
     yield
     state_module.reset_state()
     invalidate_graph_cache()
+    clear_external_graph_cache()
 
 
 @pytest.fixture

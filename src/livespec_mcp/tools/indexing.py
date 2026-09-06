@@ -10,6 +10,7 @@ v0.9 P6: `get_index_status` removed (deprecated in v0.8 P3.2). Read the
 
 from __future__ import annotations
 
+import json
 import logging
 from typing import Any
 
@@ -202,6 +203,63 @@ def _attach_external_edge_staleness(
     }
 
 
+def _maybe_auto_ingest(st: AppState, result: dict[str, Any]) -> None:
+    """Re-apply a recorded ingest after a run that changed files, if asked.
+
+    Off unless `[graph] auto_ingest = true`: an ingest writes rows into
+    `symbol_edge`, and a write that happens because someone saved a file is not
+    something to opt anyone into silently.
+
+    On, it closes the window the staleness report can only describe. A
+    re-extract cascades ingested edges away with the symbols they pointed at,
+    and the rows that survive are derived from a graph built against code that
+    has since moved. Re-running the ingest from the same graph rebuilds both
+    halves against the current index.
+
+    The graph comes from the recorded provenance first (whatever was actually
+    ingested last, with the same relations) and falls back to `[graph]
+    external`. Never fatal: a missing or unreadable graph leaves the staleness
+    report to say so, exactly as it would have without this.
+    """
+    from livespec_mcp.domain.external_ingest import EXTERNAL_ORIGIN, read_ingest
+
+    if not (result.get("files_changed") or result.get("files_deleted")):
+        return
+    from livespec_mcp.config import load_repo_config
+
+    cfg = load_repo_config(st.settings.workspace)
+    if not cfg.graph_auto_ingest:
+        return
+    prior = read_ingest(st.conn, st.project_id, EXTERNAL_ORIGIN)
+    graph_path = prior[0]["graph_path"] if prior else cfg.external_graph
+    if not graph_path:
+        return
+    relations: list[str] | None = None
+    if prior and prior[0].get("relations"):
+        try:
+            relations = json.loads(prior[0]["relations"])
+        except (TypeError, ValueError):
+            relations = None
+    try:
+        outcome = _run_external_ingest(
+            st, resolved_path=graph_path, relations=relations, dry_run=False
+        )
+    except Exception:
+        _log.exception("auto ingest failed; leaving the staleness report to speak")
+        return
+    if outcome.get("isError"):
+        # Not fatal: the staleness report below already says the edges may no
+        # longer match, which is exactly the situation an unreadable graph
+        # leaves us in. Failing the index over it would be worse.
+        result["external_ingest_refresh_failed"] = outcome.get("error")
+        return
+    result["external_ingest_refreshed"] = {
+        "source": outcome.get("source"),
+        "edges_added": outcome.get("edges_added"),
+        "edges_replaced": outcome.get("edges_replaced"),
+    }
+
+
 def _delete_external_edges(st: AppState, project_id: int, origin: str) -> int:
     """Delete exactly the edges one external origin wrote into this project.
 
@@ -222,6 +280,150 @@ def _delete_external_edges(st: AppState, project_id: int, origin: str) -> int:
         (origin, project_id),
     )
     return int(cur.rowcount or 0)
+
+
+def _run_external_ingest(
+    st: AppState,
+    *,
+    resolved_path: str,
+    relations: list[str] | None,
+    dry_run: bool,
+) -> dict[str, Any]:
+    """Plan (and optionally apply) an ingest. Shared by the tool and auto-ingest.
+
+    Module level rather than a closure inside `register()` so `index_project`
+    can re-apply a recorded ingest after a re-extract without going through the
+    MCP tool — and so the write path has exactly one implementation.
+    """
+    from livespec_mcp.domain.external_ingest import (
+        DEFAULT_RELATIONS,
+        EXTERNAL_ORIGIN,
+        IMPORT_RELATIONS,
+        plan_ingest,
+        record_ingest,
+        sample_edges,
+    )
+    from livespec_mcp.domain.graph import invalidate_graph_cache
+    from livespec_mcp.tools.analysis import (
+        _attach_unknown_relations,
+        _load_corroborating_graph,
+    )
+
+    pid = st.project_id
+    graph, overlap, err = _load_corroborating_graph(
+        st, resolved_path, keep_link_meta=True
+    )
+    if err is not None:
+        return err
+
+    symbols = [
+        dict(r)
+        for r in st.conn.execute(
+            "SELECT s.id, s.name, s.qualified_name, s.start_line, f.path AS file_path "
+            "FROM symbol s JOIN file f ON f.id = s.file_id WHERE f.project_id = ?",
+            (pid,),
+        )
+    ]
+    # Rows this ingest owns are excluded from "already known" because the apply
+    # path deletes them first. Without that, a second dry run would report every
+    # edge as agreed and predict a no-op for a run that actually rewrites them.
+    existing = {
+        (int(r["src_symbol_id"]), int(r["dst_symbol_id"]), r["edge_type"])
+        for r in st.conn.execute(
+            """SELECT e.src_symbol_id, e.dst_symbol_id, e.edge_type
+               FROM symbol_edge e
+               JOIN symbol s ON s.id = e.src_symbol_id
+               JOIN file f ON f.id = s.file_id
+               WHERE f.project_id = ? AND e.origin <> ?""",
+            (pid, EXTERNAL_ORIGIN),
+        )
+    }
+    plan = plan_ingest(
+        graph,
+        symbols,
+        existing,
+        relations=frozenset(relations) if relations else None,
+    )
+
+    sym_meta = {int(r["id"]): r for r in symbols}
+    payload: dict[str, Any] = {
+        "source": graph.path,
+        "origin": EXTERNAL_ORIGIN,
+        "dry_run": dry_run,
+        "relations": sorted(relations or DEFAULT_RELATIONS),
+        "external_nodes": graph.node_count,
+        "external_edges": graph.edge_count,
+        "file_overlap": round(overlap, 3),
+        "mapped_nodes": plan.mapped_nodes,
+        "ambiguous_nodes": plan.ambiguous_nodes,
+        "edges_to_add": plan.edge_count,
+        "edges_by_relation": dict(sorted(plan.by_relation.items())),
+        "already_known": plan.agreed,
+        "already_known_by_relation": dict(sorted(plan.agreed_by_relation.items())),
+        "skipped": dict(sorted(plan.skipped.items())),
+        "sample": sample_edges(plan, sym_meta),
+    }
+    _attach_unknown_relations(payload, graph)
+    if graph.has_non_ast_origin:
+        payload["warning"] = (
+            "Some external edges are not marked `_origin: ast` — this graph "
+            "may include LLM-derived (semantic) edges, unlike a code-only "
+            "Graphify run. Those would land in your call graph."
+        )
+    if relations and set(relations) & IMPORT_RELATIONS:
+        payload["import_relations_warning"] = (
+            "Import relations are being ingested. `who_calls` does not "
+            "distinguish edge types, so importers will be reported as "
+            "callers. Run with remove=True to undo."
+        )
+
+    if dry_run:
+        payload["next"] = (
+            "ingest_external_graph(dry_run=False) to apply, or "
+            "find_dead_code(corroborate_with=…) if you only want dead-code "
+            "filtering without writing to the index."
+        )
+        return payload
+
+    # Under the lock `index_project` takes: a re-extract landing between the
+    # DELETE and the INSERT cascades the symbols away and the INSERT fails on a
+    # foreign key, with no shaped error to show for it.
+    with st.lock():
+        replaced = _delete_external_edges(st, pid, EXTERNAL_ORIGIN)
+        st.conn.executemany(
+            """INSERT OR IGNORE INTO
+               symbol_edge(src_symbol_id, dst_symbol_id, edge_type, weight, origin)
+               VALUES(?,?,?,?,?)""",
+            [
+                (
+                    e.src_symbol_id,
+                    e.dst_symbol_id,
+                    e.edge_type,
+                    e.weight,
+                    EXTERNAL_ORIGIN,
+                )
+                for e in plan.new_edges
+            ],
+        )
+        record_ingest(
+            st.conn,
+            pid,
+            origin=EXTERNAL_ORIGIN,
+            graph_path=graph.path,
+            relations=frozenset(relations) if relations else DEFAULT_RELATIONS,
+            edges_written=plan.edge_count,
+        )
+        st.conn.commit()
+    invalidate_graph_cache(pid)
+    payload["edges_added"] = plan.edge_count
+    payload["edges_replaced"] = replaced
+    payload["hint"] = (
+        "These edges are now part of the call graph and will show up in "
+        "who_calls / analyze_impact / find_dead_code, labelled "
+        f"`{EXTERNAL_ORIGIN}`. Re-run after any index_project that changed "
+        "files; remove=True takes them back out."
+    )
+    return payload
 
 
 def register(mcp: FastMCP) -> None:
@@ -264,6 +466,7 @@ def register(mcp: FastMCP) -> None:
         external_before = _external_edge_counts(st)
         result = run_index_pipeline(st, force=force)
         result["explorer_regenerated"] = _maybe_regenerate_explorer(st, explorer)
+        _maybe_auto_ingest(st, result)
         _attach_external_edge_staleness(st, result, external_before)
         try:
             from livespec_mcp.domain.specs_sync import sync_specs_from_config
@@ -357,26 +560,26 @@ def register(mcp: FastMCP) -> None:
         delete or move the symbols these edges point at.
         """
         from livespec_mcp.domain.external_ingest import (
-            DEFAULT_RELATIONS,
             EXTERNAL_ORIGIN,
-            IMPORT_RELATIONS,
             RELATION_EDGE_TYPE,
-            plan_ingest,
-            sample_edges,
+            clear_ingest,
         )
         from livespec_mcp.domain.graph import invalidate_graph_cache
         from livespec_mcp.tools._errors import mcp_error
 
         st = get_state(workspace)
         pid = st.project_id
-        project_symbols_sql = (
-            "SELECT s.id, s.name, s.qualified_name, s.start_line, f.path AS file_path "
-            "FROM symbol s JOIN file f ON f.id = s.file_id WHERE f.project_id = ?"
-        )
 
         if remove:
-            removed = _delete_external_edges(st, pid, EXTERNAL_ORIGIN)
-            st.conn.commit()
+            # Under the same lock `index_project` takes. A reindex landing
+            # between the DELETE and the COMMIT cascades symbols away
+            # underneath it; the ingest path below is worse, because a
+            # re-extract between its DELETE and its INSERT makes the INSERT
+            # fail on a foreign key with no shaped error to show for it.
+            with st.lock():
+                removed = _delete_external_edges(st, pid, EXTERNAL_ORIGIN)
+                clear_ingest(st.conn, pid, EXTERNAL_ORIGIN)
+                st.conn.commit()
             invalidate_graph_cache(pid)
             return {
                 "removed": removed,
@@ -405,10 +608,7 @@ def register(mcp: FastMCP) -> None:
                     hint="Omit it for the default set, or name at least one relation.",
                 )
 
-        from livespec_mcp.tools.analysis import (
-            _load_corroborating_graph,
-            _resolve_corroboration_source,
-        )
+        from livespec_mcp.tools.analysis import _resolve_corroboration_source
 
         resolved_path, availability_hint = _resolve_corroboration_source(st, graph_path)
         if not resolved_path:
@@ -421,97 +621,9 @@ def register(mcp: FastMCP) -> None:
                     ".livespec.toml."
                 ),
             )
-
-        graph, err = _load_corroborating_graph(st, resolved_path, keep_link_meta=True)
-        if err is not None:
-            return err
-
-        symbols = [dict(r) for r in st.conn.execute(project_symbols_sql, (pid,))]
-        # Rows this ingest owns are excluded from "already known" because the
-        # apply path deletes them first. Without that, a second dry run would
-        # report every edge as agreed and predict a no-op for a run that
-        # actually rewrites them.
-        existing = {
-            (int(r["src_symbol_id"]), int(r["dst_symbol_id"]), r["edge_type"])
-            for r in st.conn.execute(
-                """SELECT e.src_symbol_id, e.dst_symbol_id, e.edge_type
-                   FROM symbol_edge e
-                   JOIN symbol s ON s.id = e.src_symbol_id
-                   JOIN file f ON f.id = s.file_id
-                   WHERE f.project_id = ? AND e.origin <> ?""",
-                (pid, EXTERNAL_ORIGIN),
-            )
-        }
-        plan = plan_ingest(
-            graph,
-            symbols,
-            existing,
-            relations=frozenset(relations) if relations else None,
+        return _run_external_ingest(
+            st, resolved_path=resolved_path, relations=relations, dry_run=dry_run
         )
-
-        sym_meta = {int(r["id"]): r for r in symbols}
-        payload: dict[str, Any] = {
-            "source": graph.path,
-            "origin": EXTERNAL_ORIGIN,
-            "dry_run": dry_run,
-            "relations": sorted(relations or DEFAULT_RELATIONS),
-            "external_nodes": graph.node_count,
-            "external_edges": graph.edge_count,
-            "file_overlap": round(graph.file_overlap, 3),
-            "mapped_nodes": plan.mapped_nodes,
-            "ambiguous_nodes": plan.ambiguous_nodes,
-            "edges_to_add": plan.edge_count,
-            "edges_by_relation": dict(sorted(plan.by_relation.items())),
-            "already_known": plan.agreed,
-            "already_known_by_relation": dict(sorted(plan.agreed_by_relation.items())),
-            "skipped": dict(sorted(plan.skipped.items())),
-            "sample": sample_edges(plan, sym_meta),
-        }
-        from livespec_mcp.tools.analysis import _attach_unknown_relations
-
-        _attach_unknown_relations(payload, graph)
-        if graph.has_non_ast_origin:
-            payload["warning"] = (
-                "Some external edges are not marked `_origin: ast` — this graph "
-                "may include LLM-derived (semantic) edges, unlike a code-only "
-                "Graphify run. Those would land in your call graph."
-            )
-        if relations and set(relations) & IMPORT_RELATIONS:
-            payload["import_relations_warning"] = (
-                "Import relations are being ingested. `who_calls` does not "
-                "distinguish edge types, so importers will be reported as "
-                "callers. Run with remove=True to undo."
-            )
-
-        if dry_run:
-            payload["next"] = (
-                "ingest_external_graph(dry_run=False) to apply, or "
-                "find_dead_code(corroborate_with=…) if you only want dead-code "
-                "filtering without writing to the index."
-            )
-            return payload
-
-        replaced = _delete_external_edges(st, pid, EXTERNAL_ORIGIN)
-        st.conn.executemany(
-            """INSERT OR IGNORE INTO
-               symbol_edge(src_symbol_id, dst_symbol_id, edge_type, weight, origin)
-               VALUES(?,?,?,?,?)""",
-            [
-                (e.src_symbol_id, e.dst_symbol_id, e.edge_type, e.weight, EXTERNAL_ORIGIN)
-                for e in plan.new_edges
-            ],
-        )
-        st.conn.commit()
-        invalidate_graph_cache(pid)
-        payload["edges_added"] = plan.edge_count
-        payload["edges_replaced"] = replaced
-        payload["hint"] = (
-            "These edges are now part of the call graph and will show up in "
-            "who_calls / analyze_impact / find_dead_code, labelled "
-            f"`{EXTERNAL_ORIGIN}`. Re-run after any index_project that changed "
-            "files; remove=True takes them back out."
-        )
-        return payload
 
     ingest_external_graph.__doc__ = (
         ingest_external_graph.__doc__ or ""

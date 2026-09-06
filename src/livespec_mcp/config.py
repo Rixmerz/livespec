@@ -78,6 +78,13 @@ class RepoConfig:
     # are called without an explicit ``corroborate_with``. Never a source of
     # symbols or edges. Relative paths resolve against the workspace root.
     external_graph: str | None = None
+    # [graph] auto_ingest — re-run `ingest_external_graph` automatically after
+    # an index run that changed files. Off by default: an ingest writes rows
+    # into `symbol_edge`, and a write that happens because a file was saved is
+    # not something to opt anyone into silently. On, it closes the staleness
+    # window that a re-extract opens (the FK cascade takes ingested edges with
+    # the symbols they pointed at).
+    graph_auto_ingest: bool = False
     # [workspace] — cross-project grouping: a shared DB path lets several repo
     # roots live in one database (each its own project_id) so a Spec can link
     # symbols across repos. Relative paths resolve against the workspace root.
@@ -104,6 +111,7 @@ class RepoConfig:
             },
             "graph": {
                 "external": self.external_graph,
+                "auto_ingest": self.graph_auto_ingest,
             },
             "workspace": {
                 "group_db": self.group_db,
@@ -391,16 +399,20 @@ def load_repo_config(workspace: Path) -> RepoConfig:
     graph_tbl = data.get("graph", {})
     if not isinstance(graph_tbl, dict):
         raise _config_error("[graph] must be a table")
-    unknown_graph = set(graph_tbl) - {"external"}
+    unknown_graph = set(graph_tbl) - {"external", "auto_ingest"}
     if unknown_graph:
         raise _config_error(
-            f"unknown [graph] keys: {sorted(unknown_graph)} (valid: external)"
+            f"unknown [graph] keys: {sorted(unknown_graph)} "
+            "(valid: external, auto_ingest)"
         )
     external_graph = graph_tbl.get("external")
     if external_graph is not None and (
         not isinstance(external_graph, str) or not external_graph.strip()
     ):
         raise _config_error("[graph].external must be a non-empty string path")
+    graph_auto_ingest = graph_tbl.get("auto_ingest", False)
+    if not isinstance(graph_auto_ingest, bool):
+        raise _config_error("[graph].auto_ingest must be a boolean")
 
     workspace_tbl = data.get("workspace", {})
     if not isinstance(workspace_tbl, dict):
@@ -427,5 +439,6 @@ def load_repo_config(workspace: Path) -> RepoConfig:
         specs_links_seed=links_seed,
         specs_openspec_dir=openspec_dir,
         external_graph=external_graph,
+        graph_auto_ingest=graph_auto_ingest,
         group_db=group_db,
     )
