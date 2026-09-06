@@ -46,10 +46,15 @@ Todo el stack es local-first: 0 servicios externos, 0 API keys obligatorias, 0 D
 
 ### Unreleased — auditoría post-Graphify, 7 tandas
 
-**HEAD:** rama `claude/graphify-audit-improvements-wiobgd` sobre `f0095ea`.
+**HEAD:** `main` en `c0e89f0` (merge del PR #20, 10 commits).
 **Tools:** 51 (34 core + 12 Spec + 5 docs) — sin cambios, nada nuevo se
-expuso. **Migración:** v23 (`external_ingest`). **Tests nuevos:** 7 archivos,
-~90 casos.
+expuso. **Migración:** v23 (`external_ingest`). **Tests nuevos:** 8 archivos,
+~95 casos. **Suite en CI: 908 passed / 0 failed** en 3.10, 3.11, 3.12 y 3.13.
+
+Nota sobre el conteo local: en un sandbox sin red la suite da 111 rojos, y
+esos 111 SON el hallazgo de P0 — tests de tree-sitter que no pueden bajar las
+gramáticas. CI ahora las prefetchea en un paso explícito, así que el número
+real es 908 en verde. Si te aparece 111 rojos, corré `livespec grammars`.
 
 Auditoría pedida sobre la integración con Graphify que se acababa de landear.
 Encontró siete cosas; la más grave no era de Graphify.
@@ -102,7 +107,16 @@ dos alrededor de las que giraron los últimos releases.
 `tests/test_agent_docs_sync.py` falla si vuelve a pasar.
 
 **P7 — CI y docs.** `ruff format --check` y `uv lock --check` en CI, matriz con
-3.13, y esta sección.
+3.13, prefetch explícito de gramáticas, y esta sección. El reformateo va en su
+propio commit (`34d3d5f`, 137 archivos, cero cambios de comportamiento).
+
+**Un bug que sólo CI podía ver** (`67f3eba`): `monkeypatch.undo()` revertía
+TODOS los parches del fixture, incluido el autouse de conftest que liga las
+llamadas de tool al workspace del test, así que la segunda llamada volvía como
+error de "workspace requerido". Localmente el `pytest.skip` por falta de
+gramática lo tapaba. Regla: un test que se saltea es un test que no se revisa —
+si hace falta un skip, escribí también un hermano que verifique el mismo
+mecanismo sin la dependencia que lo saltea.
 
 **Sigue abierto:** PR #18 (draft, superado por #19) con el carril
 `external_callers` y `scripts/dogfood_caller_gap.py`; los ~111 tests que sólo
