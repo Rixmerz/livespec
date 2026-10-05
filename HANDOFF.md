@@ -46,7 +46,7 @@ Todo el stack es local-first: 0 servicios externos, 0 API keys obligatorias, 0 D
 
 ### Unreleased — bootstrap del índice serializado entre procesos
 
-**HEAD:** `main` en `__SHA__`. **Tools:** 51, sin cambios. **Migración:** v23,
+**HEAD:** `main` en `18db546`. **Tools:** 51, sin cambios. **Migración:** v23,
 sin cambios. **Tests nuevos:** `tests/test_concurrent_bootstrap.py` (3 casos).
 
 Llegó de cauce: una tarea falló con `database is locked`. Dos procesos que
