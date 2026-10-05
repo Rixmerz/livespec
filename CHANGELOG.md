@@ -6,6 +6,23 @@ follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed — two processes opening one index no longer fail with "database is locked"
+
+`connect()` bootstrapped the schema with no coordination between processes.
+Two of them opening the same index at once — a `livespec index` started by a
+session hook beside one another tool started, two MCP servers on a shared
+group index — raced: switching to WAL and creating the schema could be refused
+at once with `database is locked` (the busy timeout does not cover that, and it
+was set after the WAL switch), and both could run the same migration
+(`UNIQUE constraint failed: schema_migrations.version`). Six processes opening a
+fresh index at once failed in 9 of 10 rounds.
+
+The busy timeout is now set first, and the bootstrap runs under an exclusive
+lock on `<db>.lock` (`fcntl`; where there is none, the retries remain), with a
+"locked" setup retried. And `livespec index` no longer answers a busy index
+with "Delete <repo>/.mcp-docs/docs.db": a lock means another process is
+writing a good index, and the message now says to run again, not to delete it.
+
 ### Fixed — a tree-sitter grammar that will not load is no longer an empty file
 
 `tree-sitter-language-pack` 1.x stopped bundling grammars in the wheel and

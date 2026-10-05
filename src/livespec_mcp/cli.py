@@ -265,6 +265,15 @@ def main(argv: list[str] | None = None) -> int:
         print(f"error: {e}", file=sys.stderr)
         return 1
     except sqlite3.DatabaseError as e:
+        if isinstance(e, sqlite3.OperationalError) and "locked" in str(e):
+            # Busy, not broken: another livespec process holds the write lock past
+            # the 30s timeout. Deleting the file would throw away a good index.
+            print(
+                f"error: the index is busy ({e}): another livespec process is writing it. "
+                f"Run this again when it is done; the file is fine, do not delete it.",
+                file=sys.stderr,
+            )
+            return 1
         print(
             f"error: index database unreadable ({e}). "
             f"Delete <repo>/.mcp-docs/docs.db and re-run `livespec-mcp index`.",

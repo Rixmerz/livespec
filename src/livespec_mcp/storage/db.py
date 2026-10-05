@@ -9,10 +9,16 @@ on success so subsequent connects skip already-applied work.
 from __future__ import annotations
 
 import sqlite3
+import time
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from importlib import resources
 from pathlib import Path
+
+try:
+    import fcntl
+except ImportError:  # Windows: no flock; the bootstrap retries instead
+    fcntl = None  # type: ignore[assignment]
 
 _SCHEMA_CACHE: str | None = None
 
@@ -58,20 +64,57 @@ def connect(db_path: Path, *, create: bool = True) -> sqlite3.Connection:
         return conn
 
     db_path.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(str(db_path), isolation_level=None, check_same_thread=False)
+    conn = sqlite3.connect(str(db_path), isolation_level=None, check_same_thread=False, timeout=30)
     conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA foreign_keys = ON")
-    conn.execute("PRAGMA journal_mode = WAL")
-    conn.execute("PRAGMA synchronous = NORMAL")
     # WAL gives concurrent readers for free but still allows only one writer.
     # Cross-process writers (the `livespec-mcp index` CLI, `explorer install`)
     # and a cold full index that holds the write lock for minutes would
     # otherwise hit `database is locked` after Python's 5s default. Wait up
-    # to 30s for the lock instead of erroring.
+    # to 30s for the lock instead of erroring — set first, before anything
+    # below takes a lock.
     conn.execute("PRAGMA busy_timeout = 30000")
-    conn.executescript(_schema_sql())
-    _run_migrations(conn)
+    # The bootstrap is serialized across processes. Two processes opening a
+    # fresh file at once (an `index` run started by a session hook beside one a
+    # task started, or two MCP servers) raced here: switching to WAL and
+    # creating the schema can be refused at once with `database is locked`,
+    # without waiting on the timeout, and both ran the same migration
+    # (`UNIQUE constraint failed: schema_migrations.version`).
+    with _setup_lock(db_path):
+        for attempt in range(SETUP_RETRIES):
+            try:
+                conn.execute("PRAGMA foreign_keys = ON")
+                conn.execute("PRAGMA journal_mode = WAL")
+                conn.execute("PRAGMA synchronous = NORMAL")
+                conn.executescript(_schema_sql())
+                _run_migrations(conn)
+                break
+            except sqlite3.OperationalError as e:
+                if "locked" not in str(e) or attempt == SETUP_RETRIES - 1:
+                    raise
+                time.sleep(SETUP_PAUSE_S)
     return conn
+
+
+#: How often a bootstrap refused with "database is locked" (another process
+#: holds the write lock outside the setup lock, e.g. a long index run) is tried.
+SETUP_RETRIES = 100
+SETUP_PAUSE_S = 0.2
+
+
+@contextmanager
+def _setup_lock(db_path: Path) -> Iterator[None]:
+    """An exclusive lock on ``<db>.lock`` while the schema is bootstrapped.
+    Where ``fcntl`` is missing (Windows) it is a no-op and the retries above
+    are what remains."""
+    if fcntl is None:
+        yield
+        return
+    with open(f"{db_path}.lock", "a") as fh:
+        fcntl.flock(fh, fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(fh, fcntl.LOCK_UN)
 
 
 # ---------- Migration framework ----------

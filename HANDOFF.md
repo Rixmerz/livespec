@@ -44,6 +44,30 @@ Todo el stack es local-first: 0 servicios externos, 0 API keys obligatorias, 0 D
 
 ## 3. Estado actual
 
+### Unreleased — bootstrap del índice serializado entre procesos
+
+**HEAD:** `main` en `__SHA__`. **Tools:** 51, sin cambios. **Migración:** v23,
+sin cambios. **Tests nuevos:** `tests/test_concurrent_bootstrap.py` (3 casos).
+
+Llegó de cauce: una tarea falló con `database is locked`. Dos procesos que
+abren el mismo índice a la vez (un `livespec index` lanzado por un hook de
+sesión al lado de otro, o dos servidores MCP sobre un índice de grupo)
+competían en `connect()`: el cambio a WAL y la creación del esquema podían ser
+rechazados al instante con "locked" — el `busy_timeout` no cubre ese caso y
+además se fijaba después del cambio a WAL — y ambos podían correr la misma
+migración (`UNIQUE constraint failed: schema_migrations.version`). Seis
+procesos abriendo un índice nuevo fallaban en 9 de 10 rondas.
+
+Ahora `busy_timeout` va primero y el bootstrap corre bajo un lock exclusivo en
+`<db>.lock` (`fcntl`; donde no existe, quedan los reintentos ante "locked").
+Y `livespec index` ya no responde a un índice ocupado con "Delete
+<repo>/.mcp-docs/docs.db": un lock significa que otro proceso está escribiendo
+un índice sano; el mensaje ahora dice que se reintente, no que se borre.
+
+Suite local: 796 passed / 111 failed — los 111 son los mismos que sin el cambio, tests de
+tree-sitter que en un sandbox sin red no pueden bajar las gramáticas (ver la
+nota de la sección siguiente).
+
 ### Unreleased — auditoría post-Graphify, 7 tandas
 
 **HEAD:** `main` en `c0e89f0` (merge del PR #20, 10 commits).
