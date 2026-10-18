@@ -1577,7 +1577,7 @@ def compute_endpoints(
     """Module-level shared computation: the full unpaginated endpoint list.
 
     Both ``find_endpoints`` (the paginated tool wrapper) and
-    ``export_explorer`` consume this. Returns the same per-endpoint dicts
+    ``livespec ui`` (``ui/data.py``) consume this. Returns the same per-endpoint dicts
     the tool emits (``qualified_name``, ``kind``, ``file_path``,
     ``start_line``, ``end_line``, ``decorators``, plus optional
     framework-specific keys: ``ts_framework`` / ``django_cbv_base`` /
@@ -2250,7 +2250,7 @@ def compute_coverage(st: AppState, *, record: bool = True) -> dict[str, Any]:
     """Module-level shared computation: the full unpaginated coverage audit.
 
     Both ``audit_coverage`` (the paginated tool wrapper) and
-    ``export_explorer`` consume this. Returns the complete lists plus an
+    ``livespec ui`` (``record=False``) consume this. Returns the complete lists plus an
     exact ``counts`` dict — pagination is applied by the tool wrapper, not
     here.
     """
@@ -4503,6 +4503,17 @@ def register(mcp: FastMCP) -> None:
                 )
             )
         if target_type == "spec":
+            from livespec_mcp.domain.spec_alias import deprecation_note, resolve_spec_id
+
+            # A legacy id (pre-transliteration slug) answers for its spec.
+            target, via_alias = resolve_spec_id(st.conn, pid, target)
+            spec_note = deprecation_note(via_alias, target)
+            if spec_note is not None:
+                inner_out = _out
+
+                def _out(payload: dict[str, Any], project_id: int = pid) -> dict[str, Any]:
+                    return {**inner_out(payload, project_id), "deprecated_spec_id": spec_note}
+
             spec = st.conn.execute(
                 "SELECT id, spec_id FROM spec WHERE project_id=? AND spec_id=?", (pid, target)
             ).fetchone()
@@ -4540,12 +4551,15 @@ def register(mcp: FastMCP) -> None:
             sids = [int(r["symbol_id"]) for r in sid_rows]
 
             if not sids:
-                return {
+                empty: dict[str, Any] = {
                     "spec_id": spec["spec_id"],
                     "warning": "Spec (and its dependents) have no linked symbols",
                     "implementing_symbols": [],
                     "dependent_specs": [],
                 }
+                if spec_note is not None:
+                    empty["deprecated_spec_id"] = spec_note
+                return empty
             forward: set[int] = set()
             backward: set[int] = set()
             for sid in sids:

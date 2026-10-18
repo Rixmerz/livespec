@@ -39,8 +39,6 @@ async def test_list_tools_hides_plugins_on_fresh_workspace(workspace, monkeypatc
     assert "index_project" in names
     assert "create_spec" not in names
     assert "generate_docs" not in names
-    assert "export_explorer" not in names
-    assert "export_flow_explorer" not in names
     assert "import_specs_from_markdown" in names
     assert "bulk_link_spec_symbols" in names
 
@@ -93,25 +91,26 @@ async def test_call_plugin_tool_allowed_when_rf_rows_exist(workspace, monkeypatc
 
 
 @pytest.mark.asyncio
-async def test_export_explorer_gated_until_docs_plugin(workspace, monkeypatch):
-    """export_explorer lives in the docs plugin — not always-visible core."""
+async def test_docs_tools_gated_until_docs_plugin(workspace, monkeypatch):
+    """generate_docs lives in the docs plugin — not always-visible core."""
     monkeypatch.delenv("LIVESPEC_PLUGINS", raising=False)
     mcp = _minimal_mcp()
     async with Client(mcp) as c:
         names = {t.name for t in await c.list_tools()}
-        assert "export_explorer" not in names
+        assert "list_docs" not in names
         blocked = (
             await c.call_tool(
-                "export_explorer",
+                "list_docs",
                 {"workspace": str(workspace)},
             )
         ).data
         assert blocked.get("isError") is True
+        assert "livespec ui" in blocked.get("hint", "")
     monkeypatch.setenv("LIVESPEC_PLUGINS", "docs")
     mcp2 = _minimal_mcp()
     async with Client(mcp2) as c:
         names = {t.name for t in await c.list_tools()}
-    assert "export_explorer" in names
+    assert "list_docs" in names
     assert "generate_docs" in names
 
 
@@ -122,7 +121,7 @@ async def test_env_all_shows_plugins_without_workspace_touch(workspace, monkeypa
     async with Client(mcp) as c:
         names = {t.name for t in await c.list_tools()}
     assert "create_spec" in names
-    assert "export_explorer" in names
+    assert "generate_docs" in names
 
 
 def test_env_override_without_workspace_never_touches_state(monkeypatch):

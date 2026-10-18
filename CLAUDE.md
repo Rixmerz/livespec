@@ -58,7 +58,7 @@ read before starting any feature work in v0.8+.
 
 ```bash
 uv run pytest -q                           # full default suite
-uv run livespec explorer serve .           # Spec Explorer at http://127.0.0.1:8765/explorer/
+uv run livespec ui --port 8765             # read-only UI over every indexed project
 uv run pytest tests/test_rf_deps.py -v     # single file (Spec dependency graph tests)
 uv run pytest tests/test_rf_deps.py::test_link_and_walk_dependencies -v   # single test
 ```
@@ -112,7 +112,7 @@ populates new fields.
 ### Layered stack
 
 ```
-tools/          MCP-exposed surface (51 tools: 34 core + 12 Spec + 5 docs)
+tools/          MCP-exposed surface (49 tools: 34 core + 12 Spec + 3 docs)
   analysis.py     find_symbol, quick_orient, get_symbol_source, who_calls,
                   who_does_this_call, analyze_impact, audit_coverage,
                   find_dead_code, find_legacy_flows, find_orphan_tests,
@@ -130,8 +130,7 @@ tools/          MCP-exposed surface (51 tools: 34 core + 12 Spec + 5 docs)
                   get_spec_dependency_graph, scan_spec_annotations,
                   scan_docstrings_for_spec_hints, import_specs_from_markdown
                   (delegates to specs.py:register(mutation=True))
-  plugins/docs.py generate_docs, list_docs, export_documentation,
-                  export_explorer, export_flow_explorer
+  plugins/docs.py generate_docs, list_docs, export_documentation
   _errors.py      mcp_error() helper — every tool error returns
                   {error, isError, did_you_mean?, hint?}
 
@@ -140,7 +139,14 @@ domain/         Pure business logic, no MCP coupling
                   JS/TS/Go/Ruby/PHP/Rust/Java; _py_extract uses ast for
                   precision. Decorators/annotations extracted for Python +
                   TS/JS/TSX + Java (v0.13). Hono route scan +
-                  registration-callback name scan (v0.13)
+                  registration-callback name scan (v0.13). `const x = <fn>`
+                  and `const x = wrapper(<fn>)` (Fresh 2 `define.*`) are
+                  function symbols whose JSDoc sits on the declaration
+  languages.py    get_parser (success cached, failure memoised per index run)
+                  + GrammarUnavailableError.error/.hint; grammar_fetch.py
+                  re-downloads the pack's grammar bundle with Python TLS
+                  (honours SSL_CERT_FILE / REQUESTS_CA_BUNDLE) when the
+                  pack's native downloader rejects a proxy's CA
   indexer.py      walks workspace, calls extractors, persists to symbol_ref,
                   resolves edges via _resolve_refs (INSERT OR IGNORE)
   graph.py        NetworkX wrapper + cache by (db_path, project_id, last_run_id)
@@ -161,7 +167,7 @@ domain/         Pure business logic, no MCP coupling
 storage/        SQLite persistence
   schema.sql      single-file schema; CREATE TABLE IF NOT EXISTS for everything
   db.py           connection bootstrap + ordered migration framework
-                  (schema_migrations table; MIGRATIONS list append-only, at v23)
+                  (schema_migrations table; MIGRATIONS list append-only, at v24)
 ```
 
 ### Critical contracts (don't break)
@@ -220,10 +226,14 @@ The v0.8 curation pass shipped: battle-test data (3 sessions, 40 calls,
 - **Plugin `livespec-spec` (12 tools)** — Spec mutation ceremony: CRUD,
   link/unlink, Spec-Spec graph, scans (import moved to core v0.19),
   OpenSpec change lifecycle (apply_spec_change, archive_spec_change — v0.22).
-- **Plugin `livespec-docs` (5 tools)** — generate_docs, list_docs,
-  export_documentation, export_explorer, export_flow_explorer
-  (Explorer demoted from always-visible core; unlock via docs plugin /
-  explorer bundle / `LIVESPEC_PLUGINS`).
+- **Plugin `livespec-docs` (3 tools)** — generate_docs, list_docs,
+  export_documentation (unlock via doc rows / `LIVESPEC_PLUGINS`).
+- **Dropped (Unreleased, hard cut):** export_explorer, export_flow_explorer,
+  `index_project(explorer=)`, the `explorer` / `fastapi` CLI subcommands and
+  the FastAPI autowire — they wrote HTML/JS bundles into the user's repo. The
+  human view is `livespec ui` (`ui/`), a read-only server over the user-level
+  registry (`registry.py`, outside any repo). **Never write UI artifacts into
+  a project directory.**
 - **Dropped (v0.29):** agent_scratch / agent_scratch_get /
   agent_scratch_clear; dense-vector search (`embed_chunks`, `[embeddings]`).
 - **Dropped (v0.8-v0.9)**: list_files, get_index_status (resource
@@ -236,7 +246,7 @@ The v0.8 curation pass shipped: battle-test data (3 sessions, 40 calls,
 
 **Plugin loading (v0.18):** plugins register at boot (`register_all_plugins`);
 `PluginVisibilityMiddleware` filters `tools/list` and gates `tools/call` per
-workspace (spec/doc rows, explorer bundle on disk, or `LIVESPEC_PLUGINS` override).
+workspace (spec/doc rows, or `LIVESPEC_PLUGINS` override).
 Session caches the last `workspace=` from tool calls.
 
 ---

@@ -106,8 +106,9 @@ def _plugin_blocked_payload(tool_name: str, workspace: str | None) -> dict[str, 
     return mcp_error(
         f"Docs plugin tool {tool_name!r} is not active{ws_hint}.",
         hint=(
-            "Set LIVESPEC_PLUGINS=docs (or =all), generate a doc row, or run "
-            "index_project(explorer=True) so .mcp-docs/explorer/ exists."
+            "Set LIVESPEC_PLUGINS=docs (or =all), or persist a doc row with "
+            "generate_docs. For a browsable view of indexed projects run "
+            "`livespec ui` (it writes nothing into the repo)."
         ),
     )
 

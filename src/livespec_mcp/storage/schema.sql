@@ -213,6 +213,21 @@ CREATE TABLE IF NOT EXISTS scenario_symbol (
 CREATE INDEX IF NOT EXISTS idx_scenario_symbol_scenario ON scenario_symbol(scenario_id);
 CREATE INDEX IF NOT EXISTS idx_scenario_symbol_symbol ON scenario_symbol(symbol_id);
 
+-- v0.33: old spec ids that still answer for a spec (migration v24). Ids
+-- derived before transliteration turned accented letters into hyphens
+-- (`validaci-n`); the renamed spec keeps its row and the old id lands here so
+-- `@spec:` annotations and tool calls that use it still resolve.
+CREATE TABLE IF NOT EXISTS spec_alias (
+    id INTEGER PRIMARY KEY,
+    project_id INTEGER NOT NULL REFERENCES project(id) ON DELETE CASCADE,
+    alias TEXT NOT NULL,
+    spec_id INTEGER NOT NULL REFERENCES spec(id) ON DELETE CASCADE,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(project_id, alias)
+);
+
+CREATE INDEX IF NOT EXISTS idx_spec_alias_spec ON spec_alias(spec_id);
+
 -- v0.5 P2: Spec dependency graph. parent depends on child.
 --   requires:  parent needs child to be implemented first
 --   extends:   parent specializes / refines child

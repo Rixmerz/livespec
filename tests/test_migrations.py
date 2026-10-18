@@ -301,6 +301,39 @@ def test_m022_adds_origin_to_an_existing_db(tmp_path: Path):
     conn.close()
 
 
+def test_m024_adds_spec_alias_to_an_existing_db(tmp_path: Path):
+    """An old DB gains ``spec_alias`` without losing its specs, and an alias
+    follows its spec: it resolves to the current id and dies with the row."""
+    db = tmp_path / "existing.db"
+    conn = connect(db)
+    conn.execute("INSERT INTO project(id, name, root) VALUES(1, 'p', '/p')")
+    conn.execute(
+        "INSERT INTO spec(id, project_id, spec_id, title) "
+        "VALUES(7, 1, 'auth-validaci-n', 'Validación')"
+    )
+    conn.commit()
+    # Rewind to a pre-24 database.
+    conn.execute("DELETE FROM schema_migrations WHERE version=24")
+    conn.execute("DROP INDEX IF EXISTS idx_spec_alias_spec")
+    conn.execute("DROP TABLE spec_alias")
+    conn.commit()
+    conn.close()
+
+    conn = connect(db)
+    assert "spec_alias" in _table_names(conn)
+    indexes = {r["name"] for r in conn.execute("PRAGMA index_list(spec_alias)")}
+    assert "idx_spec_alias_spec" in indexes
+    assert conn.execute("SELECT spec_id FROM spec WHERE id=7").fetchone()[0] == "auth-validaci-n"
+
+    from livespec_mcp.domain.spec_alias import rename_spec_row, resolve_spec_id
+
+    rename_spec_row(conn, 1, 7, "auth-validaci-n", "auth-validacion")
+    assert resolve_spec_id(conn, 1, "auth-validaci-n") == ("auth-validacion", "auth-validaci-n")
+    conn.execute("DELETE FROM spec WHERE id=7")
+    assert conn.execute("SELECT COUNT(*) FROM spec_alias").fetchone()[0] == 0
+    conn.close()
+
+
 def test_schema_sql_never_indexes_a_column_a_migration_adds():
     """Generalises the bug above so it cannot come back on another column.
 

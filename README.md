@@ -24,9 +24,9 @@ time (tree-sitter grammars are fetched once on first index — see
 [Stack](#stack)).
 
 <p align="center">
-  <img src="docs/assets/spec-explorer.png" alt="livespec Spec Explorer — Spec list, coverage, and linked symbols" width="920" />
+  <img src="docs/assets/livespec-ui.png" alt="livespec ui — every indexed project, grouped by polyrepo group, with languages, symbols, Specs and coverage" width="920" />
 </p>
-<p align="center"><em>Spec Explorer (docs plugin) on this repo — Specs, coverage, and linked symbols at a glance.</em></p>
+<p align="center"><em><code>livespec ui</code> — one local, read-only page over every project you have indexed, grouped by polyrepo group.</em></p>
 
 ### Who this is for / not for
 
@@ -189,6 +189,11 @@ uv venv --python 3.12
 uv pip install -e ".[dev]"
 ```
 
+Behind a TLS-intercepting proxy, set `SSL_CERT_FILE` (or `REQUESTS_CA_BUNDLE`)
+to the proxy's CA: livespec fetches the tree-sitter grammars itself when the
+grammar pack's own downloader rejects that CA, and `index_project` reports
+`parser_errors` with a fix instead of indexing 0 symbols.
+
 ## Run as MCP server
 
 ```bash
@@ -281,58 +286,38 @@ every file edit (hash-skip makes no-op runs cheap):
 The trailing `&` keeps the hook non-blocking; the next tool call sees a
 fresh index.
 
-### FastAPI integration
-
-Three steps to serve the Spec Explorer from your API — no manual wiring unless
-you disable autowire:
-
-1. **Install** livespec in the same environment as your app
-   (`pip install livespec` or `uv add livespec`).
-
-2. **Index once** (MCP tool or CLI). If the repo has `app = FastAPI(...)` in
-   `main.py` or `app.py`, `index_project` auto-builds `.mcp-docs/explorer/`
-   and appends `mount_explorer(app)` when `[explorer] auto_mount = true`
-   (default in `.livespec.toml`).
-
-3. **Open** `http://localhost:<port>/explorer/` — the Overview tab shows
-   spec status, coverage trend, and navigation into API / Changes /
-   Coverage gaps. For a quick try without your app:
-
-   ```bash
-   livespec-mcp index /path/to/your/repo
-   livespec-mcp explorer serve /path/to/your/repo
-   # → http://127.0.0.1:8765/explorer/
-   # API tab: live MCP Try it (read-only tools by default)
-   # → http://127.0.0.1:8765/explorer/
-   ```
-
-Set `[explorer] auto_mount = false` in `.livespec.toml` if you prefer runtime mount:
-
-```python
-from livespec_mcp.explorer import enable_explorer
-enable_explorer(app)  # no main.py patch
-```
-
-The API tab **Try it** sends `fetch` to your base URL (CORS must allow the Explorer origin).
-
-### One-shot install (rule + skill + index + autowire)
+### Browse every indexed project — `livespec ui`
 
 ```bash
-livespec-mcp fastapi init /path/to/your/fastapi-repo
+livespec ui                 # → livespec ui: http://127.0.0.1:<random port>/
+livespec ui --port 8765 --open
+livespec ui --add /path/to/repo   # register an index made before the registry existed
+livespec ui --list                # print the registry as JSON
 ```
 
-Writes:
+One local web server (stdlib, bound to `127.0.0.1`, random free port unless
+`--port`) over **every project you have indexed**, read from the database —
+no export step, no build step, and **nothing written into any repository**:
 
-| Path | Purpose |
-|------|---------|
-| `.livespec.toml` | `[explorer]` defaults |
-| `.mcp-docs/explorer/` | Spec Explorer bundle |
-| `.cursor/rules/livespec-fastapi.mdc` | Agent rule (FastAPI globs) |
-| `.cursor/skills/livespec-fastapi/SKILL.md` | Session workflow skill |
-| `.livespec/SESSION_PROMPT.md` | Copy-paste chat opener |
+- **Home** — all projects grouped by polyrepo group (repos sharing a
+  `[workspace] group_db` are one group) plus the ungrouped ones; toggle to a
+  flat list. Per project: languages, symbols, Specs, Spec coverage (the
+  `audit_coverage` numbers, never recorded as a trend snapshot), last indexed.
+- **Project** — Specs by capability with coverage, symbol search, Spec detail
+  (scenarios, implementing symbols at `file:line`, dependencies both ways),
+  endpoints, and a symbol's call-graph neighbourhood (who calls it / what it
+  calls).
+- **Group** — the repos in one group DB, cross-repo Specs (`xrepo-*` or any id
+  mirrored in more than one repo) and resolved HTTP route hops.
 
-Appends `mount_explorer(app, prefix="/explorer")` to `main.py`/`app.py` when found.
-Flags: `--no-index`, `--no-wire`, `--no-cursor`.
+Where the list comes from: every `index_project` / `livespec index` records the
+workspace in a **user-level registry** — `$LIVESPEC_HOME/registry.json`, else
+`$XDG_DATA_HOME/livespec/registry.json`, else `~/.livespec/registry.json`. An
+entry whose index is gone is shown as missing with a **Forget** action; it is
+never pruned silently. Each project's index is opened with SQLite `mode=ro`
+(`immutable` when no writer has it open, so not even `-shm`/`-wal` files
+appear). In Claude Code, `/livespec-ui` starts it in the background and gives
+you the URL.
 
 ## Workflows — livespec + OpenSpec
 
@@ -348,6 +333,7 @@ Since v0.22 livespec reads *and* writes the OpenSpec format (round-trip).
 | Invocation | What it is | When |
 |---|---|---|
 | `/livespec-onboard <path>` | slash command → delegates to the subagent (cold open) | start on any repo |
+| `/livespec-ui` | slash command → starts `livespec ui` in the background, reports the URL | browse every indexed project |
 | **`livespec`** subagent | specialized agent, preloads the Skill | heavy exploration / spec work |
 | `/openspec_workflow` | MCP prompt: the sync → trace → validate → export loop | a repo with `openspec/` |
 | `/onboard_project`, `/extract_specs_from_module`, `/audit_spec_coverage` | MCP prompts | brownfield |
@@ -406,19 +392,18 @@ gates it, you build with live links; *brownfield* → `/livespec-onboard` orient
 `propose_specs_from_codebase` reconstructs intent, **author OpenSpec first**
 (export only as a bootstrap dump).
 
-## Tools (51 total: 34 core + 12 Spec plugin + 5 docs plugin)
+## Tools (49 total: 34 core + 12 Spec plugin + 3 docs plugin)
 
 Every tool requires `workspace` (absolute project root). Pass it on each call;
 omitting it is an error (no env fallback). LRU cache (8 workspaces) — one MCP
 server, many projects, no restart.
 
 **Menu (v0.19):** plugins register at boot but `PluginVisibilityMiddleware`
-hides Spec mutation / doc tools (including Explorer export) from `tools/list`
-until the workspace has `spec` rows, a `.mcp-docs/explorer/` bundle, or you
-set `LIVESPEC_PLUGINS`. **`import_specs_from_markdown`** and
-**`sync_openspec`** stay always visible (brownfield bootstrap). After the
-first `workspace=` call on a repo with Specs + explorer, the menu grows to
-**45** tools. Reconnect the MCP host if your client cached an old tool list.
+hides Spec mutation / doc tools from `tools/list` until the workspace has
+`spec` / `doc` rows, or you set `LIVESPEC_PLUGINS`.
+**`import_specs_from_markdown`** and **`sync_openspec`** stay always visible
+(brownfield bootstrap). After the first `workspace=` call on a repo with
+Specs, the menu grows to **46** tools (49 with doc rows). Reconnect the MCP host if your client cached an old tool list.
 
 ### Default surface — code intel + Spec agentic (34)
 
@@ -426,12 +411,11 @@ These tools answer the questions an agent ASKS on an unfamiliar codebase.
 Always registered (including markdown Spec import + OpenSpec sync).
 
 #### Indexing (2)
-- `index_project(force=False, watch=False, explorer=False)` — walk, parse,
+- `index_project(force=False, watch=False)` — walk, parse,
   persist. Also rebuilds search chunks idempotently. Respects
   `.gitignore` (root + nested, negations included) on top of the
-  built-in ignore list (v0.14). Auto-builds the Spec Explorer
-  bundle when `.mcp-docs/explorer/` already exists, `explorer=True`, or a
-  FastAPI entry is detected (see **FastAPI integration** above). Read the
+  built-in ignore list (v0.14). Records the workspace in the user-level
+  registry `livespec ui` reads (outside the repo). Read the
   `project://index/status` resource for current status (the legacy
   `get_index_status` tool was dropped in v0.9).
 
@@ -472,9 +456,6 @@ Always registered (including markdown Spec import + OpenSpec sync).
                                            # symbols across repos (each keeps
                                            # its own project_id). Absent = the
                                            # per-repo .mcp-docs/docs.db.
-
-  [explorer]
-  mount_path = "/explorer"              # FastAPI mount prefix for autowire
   ```
 
 - `ingest_external_graph(graph_path=None, dry_run=True, remove=False,
@@ -602,7 +583,7 @@ Always registered (including markdown Spec import + OpenSpec sync).
   both included in the **default** sweep when `framework=None`; pass
   `framework='express'|'hono'` to filter).
   **(v0.19)** FastAPI/Flask decorators also yield `http_method` +
-  `http_path` in Explorer and MCP payloads. Default sweep **excludes**
+  `http_path` in MCP payloads and the `livespec ui` endpoints view. Default sweep **excludes**
   `tests/**` and `@pytest.fixture` handlers (use `framework='pytest'` for
   fixtures).
 - `grep_in_indexed_files(pattern, path_glob?, kind?, limit=50)` — search
@@ -616,8 +597,8 @@ Always registered (including markdown Spec import + OpenSpec sync).
   an implementing symbol counts as tested when a test's forward call-cone
   reaches it (depth 3) or an explicit `relation='tests'` link exists — so
   Spec test-coverage works with no hand-linking for projects whose tests
-  call the code directly. The Spec Explorer renders this as a per-Spec test
-  coverage meter with a `coverage_source` badge.
+  call the code directly. `livespec ui` renders this as a per-Spec test
+  coverage meter with its `coverage_source`.
 
 #### Spec agentic — query + bootstrap (5)
 - `bulk_link_spec_symbols(mappings)` — batch-link N (spec_id, symbol_qname)
@@ -669,20 +650,10 @@ an individual scenario with `link_scenario_symbol` (Spec plugin).
 
 #### Cross-repo discovery (1, v0.31.3)
 - `get_cross_repo_guide()` — the polyrepo how-to (group_db, mirrored `xrepo-*`
-  Specs, Flow Explorer, traps) plus a live `group` snapshot, as a **tool** so
+  Specs, the `livespec ui` group view, traps) plus a live `group` snapshot, as a **tool** so
   it works on hosts that cache a stale `resources/list` and refuse reads for
   URIs missing from that cache. Same content as the `project://cross-repo`
   resource.
-
-#### Spec Explorer (docs plugin — not always-visible)
-- `export_explorer(base?, head?, generated_at?)` — writes
-  `.mcp-docs/explorer/` (`data.json` + `index.html`). Swagger-style view by
-  Spec; HTTP Try-it for routes; **MCP Try it** when served via
-  `livespec-mcp explorer serve` → `http://127.0.0.1:8765/explorer/`
-  (Execute read-only tools in-process; `[explorer] playground_mode = "all"`
-  for mutations). FastAPI `mount_explorer` keeps playground off unless
-  `[explorer] playground = true`. Unlock docs tools with
-  `LIVESPEC_PLUGINS=docs` or `index_project(explorer=True)`.
 
 ### `livespec-spec` plugin — Spec mutation (12)
 
@@ -721,7 +692,7 @@ setting `LIVESPEC_PLUGINS`.
 ### Brownfield bootstrap (no Python one-liner)
 
 ```text
-index_project(workspace=..., explorer=True)
+index_project(workspace=...)
   → import_specs_from_markdown(path="docs/REQUISITOS_FUNCIONALES.md")
   → bulk_link_spec_symbols(mappings=[...])
 ```
@@ -730,11 +701,11 @@ Or add `[specs].sync_from` to `.livespec.toml` and run
 `uv run python scripts/sync_livespec_specs.py /path/to/repo` after editing the
 spec without a full re-index.
 
-### `livespec-docs` plugin — docs + Explorer (5)
+### `livespec-docs` plugin — generated docs (3)
 
-Visible when the workspace has `doc` rows, a `.mcp-docs/explorer/` bundle, or
-`LIVESPEC_PLUGINS` includes `docs`. Human-tier ceremony for generated docs and
-static Explorer bundles.
+Visible when the workspace has `doc` rows or `LIVESPEC_PLUGINS` includes
+`docs`. Human-tier ceremony for generated Markdown docs. (The browsable view
+of the index is `livespec ui`, not a tool.)
 
 - `generate_docs(target_type, identifier, content?, max_tokens?)` —
   three modes: caller_supplied / sampling / needs_caller_content. Works
@@ -742,9 +713,6 @@ static Explorer bundles.
 - `list_docs(target_type, only_stale=False)` — list or surface drifted
   docs (drift triggers on body_hash OR signature_hash mismatch).
 - `export_documentation(format, out_subdir)` — markdown or JSON.
-- `export_explorer(base?, head?, generated_at?)` — Spec Explorer static
-  bundle under `.mcp-docs/explorer/`.
-- `export_flow_explorer(...)` — Flow Explorer companion bundle.
 
 ### Migrating from older versions
 
@@ -754,6 +722,8 @@ static Explorer bundles.
 | `get_symbol_info` (v0.7) | `quick_orient` (composite) + `get_symbol_source` (body) |
 | `get_call_graph` (v0.7) | `who_calls` + `who_does_this_call` |
 | `agent_scratch` / `_get` / `_clear` (v0.29) | drop — use host chat notes / Spec links |
+| `export_explorer`, `export_flow_explorer`, `index_project(explorer=)` (Unreleased) | `livespec ui` — one read-only server over every indexed project; nothing is written into the repo |
+| `livespec explorer serve`, `livespec fastapi init`, `mount_explorer` / `enable_explorer` (Unreleased) | `livespec ui` (`/livespec-ui` in Claude Code); remove the `mount_explorer(app)` line `fastapi init` appended to your app |
 | `search`, `rebuild_chunks` (v0.7, dropped v0.8) | `search` is **back in v0.12** as FTS5 over AST-aware chunks (dense vectors removed v0.29). `rebuild_chunks` is now auto-run inside `index_project` (no separate tool). `find_symbol` + `quick_orient` still cover exact-name lookup. |
 | `list_files` (v0.7) | grep / ripgrep host with path glob |
 | `start_watcher` / `stop_watcher` / `watcher_status` (v0.7) | re-run `index_project` on demand (watcher race-condition trap for editing agents) |

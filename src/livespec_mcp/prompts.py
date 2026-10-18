@@ -77,7 +77,7 @@ def register(mcp: FastMCP) -> None:
 
         Invoke when the user has several related repos, asks about end-to-end
         flows, HTTP hops across SAs, or shared Specs. Covers .livespec.toml
-        group_db, authoring xrepo-* Specs, @spec: annotations, Flow Explorer,
+        group_db, authoring xrepo-* Specs, @spec: annotations, the livespec ui group view,
         and find_legacy_flows traps.
         """
         return _load_cross_repo_guide()

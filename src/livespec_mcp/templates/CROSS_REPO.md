@@ -17,7 +17,7 @@ Two complementary layers share one SQLite when configured:
 | Layer | How | Tools / UI |
 |-------|-----|------------|
 | **HTTP hops** | Client `requests`/`fetch` → server route | `who_does_this_call` → `invokes_endpoints`; `who_calls` → `route_callers`; `find_legacy_flows` |
-| **Shared Specs** | Same Spec id `xrepo-*` in **each** participating repo | `list_specs` / `get_spec_implementation`; Flow Explorer; `export_flow_explorer` |
+| **Shared Specs** | Same Spec id `xrepo-*` in **each** participating repo | `list_specs` / `get_spec_implementation`; the `livespec ui` group page |
 
 livespec does **not** invent a single global Spec row. You **mirror** the same
 `xrepo-<slug>` id (and usually the same OpenSpec capability) in each repo that
@@ -69,9 +69,9 @@ def search_hotels(...):
 
 4. Re-`index_project` so annotations become `spec_symbol` links.
 5. Optional: `link_spec_dependency` between related `xrepo-*` Specs (requires /
-   extends) inside a repo; Flow Explorer shows Spec↔Spec edges.
+   extends) inside a repo; the `livespec ui` group page lists each shared Spec's dependencies.
 
-Ids **must** use the `xrepo-` prefix for Flow Explorer’s cross-repo Specs tab
+Ids **should** use the `xrepo-` prefix so the `livespec ui` group page lists them as cross-repo Specs (it also lists any id mirrored in more than one repo)
 and for `project://group` aggregation. In-repo Specs stay normal OpenSpec slugs
 (`auth-user-login`).
 
@@ -88,7 +88,7 @@ From **any** member workspace (same `group_db`):
 | Client → server hop | `who_does_this_call` → `invokes_endpoints` |
 | Server → client hop | `who_calls` → `route_callers` |
 | Likely-unused HTTP | `find_legacy_flows(summary_only=True)` — graph ≠ traffic |
-| UI map | `export_flow_explorer` (docs plugin) or `livespec explorer serve --flow` |
+| UI map | `livespec ui` (or `/livespec-ui` in Claude Code) → the group's page; read-only, nothing written into any repo |
 
 `find_symbol` / `get_symbol_source` / `quick_orient` also search the whole
 `group_db` when grouped.
@@ -99,7 +99,7 @@ From **any** member workspace (same `group_db`):
 
 - **Annotation alone ≠ Spec row.** `@spec:xrepo-…` without a Spec in the store
   does not create the Spec. Sync OpenSpec or `create_spec` first.
-- **Mirror in every repo** that should show up under that Spec in Flow Explorer.
+- **Mirror in every repo** that should show up under that Spec in the `livespec ui` group page.
   A Spec only in the hub will not list SA symbols.
 - **`orphan_client`** often means the SA is outside `group_db`, not dead code.
 - **Spring / Java** endpoints: call tools with `workspace=<java-repo>` (or use
@@ -116,5 +116,5 @@ From **any** member workspace (same `group_db`):
 3. Read project://group — confirm grouped + xrepo_* counts
 4. list_specs / get_spec_implementation for the flow under discussion
 5. who_does_this_call / find_legacy_flows as needed
-6. export_flow_explorer if the user wants the HTML map
+6. `livespec ui` (`/livespec-ui`) if the user wants to browse the map
 ```

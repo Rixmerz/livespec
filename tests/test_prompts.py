@@ -49,7 +49,7 @@ async def test_cross_repo_workflow_prompt_registered():
         for needle in (
             "group_db",
             "xrepo-",
-            "export_flow_explorer",
+            "livespec ui",
             "get_cross_repo_guide",
             "project://cross-repo",
         ):

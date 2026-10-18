@@ -1,15 +1,16 @@
-"""livespec-docs plugin (v0.8 P3.5: doc-generation + Explorer surface).
+"""livespec-docs plugin (v0.8 P3.5: doc-generation surface).
 
-Loads when the active project has doc rows, an Explorer bundle on disk, or
-when ``LIVESPEC_PLUGINS`` includes ``docs``. Registers:
+Loads when the active project has doc rows, or when ``LIVESPEC_PLUGINS``
+includes ``docs``. Registers:
 
-    generate_docs, list_docs, export_documentation,
-    export_explorer, export_flow_explorer
+    generate_docs, list_docs, export_documentation
 
-Human-facing ceremony (static docs + Spec/Flow Explorer HTML). Agents
-prefer grafo tools mid-task; humans use export for durable artifacts.
-Bootstrap on a fresh repo: ``LIVESPEC_PLUGINS=docs`` (or ``=all``), or
-``index_project(explorer=True)`` to drop a bundle and unlock the plugin.
+Human-facing ceremony (Markdown docs). Agents prefer graph tools mid-task.
+Bootstrap on a fresh repo: ``LIVESPEC_PLUGINS=docs`` (or ``=all``).
+
+The Spec/Flow Explorer exports that used to live here were removed: they wrote
+HTML/JS bundles into the repository. The browsable view of every indexed
+project is now ``livespec ui``, which writes nothing into any project.
 """
 
 from __future__ import annotations

@@ -17,6 +17,7 @@ from typing import Any
 from fastmcp import FastMCP
 
 from livespec_mcp.domain.indexer import index_project as run_index
+from livespec_mcp.domain.languages import EXTRACTOR_SUPPORTED, grammar_fix_hint
 from livespec_mcp.domain.rag import rebuild_chunks
 from livespec_mcp.state import AppState, get_state
 from livespec_mcp.workspace_param import WORKSPACE_DOCSTRING_NOTE, Workspace
@@ -93,7 +94,24 @@ def run_index_pipeline(st: AppState, *, force: bool = False) -> dict[str, Any]:
         "chunks": chunk_stats,
     }
     _attach_grammar_failures(payload, stats)
+    _attach_zero_symbol_warning(payload, stats, st)
+    _record_in_registry(st)
     return payload
+
+
+def _record_in_registry(st: AppState) -> None:
+    """Note this workspace in the user-level registry `livespec ui` reads.
+
+    The registry lives outside every repository (see `livespec_mcp.registry`).
+    Best-effort by design: a read-only home directory or a corrupt registry
+    must never cost the user their index run.
+    """
+    try:
+        from livespec_mcp.registry import record_state
+
+        record_state(st)
+    except Exception:
+        _log.exception("could not record workspace in the livespec registry; skipping")
 
 
 def _attach_grammar_failures(payload: dict[str, Any], stats: Any) -> None:
@@ -117,53 +135,64 @@ def _attach_grammar_failures(payload: dict[str, Any], stats: Any) -> None:
         "`livespec grammars` once with network access, then re-index — the "
         "files were left unindexed on purpose so they are retried."
     )
+    # One entry per language with the actual error and a fix for THAT error
+    # (a proxy's CA, no network, no zstd decoder) — the counts above say how
+    # much is missing, this says why and what to do.
+    payload["parser_errors"] = [
+        {
+            "language": lang,
+            "files": stats.languages_failed.get(lang, 0),
+            "error": err,
+            "hint": grammar_fix_hint(err),
+        }
+        for lang, err in sorted((stats.parser_errors or {}).items())
+    ]
 
 
-def _should_build_explorer(st: AppState, explorer: bool) -> bool:
-    """Return whether ``index_project`` should (re)generate the Spec Explorer bundle.
+def _attach_zero_symbol_warning(payload: dict[str, Any], stats: Any, st: AppState) -> None:
+    """Top-level `warning` when a language had files this run but 0 symbols.
 
-    True when any of:
+    The failure this guards against: `languages: {typescript: 136}` next to
+    `symbols_total: 0` reads as a successful index of an empty repo, and every
+    Spec feature downstream then silently does nothing. Counted from the DB
+    (what the project holds for that language now), so a language whose
+    grammar failed but whose symbols survive from an earlier run is NOT
+    flagged — those symbols are stale but real, and `parser_errors` already
+    says the files were skipped.
 
-    * ``explorer=True`` (explicit opt-in),
-    * the bundle already exists (freshness — keep it from going stale),
-    * the workspace looks like a FastAPI app (``main.py`` / ``app.py`` with
-      ``app = FastAPI(...)``) and no bundle exists yet (first-index autodetect).
+    Tree-sitter languages only: a Python package of empty `__init__.py`
+    files legitimately has zero symbols; a TS/JS file always yields at least
+    its module symbol.
     """
-    if explorer:
-        return True
-    explorer_dir = st.settings.state_dir / "explorer"
-    if explorer_dir.exists():
-        return True
-    from livespec_mcp.explorer.autowire import find_fastapi_entrypoints
-
-    return bool(find_fastapi_entrypoints(st.settings.workspace))
-
-
-def _maybe_regenerate_explorer(st: AppState, explorer: bool) -> bool:
-    """Refresh the static Spec Explorer bundle to keep it from going stale.
-
-    Regenerates when :func:`_should_build_explorer` is true (explicit flag,
-    existing bundle, or FastAPI entry autodetect on first index). Any failure
-    is logged and swallowed — a bad explorer build must never break the index
-    pipeline. Returns whether the bundle was (re)written.
-
-    Refreshes on EVERY index (not gated on code changes) because specs/links
-    can change without any file changing; the cost of the refresh itself was
-    cut by the v0.20 coverage-BFS inversion (H3) and the single
-    compute_endpoints pass, so an always-fresh bundle stays affordable.
-    """
-    if not _should_build_explorer(st, explorer):
-        return False
-    try:
-        # Imported here (not at module top) so explorer.py — owned by another
-        # surface — is only loaded when a bundle refresh is actually needed.
-        from livespec_mcp.tools.explorer import write_explorer_bundle
-
-        write_explorer_bundle(st)
-        return True
-    except Exception:
-        _log.exception("Spec Explorer bundle regeneration failed; skipping")
-        return False
+    seen = {
+        lang: n
+        for lang, n in (stats.languages or {}).items()
+        if n and lang in EXTRACTOR_SUPPORTED and lang != "python"
+    }
+    if not seen:
+        return
+    rows = st.conn.execute(
+        """SELECT f.language AS language, COUNT(s.id) AS n
+           FROM file f LEFT JOIN symbol s ON s.file_id = f.id
+           WHERE f.project_id = ? GROUP BY f.language""",
+        (st.project_id,),
+    ).fetchall()
+    have = {r["language"]: int(r["n"]) for r in rows}
+    empty = sorted(lang for lang in seen if have.get(lang, 0) == 0)
+    if not empty:
+        return
+    failed = set(stats.languages_failed or {})
+    parts = ", ".join(f"{lang} ({seen[lang]} file(s))" for lang in empty)
+    why = (
+        "its tree-sitter parser could not be loaded — see `parser_errors` for the error and the fix"
+        if set(empty) <= failed
+        else "the extractor produced nothing for them"
+    )
+    payload["warning"] = (
+        f"0 symbols were extracted for {parts}: {why}. Until that is fixed, "
+        "call graph, dead-code, endpoint and @spec: coverage results for these "
+        "languages are empty, not clean."
+    )
 
 
 def _external_edge_counts(st: AppState) -> dict[str, int]:
@@ -468,7 +497,6 @@ def register(mcp: FastMCP) -> None:
     def index_project(
         force: bool = False,
         watch: bool = False,
-        explorer: bool = False,
         workspace: Workspace | None = None,
     ) -> dict[str, Any]:
         """Walk the workspace, parse code, persist symbols + call edges.
@@ -479,18 +507,12 @@ def register(mcp: FastMCP) -> None:
         patterns outrank .gitignore). Pass watch=True to also start a
         filesystem watcher after indexing so subsequent edits trigger
         automatic re-index (debounce 2s). Rebuilds FTS5 search chunks
-        idempotently. Pass explorer=True to (re)generate the static Spec
-        Explorer bundle (.mcp-docs/explorer/) after indexing; it is also
-        auto-refreshed whenever that bundle already exists, so the viewer
-        never goes stale.
+        idempotently. Records the workspace in the user-level registry
+        (outside the repo) that `livespec ui` reads; nothing UI-related is
+        written into the workspace.
         When ``[specs].sync_from`` is set in ``.livespec.toml``, markdown
         specs are re-imported after each index (idempotent). Optional
         ``[specs].links_seed`` replays ``bulk_link_spec_symbols`` from JSON.
-        On a first index, a FastAPI workspace (``app = FastAPI(...)`` in
-        ``main.py`` / ``app.py``) auto-builds the bundle and autowires
-        ``mount_explorer(app)`` when ``[explorer] auto_mount = true``.
-        A bundle-regeneration failure never breaks indexing — it is logged
-        and skipped. The payload reports `explorer_regenerated`.
         Use after pulling new commits or when documentation feels stale.
         """
         st = get_state(workspace, create=True)
@@ -502,7 +524,6 @@ def register(mcp: FastMCP) -> None:
         # to report what a run actually cost an ingest.
         external_before = _external_edge_counts(st)
         result = run_index_pipeline(st, force=force)
-        result["explorer_regenerated"] = _maybe_regenerate_explorer(st, explorer)
         _maybe_auto_ingest(st, result)
         _attach_external_edge_staleness(st, result, external_before)
         try:

@@ -57,14 +57,6 @@ class RepoConfig:
     ignore: tuple[str, ...] = ()
     languages: frozenset[str] | None = None
     max_file_bytes: int = DEFAULT_MAX_FILE_BYTES
-    # [explorer] — Spec Explorer served at /explorer on FastAPI apps
-    explorer_auto_mount: bool = True
-    explorer_mount_path: str = "/explorer"
-    # Opt-in MCP Try-it bridge when mounting on a foreign FastAPI app.
-    # ``livespec explorer serve`` always enables the bridge regardless.
-    explorer_playground: bool = False
-    # ``readonly`` (default) = only readOnlyHint tools; ``all`` = any tool.
-    explorer_playground_mode: str = "readonly"
     # [agent] — per-workspace agent instrumentation (off by default)
     agent_log_calls: bool = False
     # [specs] — post-index markdown sync + optional links seed
@@ -95,12 +87,6 @@ class RepoConfig:
             "ignore": list(self.ignore),
             "languages": sorted(self.languages) if self.languages is not None else None,
             "max_file_bytes": self.max_file_bytes,
-            "explorer": {
-                "auto_mount": self.explorer_auto_mount,
-                "mount_path": self.explorer_mount_path,
-                "playground": self.explorer_playground,
-                "playground_mode": self.explorer_playground_mode,
-            },
             "agent": {
                 "log_calls": self.agent_log_calls,
             },
@@ -259,12 +245,6 @@ def load_repo_config(workspace: Path) -> RepoConfig:
         languages = ["python", "typescript"]  # extractor labels; empty/absent = all
         max_file_bytes = 2000000
 
-        [explorer]
-        auto_mount = true          # append mount_explorer(app) to FastAPI main (default true)
-        mount_path = "/explorer"   # URL prefix served by mount_explorer()
-        playground = false         # MCP Try-it API on mount (serve always on)
-        playground_mode = "readonly"  # or "all" (mutations); env LIVESPEC_EXPLORER_PLAYGROUND=all
-
         [specs]
         # OpenSpec tree re-synced after every index_project
         openspec_dir = "openspec"
@@ -282,6 +262,9 @@ def load_repo_config(workspace: Path) -> RepoConfig:
 
     Malformed content raises ``ValueError`` with an actionable message —
     silently ignoring a typoed config would be worse than failing the call.
+    A legacy ``[explorer]`` table (the in-repo Spec Explorer, removed) is
+    read past like any other unknown top-level table, so an old config keeps
+    indexing; it no longer does anything.
 
     v0.24: ``deno.json``/``deno.jsonc``/``tsconfig.json`` ``exclude`` arrays
     at the workspace root are folded into ``.ignore`` too (see
@@ -334,35 +317,6 @@ def load_repo_config(workspace: Path) -> RepoConfig:
     ):
         raise _config_error("[index].max_file_bytes must be a positive integer")
 
-    explorer = data.get("explorer", {})
-    if not isinstance(explorer, dict):
-        raise _config_error("[explorer] must be a table")
-    unknown_explorer = set(explorer) - {
-        "auto_mount",
-        "mount_path",
-        "playground",
-        "playground_mode",
-    }
-    if unknown_explorer:
-        raise _config_error(
-            f"unknown [explorer] keys: {sorted(unknown_explorer)} "
-            "(valid: auto_mount, mount_path, playground, playground_mode)"
-        )
-    explorer_auto_mount = explorer.get("auto_mount", True)
-    if not isinstance(explorer_auto_mount, bool):
-        raise _config_error("[explorer].auto_mount must be a boolean")
-    explorer_mount_path = explorer.get("mount_path", "/explorer")
-    if not isinstance(explorer_mount_path, str) or not explorer_mount_path.startswith("/"):
-        raise _config_error("[explorer].mount_path must be a path starting with /")
-    explorer_playground = explorer.get("playground", False)
-    if not isinstance(explorer_playground, bool):
-        raise _config_error("[explorer].playground must be a boolean")
-    explorer_playground_mode = explorer.get("playground_mode", "readonly")
-    if not isinstance(explorer_playground_mode, str) or explorer_playground_mode not in {
-        "readonly",
-        "all",
-    }:
-        raise _config_error('[explorer].playground_mode must be "readonly" or "all"')
     agent = data.get("agent", {})
     if not isinstance(agent, dict):
         raise _config_error("[agent] must be a table")
@@ -423,10 +377,6 @@ def load_repo_config(workspace: Path) -> RepoConfig:
         ignore=eco_ignore + tuple(ignore),
         languages=frozenset(languages) if languages else None,
         max_file_bytes=max_file_bytes,
-        explorer_auto_mount=explorer_auto_mount,
-        explorer_mount_path=explorer_mount_path,
-        explorer_playground=explorer_playground,
-        explorer_playground_mode=explorer_playground_mode,
         agent_log_calls=agent_log_calls,
         specs_sync_from=tuple(sync_from),
         specs_links_seed=links_seed,

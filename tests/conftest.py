@@ -12,6 +12,10 @@ from pathlib import Path
 # would otherwise miss those tools. Set BEFORE any livespec import so
 # the value is in os.environ when server.py runs its plugin auto-detect.
 os.environ.setdefault("LIVESPEC_PLUGINS", "all")
+# Never let a test that simulates a grammar download failure trigger livespec's
+# real Python-side grammar fetch (a 19 MB download). Tests of the fallback opt
+# back in with monkeypatch and a fake fetch.
+os.environ.setdefault("LIVESPEC_GRAMMAR_FALLBACK", "0")
 
 import pytest
 
@@ -55,6 +59,17 @@ def requires_grammar(*languages: str) -> None:
 @pytest.fixture
 def workspace(tmp_path: Path) -> Path:
     return tmp_path
+
+
+@pytest.fixture(autouse=True)
+def _isolated_livespec_home(tmp_path_factory, monkeypatch):
+    """Every index run records the workspace in the user-level registry
+    (`livespec_mcp.registry`). Point it at a per-test directory OUTSIDE the
+    test workspace so tests never touch the real `~/.livespec` and a test that
+    asserts "nothing was written into the repo" stays honest."""
+    home = tmp_path_factory.mktemp("livespec_home")
+    monkeypatch.setenv("LIVESPEC_HOME", str(home))
+    return home
 
 
 @pytest.fixture(autouse=True)

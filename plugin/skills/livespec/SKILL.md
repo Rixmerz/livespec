@@ -6,8 +6,8 @@ description: >-
   polyrepo group_db, and maintain bidirectional Spec<->code traceability (FRs,
   ADRs, NFRs). Use whenever the user asks "what calls this?", "what breaks if I
   change X?", "what code implements auth-user-login?", "what Specs touch this file?",
-  "which flows/routes look unused?", or mentions livespec, the Spec Explorer,
-  Flow Explorer, or code-intelligence indexing.
+  "which flows/routes look unused?", or mentions livespec, `livespec ui`,
+  browsing indexed projects, or code-intelligence indexing.
 ---
 
 # Livespec — code intelligence & Spec traceability
@@ -53,12 +53,12 @@ Call tools from **any** member workspace (usually the hub/composer). Then:
 | Symbol in another repo | `find_symbol` / `get_symbol_source` / `quick_orient` (group-wide lookup) |
 | Shared Specs across repos | Mirror Spec ids as `xrepo-*` in **each** repo + `@spec:xrepo-…`; `get_cross_repo_guide` / `list_specs` / `get_spec_implementation`; `project://group` |
 | Likely-unused HTTP flows | `find_legacy_flows(summary_only=True)` — then full list |
-| Flow UI bundle | `export_flow_explorer` (docs plugin) |
+| Human view of the group | `/livespec-ui` (or `livespec ui`) — group page lists repos, cross-repo Specs, route hops; read-only, writes nothing into any repo |
 
 **Cross-repo Specs (`xrepo-*`):** livespec does not invent one global Spec row.
 Author the same OpenSpec slug `xrepo-<slug>` in each participating repo
 (`sync_openspec` or `create_spec`), annotate code with `@spec:xrepo-…`,
-re-index. Flow Explorer’s Specs tab unions mirrored ids. Annotation alone does
+re-index. The `livespec ui` group page unions mirrored ids. Annotation alone does
 **not** create the Spec row.
 
 **`find_legacy_flows` traps (critical):**
@@ -110,7 +110,7 @@ it is not a background watcher you should lean on while editing.
 | Stack trace / file:line → symbol | `resolve_location(path, line)` — the inverse of `read_unit` |
 | "Did I just write this twice?" | `search_similar(code or qname)` — before a write; normalised-AST hash + k-gram winnowing, no embeddings |
 | Frozen duplication debt | `debt_baseline_capture()` / `debt_baseline_status()` — accepted duplication stays quiet, new copies do not |
-| Static Spec Explorer bundle | `export_explorer(base?, head?, framework?)` — docs plugin; unlock with `LIVESPEC_PLUGINS=docs` or `index_project(explorer=True)` |
+| A human wants to *see* the index | Not a tool: tell them to run `/livespec-ui` (Claude Code) or `livespec ui` — one read-only page over every indexed project. Never generate HTML into the repo |
 
 ### A second extractor (Graphify) — optional, zero LLM
 
@@ -256,9 +256,16 @@ cached a short tool list) or set the override.
 
 ### Docs — `livespec-docs` plugin
 
-`generate_docs`, `list_docs`, `export_documentation`, `export_explorer`,
-`export_flow_explorer` — human-facing Markdown + static Explorer bundles.
-Unlock with Spec/docs rows, on-disk explorer bundle, or `LIVESPEC_PLUGINS=docs|all`.
+`generate_docs`, `list_docs`, `export_documentation` — human-facing Markdown docs.
+Unlock with doc rows or `LIVESPEC_PLUGINS=docs|all`. (The old `export_explorer` /
+`export_flow_explorer` bundles are gone; the browsable view is `livespec ui`.)
+
+### Slash commands (plugin)
+
+| Command | What it does |
+|---------|--------------|
+| `/livespec-onboard [path]` | cold open via the `livespec` subagent: `index_project` → `get_project_overview` → `list_specs` |
+| `/livespec-ui` | starts `livespec ui` in the background (one local, read-only web UI over every indexed project, grouped by polyrepo group) and reports its URL and how to stop it |
 
 ## Pagination contract
 
@@ -308,8 +315,10 @@ For the full annotation grammar and examples, fetch the MCP prompt `agent_playbo
   scratch dropped from the surface).
 - Do not read `who_calls` as complete on a repo whose `index_project` reported
   `languages_failed` — those files were never parsed, so their callers do not
-  exist in the graph at all. Run `livespec grammars` once with network access
-  and re-index.
+  exist in the graph at all. Follow `parser_errors[].hint` (a proxy's CA in
+  `SSL_CERT_FILE` / `REQUESTS_CA_BUNDLE`, or `livespec grammars` once with
+  network access) and re-index. A top-level `warning` on `index_project`
+  means a language had files but 0 symbols — say so, never report it clean.
 - Do not report a `who_calls` count as "callers" when the payload carries
   `excluded_by_edge_type` without saying what was excluded.
 - Do not run `ingest_external_graph(dry_run=False)` on someone's index without

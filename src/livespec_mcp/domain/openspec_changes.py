@@ -23,9 +23,11 @@ from typing import Any
 
 from livespec_mcp.domain.md_specs import (
     ParsedSpec,
+    _legacy_ospec_spec_id,
     _ospec_spec_id,
     parse_openspec_markdown,
 )
+from livespec_mcp.domain.spec_alias import adopt_legacy_spec, alias_legacy_slug
 from livespec_mcp.domain.specs_sync import _sync_spec_scenarios
 
 _PROSE_FILES = {"proposal": "proposal.md", "design": "design.md", "tasks": "tasks.md"}
@@ -91,7 +93,7 @@ def ingest_change(st: Any, parsed: ParsedChange, *, status: str = "proposed") ->
     for ordinal, d in enumerate(parsed.deltas):
         # For a RENAMED delta, resolve the old requirement name to its slug id so
         # apply can find and migrate the old spec.
-        rename_from_id = _ospec_spec_id(d.rename_from, d.module) if d.rename_from else None
+        rename_from_id = _rename_source_id(st, d.rename_from, d.module) if d.rename_from else None
         st.conn.execute(
             """INSERT OR IGNORE INTO spec_change_delta
                (change_id, operation, capability, spec_id, title, description,
@@ -115,6 +117,21 @@ def ingest_change(st: Any, parsed: ParsedChange, *, status: str = "proposed") ->
         "deltas": len(parsed.deltas),
         "change_id": change_id,
     }
+
+
+def _rename_source_id(st: Any, name: str, capability: str | None) -> str:
+    """Slug id of a RENAMED delta's FROM side, as the store knows it.
+
+    The current slug when a spec answers to it; otherwise the pre-
+    transliteration slug when THAT is what the store still holds (a database
+    synced before accented headings stopped turning into hyphens)."""
+    current = _ospec_spec_id(name, capability)
+    if _spec_pk(st, current) is not None:
+        return current
+    legacy = _legacy_ospec_spec_id(name, capability)
+    if legacy != current and _spec_pk(st, legacy) is not None:
+        return legacy
+    return current
 
 
 def _module_id(st: Any, name: str | None) -> int | None:
@@ -143,6 +160,16 @@ def _upsert_spec(
     existing = st.conn.execute(
         "SELECT id FROM spec WHERE project_id=? AND spec_id=?", (pid, spec_id)
     ).fetchone()
+    if existing is None:
+        # Same requirement stored under its pre-transliteration id: rename it.
+        existing = adopt_legacy_spec(
+            st.conn,
+            pid,
+            spec_id=spec_id,
+            title=title,
+            capability=capability,
+            module_id=module_id,
+        )
     if existing:
         spec_pk = int(existing["id"])
         st.conn.execute(
@@ -159,6 +186,7 @@ def _upsert_spec(
         )
         spec_pk = int(cur.lastrowid)
     _sync_spec_scenarios(st.conn, spec_pk, scenarios)
+    alias_legacy_slug(st.conn, pid, spec_pk, spec_id=spec_id, title=title, capability=capability)
 
 
 def _spec_pk(st: Any, spec_id: str) -> int | None:
