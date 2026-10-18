@@ -16,4 +16,7 @@ async def test_mutation_tools_registered_when_plugins_forced():
     assert "create_spec" in tools
     assert "link_spec_symbol" in tools
     assert "generate_docs" in tools
-    assert "export_explorer" in tools
+    # The in-repo explorer exports were removed (hard cut, `livespec ui`
+    # replaces them) — even a forced full surface must not list them.
+    assert "export_explorer" not in tools
+    assert "export_flow_explorer" not in tools

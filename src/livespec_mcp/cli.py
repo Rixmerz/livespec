@@ -8,8 +8,7 @@ pre-commit hooks, CI) without an MCP host in the middle:
     livespec index <path> [--force]             # index + chunks, JSON out
     livespec status <path>                      # index status, JSON out
     livespec grammars [--all] [lang ...]        # prefetch tree-sitter grammars
-    livespec explorer serve [path] [--port 8765]  # Spec Explorer at /explorer/
-    livespec fastapi init [path]                  # index + Explorer + Cursor assets
+    livespec ui [--port N] [--open] [--add PATH]  # browse every indexed project
     livespec serve                              # explicit server form
 
 JSON goes to stdout, errors to stderr with exit code 1.
@@ -88,6 +87,50 @@ def _cmd_status(path: str) -> dict[str, Any]:
     return compute_index_status(get_state(path))
 
 
+def _cmd_ui(args: argparse.Namespace) -> int:
+    from livespec_mcp import registry
+    from livespec_mcp.ui.data import register_existing
+
+    for path in args.add:
+        try:
+            entry = register_existing(path)
+        except (FileNotFoundError, sqlite3.Error) as e:
+            print(f"error: {e}", file=sys.stderr)
+            return 1
+        print(f"registered {entry['path']}", file=sys.stderr)
+    if args.list:
+        print(
+            json.dumps(
+                {"registry": str(registry.registry_path()), "projects": registry.list_projects()},
+                indent=2,
+            )
+        )
+        return 0
+
+    from livespec_mcp.ui.server import make_server, server_url
+
+    try:
+        srv = make_server(args.host, args.port)
+    except OSError as e:
+        print(f"error: cannot listen on {args.host}:{args.port} ({e})", file=sys.stderr)
+        return 1
+    url = server_url(srv)
+    # The first stdout line is the contract the /livespec-ui command reads.
+    print(f"livespec ui: {url}", flush=True)
+    print(f"registry: {registry.registry_path()} · stop with Ctrl+C", file=sys.stderr, flush=True)
+    if args.open:
+        import webbrowser
+
+        webbrowser.open(url)
+    try:
+        srv.serve_forever()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        srv.server_close()
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     argv = sys.argv[1:] if argv is None else argv
     if not argv:
@@ -135,125 +178,35 @@ def main(argv: list[str] | None = None) -> int:
         help="report what is cached without downloading anything",
     )
 
-    p_explorer = sub.add_parser("explorer", help="Spec Explorer local preview")
-    p_explorer_sub = p_explorer.add_subparsers(dest="explorer_cmd", required=True)
-    p_explorer_serve = p_explorer_sub.add_parser(
-        "serve",
-        help="HTTP server at /explorer with MCP Try-it playground (default port 8765)",
+    p_ui = sub.add_parser(
+        "ui",
+        help="serve one local, read-only web UI over every indexed project",
+        description=(
+            "Starts a local web server over the user-level registry of indexed "
+            "projects (every `livespec index` / index_project records one). "
+            "Each project's index is opened read-only; nothing is written into "
+            "any project. Stop it with Ctrl+C."
+        ),
     )
-    p_explorer_serve.add_argument(
-        "path",
-        nargs="?",
-        default=".",
-        help="repo root (default: current directory)",
+    p_ui.add_argument("--host", default="127.0.0.1", help="bind address (default 127.0.0.1)")
+    p_ui.add_argument("--port", type=int, default=0, help="port (default 0: a random free port)")
+    p_ui.add_argument("--open", action="store_true", help="open the page in a browser")
+    p_ui.add_argument(
+        "--add",
+        action="append",
+        default=[],
+        metavar="PATH",
+        help="register an already-indexed repo without re-indexing it (repeatable)",
     )
-    p_explorer_serve.add_argument("--host", default="127.0.0.1")
-    p_explorer_serve.add_argument("--port", type=int, default=8765)
-    p_explorer_serve.add_argument(
-        "--mount-path",
-        default="/explorer",
-        help="URL prefix (default: /explorer)",
-    )
-    p_explorer_serve.add_argument(
-        "--flow",
-        action="store_true",
-        help="serve Flow Explorer (group) at / with Spec Explorers at /repos/<name>/explorer/",
-    )
-    p_explorer_serve.add_argument(
-        "--flow-dir",
-        default=None,
-        help="Flow Explorer bundle dir (default: <group_db parent>/flow-explorer)",
-    )
-
-    p_fastapi = sub.add_parser(
-        "fastapi",
-        help="FastAPI + Spec Explorer onboarding",
-    )
-    p_fastapi_sub = p_fastapi.add_subparsers(dest="fastapi_cmd", required=True)
-    p_fastapi_init = p_fastapi_sub.add_parser(
-        "init",
-        help="index, build Explorer, autowire, install Cursor rule/skill",
-    )
-    p_fastapi_init.add_argument(
-        "path",
-        nargs="?",
-        default=".",
-        help="repo root (default: current directory)",
-    )
-    p_fastapi_init.add_argument(
-        "--no-index",
-        action="store_true",
-        help="skip index_project + explorer bundle",
-    )
-    p_fastapi_init.add_argument(
-        "--no-wire",
-        action="store_true",
-        help="skip autowire mount_explorer into main.py/app.py",
-    )
-    p_fastapi_init.add_argument(
-        "--no-cursor",
-        action="store_true",
-        help="skip .cursor/rules + .cursor/skills install",
-    )
+    p_ui.add_argument("--list", action="store_true", help="print the registry as JSON and exit")
 
     args = parser.parse_args(argv)
 
     if args.cmd == "serve":
         _serve()
         return 0
-    if args.cmd == "explorer":
-        if args.explorer_cmd == "serve":
-            try:
-                if getattr(args, "flow", False):
-                    from pathlib import Path
-
-                    from livespec_mcp.state import get_state
-                    from livespec_mcp.tools.flow_explorer import (
-                        flow_out_dir,
-                        serve_flow_explorer,
-                    )
-
-                    if args.flow_dir:
-                        flow_dir = Path(args.flow_dir)
-                    else:
-                        st = get_state(args.path, create=False)
-                        flow_dir = flow_out_dir(st)
-                    if not (flow_dir / "index.html").is_file():
-                        raise FileNotFoundError(
-                            f"Flow Explorer bundle missing at {flow_dir} — "
-                            "run export_flow_explorer first"
-                        )
-                    serve_flow_explorer(flow_dir, host=args.host, port=args.port)
-                else:
-                    from livespec_mcp.explorer.asgi import serve_explorer
-
-                    serve_explorer(
-                        args.path,
-                        host=args.host,
-                        port=args.port,
-                        prefix=args.mount_path,
-                    )
-            except FileNotFoundError as e:
-                print(f"error: {e}", file=sys.stderr)
-                return 1
-        return 0
-    if args.cmd == "fastapi":
-        if args.fastapi_cmd == "init":
-            from livespec_mcp.explorer.install import init_fastapi_project
-
-            try:
-                result = init_fastapi_project(
-                    args.path,
-                    index=not args.no_index,
-                    wire_app=not args.no_wire,
-                    install_cursor=not args.no_cursor,
-                )
-            except FileNotFoundError as e:
-                print(f"error: {e}", file=sys.stderr)
-                return 1
-            print(json.dumps(result.__dict__, indent=2))
-            return 1 if result.errors else 0
-        return 0
+    if args.cmd == "ui":
+        return _cmd_ui(args)
     if args.cmd == "grammars":
         return _cmd_grammars(args.languages or None, check=args.check)
     try:

@@ -34,10 +34,6 @@ PARAM_DESCRIPTIONS: dict[str, str] = {
         "If true, start a filesystem watcher after indexing (debounce ~2s) so "
         "edits trigger automatic re-index."
     ),
-    "explorer": (
-        "If true, (re)generate the static Spec Explorer bundle under "
-        "``.mcp-docs/explorer/`` after indexing."
-    ),
     "include_infrastructure": (
         "Include infrastructure / generated / migration-style *symbols* that are "
         "normally filtered out. For HTTP routes see ``include_infra_routes``."
@@ -145,9 +141,6 @@ PARAM_DESCRIPTIONS: dict[str, str] = {
     "content": "Optional pre-written markdown body; when set, skips LLM sampling.",
     "max_tokens": "Sampling budget hint when the host generates doc content.",
     "format": "Export format for documentation (e.g. ``markdown``).",
-    "generated_at": "Optional ISO timestamp stamped into the Explorer bundle meta.",
-    "base": "Optional git base ref for Explorer Changes tab.",
-    "head": "Optional git head ref for Explorer Changes tab.",
     "direction": "Walk ``up`` (dependents), ``down`` (dependencies), or ``both``.",
     "target": "Impact target: symbol qname, file path, or Spec id (see ``target_type``).",
     "target_type": "Impact / doc target kind: ``symbol``, ``file``, or ``spec``.",

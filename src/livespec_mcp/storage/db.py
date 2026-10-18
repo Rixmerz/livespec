@@ -67,7 +67,7 @@ def connect(db_path: Path, *, create: bool = True) -> sqlite3.Connection:
     conn = sqlite3.connect(str(db_path), isolation_level=None, check_same_thread=False, timeout=30)
     conn.row_factory = sqlite3.Row
     # WAL gives concurrent readers for free but still allows only one writer.
-    # Cross-process writers (the `livespec-mcp index` CLI, `explorer install`)
+    # Cross-process writers (the `livespec-mcp index` CLI, a second MCP server)
     # and a cold full index that holds the write lock for minutes would
     # otherwise hit `database is locked` after Python's 5s default. Wait up
     # to 30s for the lock instead of erroring — set first, before anything

@@ -6,6 +6,71 @@ follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Breaking — the in-repo Spec/Flow Explorer is removed (hard cut, no aliases)
+
+The explorers generated HTML/JS bundles **inside the user's repository**
+(`.mcp-docs/explorer/`, `flow-explorer/` next to a group DB), refreshed them on
+every index, and the FastAPI onboarding went further: it patched `main.py` /
+`app.py` with `mount_explorer(app)` and dropped `.cursor/` rules, a skill and a
+session prompt into the project. Files that do not belong to the code, made it
+heavier, and had to be maintained. All of it is gone; the same hard-cut policy
+as `[0.20.0]` applies — calling a removed name is an error, there are no
+aliases:
+
+- **Tools removed (51 → 49):** `export_explorer`, `export_flow_explorer`. The
+  `livespec-docs` plugin keeps `generate_docs`, `list_docs` and
+  `export_documentation` (3) — Markdown docs, not a UI.
+- **`index_project(explorer=...)` removed**, together with the automatic
+  bundle refresh and the first-index FastAPI autodetect; the payload no longer
+  has `explorer_regenerated`. Passing `explorer=` is now a validation error.
+- **CLI removed:** `livespec explorer serve [--flow]` and `livespec fastapi
+  init`. **Python API removed:** `livespec_mcp.explorer` (`mount_explorer`,
+  `enable_explorer`, `LivespecExplorerMiddleware`, `explorer_lifespan`,
+  `init_fastapi_project`). An app that ran `fastapi init` must delete the
+  `mount_explorer(app)` line it appended; the `.mcp-docs/explorer/`,
+  `.cursor/rules/livespec-fastapi.mdc`, `.cursor/skills/livespec-fastapi/` and
+  `.livespec/SESSION_PROMPT.md` it wrote can simply be deleted.
+- **`.livespec.toml [explorer]`** is no longer read; an old table is ignored
+  like any other unknown top-level table, so existing configs keep indexing.
+- **Plugin visibility:** a leftover `.mcp-docs/explorer/index.html` no longer
+  unlocks the docs plugin — only `doc` rows or `LIVESPEC_PLUGINS` do.
+
+### Added — `livespec ui`: one read-only UI over every indexed project
+
+- **User-level registry.** Every `index_project` / `livespec index` records the
+  workspace (absolute path, name, DB path, group, last indexed, languages,
+  counts) in `$LIVESPEC_HOME/registry.json`, else
+  `$XDG_DATA_HOME/livespec/registry.json`, else `~/.livespec/registry.json` —
+  never inside a repository. Repos sharing a `[workspace] group_db` are one
+  group. An entry whose index is gone is reported `missing_db` /
+  `missing_workspace` and kept until the user forgets it; nothing is pruned
+  silently. Recording is best-effort and can never fail an index run.
+- **`livespec ui [--host] [--port] [--open] [--add PATH] [--list]`.** One
+  stdlib HTTP server on `127.0.0.1` (random free port unless `--port`; opens a
+  browser only with `--open`) serving plain HTML/CSS/JS from package data —
+  no build step. Home: all projects grouped by group plus ungrouped (toggle to
+  a flat list), with languages, symbols, Specs, Spec coverage (the
+  `audit_coverage` computation, never recorded as a trend snapshot) and last
+  indexed. Project: Specs by capability with coverage, symbol search, Spec
+  detail (scenarios, implementing symbols at `file:line`, dependencies both
+  ways, mirrors in sibling repos), endpoints, and a symbol's call-graph
+  neighbourhood. Group: repos in the group DB, cross-repo Specs and resolved
+  HTTP route hops. JSON under `/api/...`. Accessible (landmarks, labels,
+  keyboard tabs, focus management, AA contrast) with light/dark themes.
+  `--add` registers an index made before the registry existed without
+  re-indexing; members of a group DB appear in their group even if never
+  indexed on this machine.
+- **Read-only by construction.** Each project's index is opened per request
+  with a SQLite `mode=ro` URI plus `PRAGMA query_only` — and `immutable=1`
+  when no writer has it open, so not even `-shm` / `-wal` side files are
+  created. The only write the server can do is the **Forget** action, to the
+  user-level registry. Requests with a foreign `Host` are refused (DNS
+  rebinding) and the POST needs a custom header.
+- **`/livespec-ui` slash command** (plugin): starts `livespec ui` in the
+  background (installed `livespec`, else `uvx livespec@<pinned> ui`), reports
+  the URL and how to stop it. The Skill, `AGENT_PLAYBOOK.md` and the plugin
+  README list it.
+
 ### Fixed — two processes opening one index no longer fail with "database is locked"
 
 `connect()` bootstrapped the schema with no coordination between processes.

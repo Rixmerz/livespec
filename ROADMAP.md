@@ -19,6 +19,19 @@
 
 ## 0. Estado v0.20 (addendum, reemplaza al "Estado v0.7" del final)
 
+**Addendum Unreleased — the human UI leaves the repository.** Decision (owner
+request): livespec never writes UI artifacts into a user's code again. The
+Spec/Flow Explorer exports (`export_explorer`, `export_flow_explorer`,
+`index_project(explorer=)`), `livespec explorer serve`, `livespec fastapi init`
+and the FastAPI autowire are removed (hard cut, 51 → 49 tools; the docs plugin
+keeps only Markdown docs, 3 tools). The human-facing view is now **one
+user-level, read-only server** — `livespec ui` / `/livespec-ui` — over a
+registry of every indexed project (`$LIVESPEC_HOME`, outside any repo),
+segmented by polyrepo group. Strategy implication: the human surface is a
+*viewer of the index*, not a generator of files to maintain; it reuses the
+agent tools' compute functions in-process, so the tier-1 toolkit stays the
+single source of the numbers.
+
 **Addendum v0.31.0 — OpenSpec-slug-only + honest endpoints.** Hard-cut of the
 native `SPEC-NNN` dialect (slugs under `openspec/` only). Default
 `find_endpoints` is HTTP-ish (Spring DI / Angular UI / Click / FastMCP /

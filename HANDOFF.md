@@ -44,6 +44,46 @@ Todo el stack es local-first: 0 servicios externos, 0 API keys obligatorias, 0 D
 
 ## 3. Estado actual
 
+### Unreleased — la UI sale del repo: `livespec ui` sobre un registro de usuario
+
+**HEAD:** rama `worktree-agent-a0dd096c9921cbe35` (un commit sobre `9bc9043`,
+sin push; se mergea junto a los cambios paralelos de slugs y del extractor TS).
+**Tools:** 49 (34 core + 12 Spec + 3 docs) — bajan `export_explorer` y
+`export_flow_explorer`. **Migración:** sin cambios. **Tests:** 911 → 892
+(salen 41 casos: 6 archivos de tests del explorer + 3 del Flow host en
+`test_payload_ergonomics.py`; entran `tests/test_ui.py`, 21 casos, y 1 de pin
+del comando en `test_plugin_pin_sync.py`).
+
+Pedido del owner: sacar la UI tal como estaba (bundles HTML/JS escritos dentro
+del repo del usuario, que ensucian el código, pesan y hay que mantener) y
+reemplazarla por un comando `ui` que levante, desde la base de datos, UNA UI
+navegable de TODOS los proyectos indexados, segmentada por proyecto o por
+grupo. Hard cut como en `[0.20.0]`: se fueron `tools/explorer.py`,
+`tools/flow_explorer.py`, el paquete `explorer/` (asgi, fastapi, install,
+autowire, playground), `templates/fastapi/`, los subcomandos `explorer` y
+`fastapi`, `index_project(explorer=)` con su refresco/autodetect FastAPI, la
+tabla `[explorer]` de `.livespec.toml` (ahora se ignora) y el desbloqueo del
+plugin docs por bundle en disco. Lo nuevo: `registry.py` (registro en
+`$LIVESPEC_HOME` → `$XDG_DATA_HOME/livespec` → `~/.livespec`, que escriben
+`index_project` y `livespec index`, con estado `missing_db` en vez de poda
+silenciosa), `storage/readonly.py` (`mode=ro` + `query_only`, e `immutable=1`
+cuando no hay `-wal`, para no crear ni los archivos `-shm`/`-wal`), y `ui/`
+(`data.py` llama in-process a `compute_coverage(record=False)`,
+`compute_spec_test_coverage`, `compute_endpoints`; `server.py` stdlib con
+guarda de `Host` y header para el único POST, "Forget"; `static/` HTML/CSS/JS
+sin build). Slash command `/livespec-ui`. Docs: README, CHANGELOG, ROADMAP
+(addendum), SKILL, AGENT_PLAYBOOK (docs + templates), CROSS_REPO, plugin
+README, CLAUDE.md; spec propia `openspec/specs/ui/spec.md` + links en
+`livespec-spec-links.json`.
+
+Corrido de verdad: dos repos de prueba en un `group_db` + `/home/user/mecha`;
+`livespec ui --port 8765`, 246 requests a todas las páginas/JSON, cero
+archivos creados o modificados en los repos (snapshot antes/después);
+screenshots con Playwright/Chromium en claro y oscuro. Pendiente: el README
+usa una captura con rutas de scratchpad (retomarla sobre un demo limpio), y
+`find_endpoints` en un proyecto Fresh lista helpers de islands — es el
+comportamiento de `compute_endpoints`, no de la UI.
+
 ### Unreleased — bootstrap del índice serializado entre procesos
 
 **HEAD:** `main` en `18db546`. **Tools:** 51, sin cambios. **Migración:** v23,

@@ -14,8 +14,18 @@ plugin/
 ├── .mcp.json                    # runs uvx livespec@<pinned version>
 ├── agents/livespec.md           # specialized subagent; preloads the livespec Skill
 ├── skills/livespec/SKILL.md     # operating manual: tool map, workspace rule, contracts
-└── commands/livespec-onboard.md # /livespec-onboard [repo] — cold-open + orientation
+├── commands/livespec-onboard.md # /livespec-onboard [repo] — cold-open + orientation
+└── commands/livespec-ui.md      # /livespec-ui — start the read-only UI over every indexed project
 ```
+
+### `/livespec-ui`
+
+Starts `livespec ui` in the background — one local web server (127.0.0.1, a
+random free port) over every project indexed on this machine, grouped by
+polyrepo group — and reports the URL and the command that stops it. It reads a
+user-level registry (`$LIVESPEC_HOME`, else `$XDG_DATA_HOME/livespec`, else
+`~/.livespec`) and opens each index read-only: nothing is written into any
+repository. It replaces the old in-repo Spec/Flow Explorer bundles.
 
 ### The subagent + preloaded Skill
 

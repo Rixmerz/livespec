@@ -54,13 +54,15 @@ def test_detect_doc_rows_activate_docs_plugin(workspace, monkeypatch):
     assert detect_active_plugins(state) == {"docs"}
 
 
-def test_explorer_bundle_on_disk_activates_docs_plugin(workspace, monkeypatch):
+def test_leftover_explorer_bundle_no_longer_activates_docs_plugin(workspace, monkeypatch):
+    """The in-repo Spec Explorer is gone; an old bundle left on disk is just a
+    stale folder and must not unlock the docs plugin any more."""
     monkeypatch.delenv("LIVESPEC_PLUGINS", raising=False)
     state = get_state(create=True)
     out = workspace / ".mcp-docs" / "explorer"
     out.mkdir(parents=True)
     (out / "index.html").write_text("<html></html>", encoding="utf-8")
-    assert detect_active_plugins(state) == {"docs"}
+    assert detect_active_plugins(state) == set()
 
 
 def test_detect_both_rows_activate_both_plugins(workspace, monkeypatch):

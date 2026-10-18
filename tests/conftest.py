@@ -58,6 +58,17 @@ def workspace(tmp_path: Path) -> Path:
 
 
 @pytest.fixture(autouse=True)
+def _isolated_livespec_home(tmp_path_factory, monkeypatch):
+    """Every index run records the workspace in the user-level registry
+    (`livespec_mcp.registry`). Point it at a per-test directory OUTSIDE the
+    test workspace so tests never touch the real `~/.livespec` and a test that
+    asserts "nothing was written into the repo" stays honest."""
+    home = tmp_path_factory.mktemp("livespec_home")
+    monkeypatch.setenv("LIVESPEC_HOME", str(home))
+    return home
+
+
+@pytest.fixture(autouse=True)
 def _bind_workspace_for_tests(workspace: Path, monkeypatch):
     """Tests may omit workspace= on tool calls; bind to the test ``workspace``."""
     state_module.reset_state()

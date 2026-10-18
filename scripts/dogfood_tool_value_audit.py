@@ -305,8 +305,6 @@ def _cases(seed: dict[str, Any], *, mode: str) -> list[tuple[str, dict[str, Any]
         ("validate_openspec", {"workspace": ws, "strict": False}),
         ("sync_openspec", {"workspace": ws}),
         ("export_openspec", {"workspace": ws, "out_dir": ".mcp-docs/_audit_openspec_export"}),
-        ("export_explorer", {"workspace": ws}),
-        ("export_flow_explorer", {"workspace": ws}),
         ("list_docs", {"workspace": ws}),
         ("export_documentation", {"workspace": ws, "out_subdir": "_audit_docs_export"}),
         (
@@ -504,7 +502,7 @@ def _cases(seed: dict[str, Any], *, mode: str) -> list[tuple[str, dict[str, Any]
     )
 
     # index last / light — never force on cross (huge)
-    cases.append(("index_project", {"workspace": ws, "force": False, "explorer": False}))
+    cases.append(("index_project", {"workspace": ws, "force": False}))
 
     # import only if openspec dir likely exists
     openspec = Path(ws) / "openspec"

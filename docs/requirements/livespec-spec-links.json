@@ -536,11 +536,6 @@
   },
   {
     "spec_id": "docs-documentation-generation",
-    "qname": "src.livespec_mcp.explorer.fastapi.enable_explorer",
-    "relation": "implements"
-  },
-  {
-    "spec_id": "docs-documentation-generation",
     "qname": "src.livespec_mcp.prompts.register.document_undocumented_symbols",
     "relation": "implements"
   },
@@ -566,16 +561,6 @@
   },
   {
     "spec_id": "docs-documentation-generation",
-    "qname": "src.livespec_mcp.tools.docs.register.export_explorer",
-    "relation": "implements"
-  },
-  {
-    "spec_id": "docs-documentation-generation",
-    "qname": "src.livespec_mcp.tools.docs.register.export_flow_explorer",
-    "relation": "implements"
-  },
-  {
-    "spec_id": "docs-documentation-generation",
     "qname": "src.livespec_mcp.tools.docs.register.generate_docs",
     "relation": "implements"
   },
@@ -586,28 +571,8 @@
   },
   {
     "spec_id": "docs-documentation-generation",
-    "qname": "src.livespec_mcp.tools.flow_explorer._iter_project_endpoints",
-    "relation": "implements"
-  },
-  {
-    "spec_id": "docs-documentation-generation",
     "qname": "src.livespec_mcp.tools.plugins.docs.register",
     "relation": "implements"
-  },
-  {
-    "spec_id": "docs-documentation-generation",
-    "qname": "tests.test_explorer.test_export_explorer_data_schema",
-    "relation": "tests"
-  },
-  {
-    "spec_id": "docs-documentation-generation",
-    "qname": "tests.test_explorer.test_export_explorer_idempotent",
-    "relation": "tests"
-  },
-  {
-    "spec_id": "docs-documentation-generation",
-    "qname": "tests.test_explorer.test_export_explorer_writes_both_files",
-    "relation": "tests"
   },
   {
     "spec_id": "storage-persistence-schema-migrations",
@@ -952,6 +917,81 @@
   {
     "spec_id": "openspec-fission-ai-interoperability",
     "qname": "tests.test_openspec_interop.test_validate_openspec_flags_missing_scenario",
+    "relation": "tests"
+  },
+  {
+    "spec_id": "ui-cross-project-read-only-ui",
+    "qname": "src.livespec_mcp.registry.record_workspace",
+    "relation": "implements"
+  },
+  {
+    "spec_id": "ui-cross-project-read-only-ui",
+    "qname": "src.livespec_mcp.registry.list_projects",
+    "relation": "implements"
+  },
+  {
+    "spec_id": "ui-cross-project-read-only-ui",
+    "qname": "src.livespec_mcp.registry.forget",
+    "relation": "implements"
+  },
+  {
+    "spec_id": "ui-cross-project-read-only-ui",
+    "qname": "src.livespec_mcp.storage.readonly.connect_readonly",
+    "relation": "implements"
+  },
+  {
+    "spec_id": "ui-cross-project-read-only-ui",
+    "qname": "src.livespec_mcp.ui.data.home",
+    "relation": "implements"
+  },
+  {
+    "spec_id": "ui-cross-project-read-only-ui",
+    "qname": "src.livespec_mcp.ui.data.group",
+    "relation": "implements"
+  },
+  {
+    "spec_id": "ui-cross-project-read-only-ui",
+    "qname": "src.livespec_mcp.ui.data.spec_detail",
+    "relation": "implements"
+  },
+  {
+    "spec_id": "ui-cross-project-read-only-ui",
+    "qname": "src.livespec_mcp.ui.data.symbol_detail",
+    "relation": "implements"
+  },
+  {
+    "spec_id": "ui-cross-project-read-only-ui",
+    "qname": "src.livespec_mcp.ui.server.make_server",
+    "relation": "implements"
+  },
+  {
+    "spec_id": "ui-cross-project-read-only-ui",
+    "qname": "src.livespec_mcp.cli._cmd_ui",
+    "relation": "implements"
+  },
+  {
+    "spec_id": "ui-cross-project-read-only-ui",
+    "qname": "src.livespec_mcp.tools.indexing._record_in_registry",
+    "relation": "implements"
+  },
+  {
+    "spec_id": "ui-cross-project-read-only-ui",
+    "qname": "tests.test_ui.test_home_groups_projects_by_group_db",
+    "relation": "tests"
+  },
+  {
+    "spec_id": "ui-cross-project-read-only-ui",
+    "qname": "tests.test_ui.test_serving_never_writes_into_any_project",
+    "relation": "tests"
+  },
+  {
+    "spec_id": "ui-cross-project-read-only-ui",
+    "qname": "tests.test_ui.test_missing_db_is_shown_not_pruned",
+    "relation": "tests"
+  },
+  {
+    "spec_id": "ui-cross-project-read-only-ui",
+    "qname": "tests.test_ui.test_index_project_records_every_workspace",
     "relation": "tests"
   }
 ]

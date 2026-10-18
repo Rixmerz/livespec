@@ -1,4 +1,4 @@
-"""Unreleased payload-ergonomics batch — three findings from a dogfood pass on a
+"""Unreleased payload-ergonomics batch — findings from a dogfood pass on a
 real 13-repo polyrepo group.
 
 1. `find_dead_code` reported wildly different counts for the same repo depending
@@ -12,10 +12,8 @@ real 13-repo polyrepo group.
    row per mapping even when nothing changed (61 rows of `linked: false` to say
    "no-op"). Counts stay exact; the no-op rows are now elided.
 
-3. The Flow Explorer host skipped any repo whose `local_explorer` was null in
-   `data.json`. That field records disk state at *export* time, so a Spec
-   Explorer generated afterwards stayed unmountable until the flow bundle was
-   re-exported. Disk is now the authority.
+(A third finding, about the Flow Explorer host, went with the Flow Explorer
+itself: the in-repo explorers were removed in favour of `livespec ui`.)
 """
 
 from __future__ import annotations
@@ -27,7 +25,6 @@ import pytest
 from fastmcp import Client
 
 from livespec_mcp.server import mcp
-from livespec_mcp.tools.flow_explorer import create_flow_host_app
 
 # --------------------------------------------------------------------------
 # 1. find_dead_code: filter attribution
@@ -187,78 +184,3 @@ async def test_explicit_bulk_link_tool_still_reports_every_row(workspace):
         assert len(again["results"]) == 1
         assert again["results"][0]["linked"] is False
         assert "results_omitted" not in again
-
-
-# --------------------------------------------------------------------------
-# 3. Flow Explorer host: disk beats stale metadata
-# --------------------------------------------------------------------------
-
-
-def _write_bundle(root: Path) -> None:
-    bundle = root / ".mcp-docs" / "explorer"
-    bundle.mkdir(parents=True)
-    (bundle / "index.html").write_text("<h1>spec explorer</h1>")
-
-
-def test_flow_host_mounts_repo_whose_metadata_predates_its_bundle(tmp_path: Path):
-    """`local_explorer` records disk state at export time. A Spec Explorer
-    generated afterwards must still mount — this is the bug that made the hop
-    target of a live demo 404."""
-    repo = tmp_path / "svc-a"
-    repo.mkdir()
-    _write_bundle(repo)
-
-    flow_dir = tmp_path / "flow-explorer"
-    flow_dir.mkdir()
-    (flow_dir / "index.html").write_text("<h1>flow</h1>")
-    # Exported BEFORE the bundle existed: local_explorer is null.
-    (flow_dir / "data.json").write_text(
-        json.dumps({"projects": [{"name": "svc-a", "root": str(repo), "local_explorer": None}]})
-    )
-
-    _app, mounted = create_flow_host_app(flow_dir)
-    assert mounted == ["svc-a"]
-
-
-def test_flow_host_still_skips_repo_with_no_bundle_on_disk(tmp_path: Path):
-    """The fallback derives a path; it must not invent a mount for a repo that
-    genuinely has no Explorer bundle."""
-    repo = tmp_path / "svc-b"
-    repo.mkdir()
-
-    flow_dir = tmp_path / "flow-explorer"
-    flow_dir.mkdir()
-    (flow_dir / "index.html").write_text("<h1>flow</h1>")
-    (flow_dir / "data.json").write_text(
-        json.dumps({"projects": [{"name": "svc-b", "root": str(repo), "local_explorer": None}]})
-    )
-
-    _app, mounted = create_flow_host_app(flow_dir)
-    assert mounted == []
-
-
-def test_flow_host_prefers_recorded_path_when_it_is_valid(tmp_path: Path):
-    """The hint is still used when it points at a real bundle."""
-    repo = tmp_path / "svc-c"
-    repo.mkdir()
-    _write_bundle(repo)
-
-    flow_dir = tmp_path / "flow-explorer"
-    flow_dir.mkdir()
-    (flow_dir / "index.html").write_text("<h1>flow</h1>")
-    (flow_dir / "data.json").write_text(
-        json.dumps(
-            {
-                "projects": [
-                    {
-                        "name": "svc-c",
-                        "root": str(repo),
-                        "local_explorer": str(repo / ".mcp-docs" / "explorer" / "index.html"),
-                    }
-                ]
-            }
-        )
-    )
-
-    _app, mounted = create_flow_host_app(flow_dir)
-    assert mounted == ["svc-c"]

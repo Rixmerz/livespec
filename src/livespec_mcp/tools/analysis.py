@@ -1577,7 +1577,7 @@ def compute_endpoints(
     """Module-level shared computation: the full unpaginated endpoint list.
 
     Both ``find_endpoints`` (the paginated tool wrapper) and
-    ``export_explorer`` consume this. Returns the same per-endpoint dicts
+    ``livespec ui`` (``ui/data.py``) consume this. Returns the same per-endpoint dicts
     the tool emits (``qualified_name``, ``kind``, ``file_path``,
     ``start_line``, ``end_line``, ``decorators``, plus optional
     framework-specific keys: ``ts_framework`` / ``django_cbv_base`` /
@@ -2250,7 +2250,7 @@ def compute_coverage(st: AppState, *, record: bool = True) -> dict[str, Any]:
     """Module-level shared computation: the full unpaginated coverage audit.
 
     Both ``audit_coverage`` (the paginated tool wrapper) and
-    ``export_explorer`` consume this. Returns the complete lists plus an
+    ``livespec ui`` (``record=False``) consume this. Returns the complete lists plus an
     exact ``counts`` dict — pagination is applied by the tool wrapper, not
     here.
     """
