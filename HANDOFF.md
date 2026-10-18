@@ -15,9 +15,9 @@
   era la máquina macOS anterior — referencias viejas en este doc pueden
   mencionarlo)
 - **Demo project:** `<demo-repo>` (4 archivos Python con `@rf:` annotations en docstrings, ya tiene RFs persistidas en su `.mcp-docs/docs.db`)
-- **MCP server:** Claude Code plugin `livespec@livespec-dev` **0.32.0**
+- **MCP server:** Claude Code plugin `livespec@livespec-dev` **0.33.0**
   (marketplace `livespec-dev` = `Rixmerz/livespec`; also installable as
-  `livespec@rixmerz`). Pin `uvx livespec@0.32.0` and/or Cursor `user-livespec`
+  `livespec@rixmerz`). Pin `uvx livespec@0.33.0` and/or Cursor `user-livespec`
   pointing at a local checkout. **Every tool requires `workspace=/abs/repo`**
   — there is no `LIVESPEC_WORKSPACE` env fallback (removed).
 - **Git user:** Juan Pablo Díaz S.
@@ -44,7 +44,11 @@ Todo el stack es local-first: 0 servicios externos, 0 API keys obligatorias, 0 D
 
 ## 3. Estado actual
 
-### Unreleased — tracks: specs cambiadas vs. solo tocadas
+**HEAD: `v0.33.0`, taggeado y liberado 2026-10-18.** Pin PyPI / plugin /
+`uvx livespec@0.33.0`. Trae los tracks y `CHANGESPEC.md` (PR #22: 4 tools core,
+38 core / 53 en total, migraciones 25 y 26) y `git_diff_impact` por símbolo.
+
+### v0.33.0 — tracks: specs cambiadas vs. solo tocadas
 
 Sobre `635e3cc` (rama `ccr-82a9fa1e-z0iknt`), un commit con código, docs y el
 cambio OpenSpec archivado. 965 tests.

@@ -6,6 +6,8 @@ follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.33.0] - 2026-10-18
+
 ### Changed — tracks separate the Specs a range changed from the ones it only touched (migration 26)
 
 - A changed function linked to many Specs used to mark all of them as touched:

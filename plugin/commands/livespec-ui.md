@@ -24,7 +24,7 @@ fi
 if command -v livespec >/dev/null 2>&1 && livespec ui --help >/dev/null 2>&1; then
   set -- livespec ui
 else
-  set -- uvx livespec@0.32.0 ui
+  set -- uvx livespec@0.33.0 ui
 fi
 nohup "$@" $ARGUMENTS >"$STATE/log" 2>&1 &
 echo $! >"$STATE/pid"

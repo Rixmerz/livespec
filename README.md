@@ -5,11 +5,11 @@
 [![License: AGPL v3](https://img.shields.io/badge/license-AGPL--3.0--only-blue.svg)](LICENSE)
 [![Tests](https://img.shields.io/badge/tests-716%20passed-brightgreen.svg)](https://github.com/Rixmerz/livespec/actions)
 
-> **Public beta (v0.31).** Local-first code intelligence for AI agents.
+> **Public beta (v0.33).** Local-first code intelligence for AI agents.
 > Call graph, impact analysis, and Spec ↔ code traceability. Search is
 > **FTS5-only** (no embeddings). Dead/legacy findings are **graph evidence**,
 > not production traffic — confirm with APM/logs before deleting. Spec and
-> docs mutation tools are plugin-gated. Pin: `uvx livespec@0.32.0`.
+> docs mutation tools are plugin-gated. Pin: `uvx livespec@0.33.0`.
 >
 > **License: [GNU AGPL v3](LICENSE)** (`AGPL-3.0-only`). If you modify
 > livespec and offer it over a network (MCP host, SaaS, internal API), you
@@ -41,7 +41,7 @@ Ships as a **Claude Code plugin** bundling three things: the **MCP server**
 (the tools), a specialized **subagent**, and a preloaded **Skill** (the
 operating manual). Everything an agent sees — the plugin, subagent, Skill, and
 MCP tool namespace — is `livespec`. The PyPI distribution and console command
-are also **`livespec`** (`uvx livespec@0.32.0` / `pip install livespec`).
+are also **`livespec`** (`uvx livespec@0.33.0` / `pip install livespec`).
 The legacy command alias `livespec-mcp` still works on the same entry point.
 
 Battle-tested on real codebases. Four releases of compounding wins
@@ -68,7 +68,7 @@ Spec flow, Django bugfix, TypeScript feature) — see
 ```bash
 # Wire as an MCP server next to your editor (claude.ai/code, Cursor, ...).
 # Every tool call carries workspace="/abs/path" — one server, N repos.
-uvx livespec@0.32.0
+uvx livespec@0.33.0
 # alias still works: livespec-mcp
 ```
 
@@ -197,13 +197,13 @@ grammar pack's own downloader rejects that CA, and `index_project` reports
 ## Run as MCP server
 
 ```bash
-uvx livespec@0.32.0   # preferred — PyPI distribution name is `livespec`
+uvx livespec@0.33.0   # preferred — PyPI distribution name is `livespec`
 livespec              # after `pip install livespec` / `uv tool install livespec`
 livespec-mcp          # console alias of the same entry point
 ```
 
 > The **product, package, and primary command** are `livespec`
-> (`pip install livespec`, `uvx livespec@0.32.0`). The `livespec-mcp` command
+> (`pip install livespec`, `uvx livespec@0.33.0`). The `livespec-mcp` command
 > remains as a back-compat alias only.
 
 Every tool call requires `workspace="/abs/path"` (no cwd or env fallback
