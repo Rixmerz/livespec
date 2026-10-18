@@ -165,6 +165,10 @@ Grammar (case-insensitive verb):
 A slug is recognized because it **is** a spec id in the store, so annotate
 after the spec exists. An id nothing answers to is not silently dropped:
 `scan_spec_annotations` returns it under `unknown_annotation_ids`.
+An id the spec *used* to have (accented headings once slugged to
+`validaci-n`; they now transliterate to `validacion`) still links, and comes
+back under `deprecated_annotation_ids` as `{id, use}` — rewrite the annotation
+to the `use` id.
 
 ### 5.2 Level 2 — verb-anchored (confidence 0.7)
 

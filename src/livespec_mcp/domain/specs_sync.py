@@ -10,6 +10,12 @@ from livespec_mcp.domain.md_specs import (
     UnsupportedSpecCatalogError,
     parse_openspec_markdown,
 )
+from livespec_mcp.domain.spec_alias import (
+    adopt_legacy_spec,
+    alias_legacy_slug,
+    rename_spec_row,
+    resolve_spec_id,
+)
 
 # spec_symbol.relation is a free-text column, but the query surface only knows
 # these three — a typo like 'implement' would store silently and be invisible
@@ -162,7 +168,9 @@ def _adopt_spec_under_its_old_id(
     ).fetchone()
     if row is None or row["spec_id"] in incoming_ids:
         return None
-    conn.execute("UPDATE spec SET spec_id=? WHERE id=?", (pspec.spec_id, int(row["id"])))
+    # The old id stays reachable as an alias: `@spec:SPEC-007` in code and
+    # agents passing it keep landing on the same requirement.
+    rename_spec_row(conn, project_id, int(row["id"]), row["spec_id"], pspec.spec_id)
     return row
 
 
@@ -203,6 +211,7 @@ def import_specs_from_markdown_file(
     created = 0
     updated = 0
     adopted: list[str] = []
+    renamed_legacy: list[dict[str, str]] = []
     incoming_ids = {ps.spec_id for ps in parsed}
     for pspec in parsed:
         module_id = None
@@ -227,6 +236,21 @@ def import_specs_from_markdown_file(
         existing = st.conn.execute(
             "SELECT id FROM spec WHERE project_id=? AND spec_id=?", (pid, pspec.spec_id)
         ).fetchone()
+        if existing is None:
+            # An id derived before transliteration (`validaci-n` for
+            # "Validación"): same requirement, so the row is renamed in place.
+            legacy_row = adopt_legacy_spec(
+                st.conn,
+                pid,
+                spec_id=pspec.spec_id,
+                title=pspec.title,
+                capability=pspec.module,
+                module_id=module_id,
+                taken=incoming_ids,
+            )
+            if legacy_row is not None:
+                existing = legacy_row
+                renamed_legacy.append({"from": legacy_row["spec_id"], "to": pspec.spec_id})
         if existing is None:
             existing = _adopt_spec_under_its_old_id(
                 st.conn, pid, pspec, module_id, source, incoming_ids
@@ -271,6 +295,16 @@ def import_specs_from_markdown_file(
             spec_pk = int(cur.lastrowid)
             created += 1
         _sync_spec_scenarios(st.conn, spec_pk, pspec.scenarios)
+        # Even on a fresh DB: code written against the legacy id must link.
+        alias_legacy_slug(
+            st.conn,
+            pid,
+            spec_pk,
+            spec_id=pspec.spec_id,
+            title=pspec.title,
+            capability=pspec.module,
+            taken=incoming_ids,
+        )
     st.conn.commit()
     out: dict[str, Any] = {
         "source": str(p),
@@ -281,6 +315,8 @@ def import_specs_from_markdown_file(
     }
     if adopted:
         out["adopted"] = adopted
+    if renamed_legacy:
+        out["renamed_legacy_ids"] = renamed_legacy
     if check_duplicates:
         dupes = scan_duplicate_spec_markdown_specs(st.settings.workspace, exclude=p)
         if dupes:
@@ -353,6 +389,7 @@ def bulk_link_spec_symbols_impl(
             n_failed += 1
             continue
         source = m.get("source", "manual")
+        spec_id, via_alias = resolve_spec_id(st.conn, pid, spec_id)
         spec = st.conn.execute(
             "SELECT id FROM spec WHERE project_id=? AND spec_id=?", (pid, spec_id)
         ).fetchone()
@@ -400,18 +437,19 @@ def bulk_link_spec_symbols_impl(
             n_linked += 1
         else:
             n_skipped += 1
-        if quiet_noop_results and not linked:
+        if quiet_noop_results and not linked and via_alias is None:
             n_omitted += 1
         else:
-            results.append(
-                {
-                    "spec_id": spec_id,
-                    "symbol_qname": symbol_qname,
-                    "ok": True,
-                    "linked": linked,
-                    "error": None,
-                }
-            )
+            entry = {
+                "spec_id": spec_id,
+                "symbol_qname": symbol_qname,
+                "ok": True,
+                "linked": linked,
+                "error": None,
+            }
+            if via_alias is not None:
+                entry["deprecated_spec_id"] = {"id": via_alias, "use": spec_id}
+            results.append(entry)
     st.conn.commit()
     payload: dict[str, Any] = {
         "linked": n_linked,

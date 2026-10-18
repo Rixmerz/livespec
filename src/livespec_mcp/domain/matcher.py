@@ -23,7 +23,7 @@ from __future__ import annotations
 import re
 import sqlite3
 from collections.abc import Iterable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from functools import lru_cache
 from typing import Any
 
@@ -385,6 +385,10 @@ class ScanResult:
     created: int
     unknown_ids: list[str]
     unknown_sample: list[dict[str, Any]]
+    # Legacy ids (a spec alias) met in code: they still link, to the spec the
+    # alias names, and each comes with the id to write instead.
+    deprecated_ids: list[dict[str, str]] = field(default_factory=list)
+    deprecated_sample: list[dict[str, Any]] = field(default_factory=list)
 
 
 def scan_annotations(conn: sqlite3.Connection, project_id: int) -> ScanResult:
@@ -408,11 +412,19 @@ def scan_annotations(conn: sqlite3.Connection, project_id: int) -> ScanResult:
         for r in conn.execute("SELECT id, spec_id FROM spec WHERE project_id = ?", (project_id,))
     }
     prefixes = derive_spec_prefixes(spec_map.keys())
-    known_ids = tuple(spec_map.keys())
+    # Legacy ids still resolve (to the spec they alias) — a spec_alias is
+    # never "unknown". Live ids shadow aliases inside alias_map already.
+    from livespec_mcp.domain.spec_alias import alias_map
+
+    aliases = alias_map(conn, project_id)
+    known_ids = tuple(spec_map.keys()) + tuple(aliases.keys())
 
     created = 0
     unknown: list[str] = []
     sample: list[dict[str, Any]] = []
+    deprecated: list[dict[str, str]] = []
+    deprecated_seen: set[str] = set()
+    deprecated_sample: list[dict[str, Any]] = []
     for r in rows:
         doc = r["docstring"] or ""
         for missing in find_unknown_annotation_ids(doc, prefixes, known_ids=known_ids):
@@ -428,6 +440,20 @@ def scan_annotations(conn: sqlite3.Connection, project_id: int) -> ScanResult:
                 )
         for hit in parse_annotations(doc, prefixes, known_ids=known_ids):
             spec_pk = spec_map.get(hit.spec_id)
+            if spec_pk is None and hit.spec_id in aliases:
+                spec_pk, current = aliases[hit.spec_id]
+                if hit.spec_id not in deprecated_seen:
+                    deprecated_seen.add(hit.spec_id)
+                    deprecated.append({"id": hit.spec_id, "use": current})
+                if len(deprecated_sample) < _UNKNOWN_SAMPLE_MAX:
+                    deprecated_sample.append(
+                        {
+                            "spec_id": hit.spec_id,
+                            "use": current,
+                            "qualified_name": r["qualified_name"],
+                            "file_path": r["file_path"],
+                        }
+                    )
             if spec_pk is None:
                 continue
             try:
@@ -440,4 +466,10 @@ def scan_annotations(conn: sqlite3.Connection, project_id: int) -> ScanResult:
                     created += 1
             except sqlite3.IntegrityError:
                 pass
-    return ScanResult(created=created, unknown_ids=unknown, unknown_sample=sample)
+    return ScanResult(
+        created=created,
+        unknown_ids=unknown,
+        unknown_sample=sample,
+        deprecated_ids=deprecated,
+        deprecated_sample=deprecated_sample,
+    )

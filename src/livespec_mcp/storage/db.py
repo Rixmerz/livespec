@@ -685,6 +685,29 @@ def _m023_external_ingest(conn: sqlite3.Connection) -> None:
     )
 
 
+def _m024_spec_alias(conn: sqlite3.Connection) -> None:
+    """v0.33: ``spec_alias`` — old spec ids that still answer for a spec.
+
+    Spec ids derived from OpenSpec headings used to turn every accented letter
+    into a hyphen (``Validación`` → ``validaci-n``). Transliteration fixes the
+    ids, and this table keeps the old ones resolving: ``@spec:`` annotations in
+    code and agents that still pass a legacy id reach the renamed spec instead
+    of nothing. Keyed by the spec's primary key, so an alias follows its spec
+    and dies with it. New empty table, filled on the next sync — no
+    re-extract."""
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS spec_alias (
+            id INTEGER PRIMARY KEY,
+            project_id INTEGER NOT NULL REFERENCES project(id) ON DELETE CASCADE,
+            alias TEXT NOT NULL,
+            spec_id INTEGER NOT NULL REFERENCES spec(id) ON DELETE CASCADE,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            UNIQUE(project_id, alias)
+        )"""
+    )
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_spec_alias_spec ON spec_alias(spec_id)")
+
+
 # Ordered registry. Append-only — never reuse a version number.
 MIGRATIONS: list[Migration] = [
     (1, "drop_dead_tables", _m001_drop_dead_tables),
@@ -710,6 +733,7 @@ MIGRATIONS: list[Migration] = [
     (21, "symbol_fingerprint", _m021_symbol_fingerprint),
     (22, "symbol_edge_origin", _m022_symbol_edge_origin),
     (23, "external_ingest", _m023_external_ingest),
+    (24, "spec_alias", _m024_spec_alias),
 ]
 
 

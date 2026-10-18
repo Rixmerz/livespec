@@ -24,6 +24,7 @@ from fastmcp import FastMCP
 from livespec_mcp.domain import matcher
 from livespec_mcp.domain.graph import graph_pagerank, load_graph
 from livespec_mcp.domain.matcher import scan_annotations
+from livespec_mcp.domain.spec_alias import deprecation_note, resolve_spec_id
 from livespec_mcp.state import get_state
 from livespec_mcp.tools._errors import mcp_error
 from livespec_mcp.tools.analysis import _is_test_file_path, symbol_not_found_error
@@ -205,6 +206,14 @@ def _workspace_note(fn):
     """
     fn.__doc__ = (fn.__doc__ or "") + WORKSPACE_DOCSTRING_NOTE
     return fn
+
+
+def _attach_deprecated_ids(out: dict[str, Any], *pairs: tuple[str | None, str]) -> None:
+    """Add ``deprecated_spec_ids`` to a two-spec answer when either id was a
+    legacy alias (``(alias, resolved_id)`` pairs; ``alias`` None = live id)."""
+    notes = [n for alias, sid in pairs if (n := deprecation_note(alias, sid)) is not None]
+    if notes:
+        out["deprecated_spec_ids"] = notes
 
 
 def register(
@@ -475,6 +484,8 @@ def register(
     ) -> dict[str, Any]:
         st = get_state(workspace)
         pid = st.project_id
+        spec_id, via_alias = resolve_spec_id(st.conn, pid, spec_id)
+        note = deprecation_note(via_alias, spec_id)
         spec = st.conn.execute(
             "SELECT id FROM spec WHERE project_id=? AND spec_id=?", (pid, spec_id)
         ).fetchone()
@@ -493,13 +504,17 @@ def register(
                 "DELETE FROM spec_symbol WHERE spec_id=? AND symbol_id=? AND relation=?",
                 (spec["id"], sym["id"], relation),
             )
-            return {"unlinked": True, "spec_id": spec_id, "symbol": symbol_qname}
-        st.conn.execute(
-            """INSERT OR REPLACE INTO spec_symbol(spec_id, symbol_id, relation, confidence, source)
-               VALUES(?,?,?,?,?)""",
-            (spec["id"], sym["id"], relation, confidence, source),
-        )
-        return {"linked": True, "spec_id": spec_id, "symbol": symbol_qname, "relation": relation}
+            out: dict[str, Any] = {"unlinked": True, "spec_id": spec_id, "symbol": symbol_qname}
+        else:
+            st.conn.execute(
+                """INSERT OR REPLACE INTO spec_symbol(spec_id, symbol_id, relation, confidence, source)
+                   VALUES(?,?,?,?,?)""",
+                (spec["id"], sym["id"], relation, confidence, source),
+            )
+            out = {"linked": True, "spec_id": spec_id, "symbol": symbol_qname, "relation": relation}
+        if note is not None:
+            out["deprecated_spec_id"] = note
+        return out
 
     @mutation_tool(annotations={"readOnlyHint": False, "idempotentHint": True})
     def link_spec_symbol(
@@ -536,6 +551,8 @@ def register(
         """
         st = get_state(workspace)
         pid = st.project_id
+        spec_id, via_alias = resolve_spec_id(st.conn, pid, spec_id)
+        note = deprecation_note(via_alias, spec_id)
         scen = st.conn.execute(
             """SELECT sc.id FROM spec_scenario sc JOIN spec sp ON sp.id=sc.spec_id
                WHERE sp.project_id=? AND sp.spec_id=? AND sc.name=?""",
@@ -554,19 +571,27 @@ def register(
                 "DELETE FROM scenario_symbol WHERE scenario_id=? AND symbol_id=? AND relation=?",
                 (int(scen["id"]), int(sym["id"]), relation),
             )
-            return {"unlinked": True, "spec_id": spec_id, "scenario": scenario_name}
-        st.conn.execute(
-            """INSERT OR REPLACE INTO scenario_symbol(scenario_id, symbol_id, relation, confidence, source)
-               VALUES(?,?,?,?,?)""",
-            (int(scen["id"]), int(sym["id"]), relation, confidence, source),
-        )
-        return {
-            "linked": True,
-            "spec_id": spec_id,
-            "scenario": scenario_name,
-            "symbol": symbol_qname,
-            "relation": relation,
-        }
+            out: dict[str, Any] = {
+                "unlinked": True,
+                "spec_id": spec_id,
+                "scenario": scenario_name,
+            }
+        else:
+            st.conn.execute(
+                """INSERT OR REPLACE INTO scenario_symbol(scenario_id, symbol_id, relation, confidence, source)
+                   VALUES(?,?,?,?,?)""",
+                (int(scen["id"]), int(sym["id"]), relation, confidence, source),
+            )
+            out = {
+                "linked": True,
+                "spec_id": spec_id,
+                "scenario": scenario_name,
+                "symbol": symbol_qname,
+                "relation": relation,
+            }
+        if note is not None:
+            out["deprecated_spec_id"] = note
+        return out
 
     @agentic_tool(annotations={"readOnlyHint": False, "idempotentHint": True})
     def bulk_link_spec_symbols(
@@ -614,9 +639,15 @@ def register(
         spec_id: str,
         workspace: Workspace | None = None,
     ) -> dict[str, Any]:
-        """What code implements a Spec: list of symbols + files + coverage signals."""
+        """What code implements a Spec: list of symbols + files + coverage signals.
+
+        A legacy id (one the spec answered to before, e.g. a pre-
+        transliteration `validaci-n`) resolves to the spec; the answer then
+        carries `deprecated_spec_id: {id, use}`."""
         st = get_state(workspace)
         pid = st.project_id
+        spec_id, via_alias = resolve_spec_id(st.conn, pid, spec_id)
+        note = deprecation_note(via_alias, spec_id)
         spec = st.conn.execute(
             """SELECT sp.*, m.name AS module FROM spec sp
                LEFT JOIN module m ON m.id=sp.module_id
@@ -668,7 +699,7 @@ def register(
                     "verified": len(scen_syms) > 0,
                 }
             )
-        return {
+        out: dict[str, Any] = {
             "spec": {
                 "spec_id": spec["spec_id"],
                 "kind": spec["kind"],
@@ -691,6 +722,9 @@ def register(
                 "scenarios_verified": sum(1 for s in scenarios if s["verified"]),
             },
         }
+        if note is not None:
+            out["deprecated_spec_id"] = note
+        return out
 
     @mutation_tool(annotations={"readOnlyHint": False, "idempotentHint": True})
     def import_specs_from_markdown(
@@ -1171,11 +1205,22 @@ def register(
         `unknown_annotation_sample` — most often an OpenSpec requirement that
         was renamed, which changes the slug its id derives from and leaves
         every `@spec:` pointing at it silently dead.
+
+        Ids that are a spec's *old* id (e.g. `validaci-n`, derived before
+        accented headings were transliterated to `validacion`) still link to
+        that spec and come back as `deprecated_annotation_ids`
+        (`[{"id": old, "use": new}]`, plus a capped
+        `deprecated_annotation_sample` with locations) — rewrite them.
         """
         st = get_state(workspace)
         pid = st.project_id
         res = scan_annotations(st.conn, pid)
         out: dict[str, Any] = {"links_created": res.created}
+        if res.deprecated_ids:
+            # Legacy ids (pre-transliteration slugs and other aliases): they
+            # still link, but the code should be rewritten to the new id.
+            out["deprecated_annotation_ids"] = res.deprecated_ids
+            out["deprecated_annotation_sample"] = res.deprecated_sample
         if res.unknown_ids:
             out["unknown_annotation_ids"] = res.unknown_ids
             out["unknown_annotation_sample"] = res.unknown_sample
@@ -1333,6 +1378,8 @@ def register(
     ) -> dict[str, Any]:
         st = get_state(workspace)
         pid = st.project_id
+        parent_spec_id, parent_alias = resolve_spec_id(st.conn, pid, parent_spec_id)
+        child_spec_id, child_alias = resolve_spec_id(st.conn, pid, child_spec_id)
         if parent_spec_id == child_spec_id:
             return mcp_error("A Spec cannot depend on itself")
         parent = st.conn.execute(
@@ -1377,12 +1424,14 @@ def register(
                VALUES(?,?,?)""",
             (int(parent["id"]), int(child["id"]), kind),
         )
-        return {
+        out: dict[str, Any] = {
             "linked": cur.rowcount > 0,
             "parent": parent_spec_id,
             "child": child_spec_id,
             "kind": kind,
         }
+        _attach_deprecated_ids(out, (parent_alias, parent_spec_id), (child_alias, child_spec_id))
+        return out
 
     @mutation_tool(annotations={"readOnlyHint": False, "idempotentHint": True})
     def link_spec_dependency(
@@ -1417,6 +1466,8 @@ def register(
     ) -> dict[str, Any]:
         st = get_state(workspace)
         pid = st.project_id
+        parent_spec_id, parent_alias = resolve_spec_id(st.conn, pid, parent_spec_id)
+        child_spec_id, child_alias = resolve_spec_id(st.conn, pid, child_spec_id)
         parent = st.conn.execute(
             "SELECT id FROM spec WHERE project_id=? AND spec_id=?",
             (pid, parent_spec_id),
@@ -1438,12 +1489,14 @@ def register(
                    AND kind=?""",
                 (int(parent["id"]), int(child["id"]), kind),
             )
-        return {
+        out: dict[str, Any] = {
             "unlinked": cur.rowcount,
             "parent": parent_spec_id,
             "child": child_spec_id,
             "kind": kind,
         }
+        _attach_deprecated_ids(out, (parent_alias, parent_spec_id), (child_alias, child_spec_id))
+        return out
 
     @mutation_tool(
         annotations={"readOnlyHint": False, "idempotentHint": True, "destructiveHint": True}
@@ -1467,6 +1520,8 @@ def register(
     ) -> dict[str, Any]:
         st = get_state(workspace)
         pid = st.project_id
+        spec_id, via_alias = resolve_spec_id(st.conn, pid, spec_id)
+        note = deprecation_note(via_alias, spec_id)
         root = st.conn.execute(
             "SELECT id, spec_id FROM spec WHERE project_id=? AND spec_id=?",
             (pid, spec_id),
@@ -1548,12 +1603,15 @@ def register(
                 }
             )
 
-        return {
+        out: dict[str, Any] = {
             "root": spec_id,
             "direction": direction,
             "nodes": list(spec_meta.values()),
             "edges": edge_payload,
         }
+        if note is not None:
+            out["deprecated_spec_id"] = note
+        return out
 
     @mutation_tool(annotations={"readOnlyHint": True, "idempotentHint": True})
     def get_spec_dependency_graph(

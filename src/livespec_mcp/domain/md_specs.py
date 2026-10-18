@@ -15,6 +15,7 @@ Migrate those files to ``openspec/specs/<capability>/spec.md`` and sync.
 from __future__ import annotations
 
 import re
+import unicodedata
 from dataclasses import dataclass, field
 
 # OpenSpec (Fission-AI) interop: `### Requirement: <name>` anchors one spec;
@@ -132,12 +133,54 @@ class ParsedSpec:
     capability_purpose: str | None = None
 
 
+# Letters NFKD leaves whole (no combining mark to strip). Lowercase only:
+# ``_transliterate`` runs after ``lower()``, and ``"ß".lower()`` is itself.
+_TRANSLIT_EXTRA = str.maketrans(
+    {
+        "ß": "ss",
+        "æ": "ae",
+        "ø": "o",
+        "œ": "oe",
+        "đ": "d",
+        "ð": "d",
+        "ł": "l",
+        "þ": "th",
+        "\u0131": "i",  # dotless i
+    }
+)
+
+
+def _transliterate(text: str) -> str:
+    """Fold accented Latin letters to ASCII: ``validación`` → ``validacion``.
+
+    NFKD splits ``á`` into ``a`` + a combining acute, and the combining marks
+    are dropped; the handful of letters NFKD does not decompose (``ß``, ``æ``,
+    ``ø``, ``œ``, ``đ``, ``ł``…) go through an explicit map. Anything else that
+    is still not ASCII is left for the slugifier to treat as a separator.
+    Pure and deterministic — the same name always gives the same id."""
+    decomposed = unicodedata.normalize("NFKD", text.lower())
+    stripped = "".join(c for c in decomposed if not unicodedata.combining(c))
+    return stripped.translate(_TRANSLIT_EXTRA)
+
+
 def _slugify(text: str) -> str:
     """Deterministic, filesystem-free slug for a requirement name.
 
-    Lowercase, non-alphanumeric runs collapse to a single hyphen, edges
-    trimmed. Stable across re-imports so idempotency holds (same requirement
-    name → same slug → UPDATE, not a duplicate INSERT)."""
+    Transliterated to ASCII first (``único`` → ``unico``, ``contraseñas`` →
+    ``contrasenas``), then lowercase, non-alphanumeric runs collapse to a
+    single hyphen, edges trimmed. Stable across re-imports so idempotency
+    holds (same requirement name → same slug → UPDATE, not a duplicate
+    INSERT)."""
+    slug = re.sub(r"[^a-z0-9]+", "-", _transliterate(text.strip())).strip("-")
+    return slug or "requirement"
+
+
+def _legacy_slugify(text: str) -> str:
+    """The pre-transliteration slug: every non-ASCII letter became a hyphen.
+
+    ``validación`` → ``validaci-n``, ``único`` → ``nico``. Kept ONLY to
+    recognise ids that older databases and ``@spec:`` annotations still carry
+    (rename the row, alias the old id). Never used to create a spec."""
     slug = re.sub(r"[^a-z0-9]+", "-", text.strip().lower()).strip("-")
     return slug or "requirement"
 
@@ -152,6 +195,15 @@ def _ospec_spec_id(name: str, capability: str | None) -> str:
     name_slug = _slugify(name)
     if capability:
         return f"{_slugify(capability)}-{name_slug}"
+    return name_slug
+
+
+def _legacy_ospec_spec_id(name: str, capability: str | None) -> str:
+    """``_ospec_spec_id`` as it was before transliteration (see
+    ``_legacy_slugify``). Detection and aliasing only."""
+    name_slug = _legacy_slugify(name)
+    if capability:
+        return f"{_legacy_slugify(capability)}-{name_slug}"
     return name_slug
 
 
