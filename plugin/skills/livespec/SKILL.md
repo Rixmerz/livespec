@@ -308,8 +308,10 @@ For the full annotation grammar and examples, fetch the MCP prompt `agent_playbo
   scratch dropped from the surface).
 - Do not read `who_calls` as complete on a repo whose `index_project` reported
   `languages_failed` — those files were never parsed, so their callers do not
-  exist in the graph at all. Run `livespec grammars` once with network access
-  and re-index.
+  exist in the graph at all. Follow `parser_errors[].hint` (a proxy's CA in
+  `SSL_CERT_FILE` / `REQUESTS_CA_BUNDLE`, or `livespec grammars` once with
+  network access) and re-index. A top-level `warning` on `index_project`
+  means a language had files but 0 symbols — say so, never report it clean.
 - Do not report a `who_calls` count as "callers" when the payload carries
   `excluded_by_edge_type` without saying what was excluded.
 - Do not run `ingest_external_graph(dry_run=False)` on someone's index without

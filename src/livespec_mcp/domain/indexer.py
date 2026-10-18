@@ -26,7 +26,11 @@ from livespec_mcp.domain.extractors import (
     extract,
     normalize_route_path,
 )
-from livespec_mcp.domain.languages import EXTRACTOR_SUPPORTED, detect_language
+from livespec_mcp.domain.languages import (
+    EXTRACTOR_SUPPORTED,
+    detect_language,
+    reset_grammar_failures,
+)
 from livespec_mcp.storage.db import (
     clear_reextract_flag,
     get_or_create_project,
@@ -77,6 +81,9 @@ class IndexStats:
     # deliberately has no extractor for. This one is recoverable: run
     # `livespec grammars` once with network and re-index.
     languages_failed: dict[str, int] = None  # type: ignore
+    # language -> the parser-load error (first one seen this run), so the
+    # payload can say WHY, not just how many files were skipped.
+    parser_errors: dict[str, str] = None  # type: ignore
     repo_config: dict[str, Any] | None = None  # echo of .livespec.toml, if present
 
     def __post_init__(self) -> None:
@@ -86,6 +93,8 @@ class IndexStats:
             self.languages_unsupported = {}
         if self.languages_failed is None:
             self.languages_failed = {}
+        if self.parser_errors is None:
+            self.parser_errors = {}
 
 
 def _hash_bytes(b: bytes) -> str:
@@ -206,6 +215,10 @@ def index_project(
     run_id = conn.execute("INSERT INTO index_run(project_id) VALUES(?)", (project_id,)).lastrowid
 
     stats = IndexStats()
+    # A grammar that failed in an earlier run (or before `livespec grammars`
+    # ran in another terminal) gets one fresh attempt per run; within the run
+    # the failure is memoised so 500 files cost one network attempt.
+    reset_grammar_failures()
     repo_cfg = load_repo_config(settings.workspace)
     if (settings.workspace / ".livespec.toml").is_file():
         stats.repo_config = repo_cfg.as_payload()
@@ -294,6 +307,9 @@ def index_project(
                 stats.files_skipped += 1
                 stats.languages_failed[result.grammar_missing] = (
                     stats.languages_failed.get(result.grammar_missing, 0) + 1
+                )
+                stats.parser_errors.setdefault(
+                    result.grammar_missing, result.grammar_error or "unknown error"
                 )
                 continue
             # C4: a transient parse failure (file saved mid-edit) must NOT wipe

@@ -41,8 +41,10 @@ your operating manual and follow its tool map and contracts exactly.
 4. **Report the caveats the payload gives you, do not swallow them.** Three
    in particular change what an answer means:
    - `languages_failed` on `index_project` — those files were never parsed, so
-     every count excludes them. Say so; the fix is `livespec grammars` once
-     with network access, then re-index.
+     every count excludes them. Say so; the fix is in `parser_errors[].hint`
+     (usually `livespec grammars` once with network access, or a proxy's CA
+     in `SSL_CERT_FILE`), then re-index. A top-level `warning` means a
+     language had files but 0 symbols.
    - `excluded_by_edge_type` on `who_calls` — symbols that depend on the root
      through a type annotation or inheritance rather than a call. They are real
      dependencies; name them instead of reporting only the call count.

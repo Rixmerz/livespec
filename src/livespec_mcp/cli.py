@@ -74,9 +74,11 @@ def _cmd_grammars(languages: list[str] | None, *, check: bool = False) -> int:
         print(
             f"error: {len(result['failed'])} grammar(s) could not be downloaded. "
             "Indexing will SKIP those languages and say so in the "
-            "`languages_failed` field of index_project.",
+            "`languages_failed` / `parser_errors` fields of index_project.",
             file=sys.stderr,
         )
+        if result.get("hint"):
+            print(f"hint: {result['hint']}", file=sys.stderr)
         return 1
     return 0
 

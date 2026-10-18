@@ -143,6 +143,11 @@ as referenced.
   Python and skips everything else. Those files are left unindexed on purpose
   so a later run retries them, but every count until then excludes them. Run
   `livespec grammars` once with network access, then re-index.
+  `parser_errors: [{language, files, error, hint}]` says why each language
+  failed and how to fix THAT failure (behind a TLS-intercepting proxy: set
+  `SSL_CERT_FILE` / `REQUESTS_CA_BUNDLE` to its CA — livespec then fetches the
+  grammars itself with Python's TLS), and a top-level `warning` fires when a
+  language had files but 0 symbols.
 - **`excluded_by_edge_type` on `who_calls`.** Symbols that depend on the root
   through a type annotation or inheritance rather than a call. Real
   dependencies, deliberately not counted as callers. Widen with

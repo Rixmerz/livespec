@@ -359,7 +359,7 @@ What to hold on to when you read the results:
 | Call removed tools (`get_symbol_info`, `find_references`) | `quick_orient`, `analyze_impact(max_depth=1)` |
 | Rely on filesystem watcher during active edits | `index_project()` when done |
 | Create Specs without linking code | `@spec:` + re-index or `bulk_link_spec_symbols` |
-| Trust counts on a repo whose index reported `languages_failed` | Those files were never parsed — run `livespec grammars`, re-index |
+| Trust counts on a repo whose index reported `languages_failed` / `parser_errors` / `warning` | Those files were never parsed — follow `parser_errors[].hint` (CA bundle env var, or `livespec grammars`), re-index |
 | Report a `who_calls` count while ignoring `excluded_by_edge_type` | Say what was excluded, or widen `edge_types` |
 | Run `ingest_external_graph(dry_run=False)` on someone's index unannounced | Show the dry run first; `remove=True` undoes it |
 

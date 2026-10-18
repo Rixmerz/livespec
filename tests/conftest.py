@@ -12,6 +12,10 @@ from pathlib import Path
 # would otherwise miss those tools. Set BEFORE any livespec import so
 # the value is in os.environ when server.py runs its plugin auto-detect.
 os.environ.setdefault("LIVESPEC_PLUGINS", "all")
+# Never let a test that simulates a grammar download failure trigger livespec's
+# real Python-side grammar fetch (a 19 MB download). Tests of the fallback opt
+# back in with monkeypatch and a fake fetch.
+os.environ.setdefault("LIVESPEC_GRAMMAR_FALLBACK", "0")
 
 import pytest
 

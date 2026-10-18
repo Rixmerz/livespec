@@ -17,6 +17,7 @@ from typing import Any
 from fastmcp import FastMCP
 
 from livespec_mcp.domain.indexer import index_project as run_index
+from livespec_mcp.domain.languages import EXTRACTOR_SUPPORTED, grammar_fix_hint
 from livespec_mcp.domain.rag import rebuild_chunks
 from livespec_mcp.state import AppState, get_state
 from livespec_mcp.workspace_param import WORKSPACE_DOCSTRING_NOTE, Workspace
@@ -93,6 +94,7 @@ def run_index_pipeline(st: AppState, *, force: bool = False) -> dict[str, Any]:
         "chunks": chunk_stats,
     }
     _attach_grammar_failures(payload, stats)
+    _attach_zero_symbol_warning(payload, stats, st)
     return payload
 
 
@@ -116,6 +118,64 @@ def _attach_grammar_failures(payload: dict[str, Any], stats: Any) -> None:
         "edge and dead-code counts exclude them entirely. Run "
         "`livespec grammars` once with network access, then re-index — the "
         "files were left unindexed on purpose so they are retried."
+    )
+    # One entry per language with the actual error and a fix for THAT error
+    # (a proxy's CA, no network, no zstd decoder) — the counts above say how
+    # much is missing, this says why and what to do.
+    payload["parser_errors"] = [
+        {
+            "language": lang,
+            "files": stats.languages_failed.get(lang, 0),
+            "error": err,
+            "hint": grammar_fix_hint(err),
+        }
+        for lang, err in sorted((stats.parser_errors or {}).items())
+    ]
+
+
+def _attach_zero_symbol_warning(payload: dict[str, Any], stats: Any, st: AppState) -> None:
+    """Top-level `warning` when a language had files this run but 0 symbols.
+
+    The failure this guards against: `languages: {typescript: 136}` next to
+    `symbols_total: 0` reads as a successful index of an empty repo, and every
+    Spec feature downstream then silently does nothing. Counted from the DB
+    (what the project holds for that language now), so a language whose
+    grammar failed but whose symbols survive from an earlier run is NOT
+    flagged — those symbols are stale but real, and `parser_errors` already
+    says the files were skipped.
+
+    Tree-sitter languages only: a Python package of empty `__init__.py`
+    files legitimately has zero symbols; a TS/JS file always yields at least
+    its module symbol.
+    """
+    seen = {
+        lang: n
+        for lang, n in (stats.languages or {}).items()
+        if n and lang in EXTRACTOR_SUPPORTED and lang != "python"
+    }
+    if not seen:
+        return
+    rows = st.conn.execute(
+        """SELECT f.language AS language, COUNT(s.id) AS n
+           FROM file f LEFT JOIN symbol s ON s.file_id = f.id
+           WHERE f.project_id = ? GROUP BY f.language""",
+        (st.project_id,),
+    ).fetchall()
+    have = {r["language"]: int(r["n"]) for r in rows}
+    empty = sorted(lang for lang in seen if have.get(lang, 0) == 0)
+    if not empty:
+        return
+    failed = set(stats.languages_failed or {})
+    parts = ", ".join(f"{lang} ({seen[lang]} file(s))" for lang in empty)
+    why = (
+        "its tree-sitter parser could not be loaded — see `parser_errors` for the error and the fix"
+        if set(empty) <= failed
+        else "the extractor produced nothing for them"
+    )
+    payload["warning"] = (
+        f"0 symbols were extracted for {parts}: {why}. Until that is fixed, "
+        "call graph, dead-code, endpoint and @spec: coverage results for these "
+        "languages are empty, not clean."
     )
 
 

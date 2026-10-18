@@ -237,3 +237,146 @@ export function dispatchTool() { return null; }
     assert "Resolve a token" in a.docstring
     assert b.docstring is not None and "Tool Execution Dispatcher" not in b.docstring
     assert "BE-SPEC-001" in b.docstring
+
+
+# ---------- const-bound functions and framework callbacks (Fresh 2) ----------
+
+FRESH_CONST = FIXTURES / "typescript" / "fresh_const"
+
+
+def _extract_fixture(rel: str):
+    p = FRESH_CONST / rel
+    _, result = extract(p, p.read_text(encoding="utf-8"), FRESH_CONST)
+    return result
+
+
+def _by_qname(result):
+    return {s.qualified_name: s for s in result.symbols}
+
+
+def test_ts_const_arrow_keeps_its_jsdoc():
+    """`/** @spec:x */ const f = () => {}` (and `export const`): the comment
+    sits above the declaration, not next to the arrow node the symbol spans.
+    Looking for it beside the arrow made every such docstring None, so the
+    @spec: annotation was silently ignored."""
+    syms = _by_qname(_extract_fixture("main.ts"))
+    assert "@spec:arrow-plain" in (syms["main.formatName"].docstring or "")
+    assert "@spec:arrow-exported" in (syms["main.greet"].docstring or "")
+    # `export const` is exported, like `export function` always was.
+    assert syms["main.greet"].visibility == "exported"
+    assert syms["main.formatName"].visibility is None
+
+
+def test_ts_const_initialised_with_a_wrapping_call_is_a_function():
+    """`export const session = define.middleware(async (ctx) => …)` produced
+    no symbol at all — the initializer is a call, not a function. It is the
+    function the framework calls, so it is one, named after the binding."""
+    result = _extract_fixture("main.ts")
+    syms = _by_qname(result)
+    session = syms["main.session"]
+    assert session.kind == "function"
+    assert session.visibility == "exported"
+    assert "@spec:auth-session" in (session.docstring or "")
+    hdrs = syms["main.securityHeaders"]
+    assert hdrs.kind == "function"
+    assert "@spec:platform-headers" in (hdrs.docstring or "")
+    # Calls inside the inline callback belong to the binding, not the module.
+    owners = {(r.src_qname, r.target_name) for r in result.refs}
+    assert ("main.session", "loadUser") in owners
+    assert ("main.securityHeaders", "setHeaders") in owners
+    assert ("main", "loadUser") not in owners
+    # A call over plain values is not a function: no symbol.
+    assert "main.LIMIT" not in syms
+    assert "main.app" not in syms  # define.app([session, …]): no fn literal
+
+
+def test_fresh_define_handlers_and_define_page():
+    """`define.handlers({ GET() {…}, POST: handle(async …) })` and
+    `export default define.page(function Health() {…})`."""
+    result = _extract_fixture("routes/healthz.ts")
+    syms = _by_qname(result)
+    handler = syms["routes.healthz.handler"]
+    assert handler.kind == "function"
+    assert "@spec:platform-health" in (handler.docstring or "")
+    # The method keeps the module-level qname it has in Fresh 1's plain
+    # `handler = { GET() {} }` object, and its own JSDoc.
+    get = syms["routes.healthz.GET"]
+    assert get.kind == "method"
+    assert "@spec:platform-health-get" in (get.docstring or "")
+    page = syms["routes.healthz.Health"]
+    assert page.kind == "function"
+    assert "@spec:platform-health-page" in (page.docstring or "")
+    owners = {(r.src_qname, r.target_name) for r in result.refs}
+    assert ("routes.healthz.GET", "getSettings") in owners  # not double-owned
+    assert ("routes.healthz.handler", "getSettings") not in owners
+    assert ("routes.healthz.handler", "createThing") in owners  # inline POST
+    assert ("routes.healthz.Health", "renderHealth") in owners
+
+
+def test_ts_object_literal_methods_are_qualified_by_their_name_property():
+    """`TOOLS = [{ name: "assign_ticket", run() {} }, …]`: every `run` got the
+    same qname. The object's `name` string disambiguates deterministically;
+    an object without one keeps the plain qname."""
+    syms = _by_qname(_extract_fixture("main.ts"))
+    assert syms["main.assign_ticket.run"].name == "run"
+    assert syms["main.get_capacity.run"].name == "run"
+    assert "main.run" in syms  # the anonymous third entry
+    runs = [s for s in _extract_fixture("main.ts").symbols if s.name == "run"]
+    assert len({s.qualified_name for s in runs}) == 3
+
+
+def test_ts_const_symbol_body_hash_ignores_comment_and_format(tmp_path: Path):
+    """The new symbols keep body_hash invariance: a JSDoc edit or reformat
+    does not drift the seed; a real change does."""
+    a = "/** @spec:a */\nexport const s = define.middleware(async (ctx) => { return ctx.next(); });\n"
+    b = (
+        "/**\n * Changed comment.\n * @spec:b\n */\nexport const s = define.middleware(\n"
+        "  async (ctx) => {\n    return ctx.next();\n  },\n);\n"
+    )
+    c = "export const s = define.middleware(async (ctx) => { return ctx.other(); });\n"
+
+    def seed(src: str) -> str:
+        p = tmp_path / "m.ts"
+        p.write_text(src, encoding="utf-8")
+        _, r = extract(p, src, tmp_path)
+        return next(x.body_hash_seed for x in r.symbols if x.name == "s")
+
+    assert seed(a) == seed(b)
+    assert seed(a) != seed(c)
+
+
+def test_ts_wrapped_call_inside_a_function_is_not_a_symbol(tmp_path: Path):
+    """Module level only: inside a body, `useMemo(() => …)` is a value."""
+    src = (
+        "export function Comp() {\n"
+        "  const total = useMemo(() => sum(items), [items]);\n"
+        "  return total;\n"
+        "}\n"
+    )
+    p = tmp_path / "c.tsx"
+    p.write_text(src, encoding="utf-8")
+    _, r = extract(p, src, tmp_path)
+    assert "total" not in {s.name for s in r.symbols}
+    assert ("c.Comp", "sum") in {(x.src_qname, x.target_name) for x in r.refs}
+
+
+@pytest.mark.asyncio
+async def test_spec_annotation_on_a_const_binding_links_end_to_end(workspace: Path):
+    """The point of the docstring fix: `@spec:` above `export const x =
+    define.middleware(…)` must reach `get_spec_implementation`."""
+    from fastmcp import Client
+
+    from livespec_mcp.server import mcp
+
+    (workspace / "main.ts").write_text(
+        (FRESH_CONST / "main.ts").read_text(encoding="utf-8"), encoding="utf-8"
+    )
+    async with Client(mcp) as c:
+        await c.call_tool("index_project", {})
+        for sid in ("auth-session", "arrow-exported"):
+            await c.call_tool("create_spec", {"title": sid, "spec_id": sid})
+        scan = (await c.call_tool("scan_spec_annotations", {})).data
+        assert scan["links_created"] >= 2
+        for sid, qname in (("auth-session", "main.session"), ("arrow-exported", "main.greet")):
+            impl = (await c.call_tool("get_spec_implementation", {"spec_id": sid})).data
+            assert qname in {s["qualified_name"] for s in impl["symbols"]}, (sid, impl)

@@ -140,7 +140,14 @@ domain/         Pure business logic, no MCP coupling
                   JS/TS/Go/Ruby/PHP/Rust/Java; _py_extract uses ast for
                   precision. Decorators/annotations extracted for Python +
                   TS/JS/TSX + Java (v0.13). Hono route scan +
-                  registration-callback name scan (v0.13)
+                  registration-callback name scan (v0.13). `const x = <fn>`
+                  and `const x = wrapper(<fn>)` (Fresh 2 `define.*`) are
+                  function symbols whose JSDoc sits on the declaration
+  languages.py    get_parser (success cached, failure memoised per index run)
+                  + GrammarUnavailableError.error/.hint; grammar_fetch.py
+                  re-downloads the pack's grammar bundle with Python TLS
+                  (honours SSL_CERT_FILE / REQUESTS_CA_BUNDLE) when the
+                  pack's native downloader rejects a proxy's CA
   indexer.py      walks workspace, calls extractors, persists to symbol_ref,
                   resolves edges via _resolve_refs (INSERT OR IGNORE)
   graph.py        NetworkX wrapper + cache by (db_path, project_id, last_run_id)
