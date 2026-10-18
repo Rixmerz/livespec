@@ -246,6 +246,36 @@ TOOL_PARAM_DESCRIPTIONS: dict[tuple[str, str], str] = {
         "Optional project name inside ``group_db``; omit for all projects."
     ),
     ("get_spec_change", "name"): "OpenSpec change folder name under ``openspec/changes/``.",
+    ("propose_track", "base_ref"): (
+        "Start of the track's range (exclusive): a branch, tag or SHA — e.g. the "
+        "merge base of a PR, ``main``, ``<sha>~1``."
+    ),
+    ("propose_track", "head_ref"): "End of the track's range (inclusive): a branch, tag or SHA.",
+    ("record_track", "base_ref"): (
+        "Same ``base_ref`` you passed to ``propose_track``. The entry is keyed by "
+        "the resolved base/head SHAs, so recording again updates it."
+    ),
+    ("record_track", "head_ref"): "Same ``head_ref`` you passed to ``propose_track``.",
+    ("record_track", "title"): (
+        "Short name of the track (a PR title, a change name). Shown in the CHANGESPEC.md heading."
+    ),
+    ("record_track", "why"): (
+        "Overall reason the range exists, confirmed by the person. Free text in "
+        "the project's language."
+    ),
+    ("record_track", "spec_reasons"): (
+        "Optional ``{spec_id: why}`` for the Specs ``propose_track`` listed. Keys "
+        "must be Specs the range touched (legacy ids accepted). On an update, a "
+        "spec left out keeps the why it already had."
+    ),
+    ("get_spec_history", "spec_id"): (
+        "Spec id whose track timeline to return (OpenSpec slug; legacy aliases accepted)."
+    ),
+    ("get_symbol_history", "symbol"): (
+        "Qualified name, or the name local to its module (``Class.method``, "
+        "``fn``). ``::``, ``#`` and ``.`` are interchangeable; removed symbols "
+        "still match."
+    ),
     ("apply_spec_change", "name"): "OpenSpec change folder name to apply.",
     ("archive_spec_change", "name"): "OpenSpec change folder name to archive.",
 }

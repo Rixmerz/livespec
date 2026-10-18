@@ -44,6 +44,29 @@ Todo el stack es local-first: 0 servicios externos, 0 API keys obligatorias, 0 D
 
 ## 3. Estado actual
 
+### Unreleased — tracks y `CHANGESPEC.md`: la historia de código ↔ spec
+
+Rama `ccr-82a9fa1e-z0iknt` sobre `57b14ff` (main tras el PR #21). 956 tests.
+
+- **Tracks** (`domain/tracks.py`, `domain/changespec.py`,
+  `domain/git_range.py`, `tools/tracks.py`, migración 25): un track es un rango
+  git con nombre y su porqué. `propose_track` (borrador, no escribe),
+  `record_track` (escribe `CHANGESPEC.md` en la raíz, idempotente por rango),
+  `get_spec_history`, `get_symbol_history`. Diff por símbolo con `body_hash`
+  (el reformateo no cuenta), renombres pareados por nombre local, deltas
+  OpenSpec por requisito, y en repos OpenSpec solo se acreditan specs que
+  existían en el head del rango. `index_project` reconstruye las tablas
+  `track*` desde el archivo. 38 core / 53 total.
+- **`git_diff_impact` por símbolo**: `changed_symbols` 274 → 25 en un commit de
+  39 archivos de una app Deno Fresh; 158 → 13 y 434 → 140 en dos commits de
+  livespec.
+- **OpenSpec propio**: cambio `tracks-y-changespec` archivado en
+  `openspec/changes/archive/2026-10-18-tracks-y-changespec/`; nueva capacidad
+  `openspec/specs/tracks/`, `analysis` y `ui` modificadas.
+- **Abierto**: una función enlazada a muchas specs las marca a todas como
+  tocadas (en el repo Fresh, 37 specs para 7 deltas); los tests anónimos
+  (`Deno.test(...)`) no son símbolos y no aparecen en el track.
+
 ### Unreleased — ids de spec sin tildes, `const` de TS con JSDoc y gramáticas que no fallan en silencio
 
 Integrado en la rama `ccr-82a9fa1e-z0iknt` junto con `livespec ui` (abajo).

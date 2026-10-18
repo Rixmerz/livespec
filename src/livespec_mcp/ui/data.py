@@ -406,6 +406,36 @@ def _project_names(conn: sqlite3.Connection) -> dict[int, str]:
     }
 
 
+def _spec_tracks(st: AppState, spec_id: str) -> list[dict[str, Any]]:
+    """@spec:ui-cross-project-read-only-ui
+
+    Tracks (from CHANGESPEC.md, via the index) that touched this Spec,
+    newest first. An index built before tracks existed has no table: empty."""
+    from livespec_mcp.domain.changespec import spec_aliases, spec_history
+
+    try:
+        items = spec_history(st.conn, st.project_id, spec_aliases(st.conn, st.project_id, spec_id))
+    except sqlite3.OperationalError:
+        return []
+    return [
+        {
+            "track_id": t["track_id"],
+            "date": t["date"],
+            "title": t["title"],
+            "why": t["why"],
+            "range": f"{t['base_sha'][:7]}..{t['head_sha'][:7]}",
+            "spec_why": t["spec_why"],
+            "deltas": t["deltas"],
+            "code": [
+                {"change": change, "name": x["name"], "path": x["path"]}
+                for change in ("added", "modified", "removed")
+                for x in t["symbols"].get(change, [])
+            ],
+        }
+        for t in items
+    ]
+
+
 def spec_detail(project_id: str, spec_id: str) -> dict[str, Any]:
     from livespec_mcp.domain.graph import load_graph
     from livespec_mcp.tools.analysis import compute_spec_test_coverage
@@ -485,6 +515,7 @@ def spec_detail(project_id: str, spec_id: str) -> dict[str, Any]:
                 (int(spec["id"]),),
             )
         ]
+        tracks = _spec_tracks(st, spec_id)
         tc = compute_spec_test_coverage(st, load_graph(st.conn, st.project_id)).get(spec_id) or {}
         implements = [s for s in symbols if s["relation"] == "implements"]
         conf = round(sum(s["confidence"] for s in symbols) / len(symbols), 3) if symbols else None
@@ -516,6 +547,7 @@ def spec_detail(project_id: str, spec_id: str) -> dict[str, Any]:
             "depends_on": depends_on,
             "depended_by": depended_by,
             "mirrors": mirrors,
+            "tracks": tracks,
             "coverage": {
                 "implementing_symbols": len(implements),
                 "confidence": conf,

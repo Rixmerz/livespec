@@ -370,3 +370,35 @@ def test_schema_sql_never_indexes_a_column_a_migration_adds():
         f"`no such column` on every pre-existing database: {sorted(set(offenders))}. "
         "Move the CREATE INDEX into the migration."
     )
+
+
+def test_m025_tracks_tables_are_created_and_cascade(tmp_path: Path):
+    """v25 creates ``track`` / ``track_spec`` / ``track_symbol`` on a DB that
+    predates them — by the migration itself, not only by schema.sql — and a
+    project's tracks die with it."""
+    from livespec_mcp.storage.db import _m025_tracks
+
+    raw = sqlite3.connect(str(tmp_path / "old.db"))
+    raw.row_factory = sqlite3.Row
+    raw.execute("PRAGMA foreign_keys=ON")
+    raw.execute("CREATE TABLE project (id INTEGER PRIMARY KEY)")
+    _m025_tracks(raw)
+    _m025_tracks(raw)  # idempotent
+    assert {"track", "track_spec", "track_symbol"} <= _table_names(raw)
+    raw.execute("INSERT INTO project(id) VALUES(1)")
+    raw.execute(
+        "INSERT INTO track(id, project_id, track_key, title, base_sha, head_sha) "
+        "VALUES(1, 1, 'a-b', 't', 'a', 'b')"
+    )
+    raw.execute("INSERT INTO track_spec(track_id, spec_id) VALUES(1, 'x')")
+    raw.execute(
+        "INSERT INTO track_symbol(track_id, spec_id, change, name, qualified_name, path) "
+        "VALUES(1, NULL, 'added', 'f', 'm.f', 'm.py')"
+    )
+    raw.execute("DELETE FROM project WHERE id=1")
+    assert raw.execute("SELECT COUNT(*) FROM track_symbol").fetchone()[0] == 0
+    assert raw.execute("SELECT COUNT(*) FROM track_spec").fetchone()[0] == 0
+    raw.close()
+
+    versions = [v for v, _, _ in MIGRATIONS]
+    assert versions[-1] == 25 and dict((v, n) for v, n, _ in MIGRATIONS)[25] == "tracks"

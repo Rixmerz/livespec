@@ -138,10 +138,9 @@ async def test_git_diff_impact_excludes_test_fixtures(workspace):
     _git(workspace, "config", "user.name", "test")
     _git(workspace, "add", ".")
     _git(workspace, "commit", "-q", "-m", "initial")
-    # Touch feature.py so it's a "changed file" against HEAD~0/HEAD
-    (pkg / "feature.py").write_text(
-        (pkg / "feature.py").read_text() + "\ndef extra():\n    return 2\n"
-    )
+    # Change widget's body so it is a changed *symbol* (git_diff_impact is
+    # symbol-precise: an untouched widget would not pull its tests in).
+    (pkg / "feature.py").write_text("def widget():\n    return 3\n\ndef extra():\n    return 2\n")
     _git(workspace, "add", ".")
     _git(workspace, "commit", "-q", "-m", "extra")
 

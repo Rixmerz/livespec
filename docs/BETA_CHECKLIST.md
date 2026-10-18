@@ -10,7 +10,7 @@ Status: **complete** (2026-07-31 docs + dogfood pass).
 
 ## Tool surface truth
 
-- [x] 49 = 34 core + 12 Spec + 3 docs everywhere that counts tools
+- [x] 53 = 38 core + 12 Spec + 3 docs everywhere that counts tools
 - [x] `find_legacy_flows` in PLAYBOOK + QUICKSTART + pagination lists
 - [x] Express + Hono in default `find_endpoints` (README / PLAYBOOK / CLAUDE)
 - [x] No current claim of `embed_chunks` / vectors / `agent_scratch` as live tools

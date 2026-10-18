@@ -228,6 +228,49 @@ CREATE TABLE IF NOT EXISTS spec_alias (
 
 CREATE INDEX IF NOT EXISTS idx_spec_alias_spec ON spec_alias(spec_id);
 
+-- v0.33: tracks (migration v25). A track is a named git range plus why it
+-- exists; per Spec, the code it changed. Derived from CHANGESPEC.md at the
+-- workspace root (the source of truth) and rebuilt on every index run, so
+-- Spec ids and symbol names are TEXT, not foreign keys.
+CREATE TABLE IF NOT EXISTS track (
+    id INTEGER PRIMARY KEY,
+    project_id INTEGER NOT NULL REFERENCES project(id) ON DELETE CASCADE,
+    track_key TEXT NOT NULL,
+    title TEXT NOT NULL,
+    why TEXT,
+    base_sha TEXT NOT NULL,
+    head_sha TEXT NOT NULL,
+    recorded_on TEXT,
+    changes TEXT,                 -- JSON list of OpenSpec change folders
+    ordinal INTEGER NOT NULL DEFAULT 0,  -- position in CHANGESPEC.md, 0 = newest
+    UNIQUE(project_id, base_sha, head_sha)
+);
+
+CREATE TABLE IF NOT EXISTS track_spec (
+    id INTEGER PRIMARY KEY,
+    track_id INTEGER NOT NULL REFERENCES track(id) ON DELETE CASCADE,
+    spec_id TEXT NOT NULL,
+    why TEXT,
+    deltas TEXT,                  -- JSON list of OpenSpec requirement deltas
+    UNIQUE(track_id, spec_id)
+);
+
+CREATE TABLE IF NOT EXISTS track_symbol (
+    id INTEGER PRIMARY KEY,
+    track_id INTEGER NOT NULL REFERENCES track(id) ON DELETE CASCADE,
+    spec_id TEXT,                 -- NULL = code changed with no Spec
+    change TEXT NOT NULL,         -- added | modified | removed
+    name TEXT NOT NULL,           -- local to its module, as CHANGESPEC.md shows it
+    qualified_name TEXT NOT NULL,
+    path TEXT NOT NULL,
+    old_path TEXT                 -- base-side path when the file moved
+);
+
+CREATE INDEX IF NOT EXISTS idx_track_spec_spec ON track_spec(spec_id);
+CREATE INDEX IF NOT EXISTS idx_track_symbol_track ON track_symbol(track_id);
+CREATE INDEX IF NOT EXISTS idx_track_symbol_qname ON track_symbol(qualified_name);
+CREATE INDEX IF NOT EXISTS idx_track_symbol_name ON track_symbol(name);
+
 -- v0.5 P2: Spec dependency graph. parent depends on child.
 --   requires:  parent needs child to be implemented first
 --   extends:   parent specializes / refines child

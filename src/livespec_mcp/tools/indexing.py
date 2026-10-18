@@ -95,8 +95,26 @@ def run_index_pipeline(st: AppState, *, force: bool = False) -> dict[str, Any]:
     }
     _attach_grammar_failures(payload, stats)
     _attach_zero_symbol_warning(payload, stats, st)
+    _attach_tracks(st, payload)
     _record_in_registry(st)
     return payload
+
+
+def _attach_tracks(st: AppState, payload: dict[str, Any]) -> None:
+    """Rebuild the track tables from ``CHANGESPEC.md`` (the source of truth).
+
+    Read-only on the workspace: indexing never writes CHANGESPEC.md. A
+    malformed entry is reported under ``tracks.problems``; any other failure
+    is logged and reported, never costs the index run."""
+    try:
+        from livespec_mcp.domain.changespec import ingest_changespec
+        from livespec_mcp.storage.db import transaction
+
+        with st.lock(), transaction(st.conn):
+            payload["tracks"] = ingest_changespec(st.conn, st.project_id, st.settings.workspace)
+    except Exception as e:
+        _log.exception("CHANGESPEC.md ingest failed; skipping")
+        payload["tracks"] = {"error": f"CHANGESPEC.md ingest failed: {e}"}
 
 
 def _record_in_registry(st: AppState) -> None:
