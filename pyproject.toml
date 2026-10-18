@@ -18,6 +18,10 @@ dependencies = [
     "pydantic>=2.7",
     "tree-sitter>=0.25",
     "tree-sitter-language-pack>=0.7,<1.6.3",
+    # Unpacks the grammar bundle when livespec fetches it itself (proxy with
+    # its own CA, which the pack's native downloader rejects). 3.14+ has
+    # `compression.zstd` in the stdlib.
+    "zstandard>=0.22 ; python_full_version < '3.14'",
     "networkx>=3.2",
     "xxhash>=3.4",
     "watchdog>=4.0",

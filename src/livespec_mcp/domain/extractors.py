@@ -79,6 +79,8 @@ class ExtractResult:
     # not persist such a file — doing so records zero symbols AND advances the
     # content hash, so the next run treats it as unchanged and never retries.
     grammar_missing: str | None = None
+    # The load error behind `grammar_missing` (GrammarUnavailableError.error).
+    grammar_error: str | None = None
 
 
 # Compound statements whose bodies can hold conditionally-defined symbols.
@@ -979,7 +981,7 @@ def _extract_visibility(node, src_bytes: bytes, language: str) -> str | None:
     return None
 
 
-def _normalize_ts_body(node, src_bytes: bytes) -> str:
+def _normalize_ts_body(node, src_bytes: bytes, *, drop_trailing_commas: bool = False) -> str:
     """Reformat-stable body seed for tree-sitter languages.
 
     Walks the syntax tree and emits only LEAF tokens joined by single spaces.
@@ -1020,6 +1022,16 @@ def _normalize_ts_body(node, src_bytes: bytes) -> str:
     visit(node)
     if not parts:
         return src_bytes[node.start_byte : node.end_byte].decode("utf-8", errors="replace")
+    if drop_trailing_commas:
+        # `f(a, b)` -> `f(\n  a,\n  b,\n)` is what deno fmt / prettier do to
+        # a call once it wraps. Only applied to symbols that span a wrapper
+        # call (`define.middleware(…)`), which have no seeds from before this
+        # rule; applying it everywhere would drift every existing TS hash once.
+        parts = [
+            t
+            for i, t in enumerate(parts)
+            if not (t == "," and parts[i + 1 : i + 2] in ([")"], ["]"], ["}"]))
+        ]
     return " ".join(parts)
 
 
@@ -1066,6 +1078,173 @@ _ANONYMOUS_FN_TYPES = {
     "arrow_function",  # JS/TS: const f = () => {}
     "function_expression",  # JS/TS: const f = function () {}
 }
+
+# How deep `_ts_call_wraps_function` looks through nested wrappers
+# (`withAuth(handle(async () => …))`) and object-literal arguments.
+_CALL_WRAP_MAX_DEPTH = 3
+
+
+def _ts_call_wraps_function(call_node, depth: int = 0) -> bool:
+    """True when a JS/TS call expression hands a function literal to its callee.
+
+    The framework-callback shape: Fresh 2's `define.middleware(async (ctx) =>
+    …)` and `define.handlers({ GET() {…}, POST: handle(async (ctx) => …) })`,
+    `define.page(function Home() {…})`, `createRoute(() => …)`, zustand's
+    `create((set) => …)`. A binding initialised this way IS the function the
+    framework calls, so it gets a symbol named after the binding — exactly as
+    `const f = () => {}` does. A call whose arguments are only values
+    (`compute(3)`, `new Hono()`, `express()`) is not this shape.
+
+    Looks at direct arguments, nested wrapper calls and object literals that
+    hold a method or a function-valued property, up to `_CALL_WRAP_MAX_DEPTH`.
+    """
+    if call_node is None or call_node.type != "call_expression" or depth > _CALL_WRAP_MAX_DEPTH:
+        return False
+    args = call_node.child_by_field_name("arguments")
+    if args is None:
+        return False
+    for a in args.named_children:
+        if a.type in _ANONYMOUS_FN_TYPES:
+            return True
+        if a.type == "call_expression" and _ts_call_wraps_function(a, depth + 1):
+            return True
+        if a.type == "object" and _ts_object_holds_function(a, depth + 1):
+            return True
+    return False
+
+
+def _ts_object_holds_function(obj_node, depth: int) -> bool:
+    """`{ GET() {…} }` / `{ POST: async () => … }` / `{ POST: handle(() => …) }`."""
+    for m in obj_node.named_children:
+        if m.type == "method_definition":
+            return True
+        if m.type == "pair":
+            v = m.child_by_field_name("value")
+            if v is None:
+                continue
+            if v.type in _ANONYMOUS_FN_TYPES:
+                return True
+            if v.type == "call_expression" and _ts_call_wraps_function(v, depth + 1):
+                return True
+    return False
+
+
+def _ts_first_named_fn_arg(call_node, src_bytes: bytes) -> str | None:
+    """Name of the first NAMED function-expression argument, if any.
+
+    `define.page(function Register({ data }) {…})` -> 'Register'. Used to name
+    the symbol for `export default <wrapper>(function Name() {…})`, which has
+    no binding of its own.
+    """
+    args = call_node.child_by_field_name("arguments")
+    if args is None:
+        return None
+    for a in args.named_children:
+        if a.type == "function_expression":
+            n = a.child_by_field_name("name")
+            if n is not None:
+                return src_bytes[n.start_byte : n.end_byte].decode("utf-8", errors="replace")
+    return None
+
+
+def _ts_is_module_level_declarator(decl) -> bool:
+    """`const x = …` / `export const x = …` directly in the program body."""
+    p = getattr(decl, "parent", None)
+    if p is None or p.type not in ("lexical_declaration", "variable_declaration"):
+        return False
+    gp = getattr(p, "parent", None)
+    if gp is not None and gp.type == "export_statement":
+        gp = getattr(gp, "parent", None)
+    return gp is not None and gp.type == "program"
+
+
+def _ts_is_wrapped_fn_binding(decl) -> bool:
+    """A module-level `const name = <call that wraps a function>`.
+
+    The single predicate shared by `_ts_extract.walk` (which mints the symbol)
+    and `_is_named_scope_boundary` (which keeps the module pass from also
+    collecting its calls) — they must agree or calls are double-counted.
+    Module level only: inside a body, `useMemo(() => x * 2, [x])` is a value,
+    and minting a symbol for every hook result would bury real functions.
+    """
+    if decl is None or decl.type != "variable_declarator":
+        return False
+    name = decl.child_by_field_name("name")
+    value = decl.child_by_field_name("value")
+    return (
+        name is not None
+        and name.type == "identifier"
+        and value is not None
+        and _ts_is_module_level_declarator(decl)
+        and _ts_call_wraps_function(value)
+    )
+
+
+def _ts_is_wrapped_default_export(export_node) -> bool:
+    """`export default define.page(function Home() {…})`."""
+    if export_node is None or export_node.type != "export_statement":
+        return False
+    if not any(c.type == "default" for c in export_node.children):
+        return False
+    return any(
+        c.type == "call_expression" and _ts_call_wraps_function(c) for c in export_node.children
+    )
+
+
+def _ts_declaration_anchor(decl):
+    """The node a `const` binding's leading comment and `export` attach to.
+
+    `/** @spec:x */ export const foo = () => {}`: the comment is a sibling of
+    the `export_statement`, which wraps the `lexical_declaration`, which holds
+    the `variable_declarator`, which holds the arrow. Looking for it next to
+    the arrow (or the declarator) finds nothing. Returns the declaration for
+    the FIRST declarator only — in `const a = …, b = …` the comment above the
+    statement documents the statement, not `b`.
+    """
+    p = getattr(decl, "parent", None)
+    if p is None or p.type not in ("lexical_declaration", "variable_declaration"):
+        return None
+    first = next((c for c in p.named_children if c.type == "variable_declarator"), None)
+    if first is None or first.start_byte != decl.start_byte:
+        return None
+    return p
+
+
+_OBJ_LABEL_RE = _re_rs.compile(r"^[A-Za-z_$][\w$-]{0,79}$")
+
+
+def _ts_object_method_label(method_node, src_bytes: bytes) -> str | None:
+    """`{ name: "assign_ticket", run(args) {…} }` -> 'assign_ticket'.
+
+    Object-literal methods in a registry array (`TOOLS = [{ name, run() }]`)
+    all share one short name, so they all got the same qualified name
+    (`mod.run`) and every `who_calls` / `get_symbol_source` on it was a coin
+    flip. The object's own `name: "<string>"` property is the deterministic,
+    edit-stable disambiguator — it is the key the registry dispatches on.
+    No `name` string (or one that is not identifier-like) returns None and the
+    method keeps the plain `mod.run` qname.
+    """
+    obj = getattr(method_node, "parent", None)
+    if obj is None or obj.type != "object":
+        return None
+    for m in obj.named_children:
+        if m.type != "pair":
+            continue
+        key = m.child_by_field_name("key")
+        val = m.child_by_field_name("value")
+        if key is None or val is None or val.type != "string":
+            continue
+        k = src_bytes[key.start_byte : key.end_byte].decode("utf-8", errors="replace").strip("\"'")
+        if k != "name":
+            continue
+        label = (
+            src_bytes[val.start_byte : val.end_byte]
+            .decode("utf-8", errors="replace")
+            .strip()
+            .strip("\"'`")
+        )
+        return label if _OBJ_LABEL_RE.match(label) else None
+    return None
 
 
 _JAVA_MAPPING_PATH = _re_rs.compile(
@@ -1293,11 +1472,12 @@ def _ts_extract(
     out = ExtractResult()
     try:
         parser = get_parser(language)
-    except GrammarUnavailableError:
+    except GrammarUnavailableError as e:
         # Never silently return zero symbols: the caller persists what we
         # return, and an empty result for an unread file is indistinguishable
         # from a genuinely empty one until the whole repo reads as dead code.
         out.grammar_missing = language
+        out.grammar_error = getattr(e, "error", None) or str(e)
         out.parse_error = True
         return out
     src_bytes = source.encode("utf-8", errors="replace")
@@ -1332,13 +1512,27 @@ def _ts_extract(
         return None
 
     def emit_symbol(
-        node, name: str, parent_qname: str | None, kind: str, qname_sep: str = "."
+        node,
+        name: str,
+        parent_qname: str | None,
+        kind: str,
+        qname_sep: str = ".",
+        *,
+        decl_node=None,
+        doc_node=None,
+        qname: str | None = None,
+        wrapper_call: bool = False,
     ) -> str:
-        qname = f"{parent_qname}{qname_sep}{name}" if parent_qname else f"{module_name}.{name}"
+        """`decl_node`: the declaration a binding's `export` attaches to (for
+        visibility); `doc_node`: where its leading comment sits (None = the
+        node itself). Both only differ from `node` for `const x = <fn>`, whose
+        span and body hash stay the function's own."""
+        if qname is None:
+            qname = f"{parent_qname}{qname_sep}{name}" if parent_qname else f"{module_name}.{name}"
         start_line = node.start_point[0] + 1
         end_line = node.end_point[0] + 1
         signature = text(node).splitlines()[0][:300] if node.start_byte != node.end_byte else None
-        docstring = _ts_leading_doc_comment(node, src_bytes, language)
+        docstring = _ts_leading_doc_comment(doc_node or node, src_bytes, language)
         out.symbols.append(
             ExtractedSymbol(
                 name=name,
@@ -1346,11 +1540,13 @@ def _ts_extract(
                 kind=kind,
                 signature=signature,
                 docstring=docstring,
-                body_hash_seed=_normalize_ts_body(node, src_bytes),
+                body_hash_seed=_normalize_ts_body(
+                    node, src_bytes, drop_trailing_commas=wrapper_call
+                ),
                 start_line=start_line,
                 end_line=end_line,
                 parent_qname=parent_qname,
-                visibility=_extract_visibility(node, src_bytes, language),
+                visibility=_extract_visibility(decl_node or node, src_bytes, language),
                 decorators=_ts_node_decorators(node, src_bytes, language),
             )
         )
@@ -1414,9 +1610,42 @@ def _ts_extract(
             if value is not None and value.type in _ANONYMOUS_FN_TYPES:
                 name = find_name(node)
                 if name:
-                    qname = emit_symbol(value, name, parent_qname, "function")
+                    decl = getattr(node, "parent", None)
+                    qname = emit_symbol(
+                        value,
+                        name,
+                        parent_qname,
+                        "function",
+                        decl_node=decl,
+                        doc_node=_ts_declaration_anchor(node) or node,
+                    )
                     _ts_collect_calls(value, qname, src_bytes, out, http_wrappers)
                     return  # do not double-walk
+            # `export const session = define.middleware(async (ctx) => {…})`
+            # / `export const handler = define.handlers({ GET() {…} })`: the
+            # binding is the function the framework calls, so it gets a
+            # function symbol named after the binding, spanning the call.
+            # Its children are walked at the SAME parent, so a `GET() {}`
+            # method inside keeps the `mod.GET` qname it has in Fresh 1's
+            # plain `handler = { GET() {} }` object; calls in the inline
+            # callbacks (which get no symbol of their own) now belong to the
+            # binding instead of the module pseudo-symbol.
+            if language in ("javascript", "typescript", "tsx") and _ts_is_wrapped_fn_binding(node):
+                name = find_name(node)
+                if name:
+                    qname = emit_symbol(
+                        value,
+                        name,
+                        parent_qname,
+                        "function",
+                        decl_node=getattr(node, "parent", None),
+                        doc_node=_ts_declaration_anchor(node) or node,
+                        wrapper_call=True,
+                    )
+                    _ts_collect_calls(value, qname, src_bytes, out, http_wrappers)
+                    for c in value.children:
+                        walk(c, parent_qname)
+                    return
             # otherwise let normal recursion continue
 
         # Object-literal arrow properties (`{ handler: async (c) => {...} }`)
@@ -1463,6 +1692,24 @@ def _ts_extract(
                 for c in value.children:
                     walk(c, qname)
                 return
+            # `export default define.page(function Register() {…})` (Fresh 2
+            # pages): named after the inner function, else the module basename.
+            if _ts_is_wrapped_default_export(node):
+                call = next(
+                    c
+                    for c in node.children
+                    if c.type == "call_expression" and _ts_call_wraps_function(c)
+                )
+                name = _ts_first_named_fn_arg(call, src_bytes) or (
+                    module_name.rsplit(".", 1)[-1] or "default"
+                )
+                qname = emit_symbol(
+                    call, name, parent_qname, "function", doc_node=node, wrapper_call=True
+                )
+                _ts_collect_calls(call, qname, src_bytes, out, http_wrappers)
+                for c in call.children:
+                    walk(c, parent_qname)
+                return
 
         # ----- Standard def nodes -----
         if node.type in _DEF_NODE_TYPES:
@@ -1478,7 +1725,17 @@ def _ts_extract(
                     kind = "method"
                 else:
                     kind = "function"
-                qname = emit_symbol(node, name, parent_qname, kind)
+                override = None
+                if node.type == "method_definition" and language in (
+                    "javascript",
+                    "typescript",
+                    "tsx",
+                ):
+                    label = _ts_object_method_label(node, src_bytes)
+                    if label:
+                        base = parent_qname or module_name
+                        override = f"{base}.{label}.{name}"
+                qname = emit_symbol(node, name, parent_qname, kind, qname=override)
                 _ts_collect_calls(node, qname, src_bytes, out, http_wrappers)
                 for c in node.children:
                     walk(c, qname)
@@ -2001,6 +2258,18 @@ def _is_named_scope_boundary(node) -> bool:
     """
     if node.type in _DEF_NODE_TYPES:
         return True
+    if node.type == "call_expression":
+        # `const session = define.middleware(async (ctx) => …)` and
+        # `export default define.page(function Home() …)` get their own
+        # symbol (see `_ts_extract.walk`) — same predicates, or calls double.
+        parent = getattr(node, "parent", None)
+        if parent is not None and parent.type == "variable_declarator":
+            return _ts_is_wrapped_fn_binding(parent) and (
+                parent.child_by_field_name("value") == node
+            )
+        if parent is not None and parent.type == "export_statement":
+            return _ts_is_wrapped_default_export(parent) and _ts_call_wraps_function(node)
+        return False
     if node.type in _ANONYMOUS_FN_TYPES:
         parent = getattr(node, "parent", None)
         if parent is not None and parent.type == "variable_declarator":
