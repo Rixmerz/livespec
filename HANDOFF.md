@@ -46,7 +46,8 @@ Todo el stack es local-first: 0 servicios externos, 0 API keys obligatorias, 0 D
 
 ### Unreleased — tracks y `CHANGESPEC.md`: la historia de código ↔ spec
 
-Rama `ccr-82a9fa1e-z0iknt` sobre `57b14ff` (main tras el PR #21). 956 tests.
+Rama `ccr-82a9fa1e-z0iknt` sobre `57b14ff` (main tras el PR #21): `01aed8b`
+(código + docs) y el commit del cambio OpenSpec archivado. 956 tests.
 
 - **Tracks** (`domain/tracks.py`, `domain/changespec.py`,
   `domain/git_range.py`, `tools/tracks.py`, migración 25): un track es un rango
