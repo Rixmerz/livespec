@@ -67,3 +67,15 @@ def test_plugin_manifest_version_matches_package_version():
         f"pyproject.toml declares {_package_version()} — the updater keys off "
         f"the manifest, so every install would silently stay on the old version"
     )
+
+
+def test_ui_command_pin_matches_package_version():
+    # `/livespec-ui` falls back to `uvx livespec@<version> ui` when no installed
+    # `livespec` has the subcommand. A stale pin there would start an older
+    # server than the one the plugin's MCP config runs.
+    text = (REPO / "plugin" / "commands" / "livespec-ui.md").read_text(encoding="utf-8")
+    pins = set(re.findall(r"uvx livespec@(\d[^\s]*)", text))
+    assert pins == {_package_version()}, (
+        f"plugin/commands/livespec-ui.md pins {sorted(pins)} but pyproject.toml "
+        f"declares {_package_version()} — bump the pin with the release"
+    )

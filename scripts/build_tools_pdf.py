@@ -45,7 +45,7 @@ TOOLS: list[tuple[str, str, list[tuple[str, str]]]] = [
         "[index] de .livespec.toml.",
         [
             (
-                "index_project(force=False, watch=False, explorer=False)",
+                "index_project(force=False, watch=False)",
                 "Recorre el workspace, parsea, persiste símbolos y aristas, "
                 "reconstruye los chunks de búsqueda y auto-escanea las "
                 "anotaciones @spec:. Es la única puerta de entrada al índice.",
@@ -229,8 +229,8 @@ TOOLS: list[tuple[str, str, list[tuple[str, str]]]] = [
             ),
             (
                 "get_cross_repo_guide()",
-                "El how-to de polyrepo (group_db, Specs xrepo-*, Flow "
-                "Explorer, trampas) más un snapshot vivo del grupo, expuesto "
+                "El how-to de polyrepo (group_db, Specs xrepo-*, vista de "
+                "grupo de livespec ui, trampas) más un snapshot vivo del grupo, expuesto "
                 "como tool porque algunos hosts cachean un resources/list "
                 "viejo.",
             ),
@@ -299,9 +299,10 @@ TOOLS: list[tuple[str, str, list[tuple[str, str]]]] = [
         ],
     ),
     (
-        "Plugin livespec-docs — docs y Explorer (5)",
-        "Ceremonia de tier humano. Visible con filas doc, con un bundle "
-        ".mcp-docs/explorer/ en disco, o con LIVESPEC_PLUGINS=docs.",
+        "Plugin livespec-docs — docs (3)",
+        "Ceremonia de tier humano. Visible con filas doc o con "
+        "LIVESPEC_PLUGINS=docs. La vista navegable del índice es "
+        "`livespec ui` (no es un tool y no escribe en el repo).",
         [
             (
                 "generate_docs(target_type, identifier, content=None, ...)",
@@ -317,17 +318,6 @@ TOOLS: list[tuple[str, str, list[tuple[str, str]]]] = [
             (
                 "export_documentation(format, out_subdir)",
                 "Vuelca la documentación a markdown o JSON.",
-            ),
-            (
-                "export_explorer(base=None, head=None, generated_at=None)",
-                "Escribe el bundle estático del Spec Explorer "
-                "(.mcp-docs/explorer/): vista tipo Swagger por Spec, Try-it "
-                "HTTP y playground MCP al servirlo.",
-            ),
-            (
-                "export_flow_explorer(...)",
-                "Bundle companion del Flow Explorer: los flujos HTTP "
-                "cross-repo dibujados de cliente a handler.",
             ),
         ],
     ),
@@ -486,8 +476,8 @@ def build(out_path: Path) -> Path:
         Paragraph(
             f"Superficie completa de tools MCP — v{VERSION}. 45 tools: 28 en el "
             "núcleo siempre visible, 12 en el plugin <b>livespec-spec</b> "
-            "(mutación de Specs) y 5 en el plugin <b>livespec-docs</b> "
-            "(documentación y Explorer). Los plugins registran al boot pero "
+            "(mutación de Specs) y 3 en el plugin <b>livespec-docs</b> "
+            "(documentación). Los plugins registran al boot pero "
             "<b>PluginVisibilityMiddleware</b> los oculta de <i>tools/list</i> "
             "hasta que el workspace los justifica — o hasta que se fuerza con "
             "<font face='Courier'>LIVESPEC_PLUGINS</font>. Todo tool exige "

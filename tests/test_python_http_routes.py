@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import json
-
 import pytest
 from fastmcp import Client
 
@@ -94,7 +92,11 @@ async def test_find_endpoints_includes_http_method_and_path(workspace):
 
 
 @pytest.mark.asyncio
-async def test_export_explorer_fastapi_paths_in_data_json(workspace):
+async def test_ui_endpoints_carry_fastapi_method_and_path(workspace):
+    """`livespec ui`'s endpoints view (successor of the Explorer's endpoints
+    tab) keeps the FastAPI method + path, read from the index read-only."""
+    from livespec_mcp.ui import data as ui_data
+
     pkg = workspace / "api"
     pkg.mkdir()
     (pkg / "__init__.py").write_text("")
@@ -102,11 +104,8 @@ async def test_export_explorer_fastapi_paths_in_data_json(workspace):
 
     async with Client(mcp) as c:
         await c.call_tool("index_project", {})
-        await c.call_tool("export_explorer", {})
 
-    data = json.loads(
-        (workspace / ".mcp-docs" / "explorer" / "data.json").read_text(encoding="utf-8")
-    )
+    data = ui_data.endpoints(ui_data.stable_id(str(workspace.resolve())))
     by_handler = {e["handler"]: e for e in data["endpoints"]}
     users = by_handler["api.main.list_users"]
     assert users["method"] == "GET"

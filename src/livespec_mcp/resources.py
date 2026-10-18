@@ -170,7 +170,7 @@ def compute_group_view(st: AppState) -> dict[str, Any]:
 def register(mcp: FastMCP) -> None:
     @mcp.resource("project://cross-repo", mime_type="text/markdown")
     def project_cross_repo_guide() -> str:
-        """Static how-to: group_db, mirrored xrepo-* Specs, Flow Explorer."""
+        """Static how-to: group_db, mirrored xrepo-* Specs, the livespec ui group view."""
         return _load_cross_repo_guide()
 
     @mcp.resource("guide://cross-repo", mime_type="text/markdown")

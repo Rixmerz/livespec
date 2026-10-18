@@ -37,8 +37,7 @@ list_specs(workspace="PROJECT")
 Report: file/symbol/edge counts, languages, top symbols, Spec totals.
 
 **Plugins (v0.18):** Spec/docs mutation tools appear in `tools/list` after a
-`workspace=` call when that repo has `spec` rows and/or a `.mcp-docs/explorer/`
-bundle. On a **fresh** repo with no index yet, set `LIVESPEC_PLUGINS=spec` or
+`workspace=` call when that repo has `spec` and/or `doc` rows. On a **fresh** repo with no index yet, set `LIVESPEC_PLUGINS=spec` or
 `=all` in MCP config, or run `index_project` first and reconnect MCP if the
 client cached the short tool list.
 
@@ -93,11 +92,21 @@ client cached the short tool list.
 
 Run `scan_spec_annotations()` after bulk doc edits; it also runs automatically at end of `index_project()`.
 
-### `livespec-docs` plugin — *generated Markdown docs + Explorers*
+### `livespec-docs` plugin — *generated Markdown docs*
 
-`generate_docs`, `list_docs`, `export_documentation`, `export_explorer`,
-`export_flow_explorer` — optional; unlock via docs rows, explorer bundle, or
-`LIVESPEC_PLUGINS=docs|all`. Drift detection is live; generation needs LLM/sampling.
+`generate_docs`, `list_docs`, `export_documentation` — optional; unlock via docs
+rows or `LIVESPEC_PLUGINS=docs|all`. Drift detection is live; generation needs
+LLM/sampling.
+
+### Showing the index to a human — `livespec ui` (not a tool)
+
+When the user wants to *look* at Specs, coverage or the call graph, do not write
+HTML/JSON into their repo (the old `export_explorer` / `export_flow_explorer`
+did; they are removed). Point them at `/livespec-ui` in Claude Code, or run
+`livespec ui` (add `--port N`, `--open`): one local, read-only page over every
+project indexed on this machine, grouped by polyrepo group. The list comes from
+a user-level registry every `index_project` updates; an index made before it
+existed is added with `livespec ui --add /abs/repo`.
 
 ---
 
@@ -376,6 +385,10 @@ What to hold on to when you read the results:
 | `audit_spec_coverage` | Traceability audit |
 | `extract_specs_from_module` | Module-scoped Spec draft |
 | `openspec_workflow` | Repo has an `openspec/` dir — sync/trace/validate/export loop |
+
+Plugin slash commands (Claude Code): `/livespec-onboard [path]` (cold open via the
+subagent) and `/livespec-ui` (start the read-only UI over every indexed project
+and report its URL).
 
 ---
 

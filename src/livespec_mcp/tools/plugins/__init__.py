@@ -55,8 +55,6 @@ DOCS_PLUGIN_TOOL_NAMES = frozenset(
         "generate_docs",
         "list_docs",
         "export_documentation",
-        "export_explorer",
-        "export_flow_explorer",
     }
 )
 
@@ -90,11 +88,6 @@ def _project_table_has_rows(state: AppState, table: str) -> bool:
     except Exception:
         return False
     return row is not None
-
-
-def _project_has_explorer_bundle(state: AppState) -> bool:
-    """Explorer bundle on disk → docs plugin tools (export_explorer) are relevant."""
-    return (state.settings.workspace / ".mcp-docs" / "explorer" / "index.html").is_file()
 
 
 def _parse_override(raw: str) -> set[str] | None:
@@ -135,7 +128,7 @@ def detect_active_plugins(state: AppState) -> set[str]:
     active: set[str] = set()
     if _project_table_has_rows(state, "spec"):
         active.add("spec")
-    if _project_table_has_rows(state, "doc") or _project_has_explorer_bundle(state):
+    if _project_table_has_rows(state, "doc"):
         active.add("docs")
     return active
 

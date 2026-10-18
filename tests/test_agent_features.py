@@ -177,7 +177,7 @@ async def test_grep_response_contract_unchanged(sample_repo):
 
 
 @pytest.mark.asyncio
-async def test_export_explorer_hidden_on_fresh_without_docs_plugin(workspace, monkeypatch):
+async def test_docs_tools_hidden_on_fresh_without_docs_plugin(workspace, monkeypatch):
     monkeypatch.delenv("LIVESPEC_PLUGINS", raising=False)
     # Use a visibility-aware minimal surface — full server conftest forces =all.
     from fastmcp import FastMCP
@@ -195,6 +195,7 @@ async def test_export_explorer_hidden_on_fresh_without_docs_plugin(workspace, mo
     register_all_plugins(m)
     async with Client(m) as c:
         names = {t.name for t in await c.list_tools()}
-    assert "export_explorer" not in names
+    assert "generate_docs" not in names
+    assert "export_explorer" not in names  # removed outright, not just gated
     assert "import_specs_from_markdown" in names
     assert "agent_scratch" not in names

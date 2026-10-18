@@ -31,7 +31,7 @@ REPO = Path(__file__).resolve().parents[1]
 # The two plugin tiers are gated out of `tools/list` by default; their sizes are
 # fixed by the tier split, so the doc claim is checked against these.
 SPEC_PLUGIN_TOOLS = 12
-DOCS_PLUGIN_TOOLS = 5
+DOCS_PLUGIN_TOOLS = 3
 
 
 async def _registered(plugins: str | None) -> set[str]:

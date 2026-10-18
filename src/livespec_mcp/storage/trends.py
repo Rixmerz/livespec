@@ -11,8 +11,8 @@ Two functions:
 * ``read_trend`` — chronological list of ``{ts, avg_test_coverage,
   verified_count}`` rollup rows (one per recorded audit).
 
-Kept deliberately small: the explorer agent consumes ``read_trend`` to build
-``data.json``; this module owns only the storage shape.
+Kept deliberately small: ``read_trend`` serves any consumer of the trend
+(the removed Spec Explorer was the first); this module owns only the storage shape.
 """
 
 from __future__ import annotations
