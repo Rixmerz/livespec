@@ -6,6 +6,89 @@ follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed — tracks separate the Specs a range changed from the ones it only touched (migration 26)
+
+- A changed function linked to many Specs used to mark all of them as touched:
+  on a Deno Fresh app, one range with 7 OpenSpec requirement deltas listed 37
+  Specs in `CHANGESPEC.md`. Now each Spec of a track is **changed** — the
+  range carries an OpenSpec delta for it, or it is the *primary explicit
+  annotation* (first id of the first `@spec:` / `@implements:` line, head side
+  for added / modified symbols, base side for removed ones) of a symbol the
+  range changed — or **touched**: reached only through secondary ids,
+  verb-anchored mentions, `@tests:` / `@see:` lines or link-table rows. That
+  range now reads 7 changed + 30 touched.
+- `CHANGESPEC.md`: changed Specs keep their `### <spec-id>` sections; touched
+  Specs go on one line per entry,
+  `Also touched: a, b <!-- livespec:touched -->`, with no section and no code
+  of their own. Only a line carrying the marker is
+  read as touched Specs, so a Why with a line starting `Also touched:` reads
+  back unchanged; entries written before this change read back byte for byte
+  (every section a changed Spec). A touched Spec written as a section carries
+  the marker on its heading.
+- `propose_track` returns `changed_specs` and `touched_specs` (each Spec with
+  `tier`) instead of `specs`, paged by `limit` / `cursor`; `summary_only`
+  returns `changed_spec_ids` / `touched_spec_ids`. `counts` keeps
+  `specs_touched` (all the Specs the range reached, as before) and gains
+  `specs_changed` and `specs_touched_only` (the two tiers).
+- `record_track` returns `changed_specs` / `touched_specs` (ids, paged, new
+  `limit` / `cursor` / `summary_only`), and takes
+  `include_touched_sections=False` to write a section for every touched Spec.
+  A touched Spec with a why — given, or kept from the entry being re-recorded —
+  keeps its section, so re-recording never drops a why.
+- `get_spec_history` marks each track `tier: changed | touched` (also in
+  `summary_only`); the `livespec ui` Spec page shows it as a badge.
+- Migration 26: `track_spec.tier` (TEXT, default `changed`). Additive, no
+  re-extract; `index_project` rebuilds the rows from `CHANGESPEC.md`.
+- OpenSpec: change `tracks-changed-and-touched-specs` archived; `tracks` gains
+  "Changed and touched Specs" and "Touched Specs in CHANGESPEC.md".
+
+### Added — tracks and `CHANGESPEC.md`: the history of code ↔ spec (migration 25)
+
+- A **track** is a macro-commit: a named git range (`base..head` — a branch, a
+  PR, a run of commits) plus why it exists. Four new core tools (34 → 38 core,
+  49 → 53 total):
+  - `propose_track(base_ref, head_ref, limit, cursor, summary_only)` — draft,
+    writes nothing: Specs touched, per Spec the symbols added / modified /
+    removed, OpenSpec requirement deltas, and `unlinked` code with no Spec.
+  - `record_track(base_ref, head_ref, title, why, spec_reasons)` — writes the
+    entry into `CHANGESPEC.md` at the workspace root (created if absent) and the
+    index. Idempotent per range: the same base/head updates its entry and keeps
+    per-Spec whys the call does not restate. Unknown refs and spec ids are
+    `mcp_error`s with `did_you_mean`.
+  - `get_spec_history(spec_id, …)` (aliases accepted) and
+    `get_symbol_history(symbol, …)` (removed symbols too) — paginated
+    timelines, newest first.
+- Symbol-level diff: both sides read from git (`cat-file --batch`) and run
+  through the regular extractors; `modified` means the normalised `body_hash`
+  differs, so reformat-only edits never count. Renamed files (`-M`) pair their
+  symbols by module-local name; a class whose only change is a reported method
+  is not reported again.
+- OpenSpec: `## ADDED|MODIFIED|REMOVED|RENAMED Requirements` in
+  `openspec/changes/**/specs/**/spec.md` (archive included) the range adds,
+  moves or edits become requirement deltas on their Spec ids. In an OpenSpec
+  repo, a Spec that did not exist yet at the range's head is never credited
+  through today's link table.
+- `CHANGESPEC.md` is the source of truth: newest first, one `##` entry per
+  track with a `<!-- livespec:track id=… base=<sha> head=<sha> -->` marker, one
+  `###` section per Spec (`- Spec:`, `- Code: + new (path), ~ changed (path),
+  - removed (path)`, `- Why:`) and `### (no spec)`. Migration 25 adds `track`,
+  `track_spec`, `track_symbol`; `index_project` rebuilds them from the file on
+  every run and reports `tracks: {present, tracks, symbols, problems?}` — a
+  missing file is no tracks, a malformed block is reported, never fatal. It is
+  the one file livespec writes into a project, and only on `record_track`.
+- `livespec ui`: a Spec's page lists its tracks (read-only).
+
+### Changed — `git_diff_impact` is symbol-precise
+
+- `changed_symbols` lists only what the range added, modified or removed, not
+  every symbol of a changed file; impacted callers, affected Specs and
+  suggested tests follow. Same payload shape and pagination. Files that cannot
+  be compared (parse error, missing grammar) keep the file-level answer.
+  Measured: a Deno Fresh app's 39-file commit 274 → 25 changed symbols (Specs
+  159 → 131); livespec's own last two feature commits 158 → 13 and 434 → 140.
+- The git core moved to `domain/git_range.py` (refs still after
+  `--end-of-options`; failures returned as data).
+
 ### Changed — accented requirement names get readable spec ids
 
 - OpenSpec headings are transliterated before slugging (NFKD minus combining

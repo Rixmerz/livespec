@@ -95,6 +95,18 @@ ningún manual de agente menciona). Cuatro tests nuevos existen sólo para que
 esos silencios fallen fuerte: `test_layering`, `test_agent_docs_sync`,
 `test_grammar_availability` y el reporte de `unknown_relations`.
 
+**Addendum v0.33 (2026-10-18) — tracks: excepción deliberada a "no más
+superficie".** Cuatro tools core nuevas (`propose_track`, `record_track`,
+`get_spec_history`, `get_symbol_history`) porque responden una pregunta que
+ninguna tool contestaba en ≤2 llamadas: *cómo llegó una Spec hasta aquí y por
+qué*. Es el diferenciador (trazabilidad Spec ↔ código) llevado al tiempo, no
+inteligencia de código genérica. La historia vive en `CHANGESPEC.md`,
+versionado con el código; el índice es derivado. La misma maquinaria hizo
+`git_diff_impact` preciso por símbolo (274 → 25 símbolos cambiados en un
+commit real). Pendiente de evidencia en ≥2 perfiles más antes de 1.0: si el
+abanico de specs por función (37 specs para 7 deltas en un repo Fresh) hace
+ruido, el siguiente paso es ponderar por delta OpenSpec, no agregar tools.
+
 **vs Graphify (2026-07-31, actualizado 2026-09-06):** conviven; **no** portar
 Leiden / multimodal al core. Ver `docs/COMPETITIVE_GRAPHIFY.md`. Weight +
 `edge_type` ya cubren EXTRACTED/AMBIGUOUS/INFERRED — pero la columna de

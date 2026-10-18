@@ -708,6 +708,71 @@ def _m024_spec_alias(conn: sqlite3.Connection) -> None:
     conn.execute("CREATE INDEX IF NOT EXISTS idx_spec_alias_spec ON spec_alias(spec_id)")
 
 
+def _m025_tracks(conn: sqlite3.Connection) -> None:
+    """v0.33: tracks — a named git range, why it exists, and per Spec what code
+    it changed.
+
+    ``CHANGESPEC.md`` at the workspace root is the source of truth; these
+    tables are derived from it and rebuilt on every index run, so they hold
+    Spec ids and symbol names as TEXT, not foreign keys: history outlives the
+    specs and symbols it mentions. ``track_symbol.spec_id`` NULL is code the
+    range changed with no Spec. New empty tables — no re-extract."""
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS track (
+            id INTEGER PRIMARY KEY,
+            project_id INTEGER NOT NULL REFERENCES project(id) ON DELETE CASCADE,
+            track_key TEXT NOT NULL,
+            title TEXT NOT NULL,
+            why TEXT,
+            base_sha TEXT NOT NULL,
+            head_sha TEXT NOT NULL,
+            recorded_on TEXT,
+            changes TEXT,
+            ordinal INTEGER NOT NULL DEFAULT 0,
+            UNIQUE(project_id, base_sha, head_sha)
+        )"""
+    )
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS track_spec (
+            id INTEGER PRIMARY KEY,
+            track_id INTEGER NOT NULL REFERENCES track(id) ON DELETE CASCADE,
+            spec_id TEXT NOT NULL,
+            why TEXT,
+            deltas TEXT,
+            UNIQUE(track_id, spec_id)
+        )"""
+    )
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS track_symbol (
+            id INTEGER PRIMARY KEY,
+            track_id INTEGER NOT NULL REFERENCES track(id) ON DELETE CASCADE,
+            spec_id TEXT,
+            change TEXT NOT NULL,
+            name TEXT NOT NULL,
+            qualified_name TEXT NOT NULL,
+            path TEXT NOT NULL,
+            old_path TEXT
+        )"""
+    )
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_track_spec_spec ON track_spec(spec_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_track_symbol_track ON track_symbol(track_id)")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_track_symbol_qname ON track_symbol(qualified_name)"
+    )
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_track_symbol_name ON track_symbol(name)")
+
+
+def _m026_track_spec_tier(conn: sqlite3.Connection) -> None:
+    """v0.33: ``track_spec.tier`` — ``changed`` (an OpenSpec delta, or the
+    primary ``@spec:`` of changed code) or only ``touched`` through shared code.
+
+    Rows from before keep ``changed``: that is how ``CHANGESPEC.md`` entries
+    without the ``livespec:touched`` marker read, and the next index run
+    rebuilds the rows from the file anyway. Additive, no re-extract; rolling
+    back is dropping the column, which v25 code never reads."""
+    _try_add_column(conn, "track_spec", "tier", "TEXT NOT NULL DEFAULT 'changed'")
+
+
 # Ordered registry. Append-only — never reuse a version number.
 MIGRATIONS: list[Migration] = [
     (1, "drop_dead_tables", _m001_drop_dead_tables),
@@ -734,6 +799,8 @@ MIGRATIONS: list[Migration] = [
     (22, "symbol_edge_origin", _m022_symbol_edge_origin),
     (23, "external_ingest", _m023_external_ingest),
     (24, "spec_alias", _m024_spec_alias),
+    (25, "tracks", _m025_tracks),
+    (26, "track_spec_tier", _m026_track_spec_tier),
 ]
 
 

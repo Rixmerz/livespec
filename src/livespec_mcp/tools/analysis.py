@@ -13,7 +13,6 @@ import difflib
 import fnmatch
 import json
 import re
-import subprocess
 from collections import deque
 from functools import lru_cache
 from pathlib import Path
@@ -32,6 +31,8 @@ from livespec_mcp.domain.extractors import (
     scan_hono_routes,
     ts_registered_callback_names,
 )
+from livespec_mcp.domain.git_range import changed_paths as changed_paths_of
+from livespec_mcp.domain.git_range import diff_name_status
 from livespec_mcp.domain.graph import (
     GraphView,
     ancestors_within,
@@ -43,6 +44,7 @@ from livespec_mcp.domain.indexer import DEFAULT_IGNORES, _hash_bytes, _iter_file
 from livespec_mcp.domain.languages import detect_language
 from livespec_mcp.domain.legacy_flows import compute_legacy_flows
 from livespec_mcp.domain.test_coverage_reports import discover_report_coverage
+from livespec_mcp.domain.tracks import changed_qnames_by_path
 from livespec_mcp.state import AppState, get_state
 from livespec_mcp.tool_params import (
     Cursor,
@@ -2525,102 +2527,22 @@ def compute_coverage(st: AppState, *, record: bool = True) -> dict[str, Any]:
 def _git_diff_changed_files(
     ws_root: str, base_ref: str, head_ref: str
 ) -> tuple[list[str] | None, dict[str, Any] | None]:
-    """Run ``git diff --name-only base..head`` for ``ws_root``.
+    """Changed paths of ``base..head`` (old and new side of a rename).
 
-    Shared core for ``git_diff_impact`` (the paginated tool) and
-    ``compute_diff_spec_impact`` (the explorer helper). Returns
-    ``(changed_paths, None)`` on success or ``(None, error_dict)`` when git
-    is missing / the range is unknown / the workspace has no history — the
-    error dict is already shaped by ``mcp_error`` so callers can return it
-    verbatim or treat its presence as "git unavailable".
+    Thin wrapper over ``domain.git_range.diff_name_status`` — the shared core
+    for ``git_diff_impact``, ``compute_diff_spec_impact`` and tracks. Returns
+    ``(changed_paths, None)`` on success or ``(None, error_dict)`` already
+    shaped by ``mcp_error``.
     """
-    try:
-        proc = subprocess.run(
-            # --name-status -M: detect renames so the OLD path (which holds the
-            #   indexed symbols) is included alongside the new one — a plain
-            #   --name-only rename shows only the new path, dropping the whole
-            #   caller cone / affected specs for that file.
-            # --end-of-options: a ref beginning with '-' can otherwise be
-            #   parsed as a git option (e.g. --output=... → arbitrary file
-            #   write). This guards the caller-supplied range token.
-            [
-                "git",
-                "-C",
-                ws_root,
-                "diff",
-                "--name-status",
-                "-M",
-                "--end-of-options",
-                f"{base_ref}..{head_ref}",
-            ],
-            capture_output=True,
-            text=True,
-            check=True,
-            timeout=10,
-        )
-    except FileNotFoundError:
-        return None, mcp_error(
-            "git not found on PATH",
-            hint="install git and ensure it is on PATH for this MCP server process",
-        )
-    except subprocess.CalledProcessError as e:
-        stderr = (e.stderr or "").strip()
-        stdout = (e.stdout or "").strip()
-        stderr_lower = stderr.lower()
-        if "not a git repository" in stderr_lower:
-            msg = (
-                f"workspace is not a git repository: {ws_root}. "
-                "git_diff_impact requires git history; run `git init` "
-                "and at least one commit first."
-            )
-        elif "unknown revision" in stderr_lower or "bad revision" in stderr_lower:
-            msg = (
-                f"unknown git ref(s): base_ref='{base_ref}', "
-                f"head_ref='{head_ref}'. Check `git rev-parse` for both."
-            )
-        elif "ambiguous argument" in stderr_lower:
-            msg = (
-                f"ambiguous ref: '{base_ref}..{head_ref}'. "
-                "Use full SHAs or branch names that exist locally."
-            )
-        else:
-            first_line = next(
-                (ln for ln in (stderr or stdout).splitlines() if ln.strip()),
-                "",
-            )
-            msg = (
-                f"git diff failed: {first_line[:200]}"
-                if first_line
-                else "git diff failed (no diagnostic output)"
-            )
-        return None, mcp_error(msg)
-    except subprocess.TimeoutExpired:
-        return None, mcp_error(
-            "git diff timed out after 10s",
-            hint="narrow the ref range or check for a runaway git hook",
-        )
+    entries, problem = diff_name_status(ws_root, base_ref, head_ref)
+    if problem is not None:
+        return None, _git_problem_error(problem)
+    return changed_paths_of(entries or []), None
 
-    # Parse --name-status: "<status>\t<path>" or, for renames/copies,
-    # "R<score>\t<old>\t<new>". Include both old and new for rename/copy so the
-    # old path's indexed symbols still resolve.
-    changed: list[str] = []
-    seen: set[str] = set()
-    for line in proc.stdout.splitlines():
-        if not line.strip():
-            continue
-        parts = line.split("\t")
-        status = parts[0]
-        paths = parts[1:]
-        if status[:1] in ("R", "C") and len(paths) >= 2:
-            candidates = [paths[0], paths[1]]
-        else:
-            candidates = paths[:1]
-        for p in candidates:
-            p = p.strip()
-            if p and p not in seen:
-                seen.add(p)
-                changed.append(p)
-    return changed, None
+
+def _git_problem_error(problem: Any) -> dict[str, Any]:
+    """``GitProblem`` (domain data) -> ``mcp_error`` payload."""
+    return mcp_error(problem.error, did_you_mean=problem.did_you_mean, hint=problem.hint)
 
 
 def compute_diff_spec_impact(
@@ -5584,8 +5506,10 @@ def register(mcp: FastMCP) -> None:
         """Topological impact of a git diff: changed files -> Specs + callers + suggested tests.
 
         The CI/PR-review entry point. Given a base..head git range, this tool:
-        1. lists changed files via `git diff --name-only`
-        2. resolves each one against the indexed symbols
+        1. lists changed files via `git diff --name-status -M`
+        2. resolves each one against the indexed symbols, keeping only the
+           symbols the range really added, modified (normalised body hash
+           differs, so reformat-only edits do not count) or removed
         3. unions the backward cone of callers across them
         4. unions the affected Specs
         5. suggests test files: any file under `tests/` (or `*_test.*`) whose
@@ -5604,10 +5528,12 @@ def register(mcp: FastMCP) -> None:
         pid = st.project_id
         ws_root = str(st.settings.workspace)
 
-        # v0.16 A: shared git-diff core (also feeds compute_diff_spec_impact).
-        changed_paths, err = _git_diff_changed_files(ws_root, base_ref, head_ref)
-        if err is not None:
-            return err
+        # Shared git-diff core (domain.git_range; also feeds tracks).
+        entries, problem = diff_name_status(ws_root, base_ref, head_ref)
+        if problem is not None:
+            return _git_problem_error(problem)
+        entries = entries or []
+        changed_paths = changed_paths_of(entries)
         if not changed_paths:
             empty: dict[str, Any] = {
                 "base_ref": base_ref,
@@ -5631,6 +5557,13 @@ def register(mcp: FastMCP) -> None:
 
         view = load_graph(st.conn, pid)
 
+        # Symbol-level precision: only the symbols the range really added,
+        # modified (normalised body_hash differs) or removed count as changed,
+        # not every symbol of a changed file. A path that cannot be compared
+        # (parse error, missing grammar) maps to None and keeps the file-level
+        # answer.
+        precise = changed_qnames_by_path(ws_root, base_ref, head_ref, entries)
+
         # Resolve changed files to indexed symbol ids
         changed_sym_ids: set[int] = set()
         changed_symbol_meta: list[dict[str, Any]] = []
@@ -5644,7 +5577,10 @@ def register(mcp: FastMCP) -> None:
             ).fetchall()
             if rows:
                 indexed_paths.add(path)
+            wanted = precise.get(path)
             for r in rows:
+                if wanted is not None and r["qualified_name"] not in wanted:
+                    continue
                 sid = int(r["id"])
                 changed_sym_ids.add(sid)
                 changed_symbol_meta.append(

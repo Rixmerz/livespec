@@ -392,7 +392,7 @@ gates it, you build with live links; *brownfield* → `/livespec-onboard` orient
 `propose_specs_from_codebase` reconstructs intent, **author OpenSpec first**
 (export only as a bootstrap dump).
 
-## Tools (49 total: 34 core + 12 Spec plugin + 3 docs plugin)
+## Tools (53 total: 38 core + 12 Spec plugin + 3 docs plugin)
 
 Every tool requires `workspace` (absolute project root). Pass it on each call;
 omitting it is an error (no env fallback). LRU cache (8 workspaces) — one MCP
@@ -403,9 +403,9 @@ hides Spec mutation / doc tools from `tools/list` until the workspace has
 `spec` / `doc` rows, or you set `LIVESPEC_PLUGINS`.
 **`import_specs_from_markdown`** and **`sync_openspec`** stay always visible
 (brownfield bootstrap). After the first `workspace=` call on a repo with
-Specs, the menu grows to **46** tools (49 with doc rows). Reconnect the MCP host if your client cached an old tool list.
+Specs, the menu grows to **50** tools (53 with doc rows). Reconnect the MCP host if your client cached an old tool list.
 
-### Default surface — code intel + Spec agentic (34)
+### Default surface — code intel + Spec agentic (38)
 
 These tools answer the questions an agent ASKS on an unfamiliar codebase.
 Always registered (including markdown Spec import + OpenSpec sync).
@@ -545,7 +545,9 @@ Always registered (including markdown Spec import + OpenSpec sync).
   PageRank; infra noise filtered by default.
 - `git_diff_impact(base_ref='HEAD~1', head_ref='HEAD', max_depth=5)` —
   changed files → impacted callers → affected Specs → suggested test files.
-  PR-review entry point.
+  PR-review entry point. **(v0.33)** `changed_symbols` is symbol-precise: only
+  what the range added, modified (normalised body hash) or removed, not every
+  symbol of a touched file (a Deno Fresh app's 39-file commit: 274 → 25).
 - `find_dead_code(include_infrastructure=False, corroborate_with=None)` —
   symbols with zero callers and zero Spec links. Skips entry-point paths,
   framework decorators, `__main__` guards, list-stored callbacks.
@@ -654,6 +656,52 @@ an individual scenario with `link_scenario_symbol` (Spec plugin).
   it works on hosts that cache a stale `resources/list` and refuse reads for
   URIs missing from that cache. Same content as the `project://cross-repo`
   resource.
+
+#### Tracks — the history of code ↔ spec (4, v0.33)
+
+A **track** is a macro-commit: a named git range (`base..head` — a branch, a
+PR, a run of commits) plus *why* it exists. `CHANGESPEC.md` at the workspace
+root is its versioned source of truth — newest first, per Spec: the OpenSpec
+requirement deltas and the symbols the range added / modified / removed, and
+why. The index is derived from it and rebuilt on every `index_project`. It is
+the one file livespec writes into a project, and only on an explicit
+`record_track` call.
+
+```
+## 2026-10-18 · Gamma lands (68f903d..d67bdc8)
+<!-- livespec:track id=68f903d-d67bdc8 base=<sha> head=<sha> -->
+Why: ship gamma
+OpenSpec: add-gamma
+Also touched: core-cache, core-log <!-- livespec:touched -->
+
+### core-beta
+- Spec: MODIFIED "Beta"
+- Code: + new_fn (pkg/core.py), ~ Box.open (pkg/core.py)
+- Why: beta grows new_fn
+```
+
+Specs come in two tiers. **changed**: the range carries an OpenSpec delta for
+the Spec, or the Spec is the first id of the first `@spec:` / `@implements:`
+line of a symbol it changed. **touched**: every other Spec, reached only
+through shared code (secondary ids, verb-anchored mentions, link-table rows) —
+one marked line, no section. On a Deno Fresh app, a range with 7 requirement
+deltas went from 37 Specs, all with sections, to 7 changed + 30 touched.
+
+- `propose_track(base_ref, head_ref)` — draft, writes nothing:
+  `changed_specs` and `touched_specs` (paginated, exact counts), symbols added / modified (normalised body hash — reformat-only edits do not
+  count) / removed per Spec, OpenSpec deltas from `openspec/changes/**/specs/`,
+  and code changed with no Spec (`unlinked`). Renamed files pair their
+  symbols. In OpenSpec repos a Spec that did not exist yet at the range's
+  head is never credited.
+- `record_track(base_ref, head_ref, title, why, spec_reasons,
+  include_touched_sections=False)` — write the entry into `CHANGESPEC.md`
+  (created if absent) and the index; the same range again updates it and keeps
+  the whys it does not restate. A touched Spec gets a section when asked or
+  when it has a why. Call it after the person confirmed the whys.
+- `get_spec_history(spec_id)` — timeline of tracks for one Spec (aliases
+  accepted), each `tier` changed or touched.
+- `get_symbol_history(symbol)` — tracks that changed a symbol and the Specs
+  involved; removed symbols keep their history.
 
 ### `livespec-spec` plugin — Spec mutation (12)
 

@@ -112,7 +112,7 @@ populates new fields.
 ### Layered stack
 
 ```
-tools/          MCP-exposed surface (49 tools: 34 core + 12 Spec + 3 docs)
+tools/          MCP-exposed surface (53 tools: 38 core + 12 Spec + 3 docs)
   analysis.py     find_symbol, quick_orient, get_symbol_source, who_calls,
                   who_does_this_call, analyze_impact, audit_coverage,
                   find_dead_code, find_legacy_flows, find_orphan_tests,
@@ -124,6 +124,9 @@ tools/          MCP-exposed surface (49 tools: 34 core + 12 Spec + 3 docs)
                   gated by register(mcp, agentic=, mutation=))
   indexing.py     index_project (runs rebuild_chunks inside)
   search.py       search (FTS5 over AST-aware chunks)
+  tracks.py       propose_track, record_track, get_spec_history,
+                  get_symbol_history (CHANGESPEC.md; domain in tracks.py,
+                  changespec.py, git_range.py)
   docs.py         shared doc helpers (doc tools live in plugins/docs.py)
   plugins/spec.py Spec mutation: create/update/delete_spec,
                   link_spec_symbol, link/unlink_spec_dependency,
@@ -160,6 +163,11 @@ domain/         Pure business logic, no MCP coupling
                   (GraphProblem) so domain/ never imports the MCP surface
   external_ingest.py  plan/apply ingestion + provenance (migration 23)
   md_specs.py     markdown spec importer (v0.20, was md_rfs.py)
+  git_range.py    base..head plumbing (name-status -M, rev-parse, cat-file
+                  --batch), every ref after --end-of-options; GitProblem data
+  tracks.py       symbol-level range diff (body_hash) + OpenSpec deltas →
+                  per-Spec track draft; git_diff_impact's changed set
+  changespec.py   CHANGESPEC.md render/parse/upsert + ingest into track*
   rag.py          AST-aware chunking + FTS5 keyword search
   watcher.py      watchdog wrapper used by index_project(watch=True) + atexit
                   cleanup (watcher MCP tools dropped in v0.8)
@@ -167,7 +175,7 @@ domain/         Pure business logic, no MCP coupling
 storage/        SQLite persistence
   schema.sql      single-file schema; CREATE TABLE IF NOT EXISTS for everything
   db.py           connection bootstrap + ordered migration framework
-                  (schema_migrations table; MIGRATIONS list append-only, at v24)
+                  (schema_migrations table; MIGRATIONS list append-only, at v26)
 ```
 
 ### Critical contracts (don't break)
@@ -211,7 +219,7 @@ produce duplicate symbols at the same line. Keep the first occurrence
 The v0.8 curation pass shipped: battle-test data (3 sessions, 40 calls,
 11 bug fixes) drove the tier split. Current state:
 
-- **34 core tools** always registered: code intel (find_symbol,
+- **38 core tools** always registered: code intel (find_symbol,
   quick_orient, get_symbol_source, who_calls, who_does_this_call,
   analyze_impact, git_diff_impact, find_dead_code, find_legacy_flows,
   find_orphan_tests, find_endpoints, get_project_overview, index_project,
@@ -222,6 +230,8 @@ The v0.8 curation pass shipped: battle-test data (3 sessions, 40 calls,
   + OpenSpec interop (sync_openspec, export_openspec, validate_openspec,
   list_spec_changes, get_spec_change — v0.22)
   + cross-repo discovery (get_cross_repo_guide — v0.31.3)
+  + tracks (propose_track, record_track, get_spec_history,
+  get_symbol_history — v0.33)
   + scan_annotation_verbs.
 - **Plugin `livespec-spec` (12 tools)** — Spec mutation ceremony: CRUD,
   link/unlink, Spec-Spec graph, scans (import moved to core v0.19),
@@ -233,7 +243,11 @@ The v0.8 curation pass shipped: battle-test data (3 sessions, 40 calls,
   the FastAPI autowire — they wrote HTML/JS bundles into the user's repo. The
   human view is `livespec ui` (`ui/`), a read-only server over the user-level
   registry (`registry.py`, outside any repo). **Never write UI artifacts into
-  a project directory.**
+  a project directory.** The one sanctioned write into a project is
+  `CHANGESPEC.md` at the workspace root, and only from an explicit
+  `record_track` call (never from indexing): it is a human-owned history
+  document like a CHANGELOG, versioned with the code, not a UI artifact. The
+  `track*` tables are derived from it and rebuilt on every `index_project`.
 - **Dropped (v0.29):** agent_scratch / agent_scratch_get /
   agent_scratch_clear; dense-vector search (`embed_chunks`, `[embeddings]`).
 - **Dropped (v0.8-v0.9)**: list_files, get_index_status (resource

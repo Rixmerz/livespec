@@ -504,7 +504,16 @@ async function viewSpec(id, specId) {
       h("ul", { class: "chips" }, c.uncovered_symbols.map((q) => h("li", { class: "chip" }, link(symbolHref(id, q), q))))] : null,
     h("div", { class: "columns" },
       h("section", {}, h("h2", {}, "Depends on"), depList(s.depends_on, "No dependencies.")),
-      h("section", {}, h("h2", {}, "Depended on by"), depList(s.depended_by, "Nothing depends on it."))));
+      h("section", {}, h("h2", {}, "Depended on by"), depList(s.depended_by, "Nothing depends on it."))),
+    h("h2", {}, `History (${(s.tracks || []).length})`),
+    (s.tracks || []).length
+      ? h("ol", { class: "list" }, s.tracks.map((t) => h("li", {},
+        h("p", { class: "row" }, h("strong", {}, t.title), badge(t.tier, t.tier === "touched" ? "touched only" : "changed"), h("span", { class: "muted" }, t.date || ""), h("code", {}, t.range)),
+        t.why ? h("p", {}, t.why) : null,
+        t.spec_why ? h("p", { class: "muted" }, `Why here: ${t.spec_why}`) : null,
+        t.deltas.length ? h("ul", { class: "chips" }, t.deltas.map((d) => h("li", { class: "chip" }, `${d.operation} ${d.requirement}`))) : null,
+        t.code.length ? h("ul", { class: "chips" }, t.code.map((x) => h("li", { class: "chip mono" }, `${{ added: "+", modified: "~", removed: "-" }[x.change] || "?"} ${x.name}`, h("span", { class: "muted" }, ` ${x.path}`)))) : null)))
+      : h("p", { class: "muted" }, "No recorded track touched this Spec (CHANGESPEC.md)."));
 }
 
 // ------------------------------------------------------------------ group

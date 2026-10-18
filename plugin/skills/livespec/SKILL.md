@@ -98,7 +98,7 @@ it is not a background watcher you should lean on while editing.
 | Who calls this? | `who_calls(qname, max_depth=1)` — `summary_only=True` on huge repos |
 | What does this call? | `who_does_this_call(qname, max_depth=1)` |
 | Blast radius + Spec rollup | `analyze_impact(target_type, target, max_depth)` — `symbol`\|`file`\|`spec` |
-| PR / diff scope | `git_diff_impact(base_ref, head_ref)` — git repos only |
+| PR / diff scope | `git_diff_impact(base_ref, head_ref)` — git repos only; symbol-precise (an untouched function in a changed file is not listed) |
 | Keyword search over chunks | `search(query, scope)` — FTS5 over AST-aware symbol + Spec chunks |
 | Literal string search over indexed files | `grep_in_indexed_files(pattern)` — check `scope_fresh`, see the staleness trap below |
 | Dead-code candidates | `find_dead_code()` — respects entry points / `pub` / frameworks; TS-only auto-enables `include_non_python` |
@@ -111,6 +111,28 @@ it is not a background watcher you should lean on while editing.
 | "Did I just write this twice?" | `search_similar(code or qname)` — before a write; normalised-AST hash + k-gram winnowing, no embeddings |
 | Frozen duplication debt | `debt_baseline_capture()` / `debt_baseline_status()` — accepted duplication stays quiet, new copies do not |
 | A human wants to *see* the index | Not a tool: tell them to run `/livespec-ui` (Claude Code) or `livespec ui` — one read-only page over every indexed project. Never generate HTML into the repo |
+
+### Tracks — the history of code ↔ spec (`CHANGESPEC.md`)
+
+A **track** is a macro-commit: a named git range (`base..head` — a branch, a
+PR, a run of commits) plus *why* it exists. `CHANGESPEC.md` at the repo root
+holds them newest first, per Spec: which requirement deltas and which symbols
+(added / modified / removed) the range brought, and why. It is versioned with
+the code; the index is rebuilt from it on every `index_project`.
+
+| Intent | Tool |
+|--------|------|
+| "What did this branch / PR change, per Spec?" | `propose_track(base_ref, head_ref)` — draft only, writes nothing; `changed_specs` (OpenSpec delta, or the first `@spec:` of changed code) vs `touched_specs` (reached only through shared code); also lists code changed with **no** Spec (`unlinked`) |
+| Record it once the person agreed | `record_track(base_ref, head_ref, title, why, spec_reasons)` — writes `CHANGESPEC.md`; same range again updates, never duplicates |
+| "How did this Spec evolve?" | `get_spec_history(spec_id)` — timeline of tracks, each `tier` changed or touched, whys, deltas, symbols |
+| "Why does this function look like this?" | `get_symbol_history(symbol)` — tracks that changed it and the Specs involved (removed symbols too) |
+
+The loop is **propose → draft whys → person confirms → record**. Never call
+`record_track` with whys the person has not seen: the file is theirs, like a
+CHANGELOG. When a PR is ready (or right after an OpenSpec change is archived),
+run `propose_track(base_ref=<merge base>, head_ref="HEAD")`, write one line per
+changed Spec from the diff and the change's proposal (touched Specs need none;
+they go on one `Also touched:` line), show them, then record.
 
 ### A second extractor (Graphify) — optional, zero LLM
 
@@ -295,6 +317,8 @@ For the full annotation grammar and examples, fetch the MCP prompt `agent_playbo
    to add; a hit means edit the existing one instead.
 7. **After edits** — `git_diff_impact(summary_only=True)`; re-`index_project` if
    `hint` says unindexed/non-code paths or results look empty.
+8. **Before the PR / after archiving a change** — `propose_track` → draft whys →
+   person confirms → `record_track`.
 
 ## Do not
 

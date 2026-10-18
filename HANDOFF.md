@@ -44,6 +44,65 @@ Todo el stack es local-first: 0 servicios externos, 0 API keys obligatorias, 0 D
 
 ## 3. Estado actual
 
+### Unreleased — tracks: specs cambiadas vs. solo tocadas
+
+Sobre `635e3cc` (rama `ccr-82a9fa1e-z0iknt`), un commit con código, docs y el
+cambio OpenSpec archivado. 965 tests.
+
+- **Regla** (`domain/tracks.py:SpecTouch.tier`, `primary_spec`): una spec de un
+  track es `changed` si el rango trae un delta OpenSpec para ella o si es la
+  anotación explícita primaria (primer id de la primera línea `@spec:` /
+  `@implements:`, lado head para añadidos/modificados, lado base para
+  eliminados) de un símbolo cambiado; si no, `touched`. Menciones con verbo,
+  `@tests:` / `@see:`, ids secundarios y filas de la tabla de enlaces nunca la
+  vuelven `changed`. `AnnotationHit.explicit` (matcher) marca el nivel 1.
+- **`CHANGESPEC.md`** (`domain/changespec.py`): las cambiadas conservan su
+  `### <spec-id>`; las tocadas van en una línea
+  `Also touched: a, b <!-- livespec:touched -->`, sin sección ni código
+  propio. Solo se lee como specs tocadas una línea con el
+  marcador: las líneas de continuación del Why no van indentadas, y un prefijo
+  `Also touched:` a secas truncaría un Why anterior. Las entradas sin marcador
+  se leen igual que antes (todas las secciones `changed`). Una spec tocada con
+  why (dado o ya escrito) conserva su sección; `record_track` lee los whys ya
+  registrados (`recorded_reasons`) antes de construir la entrada.
+- **Tools**: `propose_track` / `record_track` devuelven `changed_specs` y
+  `touched_specs` paginados (`counts.specs_touched` sigue siendo el total;
+  `specs_changed` y `specs_touched_only` son los tramos); `record_track(include_touched_sections=False)`;
+  `get_spec_history` y la UI marcan `tier`. Migración 26: `track_spec.tier`.
+- **Evidencia**: en la app Deno Fresh, el rango de 7 deltas (antes 37 specs)
+  queda en 7 changed + 30 touched; en livespec, `57b14ff..635e3cc` sigue en 8
+  changed / 0 touched (sus anotaciones son de una spec por símbolo).
+- **OpenSpec propio**: `tracks-changed-and-touched-specs` archivado en
+  `openspec/changes/archive/2026-10-18-tracks-changed-and-touched-specs/`.
+- **Abierto**: el código que solo alcanza a specs tocadas no se escribe en el
+  archivo en la forma compacta (`include_touched_sections` lo recupera), así
+  que `get_symbol_history` no lo ve; los tests
+  anónimos (`Deno.test(...)`) siguen sin ser símbolos.
+
+### Unreleased — tracks y `CHANGESPEC.md`: la historia de código ↔ spec
+
+Rama `ccr-82a9fa1e-z0iknt` sobre `57b14ff` (main tras el PR #21): `01aed8b`
+(código + docs) y el commit del cambio OpenSpec archivado. 956 tests.
+
+- **Tracks** (`domain/tracks.py`, `domain/changespec.py`,
+  `domain/git_range.py`, `tools/tracks.py`, migración 25): un track es un rango
+  git con nombre y su porqué. `propose_track` (borrador, no escribe),
+  `record_track` (escribe `CHANGESPEC.md` en la raíz, idempotente por rango),
+  `get_spec_history`, `get_symbol_history`. Diff por símbolo con `body_hash`
+  (el reformateo no cuenta), renombres pareados por nombre local, deltas
+  OpenSpec por requisito, y en repos OpenSpec solo se acreditan specs que
+  existían en el head del rango. `index_project` reconstruye las tablas
+  `track*` desde el archivo. 38 core / 53 total.
+- **`git_diff_impact` por símbolo**: `changed_symbols` 274 → 25 en un commit de
+  39 archivos de una app Deno Fresh; 158 → 13 y 434 → 140 en dos commits de
+  livespec.
+- **OpenSpec propio**: cambio `tracks-y-changespec` archivado en
+  `openspec/changes/archive/2026-10-18-tracks-y-changespec/`; nueva capacidad
+  `openspec/specs/tracks/`, `analysis` y `ui` modificadas.
+- **Abierto**: una función enlazada a muchas specs las marca a todas como
+  tocadas (en el repo Fresh, 37 specs para 7 deltas); los tests anónimos
+  (`Deno.test(...)`) no son símbolos y no aparecen en el track.
+
 ### Unreleased — ids de spec sin tildes, `const` de TS con JSDoc y gramáticas que no fallan en silencio
 
 Integrado en la rama `ccr-82a9fa1e-z0iknt` junto con `livespec ui` (abajo).

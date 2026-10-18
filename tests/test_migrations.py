@@ -370,3 +370,78 @@ def test_schema_sql_never_indexes_a_column_a_migration_adds():
         f"`no such column` on every pre-existing database: {sorted(set(offenders))}. "
         "Move the CREATE INDEX into the migration."
     )
+
+
+def test_m025_tracks_tables_are_created_and_cascade(tmp_path: Path):
+    """v25 creates ``track`` / ``track_spec`` / ``track_symbol`` on a DB that
+    predates them — by the migration itself, not only by schema.sql — and a
+    project's tracks die with it."""
+    from livespec_mcp.storage.db import _m025_tracks
+
+    raw = sqlite3.connect(str(tmp_path / "old.db"))
+    raw.row_factory = sqlite3.Row
+    raw.execute("PRAGMA foreign_keys=ON")
+    raw.execute("CREATE TABLE project (id INTEGER PRIMARY KEY)")
+    _m025_tracks(raw)
+    _m025_tracks(raw)  # idempotent
+    assert {"track", "track_spec", "track_symbol"} <= _table_names(raw)
+    raw.execute("INSERT INTO project(id) VALUES(1)")
+    raw.execute(
+        "INSERT INTO track(id, project_id, track_key, title, base_sha, head_sha) "
+        "VALUES(1, 1, 'a-b', 't', 'a', 'b')"
+    )
+    raw.execute("INSERT INTO track_spec(track_id, spec_id) VALUES(1, 'x')")
+    raw.execute(
+        "INSERT INTO track_symbol(track_id, spec_id, change, name, qualified_name, path) "
+        "VALUES(1, NULL, 'added', 'f', 'm.f', 'm.py')"
+    )
+    raw.execute("DELETE FROM project WHERE id=1")
+    assert raw.execute("SELECT COUNT(*) FROM track_symbol").fetchone()[0] == 0
+    assert raw.execute("SELECT COUNT(*) FROM track_spec").fetchone()[0] == 0
+    raw.close()
+
+    versions = [v for v, _, _ in MIGRATIONS]
+    assert 25 in versions and dict((v, n) for v, n, _ in MIGRATIONS)[25] == "tracks"
+
+
+def test_m026_track_spec_tier_forward_and_rollback(tmp_path: Path):
+    """v26 adds ``track_spec.tier`` to a v25 DB, rows already there read as
+    ``changed``; rolling back (dropping the column) leaves a DB v25 code writes
+    and reads, and migrating again restores the column."""
+    db = tmp_path / "existing.db"
+    conn = connect(db)
+    assert _has_tier(conn)
+
+    def rollback() -> None:
+        conn.execute("ALTER TABLE track_spec DROP COLUMN tier")
+        conn.execute("DELETE FROM schema_migrations WHERE version=26")
+        conn.commit()
+
+    rollback()
+    assert not _has_tier(conn)
+    conn.execute("INSERT INTO project(id, name, root) VALUES(1, 'p', '/p')")
+    conn.execute(
+        "INSERT INTO track(id, project_id, track_key, title, base_sha, head_sha) "
+        "VALUES(1, 1, 'a-b', 't', 'a', 'b')"
+    )
+    conn.execute("INSERT INTO track_spec(track_id, spec_id, why) VALUES(1, 'x', 'w')")  # v25 shape
+    conn.commit()
+    conn.close()
+
+    conn = connect(db)
+    assert _has_tier(conn)
+    assert tuple(conn.execute("SELECT spec_id, why, tier FROM track_spec").fetchone()) == (
+        "x",
+        "w",
+        "changed",
+    )
+    assert 26 in {r[0] for r in conn.execute("SELECT version FROM schema_migrations")}
+
+    rollback()
+    assert tuple(conn.execute("SELECT spec_id, why FROM track_spec").fetchone()) == ("x", "w")
+    conn.close()
+    assert dict((v, n) for v, n, _ in MIGRATIONS)[26] == "track_spec_tier"
+
+
+def _has_tier(conn: sqlite3.Connection) -> bool:
+    return any(r["name"] == "tier" for r in conn.execute("PRAGMA table_info(track_spec)"))

@@ -175,6 +175,9 @@ class AnnotationHit:
     spec_id: str  # store id (OpenSpec slug, or unmigrated PREFIX-NNN)
     relation: str  # implements | tests | references
     confidence: float  # 1.0 (level 1) | 0.7 (level 2) | override (level 1 + suffix)
+    # Level 1 (`@verb:` line), whatever its confidence: a `:0.7` override
+    # does not make an explicit annotation an inferred one.
+    explicit: bool = False
 
 
 def _normalize_match(m: re.Match[str]) -> str:
@@ -284,7 +287,11 @@ def parse_annotations(
                 continue
             seen.add(key)
             confidence = conf_override if conf_override is not None else 1.0
-            hits.append(AnnotationHit(spec_id=spec_id, relation=relation, confidence=confidence))
+            hits.append(
+                AnnotationHit(
+                    spec_id=spec_id, relation=relation, confidence=confidence, explicit=True
+                )
+            )
 
     # Second pass: L2 verb-anchored (digit-prefix schemes)
     for m in verb_re.finditer(text):
