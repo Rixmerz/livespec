@@ -762,6 +762,17 @@ def _m025_tracks(conn: sqlite3.Connection) -> None:
     conn.execute("CREATE INDEX IF NOT EXISTS idx_track_symbol_name ON track_symbol(name)")
 
 
+def _m026_track_spec_tier(conn: sqlite3.Connection) -> None:
+    """v0.33: ``track_spec.tier`` — ``changed`` (an OpenSpec delta, or the
+    primary ``@spec:`` of changed code) or only ``touched`` through shared code.
+
+    Rows from before keep ``changed``: that is how ``CHANGESPEC.md`` entries
+    without the ``livespec:touched`` marker read, and the next index run
+    rebuilds the rows from the file anyway. Additive, no re-extract; rolling
+    back is dropping the column, which v25 code never reads."""
+    _try_add_column(conn, "track_spec", "tier", "TEXT NOT NULL DEFAULT 'changed'")
+
+
 # Ordered registry. Append-only — never reuse a version number.
 MIGRATIONS: list[Migration] = [
     (1, "drop_dead_tables", _m001_drop_dead_tables),
@@ -789,6 +800,7 @@ MIGRATIONS: list[Migration] = [
     (23, "external_ingest", _m023_external_ingest),
     (24, "spec_alias", _m024_spec_alias),
     (25, "tracks", _m025_tracks),
+    (26, "track_spec_tier", _m026_track_spec_tier),
 ]
 
 

@@ -14,7 +14,7 @@ base side:
   deltas from OpenSpec change files the range adds or edits.
 * ``draft_track`` — both of the above folded onto Spec ids: annotations and the
   link table at head for what exists at head, base-side annotations for what
-  was removed.
+  was removed. Each Spec is ``changed`` or only ``touched`` (``SpecTouch.tier``).
 
 Writing the draft into ``CHANGESPEC.md`` lives in ``domain/changespec.py``.
 """
@@ -40,7 +40,7 @@ from livespec_mcp.domain.git_range import (
     resolve_commit,
 )
 from livespec_mcp.domain.languages import detect_language
-from livespec_mcp.domain.matcher import derive_spec_prefixes, parse_annotations
+from livespec_mcp.domain.matcher import AnnotationHit, derive_spec_prefixes, parse_annotations
 from livespec_mcp.domain.md_specs import parse_openspec_markdown
 
 CHANGES = ("added", "modified", "removed")
@@ -78,6 +78,8 @@ class SymbolChange:
     old_path: str | None = None  # base-side path when the file moved
     docstring: str | None = None
     specs: list[str] = field(default_factory=list)
+    # The Spec this symbol's own `@spec:` names first (see ``primary_spec``).
+    primary: str | None = None
 
     def as_payload(self) -> dict[str, Any]:
         out: dict[str, Any] = {
@@ -390,6 +392,18 @@ class SpecTouch:
     deltas: list[SpecDelta] = field(default_factory=list)
     symbols: list[SymbolChange] = field(default_factory=list)
 
+    @property
+    def tier(self) -> str:
+        """@spec:tracks-changed-and-touched-specs
+
+        ``changed`` when the range carries a requirement delta for this Spec or
+        it is the primary explicit annotation of a symbol the range changed;
+        ``touched`` when it is reached only through shared code (a secondary
+        id, a verb-anchored mention, a link-table row)."""
+        if self.deltas or any(c.primary == self.spec_id for c in self.symbols):
+            return "changed"
+        return "touched"
+
 
 @dataclass
 class TrackDraft:
@@ -408,6 +422,14 @@ class TrackDraft:
         return track_id_for(self.base_sha, self.head_sha)
 
     @property
+    def changed_specs(self) -> list[SpecTouch]:
+        return [t for t in self.specs.values() if t.tier == "changed"]
+
+    @property
+    def touched_specs(self) -> list[SpecTouch]:
+        return [t for t in self.specs.values() if t.tier == "touched"]
+
+    @property
     def changes(self) -> list[str]:
         """OpenSpec change folders the range carries, in order."""
         seen: list[str] = []
@@ -420,6 +442,16 @@ class TrackDraft:
 
 def track_id_for(base_sha: str, head_sha: str) -> str:
     return f"{base_sha[:7]}-{head_sha[:7]}"
+
+
+def primary_spec(hits: list[AnnotationHit]) -> str | None:
+    """@spec:tracks-changed-and-touched-specs
+
+    The Spec a symbol names as its own: the first id of its first level-1
+    ``@spec:`` / ``@implements:`` line (``parse_annotations`` keeps source
+    order and has already applied ``@not_spec``). ``@tests:`` / ``@see:`` and
+    verb-anchored mentions say the code relates to a Spec, not that it is it."""
+    return next((h.spec_id for h in hits if h.explicit and h.relation == "implements"), None)
 
 
 def _index_links(
@@ -509,15 +541,18 @@ def draft_track(
     at_base = spec_ids_in_tree(ws_root, base_sha)
     unlinked: list[SymbolChange] = []
     for c in diff.changes:
-        found: set[str] = set()
-        for hit in parse_annotations(c.docstring or "", prefixes, known_ids=known_ids):
-            found.add(canon(hit.spec_id))
+        hits = parse_annotations(c.docstring or "", prefixes, known_ids=known_ids)
+        found = {canon(hit.spec_id) for hit in hits}
         found |= {canon(s) for s in links.get((c.path, c.qualified_name), set())}
         existing = at_base if c.change == "removed" else at_head
         if existing is not None:
             allowed = {canon(s) for s in existing} | delta_ids
             found &= allowed
         c.specs = sorted(found)
+        primary = primary_spec(hits)
+        # A primary the commit did not hold credits nothing; the next id in
+        # the docstring is not promoted in its place.
+        c.primary = canon(primary) if primary is not None and canon(primary) in found else None
         if not found:
             unlinked.append(c)
         for sid in c.specs:

@@ -410,7 +410,8 @@ def _spec_tracks(st: AppState, spec_id: str) -> list[dict[str, Any]]:
     """@spec:ui-cross-project-read-only-ui
 
     Tracks (from CHANGESPEC.md, via the index) that touched this Spec,
-    newest first. An index built before tracks existed has no table: empty."""
+    newest first, each ``changed`` or only ``touched``. An index built before
+    tracks existed has no table: empty."""
     from livespec_mcp.domain.changespec import spec_aliases, spec_history
 
     try:
@@ -424,6 +425,7 @@ def _spec_tracks(st: AppState, spec_id: str) -> list[dict[str, Any]]:
             "title": t["title"],
             "why": t["why"],
             "range": f"{t['base_sha'][:7]}..{t['head_sha'][:7]}",
+            "tier": t["tier"],
             "spec_why": t["spec_why"],
             "deltas": t["deltas"],
             "code": [

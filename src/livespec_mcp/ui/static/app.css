@@ -282,6 +282,8 @@ h1[tabindex="-1"]:focus { outline: none; }
 .badge.implemented { color: var(--accent); background: var(--accent-soft); }
 .badge.in_progress, .badge.missing_workspace, .badge.unregistered { color: var(--warn); background: var(--warn-soft); }
 .badge.not_started, .badge.missing_db, .badge.error { color: var(--bad); background: var(--bad-soft); }
+.badge.changed { color: var(--accent); background: var(--accent-soft); }
+.badge.touched { color: var(--ink-3); background: var(--bg); }
 
 .meter { display: flex; align-items: center; gap: 8px; font-size: 13px; }
 .meter .bar {

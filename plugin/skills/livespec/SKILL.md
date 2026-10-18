@@ -122,16 +122,17 @@ the code; the index is rebuilt from it on every `index_project`.
 
 | Intent | Tool |
 |--------|------|
-| "What did this branch / PR change, per Spec?" | `propose_track(base_ref, head_ref)` — draft only, writes nothing; also lists code changed with **no** Spec (`unlinked`) |
+| "What did this branch / PR change, per Spec?" | `propose_track(base_ref, head_ref)` — draft only, writes nothing; `changed_specs` (OpenSpec delta, or the first `@spec:` of changed code) vs `touched_specs` (reached only through shared code); also lists code changed with **no** Spec (`unlinked`) |
 | Record it once the person agreed | `record_track(base_ref, head_ref, title, why, spec_reasons)` — writes `CHANGESPEC.md`; same range again updates, never duplicates |
-| "How did this Spec evolve?" | `get_spec_history(spec_id)` — timeline of tracks, whys, deltas, symbols |
+| "How did this Spec evolve?" | `get_spec_history(spec_id)` — timeline of tracks, each `tier` changed or touched, whys, deltas, symbols |
 | "Why does this function look like this?" | `get_symbol_history(symbol)` — tracks that changed it and the Specs involved (removed symbols too) |
 
 The loop is **propose → draft whys → person confirms → record**. Never call
 `record_track` with whys the person has not seen: the file is theirs, like a
 CHANGELOG. When a PR is ready (or right after an OpenSpec change is archived),
 run `propose_track(base_ref=<merge base>, head_ref="HEAD")`, write one line per
-Spec from the diff and the change's proposal, show them, then record.
+changed Spec from the diff and the change's proposal (touched Specs need none;
+they go on one `Also touched:` line), show them, then record.
 
 ### A second extractor (Graphify) — optional, zero LLM
 

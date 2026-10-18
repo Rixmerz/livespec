@@ -9,7 +9,7 @@ web view over every indexed project, kept outside every repository.
 
 ### Requirement: Cross-project read-only UI
 
-The livespec MCP server SHALL record every indexed workspace in a user-level registry outside any repository, and `livespec ui` SHALL serve one local web UI over all registered projects, grouped by polyrepo group, reading each project's index read-only and writing nothing into any project directory; a Spec's page SHALL show the tracks that touched it.
+The livespec MCP server SHALL record every indexed workspace in a user-level registry outside any repository, and `livespec ui` SHALL serve one local web UI over all registered projects, grouped by polyrepo group, reading each project's index read-only and writing nothing into any project directory; a Spec's page SHALL show the tracks that touched it and whether each track changed the Spec or only touched it.
 
 #### Scenario: Index then browse
 
@@ -29,4 +29,4 @@ The livespec MCP server SHALL record every indexed workspace in a user-level reg
 #### Scenario: Spec history
 
 - **WHEN** a recorded track touched a Spec
-- **THEN** that Spec's page lists the track with its why, deltas and changed symbols, and `CHANGESPEC.md` is unchanged
+- **THEN** that Spec's page lists the track with its tier, why, deltas and changed symbols, and `CHANGESPEC.md` is unchanged

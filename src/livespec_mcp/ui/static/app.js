@@ -508,7 +508,7 @@ async function viewSpec(id, specId) {
     h("h2", {}, `History (${(s.tracks || []).length})`),
     (s.tracks || []).length
       ? h("ol", { class: "list" }, s.tracks.map((t) => h("li", {},
-        h("p", { class: "row" }, h("strong", {}, t.title), h("span", { class: "muted" }, t.date || ""), h("code", {}, t.range)),
+        h("p", { class: "row" }, h("strong", {}, t.title), badge(t.tier, t.tier === "touched" ? "touched only" : "changed"), h("span", { class: "muted" }, t.date || ""), h("code", {}, t.range)),
         t.why ? h("p", {}, t.why) : null,
         t.spec_why ? h("p", { class: "muted" }, `Why here: ${t.spec_why}`) : null,
         t.deltas.length ? h("ul", { class: "chips" }, t.deltas.map((d) => h("li", { class: "chip" }, `${d.operation} ${d.requirement}`))) : null,

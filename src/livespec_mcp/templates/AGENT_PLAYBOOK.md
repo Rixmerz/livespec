@@ -56,9 +56,9 @@ client cached the short tool list.
 | What does this call? | `who_does_this_call(qname, max_depth=1)` | Forward cone + `invokes_endpoints` (cross-repo with `group_db`) |
 | Blast radius + Spec rollup | `analyze_impact(target_type, target, max_depth)` | `symbol` \| `file` \| `spec` |
 | PR / diff scope | `git_diff_impact(base_ref, head_ref)` | Inside a git repo only; symbol-precise changed set |
-| Draft a track (range → per-Spec changes) | `propose_track(base_ref, head_ref)` | Writes nothing; Specs touched, symbols added/modified/removed, OpenSpec deltas, `unlinked` code |
-| Record a track in `CHANGESPEC.md` | `record_track(base_ref, head_ref, title, why, spec_reasons)` | Only after the person confirmed the whys; idempotent per range |
-| How did a Spec evolve? | `get_spec_history(spec_id)` | Tracks newest first; aliases accepted; paginated |
+| Draft a track (range → per-Spec changes) | `propose_track(base_ref, head_ref)` | Writes nothing; `changed_specs` (OpenSpec delta, or the first `@spec:` of changed code) vs `touched_specs` (only through shared code), symbols added/modified/removed, OpenSpec deltas, `unlinked` code |
+| Record a track in `CHANGESPEC.md` | `record_track(base_ref, head_ref, title, why, spec_reasons)` | Only after the person confirmed the whys; idempotent per range; touched Specs go on one `Also touched:` line unless `include_touched_sections=True` |
+| How did a Spec evolve? | `get_spec_history(spec_id)` | Tracks newest first, each `tier` changed or touched; aliases accepted; paginated |
 | Why is this symbol like this? | `get_symbol_history(symbol)` | Tracks that changed it + Specs involved; removed symbols too |
 | Semantic grep | `search(query, scope)` | FTS5 over AST chunks + Specs |
 | Spec list | `list_specs(...)` | Filters: status, module, `kind`, `has_implementation` |
@@ -317,7 +317,8 @@ freely. Invoke the `openspec_workflow` MCP prompt for this as a slash command.
 3. **After edit:** `index_project()` on the workspace.
 4. **Before PR:** `git_diff_impact(base_ref="main", head_ref="HEAD")` → run suggested tests.
 5. **Record the track:** `propose_track(base_ref="main", head_ref="HEAD")` →
-   draft one *why* per Spec (from the diff and the OpenSpec proposal) → show
+   draft one *why* per changed Spec (from the diff and the OpenSpec proposal;
+   touched Specs need none) → show
    them to the person → only after they confirm, `record_track(...)`. It writes
    `CHANGESPEC.md` at the repo root (the versioned history of code ↔ spec; the
    index is rebuilt from it). Same range again updates the entry.

@@ -401,4 +401,47 @@ def test_m025_tracks_tables_are_created_and_cascade(tmp_path: Path):
     raw.close()
 
     versions = [v for v, _, _ in MIGRATIONS]
-    assert versions[-1] == 25 and dict((v, n) for v, n, _ in MIGRATIONS)[25] == "tracks"
+    assert 25 in versions and dict((v, n) for v, n, _ in MIGRATIONS)[25] == "tracks"
+
+
+def test_m026_track_spec_tier_forward_and_rollback(tmp_path: Path):
+    """v26 adds ``track_spec.tier`` to a v25 DB, rows already there read as
+    ``changed``; rolling back (dropping the column) leaves a DB v25 code writes
+    and reads, and migrating again restores the column."""
+    db = tmp_path / "existing.db"
+    conn = connect(db)
+    assert _has_tier(conn)
+
+    def rollback() -> None:
+        conn.execute("ALTER TABLE track_spec DROP COLUMN tier")
+        conn.execute("DELETE FROM schema_migrations WHERE version=26")
+        conn.commit()
+
+    rollback()
+    assert not _has_tier(conn)
+    conn.execute("INSERT INTO project(id, name, root) VALUES(1, 'p', '/p')")
+    conn.execute(
+        "INSERT INTO track(id, project_id, track_key, title, base_sha, head_sha) "
+        "VALUES(1, 1, 'a-b', 't', 'a', 'b')"
+    )
+    conn.execute("INSERT INTO track_spec(track_id, spec_id, why) VALUES(1, 'x', 'w')")  # v25 shape
+    conn.commit()
+    conn.close()
+
+    conn = connect(db)
+    assert _has_tier(conn)
+    assert tuple(conn.execute("SELECT spec_id, why, tier FROM track_spec").fetchone()) == (
+        "x",
+        "w",
+        "changed",
+    )
+    assert 26 in {r[0] for r in conn.execute("SELECT version FROM schema_migrations")}
+
+    rollback()
+    assert tuple(conn.execute("SELECT spec_id, why FROM track_spec").fetchone()) == ("x", "w")
+    conn.close()
+    assert dict((v, n) for v, n, _ in MIGRATIONS)[26] == "track_spec_tier"
+
+
+def _has_tier(conn: sqlite3.Connection) -> bool:
+    return any(r["name"] == "tier" for r in conn.execute("PRAGMA table_info(track_spec)"))

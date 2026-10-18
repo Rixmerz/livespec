@@ -4,8 +4,10 @@ A track is a macro-commit — a named ``base..head`` range plus why it exists �
 recorded per Spec in ``CHANGESPEC.md`` at the workspace root. The flow an
 agent follows:
 
-1. ``propose_track`` — draft: Specs touched, symbols added / modified /
-   removed per Spec, OpenSpec deltas, code with no Spec. Writes nothing.
+1. ``propose_track`` — draft: Specs changed (an OpenSpec delta, or the
+   primary ``@spec:`` of changed code) and Specs only touched through shared
+   code, symbols added / modified / removed per Spec, OpenSpec deltas, code
+   with no Spec. Writes nothing.
 2. The agent drafts a why per Spec and the person confirms them.
 3. ``record_track`` — appends (or updates) the entry in ``CHANGESPEC.md`` and
    re-ingests it into the index.
@@ -26,9 +28,11 @@ from livespec_mcp.domain.changespec import (
     CHANGESPEC_FILE,
     entry_from_draft,
     ingest_changespec,
+    recorded_reasons,
     spec_aliases,
     spec_history,
     symbol_history,
+    why_has_touched_line,
     write_entry,
 )
 from livespec_mcp.domain.spec_alias import deprecation_note, resolve_spec_id
@@ -88,6 +92,7 @@ def _spec_payload(t: Any) -> dict[str, Any]:
     return {
         "spec_id": t.spec_id,
         "title": t.title,
+        "tier": t.tier,
         "known": t.known,
         "deltas": [d.as_payload() for d in t.deltas],
         "symbols": by,
@@ -100,6 +105,8 @@ def _draft_counts(draft: TrackDraft) -> dict[str, int]:
     return {
         "files_changed": len(draft.files),
         "specs_touched": len(draft.specs),
+        "specs_changed": len(draft.changed_specs),
+        "specs_touched_only": len(draft.touched_specs),
         "symbols_added": sum(c.change == "added" for c in every),
         "symbols_modified": sum(c.change == "modified" for c in every),
         "symbols_removed": sum(c.change == "removed" for c in every),
@@ -110,6 +117,20 @@ def _draft_counts(draft: TrackDraft) -> dict[str, int]:
 
 def _close(value: str, universe: set[str]) -> list[str]:
     return difflib.get_close_matches(value, sorted(universe), n=5, cutoff=0.5)
+
+
+def _paged_lists(
+    lists: dict[str, list[Any]], limit: int, cursor: int
+) -> tuple[dict[str, list[Any]], int | None]:
+    """Page every list with the same ``limit`` / ``cursor``; ``next_cursor``
+    is set while any of them has more."""
+    out: dict[str, list[Any]] = {}
+    nxt: int | None = None
+    for k, items in lists.items():
+        out[k], n = _page(items, limit, cursor)
+        if n is not None:
+            nxt = n if nxt is None else max(nxt, n)
+    return out, nxt
 
 
 def register(mcp: FastMCP) -> None:
@@ -124,9 +145,15 @@ def register(mcp: FastMCP) -> None:
         workspace: Workspace | None = None,
     ) -> dict[str, Any]:
         """Draft a track for ``base_ref..head_ref`` (a branch, a PR, a run of
-        commits): which Specs it touched and, per Spec, which symbols it
+        commits): which Specs it reached and, per Spec, which symbols it
         added / modified / removed, plus OpenSpec requirement deltas and the
         code it changed with no Spec (``unlinked``). Writes nothing.
+
+        Specs come in two tiers. ``changed_specs``: the range has an OpenSpec
+        delta for the Spec, or the Spec is the primary explicit annotation
+        (first id of the first ``@spec:`` / ``@implements:`` line) of a symbol
+        it changed. ``touched_specs``: every other Spec, reached only through
+        shared code (secondary ids, verb-anchored mentions, link-table rows).
 
         Symbol-level: ``modified`` means the normalised body hash differs, so
         reformat-only edits do not count; renamed files pair their symbols.
@@ -136,8 +163,10 @@ def register(mcp: FastMCP) -> None:
 
         Next step: draft one why per Spec from the diff, show them to the
         person, and only once they confirm call ``record_track`` with the same
-        refs. ``limit`` / ``cursor`` page ``specs`` and each ``unlinked`` list
-        (counts stay exact); ``summary_only`` returns counts and spec ids."""
+        refs; a why is expected for changed Specs, touched ones need none.
+        ``limit`` / ``cursor`` page ``changed_specs``, ``touched_specs`` and
+        each ``unlinked`` list (counts stay exact); ``summary_only`` returns
+        counts and spec ids."""
         st = get_state(workspace)
         draft, problem = draft_track(
             st.conn, st.project_id, str(st.settings.workspace), base_ref, head_ref
@@ -163,19 +192,22 @@ def register(mcp: FastMCP) -> None:
             ),
         }
         if summary_only:
-            out["spec_ids"] = list(draft.specs)
+            out["changed_spec_ids"] = [t.spec_id for t in draft.changed_specs]
+            out["touched_spec_ids"] = [t.spec_id for t in draft.touched_specs]
             return out
-        specs = [_spec_payload(t) for t in draft.specs.values()]
-        page, nxt = _page(specs, limit, cursor)
-        unlinked = symbols_by_change(draft.unlinked)
-        unlinked_page: dict[str, list[dict[str, Any]]] = {}
-        for k, items in unlinked.items():
-            p, n = _page(items, limit, cursor)
-            unlinked_page[k] = p
-            if n is not None:
-                nxt = n if nxt is None else max(nxt, n)
-        out["specs"] = page
-        out["unlinked"] = unlinked_page
+        specs, nxt = _paged_lists(
+            {
+                "changed_specs": [_spec_payload(t) for t in draft.changed_specs],
+                "touched_specs": [_spec_payload(t) for t in draft.touched_specs],
+            },
+            limit,
+            cursor,
+        )
+        unlinked, n = _paged_lists(symbols_by_change(draft.unlinked), limit, cursor)
+        if n is not None:
+            nxt = n if nxt is None else max(nxt, n)
+        out.update(specs)
+        out["unlinked"] = unlinked
         out["next_cursor"] = nxt
         return out
 
@@ -187,6 +219,10 @@ def register(mcp: FastMCP) -> None:
         title: str,
         why: str,
         spec_reasons: dict[str, str] | None = None,
+        include_touched_sections: bool = False,
+        limit: int = 200,
+        cursor: int = 0,
+        summary_only: bool = False,
         workspace: Workspace | None = None,
     ) -> dict[str, Any]:
         """Record the track ``base_ref..head_ref`` in ``CHANGESPEC.md`` at the
@@ -195,8 +231,14 @@ def register(mcp: FastMCP) -> None:
         Call it only after ``propose_track`` and after the person confirmed
         ``title``, ``why`` and the per-Spec reasons (``spec_reasons``: spec id →
         why; keys must be Specs the range touched, legacy ids accepted).
+        Changed Specs get a ``### <spec-id>`` section; touched ones go on one
+        ``Also touched:`` line unless ``include_touched_sections`` is true or
+        they have a reason, which gives them a section too.
         Idempotent: the same base/head updates its entry instead of adding a
-        second one. ``CHANGESPEC.md`` is the source of truth — the index is
+        second one, and keeps the per-Spec reasons this call does not restate.
+        Returns ``changed_specs`` / ``touched_specs`` (spec ids, paged by
+        ``limit`` / ``cursor``, exact ``counts``); ``summary_only`` drops the
+        lists and ``entry_markdown``. ``CHANGESPEC.md`` is the source of truth — the index is
         rebuilt from it on every ``index_project`` — and it is the one file
         livespec writes into a project."""
         st = get_state(workspace)
@@ -205,6 +247,11 @@ def register(mcp: FastMCP) -> None:
         if not why or not why.strip():
             return mcp_error(
                 "why is required", hint="the overall reason this range exists, in one line"
+            )
+        if why_has_touched_line(why):
+            return mcp_error(
+                "why has a line CHANGESPEC.md would read as the touched Specs",
+                hint="drop the '<!-- livespec:touched -->' marker from that line",
             )
         ws = st.settings.workspace
         draft, problem = draft_track(st.conn, st.project_id, str(ws), base_ref, head_ref)
@@ -236,8 +283,18 @@ def register(mcp: FastMCP) -> None:
             if (note := deprecation_note(alias, sid)) is not None:
                 deprecated.append(note)
             reasons[sid] = reason
-        entry = entry_from_draft(draft, title=title, why=why, spec_reasons=reasons)
         with st.lock():
+            kept = recorded_reasons(ws, draft.base_sha, draft.head_sha)
+            entry = entry_from_draft(
+                draft,
+                title=title,
+                why=why,
+                spec_reasons={
+                    **{k: v for k, v in kept.items() if k in draft.specs},
+                    **reasons,
+                },
+                include_touched_sections=include_touched_sections,
+            )
             written = write_entry(ws, entry)
             with transaction(st.conn):
                 ingest = ingest_changespec(st.conn, st.project_id, ws)
@@ -249,9 +306,20 @@ def register(mcp: FastMCP) -> None:
             "created": written["created"],
             "updated": not written["created"],
             "counts": _draft_counts(draft),
-            "entry_markdown": written["entry_markdown"],
             "tracks_in_file": ingest.get("tracks"),
         }
+        if not summary_only:
+            lists, nxt = _paged_lists(
+                {
+                    "changed_specs": [t.spec_id for t in draft.changed_specs],
+                    "touched_specs": [t.spec_id for t in draft.touched_specs],
+                },
+                limit,
+                cursor,
+            )
+            out.update(lists)
+            out["next_cursor"] = nxt
+            out["entry_markdown"] = written["entry_markdown"]
         if ingest.get("problems"):
             out["changespec_problems"] = ingest["problems"]
         if deprecated:
@@ -268,13 +336,15 @@ def register(mcp: FastMCP) -> None:
         workspace: Workspace | None = None,
     ) -> dict[str, Any]:
         """Timeline of the tracks that touched one Spec, newest first: when,
-        the track's title and why, the per-Spec why, the OpenSpec deltas and
-        the symbols added / modified / removed for it. Read from the index,
+        the track's title and why, ``tier`` (``changed``: the track changed
+        this Spec; ``touched``: only reached it through shared code), the
+        per-Spec why, the OpenSpec deltas and the symbols added / modified /
+        removed for it (none for a Spec on a track's ``Also touched`` line). Read from the index,
         which ``index_project`` rebuilds from ``CHANGESPEC.md``.
 
         Legacy spec ids (aliases) are accepted. Paginated (``limit`` /
         ``cursor``, exact ``count``); ``summary_only`` returns only the track
-        ids and dates."""
+        ids, dates and tiers."""
         st = get_state(workspace)
         pid = st.project_id
         sid, alias = resolve_spec_id(st.conn, pid, spec_id)
@@ -309,7 +379,9 @@ def register(mcp: FastMCP) -> None:
                 "(propose_track → record_track)"
             )
         if summary_only:
-            out["tracks"] = [{"track_id": r["track_id"], "date": r["date"]} for r in rows]
+            out["tracks"] = [
+                {"track_id": r["track_id"], "date": r["date"], "tier": r["tier"]} for r in rows
+            ]
             return out
         items, nxt = _page(rows, limit, cursor)
         out["tracks"] = items

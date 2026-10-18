@@ -6,6 +6,42 @@ follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed — tracks separate the Specs a range changed from the ones it only touched (migration 26)
+
+- A changed function linked to many Specs used to mark all of them as touched:
+  on a Deno Fresh app, one range with 7 OpenSpec requirement deltas listed 37
+  Specs in `CHANGESPEC.md`. Now each Spec of a track is **changed** — the
+  range carries an OpenSpec delta for it, or it is the *primary explicit
+  annotation* (first id of the first `@spec:` / `@implements:` line, head side
+  for added / modified symbols, base side for removed ones) of a symbol the
+  range changed — or **touched**: reached only through secondary ids,
+  verb-anchored mentions, `@tests:` / `@see:` lines or link-table rows. That
+  range now reads 7 changed + 30 touched.
+- `CHANGESPEC.md`: changed Specs keep their `### <spec-id>` sections; touched
+  Specs go on one line per entry,
+  `Also touched: a, b <!-- livespec:touched -->`, with no section and no code
+  of their own. Only a line carrying the marker is
+  read as touched Specs, so a Why with a line starting `Also touched:` reads
+  back unchanged; entries written before this change read back byte for byte
+  (every section a changed Spec). A touched Spec written as a section carries
+  the marker on its heading.
+- `propose_track` returns `changed_specs` and `touched_specs` (each Spec with
+  `tier`) instead of `specs`, paged by `limit` / `cursor`; `summary_only`
+  returns `changed_spec_ids` / `touched_spec_ids`. `counts` keeps
+  `specs_touched` (all the Specs the range reached, as before) and gains
+  `specs_changed` and `specs_touched_only` (the two tiers).
+- `record_track` returns `changed_specs` / `touched_specs` (ids, paged, new
+  `limit` / `cursor` / `summary_only`), and takes
+  `include_touched_sections=False` to write a section for every touched Spec.
+  A touched Spec with a why — given, or kept from the entry being re-recorded —
+  keeps its section, so re-recording never drops a why.
+- `get_spec_history` marks each track `tier: changed | touched` (also in
+  `summary_only`); the `livespec ui` Spec page shows it as a badge.
+- Migration 26: `track_spec.tier` (TEXT, default `changed`). Additive, no
+  re-extract; `index_project` rebuilds the rows from `CHANGESPEC.md`.
+- OpenSpec: change `tracks-changed-and-touched-specs` archived; `tracks` gains
+  "Changed and touched Specs" and "Touched Specs in CHANGESPEC.md".
+
 ### Added — tracks and `CHANGESPEC.md`: the history of code ↔ spec (migration 25)
 
 - A **track** is a macro-commit: a named git range (`base..head` — a branch, a

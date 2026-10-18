@@ -14,16 +14,30 @@ Format (newest first; prose is the caller's, headings and markers are fixed)::
     <!-- livespec:track id=<id> base=<full sha> head=<full sha> -->
     Why: <overall reason>
     OpenSpec: <change folder>, ...
+    Also touched: <spec-id>, <spec-id> <!-- livespec:touched -->
 
     ### <spec-id>
     - Spec: MODIFIED "<requirement>", RENAMED "<old>" → "<new>"
     - Code: + newFn (path), ~ changedFn (path), - removedFn (path)
     - Why: <per-spec reason>
 
+    ### <touched spec-id> <!-- livespec:touched -->
+    - Code: ~ sharedFn (path)
+    - Why: <per-spec reason>
+
     ### (no spec)
     - Code: + helper (path)
 
 A moved symbol shows its old path after an arrow: ``~ fn (new.py ← old.py)``.
+
+Changed Specs (``SpecTouch.tier``) get a section; touched ones go on the
+``Also touched`` line, or get a section whose heading carries the
+``livespec:touched`` marker when the caller asked for one or wrote a reason
+for it; a compact touched Spec has no code of its own in the file.
+Only a line ending in the marker is read as touched Specs: the Why's
+continuation lines are unindented, so a bare ``Also touched:`` prefix would
+swallow a Why written before tiers existed. An entry with no marker reads as
+it always did — every section a changed Spec.
 """
 
 from __future__ import annotations
@@ -46,6 +60,7 @@ PREAMBLE = (
     "`livespec:track` markers."
 )
 NO_SPEC = "(no spec)"
+TOUCHED_MARK = "<!-- livespec:touched -->"
 _OP_CHAR = {"added": "+", "modified": "~", "removed": "-"}
 _CHAR_OP = {v: k for k, v in _OP_CHAR.items()}
 
@@ -58,6 +73,8 @@ _MARKER_RE = re.compile(
     r"\s+head=(?P<head>[0-9a-f]{40,64})\s*-->\s*$"
 )
 _SPEC_HEAD_RE = re.compile(r"^### (?P<sid>.+?)\s*$")
+_TOUCHED_MARK_RE = re.compile(r"\s*<!--\s*livespec:touched\s*-->\s*$")
+_TOUCHED_LINE_RE = re.compile(r"^Also touched:(?P<ids>.*?)<!--\s*livespec:touched\s*-->\s*$")
 _CODE_ITEM_RE = re.compile(r"(?P<op>[+~-]) (?P<name>\S+?) \((?P<path>.*?)\)(?=, [+~-] |\s*$)")
 _Q = r'"((?:[^"\\]|\\.)*)"'
 _DELTA_ITEM_RE = re.compile(rf"(?P<op>ADDED|MODIFIED|REMOVED|RENAMED) {_Q}(?: → {_Q})?")
@@ -73,10 +90,12 @@ class CodeItem:
 
 @dataclass
 class SpecSection:
-    spec_id: str | None  # None = the "(no spec)" section
+    # None = the code-only "(no spec)" section.
+    spec_id: str | None
     deltas: list[dict[str, Any]] = field(default_factory=list)
     code: list[CodeItem] = field(default_factory=list)
     why: str | None = None
+    tier: str = "changed"  # changed | touched
 
 
 @dataclass
@@ -89,6 +108,7 @@ class TrackEntry:
     why: str
     changes: list[str] = field(default_factory=list)
     sections: list[SpecSection] = field(default_factory=list)
+    touched: list[str] = field(default_factory=list)  # the "Also touched" line
 
 
 # ------------------------------------------------------------------ render
@@ -120,6 +140,17 @@ def _render_delta(d: dict[str, Any]) -> str:
     return f"{d['operation']} {_quote(d['requirement'])}"
 
 
+def why_has_touched_line(why: str) -> bool:
+    """A Why line that would read back as the ``Also touched`` line."""
+    return any(_TOUCHED_LINE_RE.match(ln.rstrip()) for ln in why.splitlines())
+
+
+def _heading(s: SpecSection) -> str:
+    if s.spec_id is None:
+        return NO_SPEC
+    return f"{s.spec_id} {TOUCHED_MARK}" if s.tier == "touched" else s.spec_id
+
+
 def render_entry(entry: TrackEntry) -> str:
     """One entry, from its ``##`` heading to the line before the next one."""
     title = _one_line(entry.title) or "(untitled)"
@@ -132,9 +163,11 @@ def render_entry(entry: TrackEntry) -> str:
     lines.extend(ln.rstrip() for ln in why[1:])
     if entry.changes:
         lines.append(f"OpenSpec: {', '.join(entry.changes)}")
+    if entry.touched:
+        lines.append(f"Also touched: {', '.join(entry.touched)} {TOUCHED_MARK}")
     for s in entry.sections:
         lines.append("")
-        lines.append(f"### {s.spec_id or NO_SPEC}")
+        lines.append(f"### {_heading(s)}")
         if s.deltas:
             lines.append("- Spec: " + ", ".join(_render_delta(d) for d in s.deltas))
         if s.code:
@@ -145,10 +178,21 @@ def render_entry(entry: TrackEntry) -> str:
 
 
 def entry_from_draft(
-    draft: TrackDraft, *, title: str, why: str, spec_reasons: dict[str, str] | None
+    draft: TrackDraft,
+    *,
+    title: str,
+    why: str,
+    spec_reasons: dict[str, str] | None,
+    include_touched_sections: bool = False,
 ) -> TrackEntry:
+    """@spec:tracks-touched-specs-in-changespec-md
+
+    Changed Specs get a section; a touched Spec gets one only when
+    ``include_touched_sections`` or it has a reason, else it goes on the
+    ``Also touched`` line, with no code of its own."""
     reasons = spec_reasons or {}
     sections: list[SpecSection] = []
+    touched: list[str] = []
 
     def code_of(items) -> list[CodeItem]:
         order = {"added": 0, "modified": 1, "removed": 2}
@@ -157,7 +201,14 @@ def entry_from_draft(
             for c in sorted(items, key=lambda c: (order[c.change], c.path, c.name))
         ]
 
-    for sid, t in draft.specs.items():
+    expanded = draft.changed_specs
+    for t in draft.touched_specs:
+        if include_touched_sections or reasons.get(t.spec_id):
+            expanded.append(t)
+        else:
+            touched.append(t.spec_id)
+    for t in expanded:
+        sid = t.spec_id
         sections.append(
             SpecSection(
                 spec_id=sid,
@@ -171,6 +222,7 @@ def entry_from_draft(
                 ],
                 code=code_of(t.symbols),
                 why=reasons.get(sid),
+                tier=t.tier,
             )
         )
     if draft.unlinked:
@@ -184,6 +236,7 @@ def entry_from_draft(
         why=why,
         changes=draft.changes,
         sections=sections,
+        touched=touched,
     )
 
 
@@ -227,11 +280,17 @@ def _parse_block(lines: list[str]) -> tuple[TrackEntry | None, str | None]:
         if sh:
             in_why = False
             sid = sh.group("sid").strip()
-            section = SpecSection(spec_id=None if sid == NO_SPEC else sid)
+            tier = "changed"
+            if (mark := _TOUCHED_MARK_RE.search(sid)) is not None:
+                sid, tier = sid[: mark.start()].strip(), "touched"
+            section = SpecSection(spec_id=None if sid == NO_SPEC else sid, tier=tier)
             entry.sections.append(section)
             continue
         if section is None:
-            if ln.startswith("Why:"):
+            if (tl := _TOUCHED_LINE_RE.match(ln)) is not None:
+                # Not the end of the Why: a person may have moved the line.
+                entry.touched = [t.strip() for t in tl.group("ids").split(",") if t.strip()]
+            elif ln.startswith("Why:"):
                 in_why = True
                 why_lines.append(ln[4:].strip())
             elif ln.startswith("OpenSpec:"):
@@ -292,7 +351,11 @@ def parse_changespec(text: str) -> tuple[str, list[Block]]:
 def upsert_entry(text: str | None, entry: TrackEntry) -> tuple[str, bool]:
     """``(new file text, created)``. An entry with the same base and head is
     replaced in place (keeping per-spec whys the update does not restate); a
-    new one goes above the first entry that is not newer."""
+    new one goes above the first entry that is not newer.
+
+    A Spec on the ``Also touched`` line has no why to keep: ``record_track``
+    first reads the recorded ones (``recorded_reasons``) and passes them on,
+    which gives such a Spec back its section."""
     if not text or not text.strip():
         return f"{HEADER}\n\n{PREAMBLE}\n\n{render_entry(entry)}", True
     preamble, blocks = parse_changespec(text)
@@ -301,7 +364,7 @@ def upsert_entry(text: str | None, entry: TrackEntry) -> tuple[str, bool]:
         if b.entry and (b.entry.base_sha, b.entry.head_sha) == (entry.base_sha, entry.head_sha):
             # A per-spec why the person already wrote survives an update that
             # does not restate it.
-            old = {s.spec_id: s.why for s in b.entry.sections if s.why}
+            old = {s.spec_id: s.why for s in b.entry.sections if s.why and s.spec_id}
             for sec in entry.sections:
                 if not sec.why and sec.spec_id in old:
                     sec.why = old[sec.spec_id]
@@ -321,6 +384,18 @@ def upsert_entry(text: str | None, entry: TrackEntry) -> tuple[str, bool]:
         pre = f"{HEADER}\n\n{PREAMBLE}"
     body = "\n".join(b.text.rstrip("\n") + "\n" for b in blocks)
     return f"{pre}\n\n{body}", created
+
+
+def recorded_reasons(workspace: Path, base_sha: str, head_sha: str) -> dict[str, str]:
+    """Per-Spec whys ``CHANGESPEC.md`` already holds for this range."""
+    path = Path(workspace) / CHANGESPEC_FILE
+    if not path.is_file():
+        return {}
+    _, blocks = parse_changespec(path.read_text(encoding="utf-8"))
+    for b in blocks:
+        if b.entry and (b.entry.base_sha, b.entry.head_sha) == (base_sha, head_sha):
+            return {s.spec_id: s.why for s in b.entry.sections if s.spec_id and s.why}
+    return {}
 
 
 def write_entry(workspace: Path, entry: TrackEntry) -> dict[str, Any]:
@@ -396,9 +471,9 @@ def ingest_changespec(conn: sqlite3.Connection, project_id: int, workspace: Path
         for s in e.sections:
             if s.spec_id is not None:
                 conn.execute(
-                    """INSERT OR IGNORE INTO track_spec(track_id, spec_id, why, deltas)
-                       VALUES(?,?,?,?)""",
-                    (tid, s.spec_id, s.why, json.dumps(s.deltas) if s.deltas else None),
+                    """INSERT OR IGNORE INTO track_spec(track_id, spec_id, why, deltas, tier)
+                       VALUES(?,?,?,?,?)""",
+                    (tid, s.spec_id, s.why, json.dumps(s.deltas) if s.deltas else None, s.tier),
                 )
             for c in s.code:
                 conn.execute(
@@ -408,6 +483,12 @@ def ingest_changespec(conn: sqlite3.Connection, project_id: int, workspace: Path
                     (tid, s.spec_id, c.change, c.name, qualify(c.name, c.path), c.path, c.old_path),
                 )
                 symbols += 1
+        # After the sections: a Spec both there and on the line keeps its section.
+        for sid in e.touched:
+            conn.execute(
+                "INSERT OR IGNORE INTO track_spec(track_id, spec_id, tier) VALUES(?,?,'touched')",
+                (tid, sid),
+            )
     out: dict[str, Any] = {"present": True, "tracks": len(entries), "symbols": symbols}
     if problems:
         out["problems"] = problems
@@ -434,7 +515,8 @@ def spec_history(conn: sqlite3.Connection, project_id: int, ids: set[str]) -> li
     """@spec:tracks-spec-and-symbol-history
 
     Tracks that touched any of ``ids`` (one Spec and its aliases), newest
-    first, with the per-Spec why, deltas and symbols."""
+    first, with the per-Spec why, deltas, symbols and tier (``changed`` or
+    only ``touched``)."""
     marks = ",".join("?" * len(ids))
     rows = conn.execute(
         f"""SELECT t.* FROM track t WHERE t.project_id=? AND (
@@ -448,7 +530,8 @@ def spec_history(conn: sqlite3.Connection, project_id: int, ids: set[str]) -> li
     items: list[dict[str, Any]] = []
     for r in rows:
         ts = conn.execute(
-            f"SELECT why, deltas FROM track_spec WHERE track_id=? AND spec_id IN ({marks})",
+            f"""SELECT why, deltas, tier FROM track_spec WHERE track_id=? AND spec_id IN ({marks})
+                ORDER BY tier = 'touched', id""",
             (int(r["id"]), *ids),
         ).fetchone()
         by: dict[str, list[dict[str, Any]]] = {"added": [], "modified": [], "removed": []}
@@ -469,6 +552,7 @@ def spec_history(conn: sqlite3.Connection, project_id: int, ids: set[str]) -> li
                 "why": r["why"],
                 "base_sha": r["base_sha"],
                 "head_sha": r["head_sha"],
+                "tier": ts["tier"] if ts else "changed",
                 "spec_why": ts["why"] if ts else None,
                 "deltas": json.loads(ts["deltas"]) if ts and ts["deltas"] else [],
                 "symbols": by,

@@ -252,6 +252,7 @@ CREATE TABLE IF NOT EXISTS track_spec (
     spec_id TEXT NOT NULL,
     why TEXT,
     deltas TEXT,                  -- JSON list of OpenSpec requirement deltas
+    tier TEXT NOT NULL DEFAULT 'changed',  -- v26: changed | touched
     UNIQUE(track_id, spec_id)
 );
 

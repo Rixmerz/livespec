@@ -182,8 +182,10 @@ async def test_propose_track_symbol_level_draft(track_repo):
         d = (await c.call_tool("propose_track", {"base_ref": "base", "head_ref": "HEAD"})).data
     assert d["base_sha"] == _git(track_repo, "rev-parse", "base")
     assert d["already_recorded"] is False
-    specs = {s["spec_id"]: s for s in d["specs"]}
+    specs = {s["spec_id"]: s for s in d["changed_specs"] + d["touched_specs"]}
     assert set(specs) == {"core-alpha", "core-beta", "core-gamma"}
+    # each one has a delta or is the sole @spec: of code the range changed
+    assert d["touched_specs"] == [] and {s["tier"] for s in specs.values()} == {"changed"}
 
     alpha = specs["core-alpha"]["symbols"]
     assert _names(alpha["modified"]) == {"change_me"}
@@ -222,12 +224,14 @@ async def test_propose_track_summary_and_pagination(track_repo):
                 "propose_track", {"base_ref": "base", "head_ref": "HEAD", "summary_only": True}
             )
         ).data
-        assert "specs" not in s and s["spec_ids"] == ["core-alpha", "core-beta", "core-gamma"]
+        assert "changed_specs" not in s
+        assert s["changed_spec_ids"] == ["core-alpha", "core-beta", "core-gamma"]
+        assert s["touched_spec_ids"] == []
         p = (
             await c.call_tool("propose_track", {"base_ref": "base", "head_ref": "HEAD", "limit": 1})
         ).data
-        assert len(p["specs"]) == 1 and p["next_cursor"] == 1
-        assert p["counts"]["specs_touched"] == 3
+        assert len(p["changed_specs"]) == 1 and p["next_cursor"] == 1
+        assert p["counts"]["specs_touched"] == p["counts"]["specs_changed"] == 3
 
 
 @pytest.mark.asyncio
@@ -401,7 +405,11 @@ async def test_spec_and_symbol_history_paginate(track_repo):
         summ = (
             await c.call_tool("get_spec_history", {"spec_id": "core-beta", "summary_only": True})
         ).data
-        assert set(summ["tracks"][0]) == {"track_id", "date"}
+        assert summ["tracks"][0] == {
+            "track_id": h["tracks"][0]["track_id"],
+            "date": h["tracks"][0]["date"],
+            "tier": "changed",
+        }
 
         sym = (await c.call_tool("get_symbol_history", {"symbol": "new_fn"})).data
         assert sym["count"] == 2 and sym["matched"] == ["pkg.core.new_fn"]
@@ -522,8 +530,9 @@ async def test_links_to_specs_born_after_head_are_not_credited(track_repo):
         later = (await c.call_tool("get_spec_implementation", {"spec_id": "core-later"})).data
         assert later.get("isError") is not True  # linked in today's index
         d = (await c.call_tool("propose_track", {"base_ref": "base", "head_ref": "HEAD"})).data
-    assert "core-later" not in {s["spec_id"] for s in d["specs"]}
-    alpha = {s["spec_id"]: s for s in d["specs"]}["core-alpha"]
+    reached = d["changed_specs"] + d["touched_specs"]
+    assert "core-later" not in {s["spec_id"] for s in reached}
+    alpha = {s["spec_id"]: s for s in reached}["core-alpha"]
     assert "change_me" in _names(alpha["symbols"]["modified"])
 
 
@@ -547,6 +556,7 @@ async def test_ui_spec_detail_shows_tracks_read_only(track_repo):
     detail = ui_data.spec_detail(ui_data.stable_id(str(track_repo)), "core-beta")
     assert [t["title"] for t in detail["tracks"]] == ["Gamma lands"]
     t = detail["tracks"][0]
+    assert t["tier"] == "changed"
     assert t["spec_why"] == "grow beta"
     assert {"change": "added", "name": "new_fn", "path": "pkg/core.py"} in t["code"]
     assert t["deltas"] == [{"operation": "MODIFIED", "requirement": "Beta"}]

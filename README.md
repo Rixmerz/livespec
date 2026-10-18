@@ -672,6 +672,7 @@ the one file livespec writes into a project, and only on an explicit
 <!-- livespec:track id=68f903d-d67bdc8 base=<sha> head=<sha> -->
 Why: ship gamma
 OpenSpec: add-gamma
+Also touched: core-cache, core-log <!-- livespec:touched -->
 
 ### core-beta
 - Spec: MODIFIED "Beta"
@@ -679,17 +680,26 @@ OpenSpec: add-gamma
 - Why: beta grows new_fn
 ```
 
-- `propose_track(base_ref, head_ref)` — draft, writes nothing: Specs touched,
-  symbols added / modified (normalised body hash — reformat-only edits do not
+Specs come in two tiers. **changed**: the range carries an OpenSpec delta for
+the Spec, or the Spec is the first id of the first `@spec:` / `@implements:`
+line of a symbol it changed. **touched**: every other Spec, reached only
+through shared code (secondary ids, verb-anchored mentions, link-table rows) —
+one marked line, no section. On a Deno Fresh app, a range with 7 requirement
+deltas went from 37 Specs, all with sections, to 7 changed + 30 touched.
+
+- `propose_track(base_ref, head_ref)` — draft, writes nothing:
+  `changed_specs` and `touched_specs` (paginated, exact counts), symbols added / modified (normalised body hash — reformat-only edits do not
   count) / removed per Spec, OpenSpec deltas from `openspec/changes/**/specs/`,
   and code changed with no Spec (`unlinked`). Renamed files pair their
   symbols. In OpenSpec repos a Spec that did not exist yet at the range's
   head is never credited.
-- `record_track(base_ref, head_ref, title, why, spec_reasons)` — write the
-  entry into `CHANGESPEC.md` (created if absent) and the index; the same range
-  again updates it. Call it after the person confirmed the whys.
+- `record_track(base_ref, head_ref, title, why, spec_reasons,
+  include_touched_sections=False)` — write the entry into `CHANGESPEC.md`
+  (created if absent) and the index; the same range again updates it and keeps
+  the whys it does not restate. A touched Spec gets a section when asked or
+  when it has a why. Call it after the person confirmed the whys.
 - `get_spec_history(spec_id)` — timeline of tracks for one Spec (aliases
-  accepted).
+  accepted), each `tier` changed or touched.
 - `get_symbol_history(symbol)` — tracks that changed a symbol and the Specs
   involved; removed symbols keep their history.
 

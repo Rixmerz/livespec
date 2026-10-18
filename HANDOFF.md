@@ -44,6 +44,41 @@ Todo el stack es local-first: 0 servicios externos, 0 API keys obligatorias, 0 D
 
 ## 3. Estado actual
 
+### Unreleased — tracks: specs cambiadas vs. solo tocadas
+
+Sobre `635e3cc` (rama `ccr-82a9fa1e-z0iknt`), un commit con código, docs y el
+cambio OpenSpec archivado. 965 tests.
+
+- **Regla** (`domain/tracks.py:SpecTouch.tier`, `primary_spec`): una spec de un
+  track es `changed` si el rango trae un delta OpenSpec para ella o si es la
+  anotación explícita primaria (primer id de la primera línea `@spec:` /
+  `@implements:`, lado head para añadidos/modificados, lado base para
+  eliminados) de un símbolo cambiado; si no, `touched`. Menciones con verbo,
+  `@tests:` / `@see:`, ids secundarios y filas de la tabla de enlaces nunca la
+  vuelven `changed`. `AnnotationHit.explicit` (matcher) marca el nivel 1.
+- **`CHANGESPEC.md`** (`domain/changespec.py`): las cambiadas conservan su
+  `### <spec-id>`; las tocadas van en una línea
+  `Also touched: a, b <!-- livespec:touched -->`, sin sección ni código
+  propio. Solo se lee como specs tocadas una línea con el
+  marcador: las líneas de continuación del Why no van indentadas, y un prefijo
+  `Also touched:` a secas truncaría un Why anterior. Las entradas sin marcador
+  se leen igual que antes (todas las secciones `changed`). Una spec tocada con
+  why (dado o ya escrito) conserva su sección; `record_track` lee los whys ya
+  registrados (`recorded_reasons`) antes de construir la entrada.
+- **Tools**: `propose_track` / `record_track` devuelven `changed_specs` y
+  `touched_specs` paginados (`counts.specs_touched` sigue siendo el total;
+  `specs_changed` y `specs_touched_only` son los tramos); `record_track(include_touched_sections=False)`;
+  `get_spec_history` y la UI marcan `tier`. Migración 26: `track_spec.tier`.
+- **Evidencia**: en la app Deno Fresh, el rango de 7 deltas (antes 37 specs)
+  queda en 7 changed + 30 touched; en livespec, `57b14ff..635e3cc` sigue en 8
+  changed / 0 touched (sus anotaciones son de una spec por símbolo).
+- **OpenSpec propio**: `tracks-changed-and-touched-specs` archivado en
+  `openspec/changes/archive/2026-10-18-tracks-changed-and-touched-specs/`.
+- **Abierto**: el código que solo alcanza a specs tocadas no se escribe en el
+  archivo en la forma compacta (`include_touched_sections` lo recupera), así
+  que `get_symbol_history` no lo ve; los tests
+  anónimos (`Deno.test(...)`) siguen sin ser símbolos.
+
 ### Unreleased — tracks y `CHANGESPEC.md`: la historia de código ↔ spec
 
 Rama `ccr-82a9fa1e-z0iknt` sobre `57b14ff` (main tras el PR #21): `01aed8b`

@@ -266,7 +266,12 @@ TOOL_PARAM_DESCRIPTIONS: dict[tuple[str, str], str] = {
     ("record_track", "spec_reasons"): (
         "Optional ``{spec_id: why}`` for the Specs ``propose_track`` listed. Keys "
         "must be Specs the range touched (legacy ids accepted). On an update, a "
-        "spec left out keeps the why it already had."
+        "spec left out keeps the why it already had. A reason for a touched "
+        "Spec gives it its own section."
+    ),
+    ("record_track", "include_touched_sections"): (
+        "If true, Specs only touched through shared code get their own "
+        "``### <spec-id>`` section too, instead of one ``Also touched:`` line."
     ),
     ("get_spec_history", "spec_id"): (
         "Spec id whose track timeline to return (OpenSpec slug; legacy aliases accepted)."
