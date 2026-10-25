@@ -564,13 +564,26 @@ def _ts_enum_names(root, text) -> frozenset[str]:
 
 
 # Chained after `z.object({...})` without changing its fields.
-_ZOD_OBJECT_MODIFIERS = frozenset({"strict", "passthrough", "strip"})
+_ZOD_OBJECT_MODIFIERS = frozenset(
+    {
+        "strict",
+        "passthrough",
+        "strip",
+        "catchall",
+        "refine",
+        "superRefine",
+        "describe",
+        "brand",
+        "readonly",
+        "transform",
+    }
+)
 
 
 def _zod_object_decl(value, text, receivers: frozenset[str], zod_schemas: dict):
     """(base, object literal) for `z.object({...})` -> (None, obj) or a
     same-file `Base.extend({...})` -> ('Base', obj), either optionally chained
-    with .strict()/.passthrough()/.strip(). None for anything else."""
+    with .strict()/.passthrough()/.strip()/.refine()/.describe()/…. None for anything else."""
     cur = value
     while cur is not None and cur.type == "call_expression":
         fn = cur.child_by_field_name("function")

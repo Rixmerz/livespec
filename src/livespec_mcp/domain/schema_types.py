@@ -64,6 +64,9 @@ class MappedType:
 
 _UNKNOWN = MappedType("unknown")
 
+# Built-in generics that are not schemas: a ref to them would be a false drift.
+_TS_OPAQUE_GENERICS = frozenset({"Promise", "PromiseLike", "Function"})
+
 
 def _ref(name: str) -> MappedType:
     return MappedType("ref", ref_target=name)
@@ -320,8 +323,12 @@ def ts_type(node: Any, text: TextFn, enum_names: frozenset[str]) -> MappedType:
         args = list(targs.named_children) if targs is not None else []
         if name in ("Array", "ReadonlyArray"):
             return _list_of(ts_type(args[0], text, enum_names) if args else _UNKNOWN)
-        if name == "Record":
+        if name in ("Record", "Map", "WeakMap"):
             return MappedType("json")
+        if name in ("Set", "ReadonlySet", "WeakSet"):
+            return _list_of(ts_type(args[0], text, enum_names) if args else _UNKNOWN)
+        if name in _TS_OPAQUE_GENERICS:
+            return _UNKNOWN
         return _ref(name) if name else _UNKNOWN
     if t == "array_type":
         inner = node.named_children[0] if node.named_children else None

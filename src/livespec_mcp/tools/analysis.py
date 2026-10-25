@@ -4693,6 +4693,10 @@ def register(mcp: FastMCP) -> None:
                  AND NOT EXISTS (
                    SELECT 1 FROM spec_symbol rs WHERE rs.symbol_id=s.id
                  )
+                 AND NOT (
+                   s.kind IN ('table', 'variable')
+                   AND EXISTS (SELECT 1 FROM schema_decl sd WHERE sd.symbol_id=s.id)
+                 )
                ORDER BY f.path, s.start_line""",
             tuple(edge_params),
         ).fetchall()

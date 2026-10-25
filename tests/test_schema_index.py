@@ -298,3 +298,22 @@ def test_parse_schema_annotations():
     assert got == [("user-profile", "userprofile"), ("Order", "order")]
     assert parse_schema_annotations("") == []
     assert parse_schema_annotations("see @schema: user inline") == []
+    assert parse_schema_annotations("@schema is used here") == []
+
+
+@pytest.mark.asyncio
+async def test_find_dead_code_skips_sql_tables_and_zod_variables(workspace):
+    requires_grammar("typescript")
+    (workspace / "m.sql").write_text(_SQL_USERS)
+    (workspace / "z.ts").write_text(
+        "import { z } from 'zod';\nexport const W = z.object({ s: z.string() });\n"
+    )
+    async with Client(mcp) as c:
+        await c.call_tool("index_project", {})
+        dead = (
+            await c.call_tool(
+                "find_dead_code",
+                {"include_non_python": True, "include_public": True, "include_infrastructure": True},
+            )
+        ).data
+    assert not {d["kind"] for d in dead["dead_symbols"]} & {"table", "variable"}

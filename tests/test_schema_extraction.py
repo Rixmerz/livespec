@@ -513,3 +513,19 @@ def test_new_code_carries_its_spec_ids():
         schema_types.sql_type,
     ):
         assert (inspect.getdoc(fn) or "").splitlines()[0] == r2, fn.__name__
+
+
+def test_zod_object_with_object_level_refine_is_extracted():
+    src = "import { z } from 'zod'; export const W = z.object({ s: z.string() }).refine(v => true).describe('w');"
+    sch = _schema(_extract("a.ts", src), "W")
+    assert [f.name for f in sch.fields] == ["s"]
+
+
+def test_ts_unknown_generics_do_not_become_refs():
+    src = "interface A { m: Map<string,number>; s: Set<string>; p: Promise<number> }"
+    sch = _schema(_extract("a.ts", src), "A")
+    got = {f.name: (f.type, f.ref_target) for f in sch.fields}
+    assert got["m"][0] == "json"
+    assert got["s"][0] == "list"
+    assert got["p"][0] == "unknown"
+    assert all(t[1] is None for t in got.values())

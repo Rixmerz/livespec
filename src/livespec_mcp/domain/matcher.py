@@ -494,8 +494,7 @@ NON_SPEC_ANNOTATION_VERBS: frozenset[str] = frozenset({"schema"})
 
 _SCHEMA_HEAD_RE = re.compile(
     r"""^\s*[#*]?\s*                       # optional comment leader, as for @spec:
-        @schema(?=[:=\s]|$)                # reject @schemas, @schema_x
-        [ \t]*[:=]?[ \t]*
+        @schema[ \t]*:[ \t]*               # colon required: prose like "@schema is" binds nothing
         (?P<entity>[A-Za-z][A-Za-z0-9_.-]{0,79})""",
     re.IGNORECASE | re.MULTILINE | re.VERBOSE,
 )
