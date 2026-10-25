@@ -33,7 +33,7 @@ from livespec_mcp.domain.schema_impact import (
 )
 from livespec_mcp.domain.schema_types import name_key
 from livespec_mcp.state import AppState, get_state
-from livespec_mcp.tool_params import Cursor, Limit, SummaryOnly
+from livespec_mcp.tool_params import Cursor, Limit, MaxDepth, SummaryOnly
 from livespec_mcp.tools._errors import mcp_error
 from livespec_mcp.tools.analysis import _is_test_file_path, _workspace_note
 from livespec_mcp.workspace_param import Workspace
@@ -253,7 +253,7 @@ def register(mcp: FastMCP) -> None:
         field: str,
         new_name: str | None = None,
         new_type: str | None = None,
-        max_depth: int = 3,
+        max_depth: MaxDepth = 3,
         limit: Limit = 200,
         cursor: Cursor = 0,
         summary_only: SummaryOnly = False,

@@ -10,6 +10,7 @@ from typing import Any
 
 import pytest
 from fastmcp import Client
+from fastmcp.exceptions import ToolError
 
 from livespec_mcp.domain.schema_drift import SchemaField, SchemaSide, SymbolRef
 from livespec_mcp.domain.schema_impact import FieldChange, declaration_action
@@ -494,6 +495,25 @@ async def test_unknown_entity_and_change_kind_are_mcp_errors(tmp_path):
     assert kind["did_you_mean"] == ["add", "remove", "rename", "retype"]
     assert rename["isError"] is True and "new_name" in rename["error"]
     assert retype["isError"] is True and "new_type" in retype["error"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("depth", [-1, 51])
+async def test_max_depth_outside_the_call_graph_bounds_is_rejected(tmp_path, depth):
+    requires_grammar("typescript")
+    async with Client(mcp) as c:
+        back, _ = await _indexed_group(c, tmp_path)
+        with pytest.raises(ToolError, match="max_depth"):
+            await c.call_tool(
+                "schema_impact",
+                {
+                    "workspace": str(back),
+                    "entity": "user",
+                    "change": "remove",
+                    "field": "email",
+                    "max_depth": depth,
+                },
+            )
 
 
 @pytest.mark.asyncio
