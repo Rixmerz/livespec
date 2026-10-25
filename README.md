@@ -102,6 +102,7 @@ Built for the questions an agent asks on an unfamiliar codebase:
 - Si modifico `auth.verify`, ¿qué Specs y qué llamadores se ven afectados?
 - ¿Qué módulos no tienen ningún Spec asociado?
 - ¿Qué Specs dependen de `auth-user-login` transitivamente?
+- Do my frontend, backend and database schemas agree?
 
 Spec traceability is the differentiator. Most code-intel tools stop at "what
 calls this function?". livespec layers Spec ↔ code links (functional
@@ -392,7 +393,7 @@ gates it, you build with live links; *brownfield* → `/livespec-onboard` orient
 `propose_specs_from_codebase` reconstructs intent, **author OpenSpec first**
 (export only as a bootstrap dump).
 
-## Tools (53 total: 38 core + 12 Spec plugin + 3 docs plugin)
+## Tools (54 total: 39 core + 12 Spec plugin + 3 docs plugin)
 
 Every tool requires `workspace` (absolute project root). Pass it on each call;
 omitting it is an error (no env fallback). LRU cache (8 workspaces) — one MCP
@@ -403,9 +404,9 @@ hides Spec mutation / doc tools from `tools/list` until the workspace has
 `spec` / `doc` rows, or you set `LIVESPEC_PLUGINS`.
 **`import_specs_from_markdown`** and **`sync_openspec`** stay always visible
 (brownfield bootstrap). After the first `workspace=` call on a repo with
-Specs, the menu grows to **50** tools (53 with doc rows). Reconnect the MCP host if your client cached an old tool list.
+Specs, the menu grows to **51** tools (54 with doc rows). Reconnect the MCP host if your client cached an old tool list.
 
-### Default surface — code intel + Spec agentic (38)
+### Default surface — code intel + Spec agentic (39)
 
 These tools answer the questions an agent ASKS on an unfamiliar codebase.
 Always registered (including markdown Spec import + OpenSpec sync).
@@ -703,6 +704,26 @@ deltas went from 37 Specs, all with sections, to 7 changed + 30 touched.
 - `get_symbol_history(symbol)` — tracks that changed a symbol and the Specs
   involved; removed symbols keep their history.
 
+#### Schema drift — one entity, many declarations (1, v0.34)
+
+Schemas stay where they live: a Zod schema or TypeScript types in the
+frontend, a Pydantic model or dataclass in the backend, a `CREATE TABLE` in a
+migration. A `@schema: <entity>` line binds each one to a named entity — in a
+Python docstring, a TS/Zod leading comment, or a `--` line right above the SQL
+`CREATE TABLE`. Inside a shared `[workspace] group_db` the declarations of
+every repository of the group are compared; without one, only the repo's own.
+
+- `schema_drift(entity=None)` — compares the schemas of each entity field by
+  field and reports `missing_field`, `type_mismatch`, `nullability_mismatch`
+  and `optional_mismatch`, each naming every side with project, file and line.
+  `snake_case` and `camelCase` names are one field. Types JSON carries
+  losslessly are not mismatches (a TS `string` vs a `UUID` / `datetime`, a TS
+  `number` vs an `int`, a SQL JSON column vs a nested model), optional is
+  never judged against a SQL column (a default is not an omittable field), and
+  a type no rule maps is counted as `uncomparable`. Paginated (`limit`,
+  `cursor`, `summary_only`, exact counts); an unknown entity returns
+  `did_you_mean`.
+
 ### `livespec-spec` plugin — Spec mutation (12)
 
 Visible in `tools/list` when the workspace DB has `spec` rows, or when
@@ -793,6 +814,8 @@ of the index is `livespec ui`, not a tool.)
 - `doc://symbol/{qname*}`
 - `doc://spec/{spec_id}`
 - `code://symbol/{qname*}` — raw symbol source slice
+- `project://schemas` — `@schema:` entities with their schemas and drift counts
+- `project://schemas/{entity}` — every drift finding of one entity, unpaginated
 
 ## Prompts (slash commands)
 

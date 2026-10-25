@@ -80,6 +80,7 @@ client cached the short tool list.
 | Freeze accepted duplication | `debt_baseline_capture()` / `debt_baseline_status()` | Old copies stay quiet; a NEW copy still reports |
 | Annotations the extractor cannot see | `scan_annotation_verbs()` | `@spec:` above a bare route registration that owns no symbol |
 | Borrow a second extractor's edges | `ingest_external_graph(graph_path?, dry_run=True)` | See §7.1; `remove=True` undoes it exactly |
+| Do the schemas of one entity agree? | `schema_drift(entity?)` | Field by field across every `@schema: <entity>` declaration (group-wide with `group_db`); see §5.9 |
 
 > **livespec speaks OpenSpec (Fission-AI).** If the repo has an `openspec/`
 > directory, livespec is the code-graph/traceability layer *beneath* it — it
@@ -128,11 +129,13 @@ Avoid the v0.7 chain `find_symbol → get_symbol_info → who_calls → …`.
 
 **Large repos (>30k symbols):** `summary_only=True`, `limit` + `cursor` on
 aggregators (`audit_coverage`, `find_dead_code`, `find_orphan_tests`,
-`find_endpoints`, `find_legacy_flows`, `git_diff_impact`); `min_weight=0.6` on
+`find_endpoints`, `find_legacy_flows`, `git_diff_impact`, `schema_drift`);
+`min_weight=0.6` on
 traversals (default) drops resolver fan-out noise.
 
 **Polyrepo:** sibling repos can share `[workspace] group_db` in `.livespec.toml`.
-Then `find_legacy_flows`, `route_callers`, and `invokes_endpoints` span the group.
+Then `find_legacy_flows`, `route_callers`, `invokes_endpoints` and
+`schema_drift` span the group.
 
 **Cross-repo Specs:** mirror the same Spec id with prefix `xrepo-` in each
 participating repo (OpenSpec + `sync_openspec`, or `create_spec`), then
@@ -293,6 +296,44 @@ Mapping: an OpenSpec **capability** == a livespec **module** (pass either as
 `capability=` or `module=`); a requirement name slugs to the spec_id
 (`auth` + "User Login" → `auth-user-login`). Everything is idempotent — re-sync
 freely. Invoke the `openspec_workflow` MCP prompt for this as a slash command.
+
+### 5.9 Schemas — `@schema: <entity>` (not a Spec annotation)
+
+Shared data schemas stay where they live. Bind every declaration of one entity
+with a `@schema: <entity>` line; the entity matches in any spelling
+(`user-profile` = `UserProfile`):
+
+```python
+class User(BaseModel):
+    """A user as the API returns it.
+
+    @schema: user
+    """
+```
+
+```ts
+/** @schema: user */
+export const UserSchema = z.object({ id: z.string().uuid() });
+```
+
+```sql
+-- @schema: user
+CREATE TABLE users (id UUID PRIMARY KEY);
+```
+
+Pydantic models, dataclasses, TS interfaces and object type aliases, Zod
+`z.object(...)` and SQL `CREATE TABLE` are schemas. `@schema:` creates no Spec
+link and `scan_annotation_verbs` does not flag it. Re-run `index_project`, then
+call `schema_drift()`: per entity, `missing_field`, `type_mismatch`,
+`nullability_mismatch` and `optional_mismatch`, each side with project, file
+and line. In a shared `[workspace] group_db` every repository of the group is
+compared; without one, only the repository's own declarations. Names match
+across `snake_case` / `camelCase`; JSON-carried types (a TS `string` for a
+`UUID` or `datetime`, `number` for `int`) are not mismatches; optional is never
+judged against a SQL column; `uncomparable` counts the fields whose type no
+rule maps. A `group_db` hint means the entity has one schema in scope.
+`project://schemas` and `project://schemas/{entity}` serve the same data
+without paging.
 
 ---
 

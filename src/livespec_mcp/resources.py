@@ -12,6 +12,8 @@ Canonical URI scheme (v0.20+):
 | ``project://specs/{spec_id}`` | JSON | Spec + implementations |
 | ``project://files/{path}`` | JSON | Indexed file + symbols |
 | ``project://symbols/{qname}`` | JSON | Symbol metadata |
+| ``project://schemas`` | JSON | ``@schema:`` entities + drift counts |
+| ``project://schemas/{entity}`` | JSON | Every drift finding of one entity |
 | ``guide://cross-repo`` | markdown | Alias of ``project://cross-repo`` |
 | ``doc://symbol/{qname}`` | markdown | Generated symbol doc |
 | ``doc://spec/{spec_id}`` | markdown | Generated Spec doc |
@@ -48,6 +50,7 @@ from livespec_mcp.state import AppState, get_mru_state, get_state
 from livespec_mcp.tools._errors import mcp_error
 from livespec_mcp.tools.analysis import compute_project_overview
 from livespec_mcp.tools.indexing import compute_index_status
+from livespec_mcp.tools.schemas import compute_schema_drift
 from livespec_mcp.workspace_param import WorkspaceNotIndexedError, WorkspaceRequiredError
 
 _NO_WORKSPACE_HINT = (
@@ -285,6 +288,29 @@ def register(mcp: FastMCP) -> None:
         if not row:
             return json.dumps(mcp_error(f"Symbol '{qname}' not found"))
         return json.dumps(dict(row))
+
+    @mcp.resource("project://schemas", mime_type="application/json")
+    def project_schemas() -> str:
+        """@spec:schemas-schema-drift-resource
+
+        Entities bound with ``@schema:`` in the MRU workspace (every project
+        of a group_db), their schemas and drift counts: the ``summary_only``
+        payload of ``schema_drift``."""
+        st = _resolve_state()
+        if st is None:
+            return _no_workspace_json()
+        return json.dumps(compute_schema_drift(st, summary_only=True))
+
+    @mcp.resource("project://schemas/{entity}", mime_type="application/json")
+    def project_schema_entity(entity: str) -> str:
+        """@spec:schemas-schema-drift-resource
+
+        Every drift finding of one entity, unpaginated: what
+        ``schema_drift(entity=...)`` pages through."""
+        st = _resolve_state()
+        if st is None:
+            return _no_workspace_json()
+        return json.dumps(compute_schema_drift(st, entity, limit=None))
 
     @mcp.resource("doc://symbol/{qname*}", mime_type="text/markdown")
     def doc_symbol(qname: str) -> str:

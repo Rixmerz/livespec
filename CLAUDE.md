@@ -112,7 +112,7 @@ populates new fields.
 ### Layered stack
 
 ```
-tools/          MCP-exposed surface (53 tools: 38 core + 12 Spec + 3 docs)
+tools/          MCP-exposed surface (54 tools: 39 core + 12 Spec + 3 docs)
   analysis.py     find_symbol, quick_orient, get_symbol_source, who_calls,
                   who_does_this_call, analyze_impact, audit_coverage,
                   find_dead_code, find_legacy_flows, find_orphan_tests,
@@ -127,6 +127,10 @@ tools/          MCP-exposed surface (53 tools: 38 core + 12 Spec + 3 docs)
   tracks.py       propose_track, record_track, get_spec_history,
                   get_symbol_history (CHANGESPEC.md; domain in tracks.py,
                   changespec.py, git_range.py)
+  schemas.py      schema_drift (field-level drift between the schemas bound
+                  to one `@schema:` entity, group-wide in a group_db; domain
+                  in schema_drift.py) + compute_schema_drift, which also backs
+                  the project://schemas resources
   docs.py         shared doc helpers (doc tools live in plugins/docs.py)
   plugins/spec.py Spec mutation: create/update/delete_spec,
                   link_spec_symbol, link/unlink_spec_dependency,
@@ -156,6 +160,13 @@ domain/         Pure business logic, no MCP coupling
                   -- v0.6 P3, ~4s -> µs on cache hit
   matcher.py      @spec: annotation parser (multi-Spec, confidence override,
                   @not_spec negation, verb-anchored level-2 with negation guard)
+                  + @schema: <entity> bindings (not a Spec verb)
+  schema_types.py neutral field types (string, int, ... ref, unknown) and the
+                  per-language mappers; name_key() makes user_id == userId
+  sql_schema.py   pure-Python CREATE TABLE reader for .sql files (no grammar)
+  schema_drift.py loads the sides of each bound entity + the pure comparator
+                  (missing_field / type_mismatch / nullability_mismatch /
+                  optional_mismatch, wire-compatible types)
   external_graph.py  reads a Graphify graph.json (relation vocabulary, parse
                   cache keyed by path+mtime+size)
   external_source.py  pick + load + overlap-gate an external graph. The ONE
@@ -175,7 +186,7 @@ domain/         Pure business logic, no MCP coupling
 storage/        SQLite persistence
   schema.sql      single-file schema; CREATE TABLE IF NOT EXISTS for everything
   db.py           connection bootstrap + ordered migration framework
-                  (schema_migrations table; MIGRATIONS list append-only, at v26)
+                  (schema_migrations table; MIGRATIONS list append-only, at v27)
 ```
 
 ### Critical contracts (don't break)
@@ -219,7 +230,7 @@ produce duplicate symbols at the same line. Keep the first occurrence
 The v0.8 curation pass shipped: battle-test data (3 sessions, 40 calls,
 11 bug fixes) drove the tier split. Current state:
 
-- **38 core tools** always registered: code intel (find_symbol,
+- **39 core tools** always registered: code intel (find_symbol,
   quick_orient, get_symbol_source, who_calls, who_does_this_call,
   analyze_impact, git_diff_impact, find_dead_code, find_legacy_flows,
   find_orphan_tests, find_endpoints, get_project_overview, index_project,
@@ -232,6 +243,7 @@ The v0.8 curation pass shipped: battle-test data (3 sessions, 40 calls,
   + cross-repo discovery (get_cross_repo_guide — v0.31.3)
   + tracks (propose_track, record_track, get_spec_history,
   get_symbol_history — v0.33)
+  + schema drift (schema_drift — v0.34)
   + scan_annotation_verbs.
 - **Plugin `livespec-spec` (12 tools)** — Spec mutation ceremony: CRUD,
   link/unlink, Spec-Spec graph, scans (import moved to core v0.19),
