@@ -48,11 +48,8 @@ Todo el stack es local-first: 0 servicios externos, 0 API keys obligatorias, 0 D
 commit on top. Not pushed, not tagged; `pyproject.toml` stays at 0.33.0.**
 Virtual schema-first phase 2 of 3 is complete under `[Unreleased]`: **40 core /
 55 tools** in all, no new migration (27 is still the last). Tests measured in
-this tree: **1085 collected, 1085 passed** (1060 at `a44cf22`). The five tests
-of `tests/test_schema_extraction_fixes.py` (P6) are **not in this tree**: P6
-was built beside P7 and joined as its own part; run on `main` at `31ff49d`
-they are 5 collected, 5 passed (the alias end-to-end test ran, no skip). With
-both joined: 1090 expected, not yet run in one tree. The owner's rule: nothing is pushed, tagged or
+this tree: **1093 collected, 1093 passed** (1060 at `a44cf22`; P7 adds 28,
+P6 adds 5, P6's `tests/test_schema_extraction_fixes.py` is in this tree). The owner's rule: nothing is pushed, tagged or
 version-bumped until all three phases are done.
 
 ### v0.34 (Unreleased) — virtual schema-first, phase 2 of 3
@@ -81,8 +78,7 @@ alias (no more false `missing_field`). The OpenSpec change now holds eight
   extraction fixes (on `main`, merged with P5 in `31ff49d`), `71e733b` P7
   `schema_impact` + the `git_diff_impact` fold (on top of P5), then P8 (this
   docs commit: CHANGELOG, HANDOFF, ROADMAP, cross-repo guide, `tasks.md`). P5
-  and P6 joined as separate parts. Tests 1060 (`a44cf22`) → 1085 (P7); P6 adds
-  5.
+  and P6 joined as separate parts. Tests 1060 (`a44cf22`) → 1093 (P7 +28, P6 +5).
 - **Verify** (this tree): `ruff check src tests` clean; `ruff format --check
   src tests` reports one file, `tests/test_schema_index.py:316`, which is
   pre-existing (it came in with `a44cf22` and is the same on `main`; item 7 in

@@ -234,6 +234,34 @@ def py_optional(value: ast.AST | None) -> bool:
     return True
 
 
+def _py_alias_kw(node: ast.AST | None) -> str | None:
+    if not isinstance(node, ast.Call) or _py_last(node.func) != "Field":
+        return None
+    for kw in node.keywords:
+        if kw.arg == "alias" and isinstance(kw.value, ast.Constant):
+            return kw.value.value if isinstance(kw.value.value, str) else None
+    return None
+
+
+def py_field_alias(annotation: ast.AST | None, value: ast.AST | None) -> str | None:
+    """@spec:schemas-schema-field-extraction
+
+    The wire name a Pydantic `Field(alias='...')` gives a field, from its
+    value or from `Annotated[X, Field(alias='...')]`. The value wins, then
+    the last metadata entry, as Pydantic merges them. Only a string literal
+    counts: alias_generator, validation_alias and serialization_alias are not
+    followed.
+    """
+    candidates = [value]
+    if isinstance(annotation, ast.Subscript) and _py_last(annotation.value) == "Annotated":
+        candidates.extend(reversed(_py_subscript_args(annotation)[1:]))
+    for node in candidates:
+        alias = _py_alias_kw(node)
+        if alias:
+            return alias
+    return None
+
+
 # ---------- TypeScript (tree-sitter type nodes) ----------
 
 TextFn = Callable[[Any], str]

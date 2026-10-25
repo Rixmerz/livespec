@@ -179,6 +179,16 @@ async def test_field_removed_in_a_commit(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_retype_in_a_commit_suggests_a_call_that_names_the_new_type(tmp_path):
+    out = await _committed_diff(tmp_path, "    id: int\n", "    id: str\n")
+
+    (entry,) = out["schema_impact"]
+    assert entry["follow_up"] == [
+        "schema_impact(entity=user, change=retype, field=id, new_type=string)"
+    ]
+
+
+@pytest.mark.asyncio
 async def test_rename_in_a_commit(tmp_path):
     out = await _committed_diff(tmp_path, "    email: str\n", "    contact_email: str\n")
 
