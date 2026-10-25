@@ -64,14 +64,19 @@ follows [SemVer](https://semver.org/).
   MySQL / MariaDB default and Postgres `E'...'`) no longer ends the literal, so
   the `CREATE TABLE` statements after it are no longer lost. A doubled `''`
   still escapes a quote, and a literal the escape reading never closes is read
-  the standard way. Known cost: a standard-SQL literal ending in an odd
-  backslash (`'C:\'`) followed later in the file by another quote is misread.
+  the standard way: a file is read as standard SQL (backslash is a plain
+  character, so `'C:\'` is complete) and re-read with backslash escapes only
+  when a literal never closes; Postgres `E'...'` always escapes.
 - Pydantic: a field declared with `Field(..., alias='<literal>')`, as its
   value or inside `Annotated[...]`, is matched by its alias, the wire name, so
   `schema_drift` no longer reports a false `missing_field` against the
   frontend's or the table's spelling. `alias_generator`, `validation_alias`,
   `serialization_alias` and non-literal aliases are not followed. An index
   built before this fix picks it up on `index_project(force=True)`.
+- `git_diff_impact`'s `schema_impact.follow_up` suggests the field's wire name
+  (the Pydantic `Field(alias=...)`), not the Python attribute, so the call
+  matches the TS / SQL declarations keyed by it. Each `field_changes` entry
+  gains `wire_name` (the alias, else the name).
 
 ### Added — virtual schema-first, phase 1: field-level schema drift across repositories (migration 27)
 

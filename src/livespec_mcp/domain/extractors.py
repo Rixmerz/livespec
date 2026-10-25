@@ -84,6 +84,8 @@ class ExtractedField:
     optional: bool
     nullable: bool
     line: int
+    # The name the field travels under when it is not `name` (a Pydantic alias).
+    wire_name: str | None = None
 
 
 @dataclass
@@ -420,6 +422,7 @@ def make_schema_field(
         optional=mapped.optional if optional is None else optional,
         nullable=mapped.nullable,
         line=line,
+        wire_name=wire_name,
     )
 
 

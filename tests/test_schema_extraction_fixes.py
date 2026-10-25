@@ -124,3 +124,30 @@ async def test_alias_removes_false_missing_field_in_schema_drift(tmp_path):
     missing = [f for f in drift["findings"] if f["kind"] == "missing_field"]
     assert missing == []
     assert drift["counts"]["by_kind"]["missing_field"] == 0
+
+
+def test_sql_standard_literal_ending_in_backslash_keeps_later_columns_and_tables():
+    # Standard SQL (Postgres, SQLite): `'C:\'` is complete. Read with backslash
+    # escapes, it would run on to the next quote and drop `n` and table `q`.
+    src = (
+        r"CREATE TABLE p (id INT, path TEXT DEFAULT 'C:\', n INT, tag TEXT DEFAULT 'x');" + "\n"
+        "CREATE TABLE q (id INT, label TEXT DEFAULT 'y');\n"
+    )
+    assert _tables(src) == {"m.p": ["id", "path", "n", "tag"], "m.q": ["id", "label"]}
+
+
+def test_sql_mysql_backslash_escape_still_parses_beside_a_trailing_literal():
+    # Only the escape reading closes every literal here, so it is the one used.
+    src = (
+        r"CREATE TABLE a (id INT, note TEXT DEFAULT 'it\'s', n INT);" + "\n"
+        "CREATE TABLE b (id INT, tag TEXT DEFAULT 'z');\n"
+    )
+    assert _tables(src) == {"m.a": ["id", "note", "n"], "m.b": ["id", "tag"]}
+
+
+def test_sql_postgres_escape_string_keeps_its_backslash_escape():
+    src = (
+        r"CREATE TABLE a (id INT, note TEXT DEFAULT E'it\'s', n INT);" + "\n"
+        "CREATE TABLE b (id INT, tag TEXT DEFAULT 'z');\n"
+    )
+    assert _tables(src) == {"m.a": ["id", "note", "n"], "m.b": ["id", "tag"]}

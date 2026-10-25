@@ -34,7 +34,7 @@
 ## 6. Phase 2
 
 - [x] 6.1 OpenSpec deltas: requirements `Cross-repo schema impact` and `Schema impact of a diff`, new scenarios on `Schema field extraction` and `Field-level schema drift`, phase 2 decisions in `design.md` (P5, `2ca5d55`); the change holds eight `schemas-*` requirements
-- [x] 6.2 SQL string literals honour backslash escapes, a doubled `''` still escapes, an unclosed escape reading falls back to the standard one (`domain/sql_schema.py`, P6 `57cd00b`); verified by its three tests in `tests/test_schema_extraction_fixes.py`
+- [x] 6.2 SQL string literals are read as standard SQL (doubled `''`, backslash a plain character) and re-read with backslash escapes only when a literal never closes (`domain/sql_schema.py`, P6 `57cd00b`); verified by its three tests in `tests/test_schema_extraction_fixes.py`
 - [x] 6.3 A Pydantic `Field(alias=...)` (value or `Annotated`) keys the field by its alias (`domain/extractors.py`, `domain/schema_types.py`, P6 `57cd00b` + `61d9d60`); verified by its two tests in `tests/test_schema_extraction_fixes.py`, the end-to-end `schema_drift` test included (it ran, no skip)
 - [x] 6.4 `domain/schema_impact.py`: field matching, declaration actions, the three reader channels (`graph` over the group's union graph, `schema_binding`, `spec:<id>`), roles, `diff_schema_impact` (P7, `71e733b`)
 - [x] 6.5 `schema_impact` core tool (`limit` / `cursor` / `summary_only`, exact counts, `mcp_error` with `did_you_mean`, `group_db` and no-graph-reader hints) in `tools/schemas.py` (P7)

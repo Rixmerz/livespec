@@ -104,6 +104,7 @@ class _FieldLike(Protocol):
     item_type: str | None
     optional: bool
     nullable: bool
+    wire_name: str | None
 
 
 def matched_field(side: SchemaSide, key: str) -> SchemaField | None:
@@ -509,6 +510,7 @@ def field_changes(
         return {
             "kind": kind,
             "field": f.name,
+            "wire_name": f.wire_name or f.name,
             "field_key": f.field_key,
             "before": _shape(b),
             "after": _shape(a),
@@ -667,7 +669,9 @@ def diff_schema_impact(
                 asked.setdefault(
                     (fc["field_key"], kind), FieldChange(kind, fc["field_key"], new_type=new_type)
                 )
-                call = f"schema_impact(entity={e.entity}, change={kind}, field={fc['field']}"
+                # The wire name, not the Python attribute: the other declarations
+                # of the entity are keyed by it.
+                call = f"schema_impact(entity={e.entity}, change={kind}, field={fc['wire_name']}"
                 call += f", new_type={new_type})" if new_type else ")"
                 if call not in follow_up:
                     follow_up.append(call)

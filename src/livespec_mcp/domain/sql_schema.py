@@ -26,20 +26,31 @@ from livespec_mcp.domain.extractors import (
 )
 from livespec_mcp.domain.schema_types import sql_type
 
-_TOKEN_RE = re.compile(
-    r"""
+_TOKEN_HEAD = r"""
       (?P<ws>\s+)
     | (?P<lcomment>--[^\n]*)
     | (?P<bcomment>/\*.*?(?:\*/|\Z))
-    | (?P<string>'(?:[^'\\]|\\.|'')*'|'(?:[^']|'')*(?:'|\Z))
+"""
+_TOKEN_TAIL = r"""
     | (?P<qident>"(?:[^"]|"")*(?:"|\Z)|`(?:[^`]|``)*(?:`|\Z))
     | (?P<dollar>\$(?:[A-Za-z_]\w*)?\$)
     | (?P<word>[A-Za-z_][\w$]*)
     | (?P<number>\d+(?:\.\d*)?|\.\d+)
     | (?P<punct>.)
-    """,
-    re.S | re.X,
-)
+"""
+# Postgres `E'...'` is always a backslash-escape literal.
+_ESTRING = r"| (?P<estring>[eE]'(?:[^'\\]|\\.|'')*')"
+# `ustring` is a literal that never closes: it runs to the end of the file.
+_STANDARD_STRING = r"""| (?P<string>'(?:[^']|'')*') | (?P<ustring>'.*)"""
+_ESCAPED_STRING = r"""| (?P<string>'(?:[^'\\]|\\.|'')*') | (?P<ustring>'.*)"""
+
+
+def _token_re(string_alt: str) -> re.Pattern[str]:
+    return re.compile(_TOKEN_HEAD + _ESTRING + string_alt + _TOKEN_TAIL, re.S | re.X)
+
+
+_STANDARD_RE = _token_re(_STANDARD_STRING)
+_ESCAPED_RE = _token_re(_ESCAPED_STRING)
 
 # Words between CREATE and TABLE that still make it a plain table.
 _TABLE_PREFIXES = frozenset({"OR", "REPLACE", "TEMP", "TEMPORARY", "UNLOGGED", "GLOBAL", "LOCAL"})
@@ -85,20 +96,13 @@ class _Tok:
         return self.text.upper() if self.kind == "word" else ""
 
 
-def _tokenize(src: str) -> list[_Tok]:
-    """@spec:schemas-schema-field-extraction
-
-    Inside a `'...'` literal a backslash escapes the next character (the
-    MySQL/MariaDB default, Postgres `E'...'`) and `''` is a quote. When that
-    reading never closes the literal, the standard one (backslash as a plain
-    character) is used, so `'C:\\'` still ends where standard SQL ends it.
-    The cost: a standard literal ending in an odd backslash, followed later in
-    the file by another quote, is read as running on to that quote.
-    """
+def _lex(src: str, token_re: re.Pattern[str]) -> tuple[list[_Tok], bool]:
+    """Tokens of `src` and whether every `'...'` literal closed."""
     toks: list[_Tok] = []
     pos, n = 0, len(src)
+    closed = True
     while pos < n:
-        m = _TOKEN_RE.match(src, pos)
+        m = token_re.match(src, pos)
         if m is None:  # unreachable: `punct` matches any character
             break
         kind, end = m.lastgroup or "punct", m.end()
@@ -107,10 +111,30 @@ def _tokenize(src: str) -> list[_Tok]:
             close = src.find(m.group(), end)
             end = n if close < 0 else close + len(m.group())
             kind = "string"
+        elif kind in ("estring", "ustring"):
+            closed = closed and kind == "estring"
+            kind = "string"
         if kind != "ws":
             toks.append(_Tok(kind, src[pos:end], pos, end))
         pos = end
-    return toks
+    return toks, closed
+
+
+def _tokenize(src: str) -> list[_Tok]:
+    """@spec:schemas-schema-field-extraction
+
+    Standard SQL (Postgres, SQLite) reads `'...'` with `''` as a quote and a
+    backslash as a plain character, so `'C:\\'` ends at its second quote. A file
+    that reading leaves with a literal that never closes is MySQL/MariaDB
+    style (`'it\\'s'`), and is read again with backslash escaping the next
+    character; when that does not close either, the standard reading stands.
+    Postgres `E'...'` always escapes.
+    """
+    toks, closed = _lex(src, _STANDARD_RE)
+    if closed:
+        return toks
+    escaped, escaped_closed = _lex(src, _ESCAPED_RE)
+    return escaped if escaped_closed else toks
 
 
 def _split_statements(toks: list[_Tok]) -> list[list[_Tok]]:

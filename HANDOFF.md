@@ -44,12 +44,14 @@ Todo el stack es local-first: 0 servicios externos, 0 API keys obligatorias, 0 D
 
 ## 3. Estado actual
 
-**HEAD: `71e733b` (P7, the last code commit of this tree) plus the P8 docs
-commit on top. Not pushed, not tagged; `pyproject.toml` stays at 0.33.0.**
+**HEAD: `974024a` (merge of `cauce/task-838` into `main`; it holds P6
+`57cd00b` + `61d9d60`, P7 `71e733b` and the P8 docs `8424fc2`), plus the
+SQL-tokenizer and alias follow-up fixes of this tree on top. Not pushed, not
+tagged; `pyproject.toml` stays at 0.33.0.**
 Virtual schema-first phase 2 of 3 is complete under `[Unreleased]`: **40 core /
 55 tools** in all, no new migration (27 is still the last). Tests measured in
-this tree: **1093 collected, 1093 passed** (1060 at `a44cf22`; P7 adds 28,
-P6 adds 5, P6's `tests/test_schema_extraction_fixes.py` is in this tree). The owner's rule: nothing is pushed, tagged or
+this tree: **1097 collected, 1097 passed** (1060 at `a44cf22`; P7 adds 28,
+P6 adds 5, the SQL-tokenizer and alias follow-up fixes add 4, P6's `tests/test_schema_extraction_fixes.py` is in this tree). The owner's rule: nothing is pushed, tagged or
 version-bumped until all three phases are done.
 
 ### v0.34 (Unreleased) — virtual schema-first, phase 2 of 3
@@ -75,7 +77,9 @@ alias (no more false `missing_field`). The OpenSpec change now holds eight
 `schemas-*` requirements and stays open until phase 3.
 
 - **Commits**: `2ca5d55` P5 OpenSpec deltas, `57cd00b` + `61d9d60` P6
-  extraction fixes (on `main`, merged with P5 in `31ff49d`), `71e733b` P7
+  extraction fixes (on `main`, merged with P5 in `31ff49d`; `ce97164` on the
+  `cauce/task-838` side branch carries the identical P6 diff, so `git log -S`
+  on `main` finds only `57cd00b`), `71e733b` P7
   `schema_impact` + the `git_diff_impact` fold (on top of P5), then P8 (this
   docs commit: CHANGELOG, HANDOFF, ROADMAP, cross-repo guide, `tasks.md`). P5
   and P6 joined as separate parts. Tests 1060 (`a44cf22`) → 1093 (P7 +28, P6 +5).

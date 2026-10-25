@@ -264,3 +264,42 @@ async def test_unparsable_head_blob_gives_unknown_field_changes(tmp_path):
     (ts,) = entry["declarations"]
     assert ts["actions"] == []
     assert entry["follow_up"] == []
+
+
+@pytest.mark.asyncio
+async def test_follow_up_names_the_wire_alias_not_the_python_attribute(tmp_path):
+    requires_grammar("typescript")
+    back, front = _group(tmp_path)
+    _edit(
+        back,
+        "app/models.py",
+        "from pydantic import BaseModel",
+        "from pydantic import BaseModel, Field",
+    )
+    _edit(
+        back,
+        "app/models.py",
+        "    avatar_url: str | None = None\n",
+        '    avatar_url: str | None = Field(default=None, alias="avatarUrl")\n',
+    )
+    _commit(back, "alias the avatar field")
+    _edit(
+        back,
+        "app/models.py",
+        '    avatar_url: str | None = Field(default=None, alias="avatarUrl")\n',
+        "",
+    )
+    _commit(back, "drop the avatar field")
+    async with Client(mcp) as c:
+        await _index(c, front, back)
+        out = await _diff(c, back)
+
+    (entry,) = out["schema_impact"]
+    (changed,) = entry["changed"]
+    (fc,) = changed["field_changes"]
+    assert (fc["field"], fc["wire_name"], fc["field_key"]) == (
+        "avatar_url",
+        "avatarUrl",
+        "avatarurl",
+    )
+    assert entry["follow_up"] == ["schema_impact(entity=user, change=remove, field=avatarUrl)"]
