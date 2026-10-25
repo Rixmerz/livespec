@@ -30,3 +30,18 @@
 ## 5. Release
 
 - [x] 5.1 `CHANGELOG.md` `[Unreleased]`, `HANDOFF.md`, `ROADMAP.md` and the cross-repo guide (`docs/CROSS_REPO.md` = `templates/CROSS_REPO.md`)
+
+## 6. Phase 2
+
+- [x] 6.1 OpenSpec deltas: requirements `Cross-repo schema impact` and `Schema impact of a diff`, new scenarios on `Schema field extraction` and `Field-level schema drift`, phase 2 decisions in `design.md` (P5, `2ca5d55`); the change holds eight `schemas-*` requirements
+- [x] 6.2 SQL string literals honour backslash escapes, a doubled `''` still escapes, an unclosed escape reading falls back to the standard one (`domain/sql_schema.py`, P6 `57cd00b`); verified by its three tests in `tests/test_schema_extraction_fixes.py` on `main` at `31ff49d`
+- [x] 6.3 A Pydantic `Field(alias=...)` (value or `Annotated`) keys the field by its alias (`domain/extractors.py`, `domain/schema_types.py`, P6 `57cd00b` + `61d9d60`); verified by its two tests in `tests/test_schema_extraction_fixes.py` on `main` at `31ff49d`, the end-to-end `schema_drift` test included (it ran, no skip)
+- [x] 6.4 `domain/schema_impact.py`: field matching, declaration actions, the three reader channels (`graph` over the group's union graph, `schema_binding`, `spec:<id>`), roles, `diff_schema_impact` (P7, `71e733b`)
+- [x] 6.5 `schema_impact` core tool (`limit` / `cursor` / `summary_only`, exact counts, `mcp_error` with `did_you_mean`, `group_db` and no-graph-reader hints) in `tools/schemas.py` (P7)
+- [x] 6.6 `git_diff_impact` gains `schema_impact` and `counts.schema_entities` only when a changed symbol is a bound schema declaration; any other payload is unchanged key for key (P7)
+- [x] 6.7 Parameter descriptions, Skill, agent playbook (`docs/` = `templates/`), README, CLAUDE.md and the pagination lists: 40 core, 55 total (P7); cross-repo guide (`docs/` = `templates/`), CHANGELOG, HANDOFF and ROADMAP (P8)
+- [x] 6.8 P7 tests: `tests/test_schema_impact.py` and `tests/test_git_diff_schema_impact.py`; full suite in the P7 tree 1085 collected, 1085 passed (1060 at `a44cf22`); `ruff check src tests` clean; `openspec validate --all --strict` 13 passed
+- [x] 6.9 P6 tests: `tests/test_schema_extraction_fixes.py`, 5 collected, 5 passed on `main` at `31ff49d`
+- [ ] 6.10 Full suite with P6 and P7 in one tree (1090 expected): not run, the two parts are joined after this one
+- [ ] 6.11 `ruff format --check src tests` clean: not met, `tests/test_schema_index.py:316` would be reformatted (pre-existing since `a44cf22`, the same on `main`)
+- [x] 6.12 Dogfood: an archived copy validates strict and links `schemas-cross-repo-schema-impact` and `schemas-schema-impact-of-a-diff` to code; a two-repo group lists declarations with actions and per-project readers with file:line for remove, rename and retype, and `git_diff_impact` reports the same entity for a commit that drops a field; livespec itself answers with the expected hints
