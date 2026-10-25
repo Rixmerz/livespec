@@ -44,14 +44,99 @@ Todo el stack es local-first: 0 servicios externos, 0 API keys obligatorias, 0 D
 
 ## 3. Estado actual
 
-**HEAD: `02ac814` (P3, the last code commit of the phase) plus the P4 docs
+**HEAD: `71e733b` (P7, the last code commit of this tree) plus the P8 docs
 commit on top. Not pushed, not tagged; `pyproject.toml` stays at 0.33.0.**
-Virtual schema-first phase 1 of 3 is complete under `[Unreleased]`: 39 core /
-54 tools in all, migration 27, **1057 tests** (965 at v0.33.0). The owner's
-rule: nothing is pushed, tagged or version-bumped until all three phases are
-done.
+Virtual schema-first phase 2 of 3 is complete under `[Unreleased]`: **40 core /
+55 tools** in all, no new migration (27 is still the last). Tests measured in
+this tree: **1085 collected, 1085 passed** (1060 at `a44cf22`). The five tests
+of `tests/test_schema_extraction_fixes.py` (P6) are **not in this tree**: P6
+was built beside P7 and joined as its own part; run on `main` at `31ff49d`
+they are 5 collected, 5 passed (the alias end-to-end test ran, no skip). With
+both joined: 1090 expected, not yet run in one tree. The owner's rule: nothing is pushed, tagged or
+version-bumped until all three phases are done.
 
-### v0.34 (Unreleased) — virtual schema-first, phase 1 of 3
+### v0.34 (Unreleased) — virtual schema-first, phase 2 of 3
+
+Phase 2 answers *what breaks, here and in the other repositories, if I change
+this field?* The core tool `schema_impact(entity, change, field, ...)`
+(`tools/schemas.py`, logic in `domain/schema_impact.py`) takes `add`,
+`remove`, `rename` or `retype` and lists every declaration of the entity in
+the group with the action it needs (`add` / `present`, `remove` / `absent`,
+`rename` / `both_present` / `renamed` / `absent`, `retype` / `compatible` /
+`absent`), then every reader with project, file, line, role (`endpoint` with
+method and path, `test`, `symbol`) and the channels that found it: `graph`
+(backward call cone over the union of the group's graphs, so a frontend
+`fetch` reaches a backend handler through its route), `schema_binding` and
+`spec:<id>` (mirrored `xrepo-*` ids join repos). `git_diff_impact` gains
+`schema_impact` + `counts.schema_entities` only when a changed symbol is a
+bound schema declaration: field changes read from git at base and head, the
+actions the other declarations need, reader counts per project and a sample,
+`follow_up` calls. `analyze_impact` does not follow schema links (phase 1's
+open item 1, closed). The fixes: SQL backslash escapes in string literals no
+longer drop later tables, and a Pydantic `Field(alias=...)` is matched by its
+alias (no more false `missing_field`). The OpenSpec change now holds eight
+`schemas-*` requirements and stays open until phase 3.
+
+- **Commits**: `2ca5d55` P5 OpenSpec deltas, `57cd00b` + `61d9d60` P6
+  extraction fixes (on `main`, merged with P5 in `31ff49d`), `71e733b` P7
+  `schema_impact` + the `git_diff_impact` fold (on top of P5), then P8 (this
+  docs commit: CHANGELOG, HANDOFF, ROADMAP, cross-repo guide, `tasks.md`). P5
+  and P6 joined as separate parts. Tests 1060 (`a44cf22`) → 1085 (P7); P6 adds
+  5.
+- **Verify** (this tree): `ruff check src tests` clean; `ruff format --check
+  src tests` reports one file, `tests/test_schema_index.py:316`, which is
+  pre-existing (it came in with `a44cf22` and is the same on `main`; item 7 in
+  3a); `openspec validate --all --strict` 13 passed, 0 failed;
+  `docs/AGENT_PLAYBOOK.md` = `templates/AGENT_PLAYBOOK.md` and
+  `docs/CROSS_REPO.md` = `templates/CROSS_REPO.md` by `cmp`.
+- **Dogfood: archived copy** (temp dir): `openspec archive
+  virtual-schema-first -y` (+8 requirements) + a real Purpose → `openspec
+  validate --all --strict` 13 passed, 0 failed. Through `Client(mcp)`:
+  `index_project(force=True)`, `sync_openspec` (32 specs, 3 changes), re-index
+  (219 files, 2338 symbols, 38 Spec links). `list_specs(capability="schemas")`
+  returns the 8 ids; `get_spec_implementation` links
+  `schemas-cross-repo-schema-impact` to `schema_change_impact` and the
+  `schema_impact` tool, and `schemas-schema-impact-of-a-diff` to
+  `diff_schema_impact`.
+- **Dogfood: two-repo group** (backend: Pydantic `User`, two FastAPI routes
+  building it, a test, a `.sql` table; frontend: a TS interface, two `fetch`
+  calls to those routes, a function under a mirrored `xrepo-user-profile`
+  Spec; all schemas `@schema: user`). `schema_impact` for remove `nickname`,
+  rename `email` → `contact_email` and retype `id` → `uuid` lists the 3
+  declarations with file:line (retype: Pydantic and SQL `retype`, TS `string`
+  `compatible`, so `to_change` 2) and 6 readers: back `api/routes.py:9`
+  `GET /api/users/{user_id}` and `:14` `POST /api/users` (endpoints, depth 1),
+  `tests/test_routes.py:4` (test, depth 2); front `src/client.ts:3` and `:8`
+  (graph, depth 2, across the routes) and `src/profile.ts:2`
+  (`spec:xrepo-user-profile`). Called from the frontend, the frontend comes
+  first. An unknown field `nick` → `did_you_mean: ["nickname"]`. After a
+  second backend commit that drops `nickname`, `git_diff_impact(base_ref=
+  "HEAD~1")` has `counts.schema_entities: 1` and one entry: `field_changes`
+  `removed nickname` on the Pydantic model, `remove` actions for the SQL table
+  and the TS interface, readers 6 (back 3: 2 endpoints + 1 test; front 3),
+  `follow_up: ["schema_impact(entity=user, change=remove, field=nickname)"]`;
+  with `summary_only=True` the readers keep `counts` and `by_project` and
+  drop `sample`.
+- **Dogfood: livespec itself** (a clone, no `group_db`): its product code binds
+  no entity; the test fixtures bind `user-profile` (Pydantic, SQL, TS) and
+  `address` (one Zod schema). `schema_impact(entity="user")` →
+  `did_you_mean: ["user-profile"]`. On `user-profile`, remove / rename /
+  retype / add give the expected actions per side and 0 readers, with both
+  hints (no `group_db`; no call edge, type positions, `grep_in_indexed_files`).
+  `git_diff_impact` over P7 (`HEAD~1`) and over phase 2 (`a44cf22`) has no
+  `schema_impact` key: the changed `SymbolRef` dataclass is a schema
+  declaration with no binding, so the payload is unchanged, as specified.
+- **Dogfood findings** (code left alone): (1) in the group, every reader
+  reaches the Pydantic model; the SQL table and the TS interface have no
+  reader of their own, and the zero-reader hint stays silent because the
+  graph channel found readers through the Pydantic side. That is the
+  type-position cost the design names (item 9 in 3a). (2) Phase 1's dead-code
+  item is closed by `a44cf22`: on livespec, `find_dead_code` with
+  `include_non_python`, `include_public` and `include_infrastructure` lists 177
+  candidates, none `table` or `variable`; its 13 `type_alias` candidates are
+  Python aliases, not schemas.
+
+### v0.34 phase 1 summary (reference)
 
 Shared data schemas stay where they live, and livespec now knows which
 declarations describe the same entity and where they drift, field by field.
@@ -102,7 +187,7 @@ expected.
 - **Dogfood finding (code left alone)**: `find_dead_code(include_non_python=True)`
   lists all 28 `table` symbols of `storage/schema.sql` as removal candidates
   (they have no callers); the default `find_dead_code` (8 candidates) is
-  unaffected. Open item 5 in 3a.
+  unaffected. Item 5 in 3a, since closed by `a44cf22`.
 
 ### v0.33.0 summary (reference)
 
@@ -1395,14 +1480,16 @@ v0.10 entera ejecutada en una sesión post-v0.9.0:
 
 ## 3a. Next: virtual schema-first phases 2-3
 
-To resume: `read HANDOFF.md and continue`. Phase 1 sits on the branch,
+To resume: `read HANDOFF.md and continue`. Phases 1 and 2 sit on the branch,
 unpushed: no push, tag or `pyproject.toml` bump until all three phases are
-done. Open for phases 2-3:
+done. Phase 2 is done; items 2-4 and 6 are open for phase 3, 7-9 come from the
+phase 2 release:
 
-1. **`analyze_impact` following schema links.** Decide, with data, whether a
-   change to one declaration of an entity reports the other repositories'
-   declarations as impacted. Links stay out of `symbol_edge` either way (see
-   `design.md`: ingested non-call rows once turned 2 callers into 40).
+1. **`analyze_impact` following schema links — closed in phase 2.**
+   `analyze_impact` does not follow schema links; `schema_impact` is the
+   explicit path from a field change to its readers, and `schema_link` stays
+   out of `symbol_edge` (see `design.md`, "Phase 2 decisions": ingested
+   non-call rows once turned 2 callers into 40).
 2. **`ALTER TABLE` folding.** Apply later migrations' column changes to their
    table, in migration order, so a table spread across migrations stops
    reporting false `missing_field` findings.
@@ -1411,17 +1498,36 @@ done. Open for phases 2-3:
    runs after it.
 4. **Comparing `ref` targets.** Today `ref` ~ `ref` matches whatever each side
    points to (`Address` vs `Location` is not reported).
-5. **Schema symbols as dead-code candidates.** Found by the phase 1 dogfood:
-   `table` symbols have no callers, so `find_dead_code(include_non_python=True)`
-   on livespec lists all 28 tables of `storage/schema.sql` as removal
-   candidates (37 in all; the default result, 8, has none). Zod `variable`
-   symbols appear once every filter is lifted. Exclude schema declarations (or
-   at least `table`) from dead-code candidates.
+5. **Schema symbols as dead-code candidates — closed by `a44cf22`.**
+   `find_dead_code` skips `table` and `variable` symbols that are schema
+   declarations. Measured by the phase 2 dogfood on livespec: with
+   `include_non_python`, `include_public` and `include_infrastructure`, 177
+   candidates and none `table` or `variable` (the phase 1 run listed all 28
+   tables of `storage/schema.sql`). TS object `type_alias` schemas are not in
+   that rule; none showed up on livespec.
 6. **Archiving the change.** `openspec archive virtual-schema-first -y` in the
    real tree, then replace the placeholder Purpose it writes for `schemas` (the
-   phase 1 dogfood did both on a copy and validated strict). That makes the
-   six `schemas-*` ids known to the store. Then cut the release per the
-   release flow in `CLAUDE.md`.
+   phase 1 and phase 2 dogfoods did both on a copy and validated strict). That
+   makes the eight `schemas-*` ids known to the store. Then cut the release per
+   the release flow in `CLAUDE.md`.
+7. **`ruff format --check` fails on `tests/test_schema_index.py:316`**, a
+   `find_dead_code` call argument dict longer than the line limit. It came in
+   with `a44cf22` and is the same on `main`; CI's lint-build job runs this
+   check, so fix it (`ruff format tests/test_schema_index.py`) before the
+   push.
+8. **Re-extract after P6.** The SQL escape and Pydantic alias fixes change
+   extraction only: a local index built before P6 (`57cd00b`) keeps the old
+   tables and field keys until `index_project(force=True)`. Users upgrading
+   from 0.33 get a full re-extract anyway (migration 27 is unreleased).
+9. **Type-position readers (phase 3 revisit).** Only constructor calls
+   (`User(...)`, `User(**d)`) reach a schema through the call graph: a TS
+   `function render(u: User)` gives no reference and `User.model_validate(d)`
+   references `model_validate`. In the phase 2 group dogfood every reader came
+   through the Pydantic model; the SQL table and the TS interface had none of
+   their own, and the zero-reader hint stayed silent because the graph channel
+   did find readers through the Pydantic side. If real repositories come back
+   with empty or Pydantic-only readers, revisit with type-position references
+   kept out of `symbol_edge` (`design.md`, "Risks / Trade-offs").
 
 ## 3b. Plan v0.12 (reference)
 
