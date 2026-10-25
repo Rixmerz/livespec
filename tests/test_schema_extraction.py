@@ -490,7 +490,9 @@ def test_schema_invariants(filename):
         assert len(names) == len(set(names)), schema.src_qname
         for f in schema.fields:
             assert f.type in NEUTRAL_TYPES
-            assert f.field_key == name_key(f.name)
+            # A Pydantic Field(alias=...) keys the field by its wire name.
+            wire = {"alias": "a"}.get(f.name) if filename == "models.py" else None
+            assert f.field_key == name_key(wire or f.name)
             assert (f.item_type is not None) == (f.type == "list")
             assert (f.ref_target is not None) == ("ref" in (f.type, f.item_type))
 
