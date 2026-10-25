@@ -6,6 +6,73 @@ follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Added — virtual schema-first, phase 2: cross-repo schema impact
+
+- Phase 2 of 3 answers the question after "do these declarations still
+  agree?": *what breaks, here and in the other repositories, if I change this
+  field?* Same OpenSpec change `virtual-schema-first`, now eight requirements
+  (new: `Cross-repo schema impact`, `Schema impact of a diff`), still open
+  until phase 3. No migration.
+- New core tool **`schema_impact(entity, change, field, new_name=None,
+  new_type=None, max_depth=3, limit, cursor, summary_only)`** (39 → 40 core,
+  54 → 55 total). `change` is `add`, `remove`, `rename` (needs `new_name`) or
+  `retype` (needs `new_type`, one of the 13 neutral types). `field` matches a
+  declaration's field by its convention-free key or its name as written, so
+  `avatar_url` = `avatarUrl` and a Pydantic attribute matches as well as its
+  alias.
+  - `declarations`: every schema bound to the entity in scope (every project
+    of the `group_db`, home project first), each with project, file, line,
+    flavor, the matched field (or `null`) and one action: `add` / `present`,
+    `remove` / `absent`, `rename` / `both_present` / `renamed` / `absent`,
+    `retype` / `compatible` / `absent`. `compatible` means the side already
+    carries the new type on its own wire (a TypeScript `string` for `uuid`).
+  - `readers`: one row per symbol, with project, file, line, `role`
+    (`endpoint` with `http_method` / `http_path`, `test`, or `symbol`), `via`,
+    `depth` and `reads` (the declarations it reaches). Three channels, tagged
+    in `via`: `graph`, the backward call cone up to `max_depth` over the union
+    of the group's graphs, so a frontend `fetch` reaches the backend handler
+    through its HTTP route; `schema_binding`, symbols bound with `@schema:`
+    that are not schemas; and `spec:<id>`, symbols linked to a Spec that one
+    of the declarations is linked to, so mirrored `xrepo-*` ids join
+    repositories. Readers are per declaration, not per field.
+  - `by_project` and `counts` (`declarations`, `to_change`, `both_present`,
+    `readers`, `endpoints`, `tests`, `symbols`) are exact; `limit` / `cursor`
+    page the readers and `summary_only` drops them. A `hint` says when the
+    workspace has no `group_db`, or when no call edge reaches the declarations
+    (TypeScript, Zod and SQL schemas are used in type positions, which are not
+    call edges; it points to `grep_in_indexed_files`).
+  - Errors are `mcp_error`s: an unknown entity, an unknown change kind, a
+    `new_type` outside the neutral types and a field no declaration holds
+    carry `did_you_mean` when a close name exists; `rename` without `new_name`
+    and `retype` without `new_type` are errors too.
+- **`git_diff_impact` gains a `schema_impact` key and
+  `counts.schema_entities`**, only when a changed symbol is a schema
+  declaration bound with `@schema:`; any other diff returns the same payload as
+  before, key for key. One entry per entity: the changed declarations with
+  their `field_changes` read from git at base and head (`added`, `removed`,
+  `retyped`, `modified`; a rename shows as `removed` + `added`), the actions
+  the other declarations need, reader counts per project plus a sample of 5
+  readers per project (dropped by `summary_only`), and `follow_up`
+  `schema_impact(...)` calls.
+- `analyze_impact` does not follow schema links (phase 1 left this open):
+  `schema_impact` is the explicit path from a field change to its readers, and
+  schema links still add no call-graph edges.
+
+### Fixed — schema extraction (phase 2)
+
+- SQL: a backslash-escaped quote inside a string literal (`'it\'s'`, the
+  MySQL / MariaDB default and Postgres `E'...'`) no longer ends the literal, so
+  the `CREATE TABLE` statements after it are no longer lost. A doubled `''`
+  still escapes a quote, and a literal the escape reading never closes is read
+  the standard way. Known cost: a standard-SQL literal ending in an odd
+  backslash (`'C:\'`) followed later in the file by another quote is misread.
+- Pydantic: a field declared with `Field(..., alias='<literal>')`, as its
+  value or inside `Annotated[...]`, is matched by its alias, the wire name, so
+  `schema_drift` no longer reports a false `missing_field` against the
+  frontend's or the table's spelling. `alias_generator`, `validation_alias`,
+  `serialization_alias` and non-literal aliases are not followed. An index
+  built before this fix picks it up on `index_project(force=True)`.
+
 ### Added — virtual schema-first, phase 1: field-level schema drift across repositories (migration 27)
 
 - Shared data schemas stay where they live (Zod schemas and TypeScript types in
@@ -65,9 +132,8 @@ follows [SemVer](https://semver.org/).
 - Known limits of phase 1: `ALTER TABLE` in later migrations is not folded into
   its table, a base class or interface from another file is not followed, and
   `ref` targets are not compared. The new `table` and Zod `variable` symbols
-  have no callers, so `find_dead_code` lists them as candidates when its
-  opt-in filters are lifted (`include_non_python=True` lists every table);
-  the default `find_dead_code` result lists none of them.
+  have no callers; `find_dead_code` never lists the ones that are schema
+  declarations, even with every opt-in filter lifted.
 
 ## [0.33.0] - 2026-10-18
 

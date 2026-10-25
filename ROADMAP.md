@@ -117,7 +117,7 @@ este repo, 95% de acuerdo en las que ambos ven), etiquetadas y reversibles. La
 tabla de símbolos sigue siendo nuestra, sin excepción. La capa de documentación
 (prosa + `rationale_for`) sigue diferida: es la única que necesitaría un LLM.
 
-### Pillar: virtual schema-first (v0.34, phase 1 of 3 done)
+### Pillar: virtual schema-first (v0.34, phases 1-2 of 3 done)
 
 Shared data schemas stay where they live: Zod schemas and TypeScript types in
 a frontend, Pydantic models, dataclasses and TypeScript interfaces in a
@@ -138,14 +138,25 @@ contract tied to the code that implements it, in every repository.
 | Phase | Scope | State |
 |---|---|---|
 | 1 | Field-level extraction (6 flavors, 13 neutral types), `@schema: <entity>`, database-wide links, `schema_drift` + `project://schemas`, migration 27 | **done** (Unreleased, 39 core / 54 tools) |
-| 2-3 | `analyze_impact` following schema links (decided with data), `ALTER TABLE` folding, cross-file bases, comparing `ref` targets, archiving the OpenSpec change | open |
+| 2 | `schema_impact` (declarations + readers of one field change, across the group), the `schema_impact` section of `git_diff_impact`, SQL backslash escapes, Pydantic `Field(alias=...)` as the match key; `analyze_impact` does not follow schema links (decided: `schema_impact` is the explicit path) | **done** (Unreleased, 40 core / 55 tools) |
+| 3 | `ALTER TABLE` folding, cross-file bases, comparing `ref` targets, type-position readers if real repos come back empty, archiving the OpenSpec change, then the release | open |
 
 Phase 1 evidence (dogfood): a two-repo group (Pydantic + SQL backend, TS
 interface + Zod frontend) reports one finding of each of the four kinds with
 file:line for every side, and livespec's own `storage/schema.sql` yields 28
 `table` symbols with 194 fields. Links stay out of `symbol_edge`, so they add
-no call-graph edges; the new `table` symbols, which have no callers, do show
-up in `find_dead_code(include_non_python=True)` and are a phase 2-3 fix.
+no call-graph edges; `find_dead_code` skips the `table` and `variable`
+symbols that are schema declarations (`a44cf22`).
+
+Phase 2 evidence (dogfood): in a two-repo group, removing one field of a
+Pydantic model lists its SQL table and TS interface with the action each
+needs, and 6 readers with file:line: 2 FastAPI endpoints and a test in the
+backend, 2 frontend `fetch` callers reached through the routes, and a
+frontend function under a mirrored `xrepo-*` Spec. `git_diff_impact` over the
+commit that drops the field reports the same entity, the field change read
+from git, and the same readers. The cost is the one the design names: type
+positions are not call edges, so every reader came through the Pydantic
+model; the table and the interface had none of their own.
 
 ---
 

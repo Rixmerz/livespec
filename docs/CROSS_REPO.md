@@ -18,7 +18,7 @@ Two complementary layers share one SQLite when configured:
 |-------|-----|------------|
 | **HTTP hops** | Client `requests`/`fetch` → server route | `who_does_this_call` → `invokes_endpoints`; `who_calls` → `route_callers`; `find_legacy_flows` |
 | **Shared Specs** | Same Spec id `xrepo-*` in **each** participating repo | `list_specs` / `get_spec_implementation`; the `livespec ui` group page |
-| **Shared schemas** | Same `@schema: <entity>` on each declaration of one entity | `schema_drift`; resources `project://schemas` / `project://schemas/{entity}` |
+| **Shared schemas** | Same `@schema: <entity>` on each declaration of one entity | `schema_drift`, `schema_impact`; resources `project://schemas` / `project://schemas/{entity}` |
 
 livespec does **not** invent a single global Spec row. You **mirror** the same
 `xrepo-<slug>` id (and usually the same OpenSpec capability) in each repo that
@@ -133,6 +133,52 @@ member:
 Without a `group_db`, links stay inside one repo. Not handled yet: `ALTER
 TABLE` in later migrations, and a base class or interface from another file.
 
+### Before changing a shared field: `schema_impact`
+
+Call `schema_impact` **before** you add, remove, rename or retype a field of a
+declaration bound with `@schema:`, not after the frontend breaks:
+
+```
+schema_impact(entity="user", change="remove", field="avatar_url", workspace=<repo>)
+schema_impact(entity="user", change="rename", field="email", new_name="contact_email", workspace=<repo>)
+schema_impact(entity="user", change="retype", field="id", new_type="uuid", workspace=<repo>)
+```
+
+- **`declarations`**: every declaration of the entity in the group (your repo
+  first), with file:line, the matched field and the `action` that side needs:
+  `remove` / `absent`, `rename` / `both_present` / `renamed` / `absent`,
+  `retype` / `compatible` / `absent`, `add` / `present`. `compatible` means
+  the side already carries the new type on its wire (a TS `string` for a
+  `uuid`), so it needs no edit.
+- **`readers`**: the symbols that read those declarations, with project,
+  file:line and `role` (`endpoint` with method and path, `test`, `symbol`).
+  They cross repos two ways, named in `via`:
+  - `graph`: the call graphs of the whole group are walked as one, so a
+    frontend `fetch('/api/users/42')` reaches the backend handler of
+    `GET /api/users/{user_id}`, which builds the model, and is listed as a
+    reader in the frontend repo.
+  - `spec:<id>`: symbols linked to a Spec that a declaration is linked to.
+    Mirror the same `xrepo-*` id in each repo (section 2) and annotate both
+    the declaration and the code that depends on it; the shared id joins them.
+
+  `schema_binding` lists symbols bound with `@schema:` that are not schemas.
+  Readers are per declaration, not per field.
+- **Type positions are not call edges.** A TS `function render(u: User)` gives
+  the graph nothing to follow, and only a constructor call such as
+  `User(**d)` reaches a Python model, so TS, Zod and SQL declarations usually
+  have no reader of their own. The `hint` says so when
+  the graph finds no reader; use `grep_in_indexed_files` on the declaration's
+  name, or bind the dependent code with `@schema:` / a mirrored `xrepo-*` Spec.
+- `summary_only=True` keeps `declarations`, `by_project` and `counts` and drops
+  the reader rows; `limit` / `cursor` page them.
+
+`git_diff_impact` does the same for a diff that already touches a bound
+declaration: its `schema_impact` key reads the field changes from git at base
+and head, lists the actions the other declarations need and the reader counts
+per project, and gives the `schema_impact(...)` calls to follow up with.
+`analyze_impact` does not follow schema links; for a shared field, call
+`schema_impact`.
+
 ---
 
 ## 5. Traps
@@ -156,6 +202,7 @@ TABLE` in later migrations, and a base class or interface from another file.
 3. Read project://group — confirm grouped + xrepo_* counts
 4. list_specs / get_spec_implementation for the flow under discussion
 5. who_does_this_call / find_legacy_flows as needed
-6. schema_drift(summary_only=True) if declarations carry @schema:
+6. schema_drift(summary_only=True) if declarations carry @schema:;
+   schema_impact(entity=..., change=..., field=...) before changing a shared field
 7. `livespec ui` (`/livespec-ui`) if the user wants to browse the map
 ```
