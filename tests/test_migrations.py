@@ -445,3 +445,63 @@ def test_m026_track_spec_tier_forward_and_rollback(tmp_path: Path):
 
 def _has_tier(conn: sqlite3.Connection) -> bool:
     return any(r["name"] == "tier" for r in conn.execute("PRAGMA table_info(track_spec)"))
+
+
+_SCHEMA_TABLES = {"schema_decl", "schema_field", "schema_binding", "schema_link"}
+
+
+def test_m027_schema_symbols_forward_and_rollback(tmp_path: Path):
+    """v27 creates the four schema tables; a v26 DB that already holds symbols
+    gains them and queues a re-extract (so existing files get their fields), a
+    v26 DB without symbols gains them with no re-extract."""
+    from livespec_mcp.storage.db import clear_reextract_flag, peek_reextract_flag
+
+    db = tmp_path / "existing.db"
+    conn = connect(db)
+    assert _SCHEMA_TABLES <= _table_names(conn)
+    clear_reextract_flag(conn)  # v8 queues one on every fresh DB
+    conn.commit()
+
+    def rollback() -> None:
+        for t in ("schema_link", "schema_binding", "schema_field", "schema_decl"):
+            conn.execute(f"DROP TABLE {t}")
+        conn.execute("DELETE FROM schema_migrations WHERE version=27")
+        conn.commit()
+
+    # v26 without symbols: tables come back, nothing to re-extract.
+    rollback()
+    assert not (_SCHEMA_TABLES & _table_names(conn))
+    conn.close()
+    conn = connect(db)
+    assert _SCHEMA_TABLES <= _table_names(conn)
+    assert peek_reextract_flag(conn) is False
+
+    # v26 with symbols: tables come back and the next index re-extracts.
+    rollback()
+    conn.execute("INSERT INTO project(id, name, root) VALUES(1, 'p', '/p')")
+    conn.execute(
+        "INSERT INTO file(id, project_id, path, language, content_hash, line_count, mtime) "
+        "VALUES(1, 1, 'm.py', 'python', 'h', 2, 0)"
+    )
+    conn.execute(
+        "INSERT INTO symbol(id, file_id, name, qualified_name, kind, start_line, end_line) "
+        "VALUES(1, 1, 'User', 'm.User', 'class', 1, 2)"
+    )
+    conn.commit()
+    conn.close()
+    conn = connect(db)
+    assert _SCHEMA_TABLES <= _table_names(conn)
+    assert peek_reextract_flag(conn) is True
+    indexes = {r["name"] for r in conn.execute("PRAGMA index_list(schema_binding)")}
+    assert "idx_schema_binding_key" in indexes
+
+    # A schema row dies with its symbol.
+    conn.execute("INSERT INTO schema_decl(symbol_id, flavor) VALUES(1, 'pydantic')")
+    conn.execute(
+        "INSERT INTO schema_binding(symbol_id, entity, entity_key, line) VALUES(1, 'User', 'user', 1)"
+    )
+    conn.execute("DELETE FROM symbol WHERE id=1")
+    assert conn.execute("SELECT COUNT(*) FROM schema_decl").fetchone()[0] == 0
+    assert conn.execute("SELECT COUNT(*) FROM schema_binding").fetchone()[0] == 0
+    conn.close()
+    assert dict((v, n) for v, n, _ in MIGRATIONS)[27] == "schema_symbols"

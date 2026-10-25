@@ -773,6 +773,65 @@ def _m026_track_spec_tier(conn: sqlite3.Connection) -> None:
     _try_add_column(conn, "track_spec", "tier", "TEXT NOT NULL DEFAULT 'changed'")
 
 
+def _m027_schema_symbols(conn: sqlite3.Connection) -> None:
+    """v0.34: schema declarations with their fields, ``@schema:`` entity
+    bindings and the links between schemas bound to one entity.
+
+    New tables (schema.sql already created them on fresh DBs). Re-extract is
+    queued only on a DB that already holds symbols, as in v14: existing files
+    must be read again to fill ``schema_decl`` / ``schema_field``. Rolling back
+    is dropping the four tables, which v26 code never reads."""
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS schema_decl (
+            symbol_id INTEGER PRIMARY KEY REFERENCES symbol(id) ON DELETE CASCADE,
+            flavor TEXT NOT NULL
+        )"""
+    )
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS schema_field (
+            id INTEGER PRIMARY KEY,
+            symbol_id INTEGER NOT NULL REFERENCES symbol(id) ON DELETE CASCADE,
+            ordinal INTEGER NOT NULL,
+            name TEXT NOT NULL,
+            field_key TEXT NOT NULL,
+            type TEXT NOT NULL,
+            item_type TEXT,
+            ref_target TEXT,
+            raw_type TEXT,
+            optional INTEGER NOT NULL DEFAULT 0,
+            nullable INTEGER NOT NULL DEFAULT 0,
+            line INTEGER NOT NULL,
+            UNIQUE(symbol_id, name)
+        )"""
+    )
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_schema_field_symbol ON schema_field(symbol_id)")
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS schema_binding (
+            id INTEGER PRIMARY KEY,
+            symbol_id INTEGER NOT NULL REFERENCES symbol(id) ON DELETE CASCADE,
+            entity TEXT NOT NULL,
+            entity_key TEXT NOT NULL,
+            line INTEGER,
+            UNIQUE(symbol_id, entity_key)
+        )"""
+    )
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_schema_binding_key ON schema_binding(entity_key)")
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS schema_link (
+            id INTEGER PRIMARY KEY,
+            entity_key TEXT NOT NULL,
+            a_symbol_id INTEGER NOT NULL REFERENCES symbol(id) ON DELETE CASCADE,
+            b_symbol_id INTEGER NOT NULL REFERENCES symbol(id) ON DELETE CASCADE,
+            UNIQUE(entity_key, a_symbol_id, b_symbol_id),
+            CHECK (a_symbol_id < b_symbol_id)
+        )"""
+    )
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_schema_link_a ON schema_link(a_symbol_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_schema_link_b ON schema_link(b_symbol_id)")
+    if conn.execute("SELECT 1 FROM symbol LIMIT 1").fetchone() is not None:
+        _flag_reextract(conn)
+
+
 # Ordered registry. Append-only — never reuse a version number.
 MIGRATIONS: list[Migration] = [
     (1, "drop_dead_tables", _m001_drop_dead_tables),
@@ -801,6 +860,7 @@ MIGRATIONS: list[Migration] = [
     (24, "spec_alias", _m024_spec_alias),
     (25, "tracks", _m025_tracks),
     (26, "track_spec_tier", _m026_track_spec_tier),
+    (27, "schema_symbols", _m027_schema_symbols),
 ]
 
 

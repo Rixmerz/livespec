@@ -28,6 +28,7 @@ from livespec_mcp.domain.extractors import (
 )
 from livespec_mcp.domain.languages import (
     EXTRACTOR_SUPPORTED,
+    SCHEMA_ONLY_LANGUAGES,
     detect_language,
     reset_grammar_failures,
 )
@@ -61,6 +62,10 @@ DEFAULT_IGNORES = {
     ".cache",
     ".mcp-docs",
 }
+
+# Languages a file is read for: full extractors, plus `.sql`, which yields only
+# schema tables and needs no tree-sitter grammar.
+_INDEXED_LANGUAGES = EXTRACTOR_SUPPORTED | SCHEMA_ONLY_LANGUAGES
 
 
 @dataclass
@@ -179,7 +184,7 @@ def _iter_files(
                 continue
             if _decide(p, is_dir=False, specs=specs):
                 continue
-            if lang not in EXTRACTOR_SUPPORTED:
+            if lang not in _INDEXED_LANGUAGES:
                 if unsupported is not None:
                     unsupported[lang] = unsupported.get(lang, 0) + 1
                 continue
@@ -381,6 +386,13 @@ def index_project(
             from livespec_mcp.domain.matcher import scan_annotations
 
             stats.spec_links_created = scan_annotations(conn, project_id=project_id).created
+            # `@schema: <entity>` bindings, then the links between every pair of
+            # symbols bound to one entity. DB-wide like _resolve_routes, so a
+            # group DB links the schemas of every repo in the group.
+            from livespec_mcp.domain.matcher import scan_schema_annotations
+
+            scan_schema_annotations(conn, project_id=project_id)
+            _resolve_schema_links(conn)
 
             # Restore manual spec_symbol links wiped by the symbol cascade. We
             # re-resolve symbol qname → new symbol_id and INSERT OR IGNORE,
@@ -564,6 +576,47 @@ def _replace_symbols(conn: sqlite3.Connection, *, file_id: int, result: ExtractR
                VALUES(?,?,?,?,?,?)""",
             (src_id, rt.role, rt.method, rt.path, normalize_route_path(rt.path), rt.line),
         )
+    _insert_schemas(conn, result=result, qname_to_id=qname_to_id)
+
+
+def _insert_schemas(
+    conn: sqlite3.Connection, *, result: ExtractResult, qname_to_id: dict[str, int]
+) -> None:
+    """@spec:schemas-schema-field-extraction
+
+    Persist the file's schema declarations and their fields in source order.
+    Rows hang off the symbol, so the cascade on re-extract replaces them along
+    with the symbols, exactly like symbol_ref and route_ref.
+    """
+    for sc in result.schemas:
+        symbol_id = qname_to_id.get(sc.src_qname)
+        if symbol_id is None:
+            continue
+        conn.execute(
+            "INSERT OR IGNORE INTO schema_decl(symbol_id, flavor) VALUES(?,?)",
+            (symbol_id, sc.flavor),
+        )
+        conn.executemany(
+            """INSERT OR IGNORE INTO schema_field(symbol_id, ordinal, name, field_key, type,
+                   item_type, ref_target, raw_type, optional, nullable, line)
+               VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
+            [
+                (
+                    symbol_id,
+                    ordinal,
+                    f.name,
+                    f.field_key,
+                    f.type,
+                    f.item_type,
+                    f.ref_target,
+                    f.raw_type,
+                    int(f.optional),
+                    int(f.nullable),
+                    f.line,
+                )
+                for ordinal, f in enumerate(sc.fields)
+            ],
+        )
 
 
 def _route_edge_weight(client_method: str | None, server_method: str | None) -> float | None:
@@ -622,6 +675,28 @@ def _resolve_routes(conn: sqlite3.Connection) -> int:
             )
             edge_count += 1
     return edge_count
+
+
+def _resolve_schema_links(conn: sqlite3.Connection) -> int:
+    """@spec:schemas-cross-repo-schema-linking
+
+    Link every pair of distinct symbols bound to the same entity, DB-wide.
+
+    Same scope argument as ``_resolve_routes``: one DB holds several projects
+    only through a shared ``[workspace] group_db``, so matching across the
+    whole connection is cross-repo when grouped and intra-repo otherwise.
+    INSERT OR IGNORE only, never DELETE: a link whose symbol was re-extracted
+    without its binding was cascaded away with the symbol, and survivors pair
+    up again with the new ids. Pairs are stored once, lower id first.
+    """
+    cur = conn.execute(
+        """INSERT OR IGNORE INTO schema_link(entity_key, a_symbol_id, b_symbol_id)
+           SELECT a.entity_key, a.symbol_id, b.symbol_id
+           FROM schema_binding a
+           JOIN schema_binding b
+             ON b.entity_key = a.entity_key AND a.symbol_id < b.symbol_id"""
+    )
+    return max(cur.rowcount, 0)
 
 
 def _is_caller_parameter(signature: str | None, target_name: str) -> bool:

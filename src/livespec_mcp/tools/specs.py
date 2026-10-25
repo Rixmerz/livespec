@@ -1297,6 +1297,8 @@ def register(
             for m in _ANY_ANNOTATION_RE.finditer(src):
                 verb = m.group("verb")
                 verb_lower = verb.lower()
+                if verb_lower in matcher.NON_SPEC_ANNOTATION_VERBS:
+                    continue  # a real verb, just not a Spec one (`@schema:`)
                 rest = m.group("rest")
                 token_ok = bool(token_re.search(rest))
                 verb_ok = verb_lower in recognized

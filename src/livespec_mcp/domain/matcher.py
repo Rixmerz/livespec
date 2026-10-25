@@ -27,6 +27,8 @@ from dataclasses import dataclass, field
 from functools import lru_cache
 from typing import Any
 
+from livespec_mcp.domain.schema_types import name_key
+
 # Bounded so a repo that renamed a whole capability doesn't return one entry
 # per annotated symbol. `unknown_ids` stays complete — only the sample is cut.
 _UNKNOWN_SAMPLE_MAX = 20
@@ -480,3 +482,79 @@ def scan_annotations(conn: sqlite3.Connection, project_id: int) -> ScanResult:
         deprecated_ids=deprecated,
         deprecated_sample=deprecated_sample,
     )
+
+
+# ---------- `@schema: <entity>` bindings ----------
+#
+# `@schema:` names the entity a schema describes; it is not a Spec reference.
+# Kept out of RECOGNIZED_PREFIX_VERBS and _PREFIX_HEAD_RE so it never creates a
+# spec_symbol row or an "unknown id"; tools that sweep for `@word:` verbs skip
+# the verbs listed here instead of flagging them as unrecognized.
+NON_SPEC_ANNOTATION_VERBS: frozenset[str] = frozenset({"schema"})
+
+_SCHEMA_HEAD_RE = re.compile(
+    r"""^\s*[#*]?\s*                       # optional comment leader, as for @spec:
+        @schema(?=[:=\s]|$)                # reject @schemas, @schema_x
+        [ \t]*[:=]?[ \t]*
+        (?P<entity>[A-Za-z][A-Za-z0-9_.-]{0,79})""",
+    re.IGNORECASE | re.MULTILINE | re.VERBOSE,
+)
+
+
+@dataclass(frozen=True)
+class SchemaAnnotation:
+    entity: str  # as written
+    entity_key: str  # name_key(entity): `user-profile` and `UserProfile` agree
+
+
+@dataclass
+class SchemaScanResult:
+    created: int
+
+
+def parse_schema_annotations(text: str) -> list[SchemaAnnotation]:
+    """@spec:schemas-schema-entity-annotation
+
+    Every `@schema: <entity>` line in a docstring or leading comment, in
+    order, one per entity key. Only the first token after the verb is the
+    entity; the rest of the line is prose.
+    """
+    if not text:
+        return []
+    out: list[SchemaAnnotation] = []
+    seen: set[str] = set()
+    for m in _SCHEMA_HEAD_RE.finditer(text):
+        entity = m.group("entity")
+        key = name_key(entity)
+        if key and key not in seen:
+            seen.add(key)
+            out.append(SchemaAnnotation(entity=entity, entity_key=key))
+    return out
+
+
+def scan_schema_annotations(conn: sqlite3.Connection, project_id: int) -> SchemaScanResult:
+    """@spec:schemas-schema-entity-annotation
+
+    Bind every symbol of the project whose docstring says `@schema: <entity>`.
+
+    INSERT OR IGNORE only: a binding that was removed from source died with
+    its symbol when the file was re-extracted. Symbols without a schema_decl
+    are bound too (the drift tool lists them apart); the binding's line is the
+    symbol's start line.
+    """
+    rows = conn.execute(
+        """SELECT s.id, s.docstring, s.start_line
+           FROM symbol s JOIN file f ON f.id = s.file_id
+           WHERE f.project_id = ? AND s.docstring LIKE '%@schema%'""",
+        (project_id,),
+    ).fetchall()
+    created = 0
+    for r in rows:
+        for ann in parse_schema_annotations(r["docstring"]):
+            cur = conn.execute(
+                """INSERT OR IGNORE INTO schema_binding(symbol_id, entity, entity_key, line)
+                   VALUES(?,?,?,?)""",
+                (int(r["id"]), ann.entity, ann.entity_key, r["start_line"]),
+            )
+            created += max(cur.rowcount, 0)
+    return SchemaScanResult(created=created)
