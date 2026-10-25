@@ -44,11 +44,73 @@ Todo el stack es local-first: 0 servicios externos, 0 API keys obligatorias, 0 D
 
 ## 3. Estado actual
 
+**HEAD: `02ac814` (P3, the last code commit of the phase) plus the P4 docs
+commit on top. Not pushed, not tagged; `pyproject.toml` stays at 0.33.0.**
+Virtual schema-first phase 1 of 3 is complete under `[Unreleased]`: 39 core /
+54 tools in all, migration 27, **1057 tests** (965 at v0.33.0). The owner's
+rule: nothing is pushed, tagged or version-bumped until all three phases are
+done.
+
+### v0.34 (Unreleased) — virtual schema-first, phase 1 of 3
+
+Shared data schemas stay where they live, and livespec now knows which
+declarations describe the same entity and where they drift, field by field.
+Pydantic models, dataclasses, TypeScript interfaces and object type aliases,
+Zod `z.object` consts and SQL `CREATE TABLE` (`.sql` files, read in pure Python
+with no grammar) are recorded with typed fields: 13 neutral types
+(`domain/schema_types.py`), optional and nullable kept apart, names matched
+through `name_key` (`user_id` = `userId`). A `@schema: <entity>` line binds a
+symbol to an entity without being a Spec annotation (`domain/matcher.py`);
+`indexer._resolve_schema_links` links every pair bound to one entity,
+database-wide, so a `group_db` links across repositories, in a dedicated
+`schema_link` table that stays out of the call graph. The core tool
+`schema_drift` and the resources `project://schemas` and
+`project://schemas/{entity}` report `missing_field`, `type_mismatch`,
+`nullability_mismatch` and `optional_mismatch` with file:line for every side
+(`domain/schema_drift.py`, `tools/schemas.py`). Migration 27 `schema_symbols`
+(4 tables) re-extracts existing indexes once. The OpenSpec change
+`openspec/changes/virtual-schema-first/` (capability `schemas`, six
+requirements) stays open until phases 2-3; until it is archived, the six
+`schemas-*` ids on the new code are unknown to the real repo's store, as
+expected.
+
+- **Commits**: `5cf4226` P0 OpenSpec change, `2aae3e2` P1 field-level
+  extraction, `13ae004` P2 persistence + `@schema:` + cross-repo links,
+  `02ac814` P3 `schema_drift` + resources, then P4 (this docs commit:
+  `tasks.md`, CHANGELOG, HANDOFF, ROADMAP, cross-repo guide). Tests 965 → 1008
+  (P1) → 1019 (P2) → 1057 (P3).
+- **Dogfood: archived copy** (temp dir): `openspec archive virtual-schema-first
+  -y` + the real Purpose → `openspec validate --all --strict` 13 passed, 0
+  failed. Indexed (216 files, 2262 symbols, no parser errors) and synced (30
+  specs, 3 changes) through `Client(mcp)`; `scan_spec_annotations` created 35
+  links and none of the six ids is unknown (the 7 unknown ids are pre-existing
+  test fixtures). `get_spec_implementation` returns 5 / 5 / 2 / 1 / 2 / 2
+  symbols for R1-R6: the 17 `@spec:schemas-*` annotations in `src/`.
+- **Dogfood: two-repo group** (backend: Pydantic model + `.sql` migration;
+  frontend: TS interface + Zod schema; all `@schema: user`): 4 schemas, 6
+  links, one finding of each kind (`lastLoginAt` missing in both backend
+  schemas, `is_active` bool vs SQL `INTEGER`, `email` nullable only in SQL,
+  `nickname` optional in Pydantic and Zod but not in the TS interface), 1
+  uncomparable (`payload`, a union), `created_at` = `createdAt` matched, a
+  bound function listed under `not_schemas`, and `entity="usr"` →
+  `did_you_mean: ["user"]`.
+- **Dogfood: livespec's own `storage/schema.sql`**: 28 `table` symbols (= its 28
+  `CREATE TABLE` statements; the FTS5 virtual table is skipped) with 194
+  fields, no parse error. Across the repo, 93 schema declarations: 50
+  dataclass, 31 sql_table, 5 zod, 3 pydantic, 3 ts_interface, 1 ts_type
+  (fixtures included).
+- **Dogfood finding (code left alone)**: `find_dead_code(include_non_python=True)`
+  lists all 28 `table` symbols of `storage/schema.sql` as removal candidates
+  (they have no callers); the default `find_dead_code` (8 candidates) is
+  unaffected. Open item 5 in 3a.
+
+### v0.33.0 summary (reference)
+
 **HEAD: `v0.33.0`, taggeado y liberado 2026-10-18.** Pin PyPI / plugin /
 `uvx livespec@0.33.0`. Trae los tracks y `CHANGESPEC.md` (PR #22: 4 tools core,
 38 core / 53 en total, migraciones 25 y 26) y `git_diff_impact` por símbolo.
 
-### v0.33.0 — tracks: specs cambiadas vs. solo tocadas
+**tracks: specs cambiadas vs. solo tocadas**
 
 Sobre `635e3cc` (rama `ccr-82a9fa1e-z0iknt`), un commit con código, docs y el
 cambio OpenSpec archivado. 965 tests.
@@ -1331,7 +1393,37 @@ v0.10 entera ejecutada en una sesión post-v0.9.0:
 
 ---
 
-## 3a. Plan v0.12 (próxima sesión, post `/clear`)
+## 3a. Next: virtual schema-first phases 2-3
+
+To resume: `read HANDOFF.md and continue`. Phase 1 sits on the branch,
+unpushed: no push, tag or `pyproject.toml` bump until all three phases are
+done. Open for phases 2-3:
+
+1. **`analyze_impact` following schema links.** Decide, with data, whether a
+   change to one declaration of an entity reports the other repositories'
+   declarations as impacted. Links stay out of `symbol_edge` either way (see
+   `design.md`: ingested non-call rows once turned 2 callers into 40).
+2. **`ALTER TABLE` folding.** Apply later migrations' column changes to their
+   table, in migration order, so a table spread across migrations stops
+   reporting false `missing_field` findings.
+3. **Cross-file bases.** Pydantic / dataclass bases, TypeScript `extends` and
+   Zod `.extend` from another file; extraction has no import graph, so this
+   runs after it.
+4. **Comparing `ref` targets.** Today `ref` ~ `ref` matches whatever each side
+   points to (`Address` vs `Location` is not reported).
+5. **Schema symbols as dead-code candidates.** Found by the phase 1 dogfood:
+   `table` symbols have no callers, so `find_dead_code(include_non_python=True)`
+   on livespec lists all 28 tables of `storage/schema.sql` as removal
+   candidates (37 in all; the default result, 8, has none). Zod `variable`
+   symbols appear once every filter is lifted. Exclude schema declarations (or
+   at least `table`) from dead-code candidates.
+6. **Archiving the change.** `openspec archive virtual-schema-first -y` in the
+   real tree, then replace the placeholder Purpose it writes for `schemas` (the
+   phase 1 dogfood did both on a copy and validated strict). That makes the
+   six `schemas-*` ids known to the store. Then cut the release per the
+   release flow in `CLAUDE.md`.
+
+## 3b. Plan v0.12 (reference)
 
 Para reanudar: `leé HANDOFF.md y continuá`. v0.11 cerró todos los
 bugs de session 05; **v0.12 P1 ya merged** (RAG wire). **Para v1.0

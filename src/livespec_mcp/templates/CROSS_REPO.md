@@ -18,6 +18,7 @@ Two complementary layers share one SQLite when configured:
 |-------|-----|------------|
 | **HTTP hops** | Client `requests`/`fetch` → server route | `who_does_this_call` → `invokes_endpoints`; `who_calls` → `route_callers`; `find_legacy_flows` |
 | **Shared Specs** | Same Spec id `xrepo-*` in **each** participating repo | `list_specs` / `get_spec_implementation`; the `livespec ui` group page |
+| **Shared schemas** | Same `@schema: <entity>` on each declaration of one entity | `schema_drift`; resources `project://schemas` / `project://schemas/{entity}` |
 
 livespec does **not** invent a single global Spec row. You **mirror** the same
 `xrepo-<slug>` id (and usually the same OpenSpec capability) in each repo that
@@ -95,7 +96,46 @@ From **any** member workspace (same `group_db`):
 
 ---
 
-## 4. Traps
+## 4. Link schemas across the group (`@schema:`)
+
+One entity is usually declared once per layer: a Zod schema or TS interface in
+the frontend, a Pydantic model or dataclass in the backend, a `CREATE TABLE` in
+a migration. Bind each declaration to the same entity name with an `@schema:`
+line in its docstring, JSDoc, or the `--` comment right above the table:
+
+```python
+class User(BaseModel):
+    """@schema: user"""
+```
+
+```ts
+/** @schema: user */
+export const UserSchema = z.object({ /* ... */ });
+```
+
+```sql
+-- @schema: user
+CREATE TABLE users ( /* ... */ );
+```
+
+Re-`index_project` each member: every run links all declarations bound to one
+entity in the `group_db` (entity and field names match across conventions:
+`user_profile` = `UserProfile`, `created_at` = `createdAt`). Then, from any
+member:
+
+| Intent | Call |
+|--------|------|
+| Does every declaration of an entity agree? | `schema_drift(entity="user")`: `missing_field`, `type_mismatch`, `nullability_mismatch`, `optional_mismatch`, file:line per side |
+| Which entities drift | `schema_drift(summary_only=True)` or resource `project://schemas` |
+| Every finding of one entity | resource `project://schemas/{entity}` |
+
+`@schema:` is not a Spec: it needs no Spec row and creates no Spec link.
+Without a `group_db`, links stay inside one repo. Not handled yet: `ALTER
+TABLE` in later migrations, and a base class or interface from another file.
+
+---
+
+## 5. Traps
 
 - **Annotation alone ≠ Spec row.** `@spec:xrepo-…` without a Spec in the store
   does not create the Spec. Sync OpenSpec or `create_spec` first.
@@ -108,7 +148,7 @@ From **any** member workspace (same `group_db`):
 
 ---
 
-## 5. Cold-open checklist (polyrepo session)
+## 6. Cold-open checklist (polyrepo session)
 
 ```
 1. Call get_cross_repo_guide (or read project://cross-repo / prompt cross_repo_workflow)
@@ -116,5 +156,6 @@ From **any** member workspace (same `group_db`):
 3. Read project://group — confirm grouped + xrepo_* counts
 4. list_specs / get_spec_implementation for the flow under discussion
 5. who_does_this_call / find_legacy_flows as needed
-6. `livespec ui` (`/livespec-ui`) if the user wants to browse the map
+6. schema_drift(summary_only=True) if declarations carry @schema:
+7. `livespec ui` (`/livespec-ui`) if the user wants to browse the map
 ```
