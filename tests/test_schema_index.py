@@ -313,7 +313,11 @@ async def test_find_dead_code_skips_sql_tables_and_zod_variables(workspace):
         dead = (
             await c.call_tool(
                 "find_dead_code",
-                {"include_non_python": True, "include_public": True, "include_infrastructure": True},
+                {
+                    "include_non_python": True,
+                    "include_public": True,
+                    "include_infrastructure": True,
+                },
             )
         ).data
     assert not {d["kind"] for d in dead["dead_symbols"]} & {"table", "variable"}
