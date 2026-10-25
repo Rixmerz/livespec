@@ -1,12 +1,15 @@
-"""Schema drift tool: do the declarations bound to one entity still agree?
+"""Schema tools: do the declarations bound to one entity still agree
+(``schema_drift``), and what does changing one of their fields touch
+(``schema_impact``)?
 
 A frontend Zod schema, a backend Pydantic model and a migration's
 ``CREATE TABLE`` that say ``@schema: user`` describe one entity. Inside a
 shared ``[workspace] group_db`` they may live in different repositories.
 
-The domain logic lives in ``domain/schema_drift.py``; this module scopes the
-call to the workspace's projects, pages the findings and shapes errors.
-``compute_schema_drift`` also backs the ``project://schemas`` resources.
+The domain logic lives in ``domain/schema_drift.py`` and
+``domain/schema_impact.py``; this module scopes each call to the workspace's
+projects, pages the results and shapes errors. ``compute_schema_drift`` also
+backs the ``project://schemas`` resources.
 """
 
 from __future__ import annotations
@@ -22,14 +25,31 @@ from livespec_mcp.domain.schema_drift import (
     compare_entity,
     load_entities,
 )
+from livespec_mcp.domain.schema_impact import (
+    FieldChange,
+    check_change,
+    project_names,
+    schema_change_impact,
+)
 from livespec_mcp.domain.schema_types import name_key
 from livespec_mcp.state import AppState, get_state
 from livespec_mcp.tool_params import Cursor, Limit, SummaryOnly
 from livespec_mcp.tools._errors import mcp_error
-from livespec_mcp.tools.analysis import _workspace_note
+from livespec_mcp.tools.analysis import _is_test_file_path, _workspace_note
 from livespec_mcp.workspace_param import Workspace
 
 _ANNOTATE_HINT = "annotate a schema with @schema: <entity> and re-run index_project"
+_UNGROUPED_IMPACT_HINT = (
+    "This workspace has no [workspace] group_db, so declarations and readers "
+    "in other repositories are not listed: set group_db in .livespec.toml on "
+    "each repository and re-run index_project on each"
+)
+_NO_GRAPH_READER_HINT = (
+    "No symbol reaches these declarations through the call graph. TS "
+    "interfaces and type aliases, Zod consts and SQL tables are used in type "
+    "positions, which are not call edges: find those uses with "
+    "grep_in_indexed_files on the declaration's name"
+)
 
 
 def _unknown_entity(entity: str, entities: list[BoundEntity]) -> dict[str, Any]:
@@ -133,6 +153,59 @@ def compute_schema_drift(
     return payload
 
 
+def compute_schema_impact(
+    st: AppState,
+    entity: str,
+    change: str,
+    field: str,
+    new_name: str | None = None,
+    new_type: str | None = None,
+    *,
+    max_depth: int = 3,
+    limit: int = 200,
+    cursor: int = 0,
+    summary_only: bool = False,
+) -> dict[str, Any]:
+    """The ``schema_impact`` payload, or an ``mcp_error``."""
+    pids = st.group_project_ids()
+    entities = load_entities(st.conn, pids)
+    chosen = next((e for e in entities if e.entity_key == name_key(entity)), None)
+    if chosen is None:
+        return _unknown_entity(entity, entities)
+    request = FieldChange(change, field, new_name, new_type)
+    problem = check_change(chosen, request)
+    if problem is not None:
+        return mcp_error(problem.error, did_you_mean=problem.did_you_mean)
+
+    impact = schema_change_impact(
+        st.conn, pids, chosen, request, max_depth=max_depth, is_test_path=_is_test_file_path
+    )
+    grouped = bool(st.settings.grouped)
+    payload: dict[str, Any] = {
+        "entity": chosen.entity,
+        "entity_key": chosen.entity_key,
+        "change": request.as_payload(),
+        "scope": {"grouped": grouped, "projects": project_names(st.conn, pids)},
+        "declarations": impact.declarations,
+    }
+    total = len(impact.readers)
+    if not summary_only:
+        payload["readers"] = impact.readers[cursor : cursor + limit]
+    payload["by_project"] = impact.by_project
+    payload["counts"] = impact.counts
+    next_cursor = cursor + limit if not summary_only and cursor + limit < total else None
+    payload.update({"limit": limit, "cursor": cursor, "next_cursor": next_cursor})
+
+    hints = []
+    if not grouped:
+        hints.append(_UNGROUPED_IMPACT_HINT)
+    if impact.graph_readers == 0:
+        hints.append(_NO_GRAPH_READER_HINT)
+    if hints:
+        payload["hint"] = ". ".join(hints)
+    return payload
+
+
 def register(mcp: FastMCP) -> None:
     @mcp.tool(annotations={"readOnlyHint": True, "idempotentHint": True})
     @_workspace_note
@@ -170,4 +243,62 @@ def register(mcp: FastMCP) -> None:
         st = get_state(workspace)
         return compute_schema_drift(
             st, entity, limit=limit, cursor=cursor, summary_only=summary_only
+        )
+
+    @mcp.tool(annotations={"readOnlyHint": True, "idempotentHint": True})
+    @_workspace_note
+    def schema_impact(
+        entity: str,
+        change: str,
+        field: str,
+        new_name: str | None = None,
+        new_type: str | None = None,
+        max_depth: int = 3,
+        limit: Limit = 200,
+        cursor: Cursor = 0,
+        summary_only: SummaryOnly = False,
+        workspace: Workspace | None = None,
+    ) -> dict[str, Any]:
+        """@spec:schemas-cross-repo-schema-impact
+
+        What breaks, here and in the other repositories, if I change this
+        field? Call it BEFORE adding, removing, renaming or retyping a field
+        of a schema bound with ``@schema: <entity>`` (Pydantic, dataclass,
+        TS interface or type, Zod, SQL table). ``analyze_impact`` does not
+        follow schema links; this is the tool for a shared field.
+
+        ``change`` is ``add`` | ``remove`` | ``rename`` (needs ``new_name``) |
+        ``retype`` (needs ``new_type``, a neutral type: string, int, float,
+        decimal, bool, datetime, date, uuid, json, enum, list, ref, unknown).
+        ``field`` matches by a convention-free key (``avatar_url`` =
+        ``avatarUrl``), by attribute or wire alias.
+
+        ``declarations``: every schema of the entity in scope (every project
+        of a ``[workspace] group_db``, home first) with its file, line,
+        matched field and ``action``: add | present, remove | absent,
+        rename | both_present | renamed | absent, retype | compatible (the
+        current type already carries the new one on that side's wire) |
+        absent. ``readers``: symbols that read the declarations that must
+        change, one row each with project, file, line, ``role`` (endpoint
+        with ``http_method`` / ``http_path``, test, symbol), ``via`` (``graph``
+        call cone up to ``max_depth`` across repos through HTTP routes,
+        ``schema_binding``, ``spec:<id>``), ``depth`` and ``reads``. Readers
+        are per declaration, not per field. Ordered by project, file, line.
+
+        ``limit`` / ``cursor`` page ``readers``; ``by_project`` and ``counts``
+        are exact. ``summary_only`` drops ``readers``. A ``hint`` says when
+        other repositories are out of scope (no group_db) or when no call
+        edge reaches the schema (type-position uses are not call edges)."""
+        st = get_state(workspace)
+        return compute_schema_impact(
+            st,
+            entity,
+            change,
+            field,
+            new_name,
+            new_type,
+            max_depth=max_depth,
+            limit=limit,
+            cursor=cursor,
+            summary_only=summary_only,
         )
