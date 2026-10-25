@@ -82,6 +82,7 @@ client cached the short tool list.
 | Borrow a second extractor's edges | `ingest_external_graph(graph_path?, dry_run=True)` | See §7.1; `remove=True` undoes it exactly |
 | Do the schemas of one entity agree? | `schema_drift(entity?)` | Field by field across every `@schema: <entity>` declaration (group-wide with `group_db`); see §5.9 |
 | What breaks if I change this field? | `schema_impact(entity, change, field)` | Call BEFORE adding / removing / renaming / retyping a shared field: each declaration's action + readers across repos; see §5.9 |
+| Make that field change in every repo | `plan_schema_change(entity, change, field)` | AFTER `schema_impact`: exact line edits per declaration across repos; plan first, `apply=True` only once the person agreed; see §5.9 |
 
 > **livespec speaks OpenSpec (Fission-AI).** If the repo has an `openspec/`
 > directory, livespec is the code-graph/traceability layer *beneath* it — it
@@ -131,13 +132,13 @@ Avoid the v0.7 chain `find_symbol → get_symbol_info → who_calls → …`.
 **Large repos (>30k symbols):** `summary_only=True`, `limit` + `cursor` on
 aggregators (`audit_coverage`, `find_dead_code`, `find_orphan_tests`,
 `find_endpoints`, `find_legacy_flows`, `git_diff_impact`, `schema_drift`,
-`schema_impact`);
+`schema_impact`, `plan_schema_change`);
 `min_weight=0.6` on
 traversals (default) drops resolver fan-out noise.
 
 **Polyrepo:** sibling repos can share `[workspace] group_db` in `.livespec.toml`.
 Then `find_legacy_flows`, `route_callers`, `invokes_endpoints`,
-`schema_drift` and `schema_impact` span the group.
+`schema_drift`, `schema_impact` and `plan_schema_change` span the group.
 
 **Cross-repo Specs:** mirror the same Spec id with prefix `xrepo-` in each
 participating repo (OpenSpec + `sync_openspec`, or `create_spec`), then
@@ -352,6 +353,27 @@ declarations that must change, one row per symbol with project, file, line,
 a field to the code in other repos. A hint about type positions means no call
 edge reaches the schema (TS types, Zod and SQL are used as types): search the
 names with `grep_in_indexed_files`.
+
+To make the change, call `plan_schema_change` with the same `entity`,
+`change`, `field` (`new_name`, `new_type`; `change="optionality"` takes
+`optional` and/or `nullable`; `new_type` is one of string, int, float,
+decimal, bool, datetime, date, uuid, json). It plans by default and writes
+nothing. Every declaration gets a `status`: `edit` with exact `edits` (`file`,
+`start_line`, `end_line`, `old_text`, `new_text`; whole lines, 1-based,
+inclusive), `none`, `manual` with a `reason` (edit that one by hand), or
+`stale` (changed since indexing, missing, or resolving outside its project
+root: re-run `index_project`). Names follow each side's convention
+(`contact_email` in Python and SQL, `contactEmail` in TS and Zod) and a
+Pydantic `Field(alias=...)` is renamed through its alias. An edited SQL table
+carries a `migration_hint` (`ALTER TABLE ...`): hand it to the person, it is
+never written. `readers` are `schema_impact`'s, paged by `limit` / `cursor`.
+Show the plan to the person; only once they agree, call it again with
+`apply=True` and `apply_workspaces=[<repo roots>]` (default: the calling
+workspace). Apply writes only those projects' files, lists the rest in
+`apply.not_applied`, refuses the whole apply (nothing written) when any file
+it would write changed since indexing, and does not re-index: run
+`index_project` on each root in `apply.reindex`, then `schema_drift(entity)`
+to confirm.
 
 After the edit, `git_diff_impact` reports the same thing for the range: a
 `schema_impact` entry per entity whose schema changed, with the fields added,

@@ -394,7 +394,7 @@ gates it, you build with live links; *brownfield* → `/livespec-onboard` orient
 `propose_specs_from_codebase` reconstructs intent, **author OpenSpec first**
 (export only as a bootstrap dump).
 
-## Tools (55 total: 40 core + 12 Spec plugin + 3 docs plugin)
+## Tools (56 total: 41 core + 12 Spec plugin + 3 docs plugin)
 
 Every tool requires `workspace` (absolute project root). Pass it on each call;
 omitting it is an error (no env fallback). LRU cache (8 workspaces) — one MCP
@@ -405,9 +405,9 @@ hides Spec mutation / doc tools from `tools/list` until the workspace has
 `spec` / `doc` rows, or you set `LIVESPEC_PLUGINS`.
 **`import_specs_from_markdown`** and **`sync_openspec`** stay always visible
 (brownfield bootstrap). After the first `workspace=` call on a repo with
-Specs, the menu grows to **52** tools (55 with doc rows). Reconnect the MCP host if your client cached an old tool list.
+Specs, the menu grows to **53** tools (56 with doc rows). Reconnect the MCP host if your client cached an old tool list.
 
-### Default surface — code intel + Spec agentic (40)
+### Default surface — code intel + Spec agentic (41)
 
 These tools answer the questions an agent ASKS on an unfamiliar codebase.
 Always registered (including markdown Spec import + OpenSpec sync).
@@ -668,9 +668,11 @@ A **track** is a macro-commit: a named git range (`base..head` — a branch, a
 PR, a run of commits) plus *why* it exists. `CHANGESPEC.md` at the workspace
 root is its versioned source of truth — newest first, per Spec: the OpenSpec
 requirement deltas and the symbols the range added / modified / removed, and
-why. The index is derived from it and rebuilt on every `index_project`. It is
-the one file livespec writes into a project, and only on an explicit
-`record_track` call.
+why. The index is derived from it and rebuilt on every `index_project`.
+livespec writes into a project in exactly two ways: `CHANGESPEC.md`, only on
+an explicit `record_track` call, and `plan_schema_change(apply=True)`, only
+into the declaration files of `apply_workspaces` and only when each still
+hashes as indexed.
 
 ```
 ## 2026-10-18 · Gamma lands (68f903d..d67bdc8)
@@ -708,7 +710,7 @@ deltas went from 37 Specs, all with sections, to 7 changed + 30 touched.
 - `get_symbol_history(symbol)` — tracks that changed a symbol and the Specs
   involved; removed symbols keep their history.
 
-#### Schemas — one entity, many declarations (2, v0.34)
+#### Schemas — one entity, many declarations (3, v0.34)
 
 Schemas stay where they live: a Zod schema or TypeScript types in the
 frontend, a Pydantic model or dataclass in the backend, a `CREATE TABLE` in a
@@ -740,6 +742,25 @@ every repository of the group are compared; without one, only the repo's own.
   field. `analyze_impact` does not follow schema links; this is the explicit
   path. Paginated like the aggregators; a hint says when type-position uses
   (TS types, Zod, SQL) left the call graph empty.
+- `plan_schema_change(entity, change, field, new_name=None, new_type=None,
+  optional=None, nullable=None, apply=False, apply_workspaces=None,
+  max_depth=3)` — *which exact lines make this change in every repo?* Call it
+  after `schema_impact`. For an `add`, `remove`, `rename`, `retype` or
+  `optionality` (`optional` / `nullable`) change of one field, lists every
+  declaration of the entity across the group with a `status`: `edit` with
+  exact line edits (`file`, `start_line`, `end_line`, `old_text`, `new_text`),
+  `none`, `manual` with the reason no exact edit exists, or `stale` when the
+  file changed since indexing. Names follow each side's convention
+  (`contact_email` in Python and SQL, `contactEmail` in TS and Zod) and a
+  Pydantic `Field(alias=...)` is renamed through its alias. An edited SQL
+  table carries a PostgreSQL `ALTER TABLE` migration hint, text that is never
+  written. Readers are `schema_impact`'s. Read-only by default:
+  `apply=True`, once the person agreed with the plan, writes the edits of the
+  projects in `apply_workspaces` (default: this workspace), lists the rest in
+  `apply.not_applied`, refuses the whole apply (nothing written) when any
+  file it would write changed since indexing, and never re-indexes
+  (`apply.reindex` lists the roots to index again). Paginated like the
+  aggregators (`readers`; declarations are never paged).
 - `git_diff_impact` `schema_impact` — one entry per entity whose schema the
   range changed: the fields added, removed, retyped or modified (base vs
   head), the action each asks of the other declarations, reader counts per
@@ -869,7 +890,8 @@ measured with the in-process middleware
 For repos > 30K symbols, pass `summary_only=True` on aggregator and
 traversal tools (`audit_coverage`, `find_dead_code`, `find_orphan_tests`,
 `find_endpoints`, `find_legacy_flows`, `git_diff_impact`, `who_calls`,
-`who_does_this_call`, `analyze_impact`) to keep payloads under ~200 KB. Counts
+`who_does_this_call`, `analyze_impact`, `plan_schema_change`) to keep payloads
+under ~200 KB. Counts
 stay exact regardless of pagination — see `bench/run.py --large` for the Django
 stress profile.
 

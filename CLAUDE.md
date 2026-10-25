@@ -112,7 +112,7 @@ populates new fields.
 ### Layered stack
 
 ```
-tools/          MCP-exposed surface (55 tools: 40 core + 12 Spec + 3 docs)
+tools/          MCP-exposed surface (56 tools: 41 core + 12 Spec + 3 docs)
   analysis.py     find_symbol, quick_orient, get_symbol_source, who_calls,
                   who_does_this_call, analyze_impact, audit_coverage,
                   find_dead_code, find_legacy_flows, find_orphan_tests,
@@ -131,7 +131,10 @@ tools/          MCP-exposed surface (55 tools: 40 core + 12 Spec + 3 docs)
                   to one `@schema:` entity, group-wide in a group_db; domain
                   in schema_drift.py) + compute_schema_drift, which also backs
                   the project://schemas resources; schema_impact (cross-repo
-                  impact of one field change; domain in schema_impact.py)
+                  impact of one field change; domain in schema_impact.py);
+                  plan_schema_change (exact line edits for that change in
+                  every declaration, apply mode writes them; domain in
+                  schema_edit.py + schema_plan.py)
   docs.py         shared doc helpers (doc tools live in plugins/docs.py)
   plugins/spec.py Spec mutation: create/update/delete_spec,
                   link_spec_symbol, link/unlink_spec_dependency,
@@ -173,6 +176,13 @@ domain/         Pure business logic, no MCP coupling
                   @schema bindings, shared Specs); also git_diff_impact's
                   schema_impact section (fields at base vs head from git).
                   Test-path rule injected by tools/ (layering)
+  schema_edit.py  pure text engine: the exact line edits one field change
+                  asks of one declaration (ast / tree-sitter / SQL lexer),
+                  'manual' with a reason when it cannot place one, SQL
+                  migration hint; no DB, no filesystem
+  schema_plan.py  plan_schema_change's planner (declaration status, freshness
+                  by content hash, schema_impact readers) and apply writer
+                  (temp file + os.replace, only inside apply_workspaces)
   external_graph.py  reads a Graphify graph.json (relation vocabulary, parse
                   cache keyed by path+mtime+size)
   external_source.py  pick + load + overlap-gate an external graph. The ONE
@@ -210,7 +220,8 @@ custom `warning` fields, no extra keys. Tested in `tests/test_error_shape.py`.
 
 **Aggregator pagination contract** (v0.7 B3): tools that return potentially
 unbounded collections (find_dead_code, audit_coverage, find_orphan_tests,
-find_endpoints, git_diff_impact, schema_impact) must accept `limit` (default
+find_endpoints, git_diff_impact, schema_impact, plan_schema_change) must
+accept `limit` (default
 200) +
 `cursor` + `summary_only=False`. Counts are always exact regardless of
 pagination. Triggered by 4M-7M-char payloads on a large Rust monorepo.
@@ -237,7 +248,7 @@ produce duplicate symbols at the same line. Keep the first occurrence
 The v0.8 curation pass shipped: battle-test data (3 sessions, 40 calls,
 11 bug fixes) drove the tier split. Current state:
 
-- **40 core tools** always registered: code intel (find_symbol,
+- **41 core tools** always registered: code intel (find_symbol,
   quick_orient, get_symbol_source, who_calls, who_does_this_call,
   analyze_impact, git_diff_impact, find_dead_code, find_legacy_flows,
   find_orphan_tests, find_endpoints, get_project_overview, index_project,
@@ -250,7 +261,7 @@ The v0.8 curation pass shipped: battle-test data (3 sessions, 40 calls,
   + cross-repo discovery (get_cross_repo_guide — v0.31.3)
   + tracks (propose_track, record_track, get_spec_history,
   get_symbol_history — v0.33)
-  + schemas (schema_drift, schema_impact — v0.34)
+  + schemas (schema_drift, schema_impact, plan_schema_change — v0.34)
   + scan_annotation_verbs.
 - **Plugin `livespec-spec` (12 tools)** — Spec mutation ceremony: CRUD,
   link/unlink, Spec-Spec graph, scans (import moved to core v0.19),
@@ -262,11 +273,15 @@ The v0.8 curation pass shipped: battle-test data (3 sessions, 40 calls,
   the FastAPI autowire — they wrote HTML/JS bundles into the user's repo. The
   human view is `livespec ui` (`ui/`), a read-only server over the user-level
   registry (`registry.py`, outside any repo). **Never write UI artifacts into
-  a project directory.** The one sanctioned write into a project is
-  `CHANGESPEC.md` at the workspace root, and only from an explicit
-  `record_track` call (never from indexing): it is a human-owned history
-  document like a CHANGELOG, versioned with the code, not a UI artifact. The
-  `track*` tables are derived from it and rebuilt on every `index_project`.
+  a project directory.** There are exactly two sanctioned writes into a
+  project. One is `CHANGESPEC.md` at the workspace root, and only from an
+  explicit `record_track` call (never from indexing): it is a human-owned
+  history document like a CHANGELOG, versioned with the code, not a UI
+  artifact. The `track*` tables are derived from it and rebuilt on every
+  `index_project`. The other is `plan_schema_change(apply=True)`: it rewrites
+  existing schema declaration files, only inside `apply_workspaces`, only
+  when each still hashes as indexed (otherwise nothing is written), and
+  never creates a file or writes the SQL migration hint.
 - **Dropped (v0.29):** agent_scratch / agent_scratch_get /
   agent_scratch_clear; dense-vector search (`embed_chunks`, `[embeddings]`).
 - **Dropped (v0.8-v0.9)**: list_files, get_index_status (resource

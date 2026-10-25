@@ -302,6 +302,42 @@ TOOL_PARAM_DESCRIPTIONS: dict[tuple[str, str], str] = {
         "The field's neutral type after a ``retype``: string, int, float, "
         "decimal, bool, datetime, date, uuid, json, enum, list, ref or unknown."
     ),
+    ("plan_schema_change", "entity"): (
+        "Entity name from a ``@schema: <entity>`` annotation; any spelling "
+        "matches (``user-profile`` = ``UserProfile``). Required."
+    ),
+    ("plan_schema_change", "change"): (
+        "The field change to plan: ``add`` (needs ``new_type``), ``remove``, "
+        "``rename`` (needs ``new_name``), ``retype`` (needs ``new_type``) or "
+        "``optionality`` (needs ``optional`` and/or ``nullable``)."
+    ),
+    ("plan_schema_change", "field"): (
+        "The field to change (for ``add``, the new field's name), as any "
+        "declaration writes it or by its wire alias; ``avatar_url`` = ``avatarUrl``."
+    ),
+    ("plan_schema_change", "new_name"): (
+        "The field's name after a ``rename``; each declaration spells it in its own convention."
+    ),
+    ("plan_schema_change", "new_type"): (
+        "The field's neutral type for ``add`` or ``retype``: string, int, float, "
+        "decimal, bool, datetime, date, uuid or json."
+    ),
+    ("plan_schema_change", "optional"): (
+        "For ``optionality`` or ``add``: whether a payload may omit the field. "
+        "Never edited on a SQL table."
+    ),
+    ("plan_schema_change", "nullable"): (
+        "For ``optionality`` or ``add``: whether the field may hold null."
+    ),
+    ("plan_schema_change", "apply"): (
+        "If true, write the planned edits into the files of ``apply_workspaces``. "
+        "Default false: plan only, nothing is written. Apply only once the "
+        "person agreed with the plan."
+    ),
+    ("plan_schema_change", "apply_workspaces"): (
+        "With ``apply=True``: absolute roots of the projects whose files may be "
+        "written; each must be a project in scope. Default: this workspace."
+    ),
     ("apply_spec_change", "name"): "OpenSpec change folder name to apply.",
     ("archive_spec_change", "name"): "OpenSpec change folder name to archive.",
 }

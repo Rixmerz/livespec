@@ -3,8 +3,10 @@
 The file is the source of truth; the ``track`` / ``track_spec`` /
 ``track_symbol`` tables are derived from it and rebuilt on every index run
 (``ingest_changespec``). It is written only by an explicit ``record_track``
-call — never by indexing — and it is the one file livespec writes into a
-project: a human-owned history document, like a CHANGELOG, not a UI artifact.
+call — never by indexing: a human-owned history document, like a CHANGELOG,
+not a UI artifact. It is one of the two writes livespec makes into a project;
+the other is ``plan_schema_change(apply=True)``, into the declaration files of
+``apply_workspaces`` only, each checked against its indexed hash.
 
 Format (newest first; prose is the caller's, headings and markers are fixed)::
 

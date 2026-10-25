@@ -55,6 +55,7 @@ Call tools from **any** member workspace (usually the hub/composer). Then:
 | Likely-unused HTTP flows | `find_legacy_flows(summary_only=True)` — then full list |
 | Do the repos' schemas of one entity agree? | `schema_drift(entity?)` — every `@schema: <entity>` declaration of the group, field by field; `project://schemas` |
 | What breaks in the other repos if I change this field? | `schema_impact(entity, change, field)` — BEFORE the edit: each declaration's action + readers per repo (route callers included) |
+| Make that field change in every repo | `plan_schema_change(entity, change, field)` — AFTER `schema_impact`: exact line edits per declaration; plan first, `apply=True` only once the person agreed |
 | Human view of the group | `/livespec-ui` (or `livespec ui`) — group page lists repos, cross-repo Specs, route hops; read-only, writes nothing into any repo |
 
 **Cross-repo Specs (`xrepo-*`):** livespec does not invent one global Spec row.
@@ -159,6 +160,7 @@ of the group are compared; without one, only the repository's own.
 | One entity only | `schema_drift(entity="user")` — unknown names return `did_you_mean` |
 | Read drift without paging | resources `project://schemas` (counts) and `project://schemas/{entity}` (every finding) |
 | "What breaks if I add / remove / rename / retype this field?" | `schema_impact(entity="user", change="rename", field="email", new_name="contact_email")` — call it BEFORE editing a shared field; `retype` takes `new_type` (a neutral type) |
+| "Make this field change in every repo" | `plan_schema_change(entity="user", change="rename", field="email", new_name="contact_email")` — after `schema_impact`; plans by default, `apply=True` only once the person agreed |
 | "Which schemas did this diff change, and who reads them?" | `git_diff_impact(base_ref, head_ref)` → `schema_impact` key |
 
 `schema_impact` lists every declaration of the entity in the group with the
@@ -175,6 +177,25 @@ field. `analyze_impact` does not follow schema links: for a field, this is the
 tool. A `hint` about type positions means no call edge reaches the schema (TS
 types, Zod and SQL are used as types, not called): search their names with
 `grep_in_indexed_files`.
+
+To make the change, call `plan_schema_change` with the same `entity`,
+`change`, `field` (`new_name`, `new_type`; `change="optionality"` takes
+`optional` and/or `nullable`; `new_type` is one of string, int, float,
+decimal, bool, datetime, date, uuid, json). It plans by default and writes
+nothing. Every declaration gets a `status`: `edit` with exact `edits` (`file`,
+`start_line`, `end_line`, `old_text`, `new_text`; whole lines, 1-based,
+inclusive), `none`, `manual` with a `reason` (edit that one by hand), or
+`stale` (changed since indexing, missing, or resolving outside its project
+root: re-run `index_project`). Names follow each side's convention and a
+Pydantic `Field(alias=...)` is renamed through its alias. An edited SQL table
+carries a `migration_hint` (`ALTER TABLE ...`): hand it to the person, it is
+never written. `readers` are `schema_impact`'s, paged. Show the plan to the
+person; only once they agree, call it again with `apply=True` and
+`apply_workspaces=[<repo roots>]` (default: the calling workspace). Apply
+writes only those projects' files, lists the rest in `apply.not_applied`,
+refuses the whole apply (nothing written) when any file it would write
+changed since indexing, and does not re-index: run `index_project` on each
+root in `apply.reindex`, then `schema_drift(entity)` to confirm.
 
 `git_diff_impact`'s `schema_impact` holds, per entity whose bound schema the
 range changed: `changed` (each declaration's `field_changes` base vs head:
@@ -351,7 +372,7 @@ Unlock with doc rows or `LIVESPEC_PLUGINS=docs|all`. (The old `export_explorer` 
 ## Pagination contract
 
 Aggregators (`find_dead_code`, `audit_coverage`, `find_orphan_tests`, `find_endpoints`,
-`find_legacy_flows`, `git_diff_impact`, `schema_drift`, `schema_impact`) accept `limit` (default 200) + `cursor` +
+`find_legacy_flows`, `git_diff_impact`, `schema_drift`, `schema_impact`, `plan_schema_change`) accept `limit` (default 200) + `cursor` +
 `summary_only=False`. Counts are always exact regardless of pagination. If a
 payload comes back with `payload_warning`, switch to `summary_only=True` and paginate.
 

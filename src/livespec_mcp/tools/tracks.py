@@ -239,8 +239,10 @@ def register(mcp: FastMCP) -> None:
         Returns ``changed_specs`` / ``touched_specs`` (spec ids, paged by
         ``limit`` / ``cursor``, exact ``counts``); ``summary_only`` drops the
         lists and ``entry_markdown``. ``CHANGESPEC.md`` is the source of truth — the index is
-        rebuilt from it on every ``index_project`` — and it is the one file
-        livespec writes into a project."""
+        rebuilt from it on every ``index_project``. It is one of the two writes
+        livespec makes into a project; the other is
+        ``plan_schema_change(apply=True)``, into the declaration files of
+        ``apply_workspaces`` only, each checked against its indexed hash."""
         st = get_state(workspace)
         if not title or not title.strip():
             return mcp_error("title is required", hint="a short name for the track")
