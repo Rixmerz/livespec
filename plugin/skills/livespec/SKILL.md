@@ -54,6 +54,7 @@ Call tools from **any** member workspace (usually the hub/composer). Then:
 | Shared Specs across repos | Mirror Spec ids as `xrepo-*` in **each** repo + `@spec:xrepo-…`; `get_cross_repo_guide` / `list_specs` / `get_spec_implementation`; `project://group` |
 | Likely-unused HTTP flows | `find_legacy_flows(summary_only=True)` — then full list |
 | Do the repos' schemas of one entity agree? | `schema_drift(entity?)` — every `@schema: <entity>` declaration of the group, field by field; `project://schemas` |
+| What breaks in the other repos if I change this field? | `schema_impact(entity, change, field)` — BEFORE the edit: each declaration's action + readers per repo (route callers included) |
 | Human view of the group | `/livespec-ui` (or `livespec ui`) — group page lists repos, cross-repo Specs, route hops; read-only, writes nothing into any repo |
 
 **Cross-repo Specs (`xrepo-*`):** livespec does not invent one global Spec row.
@@ -99,7 +100,7 @@ it is not a background watcher you should lean on while editing.
 | Who calls this? | `who_calls(qname, max_depth=1)` — `summary_only=True` on huge repos |
 | What does this call? | `who_does_this_call(qname, max_depth=1)` |
 | Blast radius + Spec rollup | `analyze_impact(target_type, target, max_depth)` — `symbol`\|`file`\|`spec` |
-| PR / diff scope | `git_diff_impact(base_ref, head_ref)` — git repos only; symbol-precise (an untouched function in a changed file is not listed) |
+| PR / diff scope | `git_diff_impact(base_ref, head_ref)` — git repos only; symbol-precise (an untouched function in a changed file is not listed); a `schema_impact` key appears when a `@schema:` declaration changed |
 | Keyword search over chunks | `search(query, scope)` — FTS5 over AST-aware symbol + Spec chunks |
 | Literal string search over indexed files | `grep_in_indexed_files(pattern)` — check `scope_fresh`, see the staleness trap below |
 | Dead-code candidates | `find_dead_code()` — respects entry points / `pub` / frameworks; TS-only auto-enables `include_non_python` |
@@ -157,6 +158,31 @@ of the group are compared; without one, only the repository's own.
 | "Do my frontend, backend and database schemas agree?" | `schema_drift()` — per entity: `missing_field`, `type_mismatch`, `nullability_mismatch`, `optional_mismatch`, each side with project, file, line; `summary_only=True` for counts |
 | One entity only | `schema_drift(entity="user")` — unknown names return `did_you_mean` |
 | Read drift without paging | resources `project://schemas` (counts) and `project://schemas/{entity}` (every finding) |
+| "What breaks if I add / remove / rename / retype this field?" | `schema_impact(entity="user", change="rename", field="email", new_name="contact_email")` — call it BEFORE editing a shared field; `retype` takes `new_type` (a neutral type) |
+| "Which schemas did this diff change, and who reads them?" | `git_diff_impact(base_ref, head_ref)` → `schema_impact` key |
+
+`schema_impact` lists every declaration of the entity in the group with the
+`action` the change asks of it: `add`/`present`, `remove`/`absent`,
+`rename`/`both_present`/`renamed` (already renamed there)/`absent`,
+`retype`/`compatible` (that side's wire type already carries it, e.g. a TS
+`string` for `uuid`)/`absent`. Then the `readers` of the declarations that must
+change, one row per symbol with project, file, line, `role` (`endpoint` with
+`http_method`/`http_path`, `test`, `symbol`), `depth` and `via`: `graph` (the
+call cone, up to `max_depth=3`, crossing repos through HTTP routes),
+`schema_binding` (bound with `@schema:` but not a schema) or `spec:<id>`
+(shares a Spec with a declaration). Readers are per declaration, not per
+field. `analyze_impact` does not follow schema links: for a field, this is the
+tool. A `hint` about type positions means no call edge reaches the schema (TS
+types, Zod and SQL are used as types, not called): search their names with
+`grep_in_indexed_files`.
+
+`git_diff_impact`'s `schema_impact` holds, per entity whose bound schema the
+range changed: `changed` (each declaration's `field_changes` base vs head:
+`added`, `removed`, `retyped`, `modified`; a rename is removed + added;
+`field_changes_unknown` when a side cannot be read), the other `declarations`
+with the `actions` those changes ask of them, `readers` (counts per project
+plus a 5-per-project `sample`, dropped by `summary_only`) and `follow_up`
+`schema_impact(...)` calls. No bound schema changed → no key at all.
 
 Not mismatches by design: `snake_case` vs `camelCase` names, types JSON
 carries as strings or one number type (TS `string` vs `UUID` / `datetime`,
@@ -325,7 +351,7 @@ Unlock with doc rows or `LIVESPEC_PLUGINS=docs|all`. (The old `export_explorer` 
 ## Pagination contract
 
 Aggregators (`find_dead_code`, `audit_coverage`, `find_orphan_tests`, `find_endpoints`,
-`find_legacy_flows`, `git_diff_impact`, `schema_drift`) accept `limit` (default 200) + `cursor` +
+`find_legacy_flows`, `git_diff_impact`, `schema_drift`, `schema_impact`) accept `limit` (default 200) + `cursor` +
 `summary_only=False`. Counts are always exact regardless of pagination. If a
 payload comes back with `payload_warning`, switch to `summary_only=True` and paginate.
 

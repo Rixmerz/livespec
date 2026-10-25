@@ -63,6 +63,9 @@ class SymbolRef:
     project: str
     file: str
     line: int
+    # Last and defaulted so refs built by hand keep working; `as_payload`
+    # leaves it out, so the schema_drift payload does not carry it.
+    symbol_id: int | None = None
 
     def as_payload(self) -> dict[str, Any]:
         return {
@@ -167,6 +170,7 @@ def load_entities(conn: sqlite3.Connection, project_ids: Sequence[int]) -> list[
                 project=r["project"],
                 file=r["path"],
                 line=int(r["start_line"]),
+                symbol_id=int(r["symbol_id"]),
             )
             if r["flavor"] is None:
                 not_schemas.append(ref)
@@ -224,7 +228,9 @@ def compare_entity(
             if any(_uncomparable(f) for _, f in holders):
                 uncomparable += 1
             elif any(
-                not _compatible(a.flavor, fa.type, fa.item_type, b.flavor, fb.type, fb.item_type)
+                not compatible_types(
+                    a.flavor, fa.type, fa.item_type, b.flavor, fb.type, fb.item_type
+                )
                 for (a, fa), (b, fb) in combinations(holders, 2)
             ):
                 findings.append(_finding(entity_key, "type_mismatch", name, key, holders))
@@ -260,7 +266,7 @@ def _loose(flavor: str, mine: str, theirs: str) -> bool:
     return theirs in rules.get(mine, frozenset())
 
 
-def _compatible(
+def compatible_types(
     a_flavor: str,
     a_type: str | None,
     a_item: str | None,
@@ -271,7 +277,7 @@ def _compatible(
     """Whether two neutral types can describe the same value; `ref` ~ `ref`
     whatever the targets, and lists compare their items by the same rules."""
     if a_type == b_type == "list":
-        return _compatible(a_flavor, a_item, None, b_flavor, b_item, None)
+        return compatible_types(a_flavor, a_item, None, b_flavor, b_item, None)
     if a_type == b_type:
         return True
     if a_type is None or b_type is None:

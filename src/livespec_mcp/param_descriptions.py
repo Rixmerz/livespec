@@ -285,6 +285,23 @@ TOOL_PARAM_DESCRIPTIONS: dict[tuple[str, str], str] = {
         "``fn``). ``::``, ``#`` and ``.`` are interchangeable; removed symbols "
         "still match."
     ),
+    ("schema_impact", "entity"): (
+        "Entity name from a ``@schema: <entity>`` annotation; any spelling "
+        "matches (``user-profile`` = ``UserProfile``). Required."
+    ),
+    ("schema_impact", "change"): (
+        "The proposed field change: ``add``, ``remove``, ``rename`` (needs "
+        "``new_name``) or ``retype`` (needs ``new_type``)."
+    ),
+    ("schema_impact", "field"): (
+        "The field to change, as any declaration writes it or by its wire "
+        "alias; ``avatar_url`` = ``avatarUrl``."
+    ),
+    ("schema_impact", "new_name"): "The field's name after a ``rename``.",
+    ("schema_impact", "new_type"): (
+        "The field's neutral type after a ``retype``: string, int, float, "
+        "decimal, bool, datetime, date, uuid, json, enum, list, ref or unknown."
+    ),
     ("apply_spec_change", "name"): "OpenSpec change folder name to apply.",
     ("archive_spec_change", "name"): "OpenSpec change folder name to archive.",
 }

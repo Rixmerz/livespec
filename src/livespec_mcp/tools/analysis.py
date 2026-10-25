@@ -43,6 +43,7 @@ from livespec_mcp.domain.graph import (
 from livespec_mcp.domain.indexer import DEFAULT_IGNORES, _hash_bytes, _iter_files
 from livespec_mcp.domain.languages import detect_language
 from livespec_mcp.domain.legacy_flows import compute_legacy_flows
+from livespec_mcp.domain.schema_impact import diff_schema_impact
 from livespec_mcp.domain.test_coverage_reports import discover_report_coverage
 from livespec_mcp.domain.tracks import changed_qnames_by_path
 from livespec_mcp.state import AppState, get_state
@@ -5518,6 +5519,14 @@ def register(mcp: FastMCP) -> None:
         4. unions the affected Specs
         5. suggests test files: any file under `tests/` (or `*_test.*`) whose
            symbols call any impacted symbol — those are likely to break.
+        6. when a changed symbol is a schema bound with `@schema: <entity>`,
+           adds `schema_impact` (one entry per entity) and
+           `counts.schema_entities`: the fields the range added, removed,
+           retyped or modified in it (base vs head), the action each asks of
+           the entity's other declarations across the `group_db`, reader
+           counts per project with a sample (dropped by `summary_only`), and
+           `follow_up` calls of `schema_impact`. Absent when no bound schema
+           changed (@spec:schemas-schema-impact-of-a-diff).
 
         Returns an empty result with `error` if either ref is unknown to git.
         Run `index_project` first if results look stale.
@@ -5682,6 +5691,20 @@ def register(mcp: FastMCP) -> None:
                 "(.dockerignore, *.properties, markdown, …) never yield "
                 "symbols. For source files: run `index_project` then retry."
             )
+        schema_entries = diff_schema_impact(
+            st.conn,
+            ws_root,
+            base_ref,
+            head_ref,
+            entries,
+            changed_sym_ids,
+            st.group_project_ids(),
+            is_test_path=_is_test_file_path,
+            summary_only=summary_only,
+        )
+        if schema_entries:
+            counts["schema_entities"] = len(schema_entries)
+            base["schema_impact"] = schema_entries
         if summary_only:
             # v0.16 fix: honor summary_only for real — the full path lists
             # (changed_files / _indexed / _unindexed) were previously

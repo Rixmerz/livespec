@@ -103,6 +103,7 @@ Built for the questions an agent asks on an unfamiliar codebase:
 - ¿Qué módulos no tienen ningún Spec asociado?
 - ¿Qué Specs dependen de `auth-user-login` transitivamente?
 - Do my frontend, backend and database schemas agree?
+- What breaks in the other repos if I rename this field?
 
 Spec traceability is the differentiator. Most code-intel tools stop at "what
 calls this function?". livespec layers Spec ↔ code links (functional
@@ -393,7 +394,7 @@ gates it, you build with live links; *brownfield* → `/livespec-onboard` orient
 `propose_specs_from_codebase` reconstructs intent, **author OpenSpec first**
 (export only as a bootstrap dump).
 
-## Tools (54 total: 39 core + 12 Spec plugin + 3 docs plugin)
+## Tools (55 total: 40 core + 12 Spec plugin + 3 docs plugin)
 
 Every tool requires `workspace` (absolute project root). Pass it on each call;
 omitting it is an error (no env fallback). LRU cache (8 workspaces) — one MCP
@@ -404,9 +405,9 @@ hides Spec mutation / doc tools from `tools/list` until the workspace has
 `spec` / `doc` rows, or you set `LIVESPEC_PLUGINS`.
 **`import_specs_from_markdown`** and **`sync_openspec`** stay always visible
 (brownfield bootstrap). After the first `workspace=` call on a repo with
-Specs, the menu grows to **51** tools (54 with doc rows). Reconnect the MCP host if your client cached an old tool list.
+Specs, the menu grows to **52** tools (55 with doc rows). Reconnect the MCP host if your client cached an old tool list.
 
-### Default surface — code intel + Spec agentic (39)
+### Default surface — code intel + Spec agentic (40)
 
 These tools answer the questions an agent ASKS on an unfamiliar codebase.
 Always registered (including markdown Spec import + OpenSpec sync).
@@ -549,6 +550,9 @@ Always registered (including markdown Spec import + OpenSpec sync).
   PR-review entry point. **(v0.33)** `changed_symbols` is symbol-precise: only
   what the range added, modified (normalised body hash) or removed, not every
   symbol of a touched file (a Deno Fresh app's 39-file commit: 274 → 25).
+  **(v0.34)** When the range changes a schema bound with `@schema:`, the
+  payload gains `schema_impact` (see *Schemas* below) and
+  `counts.schema_entities`; otherwise it is unchanged.
 - `find_dead_code(include_infrastructure=False, corroborate_with=None)` —
   symbols with zero callers and zero Spec links. Skips entry-point paths,
   framework decorators, `__main__` guards, list-stored callbacks.
@@ -704,7 +708,7 @@ deltas went from 37 Specs, all with sections, to 7 changed + 30 touched.
 - `get_symbol_history(symbol)` — tracks that changed a symbol and the Specs
   involved; removed symbols keep their history.
 
-#### Schema drift — one entity, many declarations (1, v0.34)
+#### Schemas — one entity, many declarations (2, v0.34)
 
 Schemas stay where they live: a Zod schema or TypeScript types in the
 frontend, a Pydantic model or dataclass in the backend, a `CREATE TABLE` in a
@@ -723,6 +727,24 @@ every repository of the group are compared; without one, only the repo's own.
   a type no rule maps is counted as `uncomparable`. Paginated (`limit`,
   `cursor`, `summary_only`, exact counts); an unknown entity returns
   `did_you_mean`.
+- `schema_impact(entity, change, field, new_name=None, new_type=None,
+  max_depth=3)` — *what breaks in the other repos if I rename this field?*
+  For a proposed `add`, `remove`, `rename` or `retype` of one field, lists
+  every declaration of the entity across the group with the action it needs
+  (`add`/`present`, `remove`/`absent`, `rename`/`both_present`/`renamed`,
+  `retype`/`compatible`) and the matched field's line, then every reader of
+  the declarations that must change: callers through the call graph (across
+  repos through HTTP routes), symbols bound with `@schema:` and symbols
+  sharing a Spec, each with project, file, line and role (`endpoint` with its
+  method and path, `test`, `symbol`). Readers are per declaration, not per
+  field. `analyze_impact` does not follow schema links; this is the explicit
+  path. Paginated like the aggregators; a hint says when type-position uses
+  (TS types, Zod, SQL) left the call graph empty.
+- `git_diff_impact` `schema_impact` — one entry per entity whose schema the
+  range changed: the fields added, removed, retyped or modified (base vs
+  head), the action each asks of the other declarations, reader counts per
+  project with a sample of 5 each (`summary_only` drops it), and `follow_up`
+  `schema_impact(...)` calls.
 
 ### `livespec-spec` plugin — Spec mutation (12)
 

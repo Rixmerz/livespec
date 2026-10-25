@@ -55,7 +55,7 @@ client cached the short tool list.
 | Who calls this? | `who_calls(qname, max_depth=1)` | Use `summary_only=True` on huge repos; `route_callers` for HTTP |
 | What does this call? | `who_does_this_call(qname, max_depth=1)` | Forward cone + `invokes_endpoints` (cross-repo with `group_db`) |
 | Blast radius + Spec rollup | `analyze_impact(target_type, target, max_depth)` | `symbol` \| `file` \| `spec` |
-| PR / diff scope | `git_diff_impact(base_ref, head_ref)` | Inside a git repo only; symbol-precise changed set |
+| PR / diff scope | `git_diff_impact(base_ref, head_ref)` | Inside a git repo only; symbol-precise changed set; `schema_impact` key when a `@schema:` declaration changed |
 | Draft a track (range → per-Spec changes) | `propose_track(base_ref, head_ref)` | Writes nothing; `changed_specs` (OpenSpec delta, or the first `@spec:` of changed code) vs `touched_specs` (only through shared code), symbols added/modified/removed, OpenSpec deltas, `unlinked` code |
 | Record a track in `CHANGESPEC.md` | `record_track(base_ref, head_ref, title, why, spec_reasons)` | Only after the person confirmed the whys; idempotent per range; touched Specs go on one `Also touched:` line unless `include_touched_sections=True` |
 | How did a Spec evolve? | `get_spec_history(spec_id)` | Tracks newest first, each `tier` changed or touched; aliases accepted; paginated |
@@ -81,6 +81,7 @@ client cached the short tool list.
 | Annotations the extractor cannot see | `scan_annotation_verbs()` | `@spec:` above a bare route registration that owns no symbol |
 | Borrow a second extractor's edges | `ingest_external_graph(graph_path?, dry_run=True)` | See §7.1; `remove=True` undoes it exactly |
 | Do the schemas of one entity agree? | `schema_drift(entity?)` | Field by field across every `@schema: <entity>` declaration (group-wide with `group_db`); see §5.9 |
+| What breaks if I change this field? | `schema_impact(entity, change, field)` | Call BEFORE adding / removing / renaming / retyping a shared field: each declaration's action + readers across repos; see §5.9 |
 
 > **livespec speaks OpenSpec (Fission-AI).** If the repo has an `openspec/`
 > directory, livespec is the code-graph/traceability layer *beneath* it — it
@@ -129,13 +130,14 @@ Avoid the v0.7 chain `find_symbol → get_symbol_info → who_calls → …`.
 
 **Large repos (>30k symbols):** `summary_only=True`, `limit` + `cursor` on
 aggregators (`audit_coverage`, `find_dead_code`, `find_orphan_tests`,
-`find_endpoints`, `find_legacy_flows`, `git_diff_impact`, `schema_drift`);
+`find_endpoints`, `find_legacy_flows`, `git_diff_impact`, `schema_drift`,
+`schema_impact`);
 `min_weight=0.6` on
 traversals (default) drops resolver fan-out noise.
 
 **Polyrepo:** sibling repos can share `[workspace] group_db` in `.livespec.toml`.
-Then `find_legacy_flows`, `route_callers`, `invokes_endpoints` and
-`schema_drift` span the group.
+Then `find_legacy_flows`, `route_callers`, `invokes_endpoints`,
+`schema_drift` and `schema_impact` span the group.
 
 **Cross-repo Specs:** mirror the same Spec id with prefix `xrepo-` in each
 participating repo (OpenSpec + `sync_openspec`, or `create_spec`), then
@@ -334,6 +336,28 @@ judged against a SQL column; `uncomparable` counts the fields whose type no
 rule maps. A `group_db` hint means the entity has one schema in scope.
 `project://schemas` and `project://schemas/{entity}` serve the same data
 without paging.
+
+Before you add, remove, rename or retype a field of a bound schema, call
+`schema_impact(entity, change, field, new_name?, new_type?)`. `change` is
+`add`, `remove`, `rename` (with `new_name`) or `retype` (with `new_type`, a
+neutral type such as `uuid`). It lists every declaration of the entity in the
+group with the `action` it needs: `add`/`present`, `remove`/`absent`,
+`rename`/`both_present`/`renamed`/`absent`, `retype`/`compatible` (that side's
+wire type already carries the new one)/`absent`. Then the `readers` of the
+declarations that must change, one row per symbol with project, file, line,
+`role` (`endpoint` with method and path, `test`, `symbol`) and `via`: `graph`
+(the call cone up to `max_depth=3`, across repos through HTTP routes),
+`schema_binding` or `spec:<id>`. Readers are per declaration, not per field.
+`analyze_impact` does not follow schema links; `schema_impact` is the path from
+a field to the code in other repos. A hint about type positions means no call
+edge reaches the schema (TS types, Zod and SQL are used as types): search the
+names with `grep_in_indexed_files`.
+
+After the edit, `git_diff_impact` reports the same thing for the range: a
+`schema_impact` entry per entity whose schema changed, with the fields added,
+removed, retyped or modified (base vs head; a rename is removed + added), the
+actions they ask of the other declarations, reader counts per project with a
+sample (`summary_only` drops it) and `follow_up` calls of `schema_impact`.
 
 ---
 
