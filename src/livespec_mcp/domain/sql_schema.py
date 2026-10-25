@@ -31,7 +31,7 @@ _TOKEN_RE = re.compile(
       (?P<ws>\s+)
     | (?P<lcomment>--[^\n]*)
     | (?P<bcomment>/\*.*?(?:\*/|\Z))
-    | (?P<string>'(?:[^']|'')*(?:'|\Z))
+    | (?P<string>'(?:[^'\\]|\\.|'')*'|'(?:[^']|'')*(?:'|\Z))
     | (?P<qident>"(?:[^"]|"")*(?:"|\Z)|`(?:[^`]|``)*(?:`|\Z))
     | (?P<dollar>\$(?:[A-Za-z_]\w*)?\$)
     | (?P<word>[A-Za-z_][\w$]*)
@@ -86,6 +86,15 @@ class _Tok:
 
 
 def _tokenize(src: str) -> list[_Tok]:
+    """@spec:schemas-schema-field-extraction
+
+    Inside a `'...'` literal a backslash escapes the next character (the
+    MySQL/MariaDB default, Postgres `E'...'`) and `''` is a quote. When that
+    reading never closes the literal, the standard one (backslash as a plain
+    character) is used, so `'C:\\'` still ends where standard SQL ends it.
+    The cost: a standard literal ending in an odd backslash, followed later in
+    the file by another quote, is read as running on to that quote.
+    """
     toks: list[_Tok] = []
     pos, n = 0, len(src)
     while pos < n:

@@ -21,6 +21,7 @@ from livespec_mcp.domain.languages import (
 from livespec_mcp.domain.schema_types import (
     MappedType,
     name_key,
+    py_field_alias,
     py_optional,
     py_type,
     ts_type,
@@ -397,14 +398,21 @@ def _py_extract(source: str, module_name: str) -> ExtractResult:
 
 
 def make_schema_field(
-    name: str, mapped: MappedType, raw_type: str | None, line: int, *, optional: bool | None = None
+    name: str,
+    mapped: MappedType,
+    raw_type: str | None,
+    line: int,
+    *,
+    optional: bool | None = None,
+    wire_name: str | None = None,
 ) -> ExtractedField:
     """An ExtractedField from a mapped type. `optional` overrides the mapped
     flag where the language decides it outside the type (a Python default, a
-    TypeScript `name?:`)."""
+    TypeScript `name?:`). `wire_name` is the name the field travels under
+    when it is not `name` (a Pydantic alias); the field is matched by it."""
     return ExtractedField(
         name=name,
-        field_key=name_key(name),
+        field_key=name_key(wire_name or name),
         type=mapped.type,
         item_type=mapped.item_type,
         ref_target=mapped.ref_target,
@@ -469,7 +477,9 @@ def _py_class_fields(
 
     Fields of a Pydantic model or dataclass from its class-body annotations:
     same-file base fields first, a redeclared field keeping its base position.
-    ClassVar, InitVar, private names and `model_config` are not fields.
+    ClassVar, InitVar, private names and `model_config` are not fields. A
+    `Field(alias='...')` keys the field by its alias; its name stays the
+    attribute.
     """
     fields: dict[str, ExtractedField] = {}
     for base in node.bases:
@@ -491,6 +501,7 @@ def _py_class_fields(
             _py_annotation(stmt.annotation) or None,
             stmt.lineno,
             optional=py_optional(stmt.value),
+            wire_name=py_field_alias(stmt.annotation, stmt.value),
         )
     return list(fields.values())
 
