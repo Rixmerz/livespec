@@ -6,6 +6,69 @@ follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Added — virtual schema-first, phase 1: field-level schema drift across repositories (migration 27)
+
+- Shared data schemas stay where they live (Zod schemas and TypeScript types in
+  a frontend, Pydantic models, dataclasses and TypeScript interfaces in a
+  backend, `CREATE TABLE` in migrations). livespec now records their fields,
+  knows which declarations describe the same entity, across the repositories
+  of a `group_db`, and reports where they disagree, field by field. Phase 1 of
+  3; OpenSpec change `virtual-schema-first` (new capability `schemas`, six
+  requirements), kept open until phases 2-3.
+- New core tool **`schema_drift(entity, limit, cursor, summary_only)`** (38 →
+  39 core, 53 → 54 total). Per entity: its schemas (project, file, line,
+  flavor, field count), the bound symbols that are not schemas, the link count,
+  and findings of four kinds, each with project, file and line for every side:
+  `missing_field`, `type_mismatch`, `nullability_mismatch`,
+  `optional_mismatch`. `snake_case` and `camelCase` names are one field
+  (`user_id` = `userId`). Wire-compatible types are not mismatches (one JSON
+  number type; datetimes, dates, uuids and decimals sent as strings; nested
+  objects and arrays in JSON columns; enums stored as text), optional is never
+  judged against a SQL table, and a field whose type maps to `unknown` is
+  counted as `uncomparable`, never judged. Scope: every project of the
+  `group_db`, else the home project. Integer-offset cursor, exact counts; an
+  unknown entity is an `mcp_error` with `did_you_mean`.
+- New resources **`project://schemas`** (the `summary_only` payload for the most
+  recently used workspace) and **`project://schemas/{entity}`** (every finding
+  of one entity, unpaginated).
+- New annotation verb **`@schema: <entity>`**: a line in a docstring, a JSDoc
+  block or the `--` comment above a `CREATE TABLE` binds that symbol to an
+  entity; entity names match through the same key as fields (`user_profile` =
+  `UserProfile`). It is not a Spec annotation: it creates no Spec link, is never
+  reported as an unknown Spec id, and `scan_annotation_verbs` skips it. A
+  binding on a symbol that is not a schema is kept and listed under
+  `not_schemas`.
+- Field-level extraction for Pydantic models, dataclasses, TypeScript
+  interfaces, TypeScript object type aliases, Zod `z.object(...)` consts (and
+  `.extend({...})`) and SQL `CREATE TABLE`: each field's name, neutral type
+  (`string`, `int`, `float`, `decimal`, `bool`, `datetime`, `date`, `uuid`,
+  `json`, `enum`, `list`, `ref`, `unknown`), item type, reference target, raw
+  type and line, with optional (may be absent) and nullable (may hold null)
+  kept as two flags. Pydantic follows v2 semantics. Same-file bases are
+  resolved.
+- **`.sql` files are now indexed** (language `sql`; `[index].languages` accepts
+  it): each `CREATE TABLE` becomes a `table` symbol named `<module>.<table>`,
+  read in pure Python, with no grammar download. `CREATE VIRTUAL TABLE`,
+  indexes, triggers, `ALTER TABLE` and `PRAGMA` are skipped.
+- New symbol kinds: TypeScript object type aliases are `type_alias` symbols
+  (the kind Python type aliases have carried since 0.32.0), Zod schema consts
+  are `variable` symbols, SQL tables are `table` symbols.
+- Linking: every index run links, database-wide and `INSERT OR IGNORE` only,
+  every pair of symbols bound to the same entity, as HTTP routes are joined, so
+  a shared `group_db` links schemas across repositories and a per-repo database
+  links within the repository. Links live in their own table and add no
+  call-graph edges, so they do not change `who_calls` or `who_does_this_call`.
+  `index_project`'s payload is unchanged.
+- Migration 27 `schema_symbols`: `schema_decl`, `schema_field`,
+  `schema_binding`, `schema_link`. An index that already holds symbols is
+  re-extracted once, automatically, on the next `index_project`.
+- Known limits of phase 1: `ALTER TABLE` in later migrations is not folded into
+  its table, a base class or interface from another file is not followed, and
+  `ref` targets are not compared. The new `table` and Zod `variable` symbols
+  have no callers, so `find_dead_code` lists them as candidates when its
+  opt-in filters are lifted (`include_non_python=True` lists every table);
+  the default `find_dead_code` result lists none of them.
+
 ## [0.33.0] - 2026-10-18
 
 ### Changed — tracks separate the Specs a range changed from the ones it only touched (migration 26)

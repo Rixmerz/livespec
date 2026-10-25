@@ -117,6 +117,36 @@ este repo, 95% de acuerdo en las que ambos ven), etiquetadas y reversibles. La
 tabla de símbolos sigue siendo nuestra, sin excepción. La capa de documentación
 (prosa + `rationale_for`) sigue diferida: es la única que necesitaría un LLM.
 
+### Pillar: virtual schema-first (v0.34, phase 1 of 3 done)
+
+Shared data schemas stay where they live: Zod schemas and TypeScript types in
+a frontend, Pydantic models, dataclasses and TypeScript interfaces in a
+backend, `CREATE TABLE` in migrations. livespec knows which declarations
+describe the same entity, across the repositories of a `group_db`, and reports
+where they drift, field by field. Schema-first tooling makes one file the
+source and generates the rest; this pillar leaves every file where it is and
+generates nothing.
+
+Why it earns one more core tool against "no more surface": it is the second
+cross-repository contract after HTTP routes (item (B) above stopped at "HTTP
+first"), and it answers a question no tool answered in ≤2 calls: *do the
+declarations of this entity still agree?* A renamed field, a column made
+nullable or a property sent as optional is a runtime bug today, never an index
+finding. Entity bindings are traceability in the same sense as Specs: a named
+contract tied to the code that implements it, in every repository.
+
+| Phase | Scope | State |
+|---|---|---|
+| 1 | Field-level extraction (6 flavors, 13 neutral types), `@schema: <entity>`, database-wide links, `schema_drift` + `project://schemas`, migration 27 | **done** (Unreleased, 39 core / 54 tools) |
+| 2-3 | `analyze_impact` following schema links (decided with data), `ALTER TABLE` folding, cross-file bases, comparing `ref` targets, archiving the OpenSpec change | open |
+
+Phase 1 evidence (dogfood): a two-repo group (Pydantic + SQL backend, TS
+interface + Zod frontend) reports one finding of each of the four kinds with
+file:line for every side, and livespec's own `storage/schema.sql` yields 28
+`table` symbols with 194 fields. Links stay out of `symbol_edge`, so they add
+no call-graph edges; the new `table` symbols, which have no callers, do show
+up in `find_dead_code(include_non_python=True)` and are a phase 2-3 fix.
+
 ---
 
 ## 1. Diagnóstico honesto: estado actual (post-v0.7)
