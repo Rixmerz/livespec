@@ -13,9 +13,11 @@ routes across the repositories of a `group_db`; it records none of the fields.
 Schema-first tooling fixes this by making one file the source and generating
 the others. This change keeps every schema where it lives and makes livespec
 know which declarations describe the same entity and where they drift, field by
-field. This is phase 1 of 3.
+field. The change now carries phases 1 and 2 of 3.
 
 ## What Changes
+
+Phase 1:
 
 - **Field-level extraction.** Pydantic models, dataclasses, TypeScript
   interfaces, TypeScript type aliases of object types, Zod `z.object(...)`
@@ -47,13 +49,44 @@ field. This is phase 1 of 3.
 - Core tool count goes from 38 to 39 (54 in all with the Spec and docs
   plugins).
 
+Phase 2 answers the question that comes after "do these declarations still
+agree?": what does changing one field of an entity touch, in every repository
+of the group? It also fixes two extraction bugs phase 1 left: a
+backslash-escaped quote in a SQL string literal hid every later table, and a
+Pydantic `Field(alias=...)` was matched by its Python attribute instead of its
+wire name, so `schema_drift` reported a false `missing_field`.
+
+- **`schema_impact` core tool** (paginated, exact counts). For a proposed
+  `add`, `remove`, `rename` or `retype` of one field of an entity bound with
+  `@schema:`, it lists every declaration of that entity in the workspace's
+  projects (every project of a `group_db`) with the action the change asks of
+  it and the matched field's file and line, and every symbol, endpoint and test
+  that reads those declarations through the call graph, an `@schema:` binding
+  or a shared Spec, with project, file and line, ordered by project with the
+  home project first.
+- **`schema_impact` section of `git_diff_impact`.** When the range changes a
+  schema declaration bound to an entity, the payload gains `schema_impact`: the
+  fields the range added, removed or retyped in that declaration (base against
+  head), the entity's other declarations with the action each field change
+  asks of them, and the readers' counts per project with a bounded sample. A
+  range that changes no bound declaration leaves the payload unchanged.
+- **SQL string literals honour backslash escapes.** Inside a single-quoted
+  literal a backslash escapes the next character, and a doubled `''` still
+  escapes a quote, so `DEFAULT 'it\'s'` no longer hides the tables after it.
+- **A Pydantic `Field(alias=...)` is matched by its alias.** The field's
+  convention-free key is the key of its alias, its wire name, so a Pydantic
+  `display` aliased `fullName` matches a TypeScript `fullName`.
+- Core tool count goes from 39 to 40 (55 in all with the Spec and docs
+  plugins).
+
 ## Capabilities
 
 ### New Capabilities
 
 - `schemas`: schema declarations with typed fields, `@schema:` entity
-  bindings, links between schemas of one entity across repositories, and
-  field-level drift between them.
+  bindings, links between schemas of one entity across repositories,
+  field-level drift between them, and the cross-repo impact of changing one of
+  their fields.
 
 ### Modified Capabilities
 
@@ -75,3 +108,11 @@ comparator), `config.py` (`sql` accepted in `[index].languages`),
 `@schema`), `resources.py` (two resources), `server.py` (tool
 registration), the Skill (`plugin/skills/livespec/SKILL.md`), the agent
 playbook (`templates/AGENT_PLAYBOOK.md`), `README.md` and `CHANGELOG.md`.
+
+Phase 2: `domain/schema_impact.py` (new: field matching, declaration actions
+and the three reader channels, shared by both tools), `domain/schema_drift.py`,
+`tools/schemas.py` (`schema_impact`), `tools/analysis.py` (the
+`git_diff_impact` section), `param_descriptions.py`, `domain/sql_schema.py`
+(backslash escapes), `domain/extractors.py` and `domain/schema_types.py`
+(Pydantic aliases), and the docs: the Skill, the agent playbook, `README.md`,
+`CLAUDE.md` and `CHANGELOG.md`.

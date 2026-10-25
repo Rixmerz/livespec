@@ -2,7 +2,7 @@
 
 ### Requirement: Schema field extraction
 
-The livespec MCP server SHALL record, for every schema declaration it indexes, its flavor and its fields in source order, each with its name as written, a convention-free key, a neutral type, whether it is optional, whether it is nullable, and its line. Schema declarations are Pydantic models and dataclasses, TypeScript interfaces and type aliases of object types, Zod `z.object(...)` declarations, and `CREATE TABLE` statements in `.sql` files, which SHALL be read without a tree-sitter grammar.
+The livespec MCP server SHALL record, for every schema declaration it indexes, its flavor and its fields in source order, each with its name as written, a convention-free key, a neutral type, whether it is optional, whether it is nullable, and its line. Schema declarations are Pydantic models and dataclasses, TypeScript interfaces and type aliases of object types, Zod `z.object(...)` declarations, and `CREATE TABLE` statements in `.sql` files, which SHALL be read without a tree-sitter grammar. The convention-free key of a Pydantic field declared with `Field(alias=...)` SHALL be the key of its alias, its wire name.
 
 #### Scenario: Pydantic model
 
@@ -43,6 +43,21 @@ The livespec MCP server SHALL record, for every schema declaration it indexes, i
 
 - **WHEN** a workspace with `.sql` files is indexed
 - **THEN** no tree-sitter grammar is downloaded or loaded for them
+
+#### Scenario: Pydantic field alias
+
+- **WHEN** a Pydantic model declares `display: str = Field(alias='fullName')`
+- **THEN** the field's name is `display` and its key is `fullname`
+
+#### Scenario: Alias inside Annotated
+
+- **WHEN** a field is declared `nick: Annotated[str, Field(alias='nickName')]`
+- **THEN** its key is `nickname`
+
+#### Scenario: Backslash-escaped quote in SQL
+
+- **WHEN** a `.sql` file holds `CREATE TABLE a (id INT, note TEXT DEFAULT 'it\'s');` followed by `CREATE TABLE b (id INT);`
+- **THEN** both tables are recorded
 
 ### Requirement: Neutral field types
 
@@ -150,6 +165,11 @@ The livespec MCP server SHALL expose `schema_drift(entity?)`, which, for each en
 - **WHEN** one `user` schema has `created_at` and another has `createdAt`
 - **THEN** they are compared as one field and no `missing_field` is reported for it
 
+#### Scenario: Aliased field
+
+- **WHEN** a Pydantic `user` schema declares `display: str = Field(alias='fullName')` and a TypeScript `user` schema declares `fullName: string`
+- **THEN** no `missing_field` is reported for either
+
 #### Scenario: Type mismatch
 
 - **WHEN** a Pydantic `user` schema declares `age: int` and the SQL `user` table declares `age TEXT`
@@ -198,3 +218,86 @@ The livespec MCP server SHALL serve `project://schemas`, listing the bound entit
 
 - **WHEN** `project://schemas/user` is read
 - **THEN** it returns the same findings as `schema_drift(entity='user')`, without pagination
+
+### Requirement: Cross-repo schema impact
+
+The livespec MCP server SHALL expose `schema_impact(entity, change, field, new_name?, new_type?)`, which, for a proposed `add`, `remove`, `rename` or `retype` of one field of an entity bound with `@schema:`, lists every schema declaration of that entity in the workspace's projects (every project of a `group_db`) with the action the change asks of it and the matched field's file and line, and every symbol, endpoint and test that reads those declarations through the call graph, an `@schema:` binding or a shared Spec, each with project, file and line, ordered by project with the home project first. Readers SHALL be listed per declaration, not per field. The tool SHALL follow the aggregator pagination contract and SHALL answer an unknown entity, an unknown field, an unknown change kind or a type outside the neutral types with an `mcp_error`.
+
+#### Scenario: Remove across repositories
+
+- **WHEN** a backend Pydantic `user` schema declares `avatar_url`, a frontend TypeScript `user` schema declares `avatarUrl`, a SQL `user` table has no such column, the repositories share one `group_db`, and `schema_impact(entity='user', change='remove', field='avatar_url')` runs from the backend
+- **THEN** the Pydantic and TypeScript declarations have action `remove` with the field's file and line, the SQL table has action `absent`, and the backend declarations come first
+
+#### Scenario: Reader through the call graph
+
+- **WHEN** a backend function constructs `User(...)` and an HTTP route handler calls that function
+- **THEN** both are readers via `graph`, the function at depth 1, and the handler has role `endpoint` with its HTTP method and path
+
+#### Scenario: Reader across a route
+
+- **WHEN** a frontend function calls the backend route that handler serves
+- **THEN** the frontend function is a reader listed under the frontend project
+
+#### Scenario: Test reader
+
+- **WHEN** a test function constructs `User(...)`
+- **THEN** it is a reader with role `test`
+
+#### Scenario: Binding and Spec readers
+
+- **WHEN** a function says `@schema: user` and another symbol shares a Spec with the backend `user` schema
+- **THEN** they are readers via `schema_binding` and via `spec:<id>`
+
+#### Scenario: Rename already applied on one side
+
+- **WHEN** a rename of `email` to `contact_email` runs, the Pydantic schema declares `email` and the TypeScript schema declares `contactEmail` only
+- **THEN** the Pydantic action is `rename` and the TypeScript action is `renamed`
+
+#### Scenario: Retype carried by the wire type
+
+- **WHEN** a retype of `id` to `uuid` runs, the Pydantic schema declares `id: int` and the TypeScript schema declares `id: string`
+- **THEN** the Pydantic action is `retype` and the TypeScript action is `compatible`
+
+#### Scenario: Unknown field
+
+- **WHEN** `remove` names a field no declaration of the entity holds
+- **THEN** the tool returns an `mcp_error` whose `did_you_mean` lists close field names
+
+#### Scenario: Type outside the neutral types
+
+- **WHEN** `retype` passes `new_type='varchar'`
+- **THEN** the tool returns an `mcp_error`
+
+#### Scenario: No call-graph reader
+
+- **WHEN** no symbol reaches the entity's declarations through the call graph
+- **THEN** the payload has a hint that type-position uses are not call edges
+
+#### Scenario: Pagination
+
+- **WHEN** there are more readers than `limit`
+- **THEN** the page holds `limit` readers, `next_cursor` resumes after them, and the counts are exact
+
+### Requirement: Schema impact of a diff
+
+`git_diff_impact` SHALL, when the range changes a schema declaration bound to an entity, report under `schema_impact` the entity, the fields the range added, removed or retyped in that declaration (base against head), the entity's other declarations in the workspace's projects with the action each field change asks of them, and its readers' counts per project with a bounded sample. A range that changes no bound schema declaration SHALL leave the payload unchanged.
+
+#### Scenario: Field removed in a commit
+
+- **WHEN** a commit removes `avatar_url` from the backend Pydantic `user` schema and the frontend TypeScript `user` schema in the same `group_db` still declares `avatarUrl`
+- **THEN** `git_diff_impact` reports `schema_impact` for `user` with a `removed` field change for `avatar_url` and the TypeScript declaration with action `remove`
+
+#### Scenario: Rename in a commit
+
+- **WHEN** a commit renames `email` to `contact_email`
+- **THEN** the field changes are `removed` `email` and `added` `contact_email`
+
+#### Scenario: No schema touched
+
+- **WHEN** the range changes no schema declaration
+- **THEN** the payload has no `schema_impact` key
+
+#### Scenario: Summary only
+
+- **WHEN** `git_diff_impact` runs with `summary_only=True`
+- **THEN** each `schema_impact` entry keeps its counts and drops the reader sample
