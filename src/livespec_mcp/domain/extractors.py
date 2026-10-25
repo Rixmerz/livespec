@@ -13,9 +13,18 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from livespec_mcp.domain.languages import (
+    SCHEMA_ONLY_LANGUAGES,
     GrammarUnavailableError,
     detect_language,
     get_parser,
+)
+from livespec_mcp.domain.schema_types import (
+    MappedType,
+    name_key,
+    py_optional,
+    py_type,
+    ts_type,
+    zod_type,
 )
 
 
@@ -60,10 +69,38 @@ class ExtractedRoute:
 
 
 @dataclass
+class ExtractedField:
+    """One field of a schema declaration, typed in the neutral model
+    (domain/schema_types.py). `optional` = may be absent; `nullable` = may
+    hold null. Neither is derived from the other."""
+
+    name: str
+    field_key: str
+    type: str
+    item_type: str | None
+    ref_target: str | None
+    raw_type: str | None
+    optional: bool
+    nullable: bool
+    line: int
+
+
+@dataclass
+class ExtractedSchema:
+    """The fields of the ExtractedSymbol named `src_qname` in the same result,
+    in source order (same-file base fields first)."""
+
+    src_qname: str
+    flavor: str  # one of schema_types.FLAVORS
+    fields: list[ExtractedField]
+
+
+@dataclass
 class ExtractResult:
     symbols: list[ExtractedSymbol] = field(default_factory=list)
     refs: list[ExtractedRef] = field(default_factory=list)
     routes: list[ExtractedRoute] = field(default_factory=list)
+    schemas: list[ExtractedSchema] = field(default_factory=list)
     # P0.4: per-file imports map. local_name -> source_module (qualified name of
     # the module providing it). Used by the resolver to scope short-name lookups.
     imports: dict[str, str] = field(default_factory=dict)
@@ -193,6 +230,11 @@ def _py_extract(source: str, module_name: str) -> ExtractResult:
                     continue
                 out.imports[local] = mod
 
+    enum_names = _py_enum_names(tree)
+    # Same-file schema classes by name, in source order: a base declared
+    # earlier in the file contributes its fields to a subclass.
+    schema_classes: dict[str, tuple[str, list[ExtractedField]]] = {}
+
     def add_func(
         node: ast.FunctionDef | ast.AsyncFunctionDef, parent_qname: str | None, kind: str
     ) -> str:
@@ -255,6 +297,11 @@ def _py_extract(source: str, module_name: str) -> ExtractResult:
                 decorators=_py_decorator_names(node),
             )
         )
+        flavor = _py_schema_flavor(node, schema_classes)
+        if flavor is not None:
+            fields = _py_class_fields(node, enum_names, schema_classes)
+            schema_classes[node.name] = (flavor, fields)
+            out.schemas.append(ExtractedSchema(src_qname=qname, flavor=flavor, fields=fields))
         return qname
 
     def add_type_alias(child: ast.AST, parent_qname: str | None) -> None:
@@ -344,6 +391,232 @@ def _py_extract(source: str, module_name: str) -> ExtractResult:
 
     visit(tree, None, in_class=False)
     return out
+
+
+# ---------- Schema declarations (fields in the neutral type model) ----------
+
+
+def make_schema_field(
+    name: str, mapped: MappedType, raw_type: str | None, line: int, *, optional: bool | None = None
+) -> ExtractedField:
+    """An ExtractedField from a mapped type. `optional` overrides the mapped
+    flag where the language decides it outside the type (a Python default, a
+    TypeScript `name?:`)."""
+    return ExtractedField(
+        name=name,
+        field_key=name_key(name),
+        type=mapped.type,
+        item_type=mapped.item_type,
+        ref_target=mapped.ref_target,
+        raw_type=raw_type,
+        optional=mapped.optional if optional is None else optional,
+        nullable=mapped.nullable,
+        line=line,
+    )
+
+
+_PY_ENUM_BASES = frozenset({"Enum", "StrEnum", "IntEnum", "IntFlag", "Flag"})
+_PY_NOT_FIELDS = frozenset({"ClassVar", "InitVar"})
+
+
+def _py_base_name(node: ast.expr) -> str | None:
+    """`pydantic.BaseModel` -> 'BaseModel'; `Generic[T]` -> 'Generic'."""
+    return _call_target_name(node.value if isinstance(node, ast.Subscript) else node)
+
+
+def _py_enum_names(tree: ast.Module) -> frozenset[str]:
+    """Enum subclasses declared anywhere in the file, including subclasses of
+    a same-file enum. A field may name one declared after its model."""
+    classes = [n for n in ast.walk(tree) if isinstance(n, ast.ClassDef)]
+    names: set[str] = set()
+    changed = True
+    while changed:
+        changed = False
+        for c in classes:
+            if c.name in names:
+                continue
+            bases = {_py_base_name(b) for b in c.bases}
+            if bases & _PY_ENUM_BASES or bases & names:
+                names.add(c.name)
+                changed = True
+    return frozenset(names)
+
+
+def _py_schema_flavor(
+    node: ast.ClassDef, schema_classes: dict[str, tuple[str, list[ExtractedField]]]
+) -> str | None:
+    """'dataclass' for `@dataclass` / `@dataclasses.dataclass` / a pydantic
+    dataclass; 'pydantic' for a BaseModel subclass or a subclass of a model
+    declared earlier in the file; None for any other class."""
+    for dec in node.decorator_list:
+        if _call_target_name(dec.func if isinstance(dec, ast.Call) else dec) == "dataclass":
+            return "dataclass"
+    for base in node.bases:
+        name = _py_base_name(base)
+        if name == "BaseModel":
+            return "pydantic"
+        if name in schema_classes and schema_classes[name][0] == "pydantic":
+            return "pydantic"
+    return None
+
+
+def _py_class_fields(
+    node: ast.ClassDef,
+    enum_names: frozenset[str],
+    schema_classes: dict[str, tuple[str, list[ExtractedField]]],
+) -> list[ExtractedField]:
+    """@spec:schemas-schema-field-extraction
+
+    Fields of a Pydantic model or dataclass from its class-body annotations:
+    same-file base fields first, a redeclared field keeping its base position.
+    ClassVar, InitVar, private names and `model_config` are not fields.
+    """
+    fields: dict[str, ExtractedField] = {}
+    for base in node.bases:
+        inherited = schema_classes.get(_py_base_name(base) or "")
+        if inherited is not None:
+            for f in inherited[1]:
+                fields[f.name] = f
+    for stmt in node.body:
+        if not isinstance(stmt, ast.AnnAssign) or not isinstance(stmt.target, ast.Name):
+            continue
+        name = stmt.target.id
+        if name.startswith("_") or name == "model_config":
+            continue
+        if _py_base_name(stmt.annotation) in _PY_NOT_FIELDS:
+            continue
+        fields[name] = make_schema_field(
+            name,
+            py_type(stmt.annotation, enum_names),
+            _py_annotation(stmt.annotation) or None,
+            stmt.lineno,
+            optional=py_optional(stmt.value),
+        )
+    return list(fields.values())
+
+
+def _ts_property_name(node, text) -> str | None:
+    """`id`, `"id"` or `0` as a property key; None for a computed key."""
+    if node is None:
+        return None
+    if node.type in ("property_identifier", "identifier", "number"):
+        return text(node)
+    if node.type == "string":
+        return text(node)[1:-1] or None
+    return None
+
+
+def _ts_object_fields(body, text, enum_names: frozenset[str], inherited: list[ExtractedField]):
+    """@spec:schemas-schema-field-extraction
+
+    Fields of a TypeScript interface body or object type: the
+    `property_signature` members after the inherited ones (methods, index and
+    call signatures are not fields). `name?:` makes a field optional.
+    """
+    fields: dict[str, ExtractedField] = {f.name: f for f in inherited}
+    for c in body.named_children:
+        if c.type != "property_signature":
+            continue
+        name = _ts_property_name(c.child_by_field_name("name"), text)
+        if name is None:
+            continue
+        ann = c.child_by_field_name("type")
+        mapped = ts_type(ann, text, enum_names)
+        raw = " ".join(text(ann.named_children[-1]).split()) if ann and ann.named_children else None
+        question = any(ch.type == "?" for ch in c.children)
+        fields[name] = make_schema_field(
+            name, mapped, raw, c.start_point[0] + 1, optional=mapped.optional or question
+        )
+    return list(fields.values())
+
+
+def _ts_extends_names(node, text) -> list[str]:
+    """Same-file candidates in `interface X extends A, B<T>` -> ['A', 'B']."""
+    out: list[str] = []
+    for c in node.children:
+        if c.type != "extends_type_clause":
+            continue
+        for t in c.named_children:
+            if t.type == "generic_type":
+                t = t.child_by_field_name("name")
+            if t is not None and t.type == "type_identifier":
+                out.append(text(t))
+    return out
+
+
+def _ts_enum_names(root, text) -> frozenset[str]:
+    """Same-file `enum X` and `type X = 'a' | 'b'` names."""
+    names: set[str] = set()
+    for c in root.named_children:
+        decl = c.child_by_field_name("declaration") if c.type == "export_statement" else c
+        if decl is None:
+            continue
+        name = decl.child_by_field_name("name")
+        if name is None:
+            continue
+        if decl.type == "enum_declaration":
+            names.add(text(name))
+        elif decl.type == "type_alias_declaration":
+            value = decl.child_by_field_name("value")
+            if value is not None and ts_type(value, text, frozenset()).type == "enum":
+                names.add(text(name))
+    return frozenset(names)
+
+
+# Chained after `z.object({...})` without changing its fields.
+_ZOD_OBJECT_MODIFIERS = frozenset({"strict", "passthrough", "strip"})
+
+
+def _zod_object_decl(value, text, receivers: frozenset[str], zod_schemas: dict):
+    """(base, object literal) for `z.object({...})` -> (None, obj) or a
+    same-file `Base.extend({...})` -> ('Base', obj), either optionally chained
+    with .strict()/.passthrough()/.strip(). None for anything else."""
+    cur = value
+    while cur is not None and cur.type == "call_expression":
+        fn = cur.child_by_field_name("function")
+        if fn is None or fn.type != "member_expression":
+            return None
+        obj = fn.child_by_field_name("object")
+        prop = fn.child_by_field_name("property")
+        method = text(prop) if prop is not None else ""
+        if method in _ZOD_OBJECT_MODIFIERS:
+            cur = obj
+            continue
+        args = cur.child_by_field_name("arguments")
+        first = args.named_children[0] if args is not None and args.named_children else None
+        if first is None or first.type != "object" or obj is None or obj.type != "identifier":
+            return None
+        if method == "object" and text(obj) in receivers:
+            return None, first
+        if method == "extend" and text(obj) in zod_schemas:
+            return text(obj), first
+        return None
+    return None
+
+
+def _zod_object_fields(obj, text, receivers: frozenset[str], inherited: list[ExtractedField]):
+    """@spec:schemas-schema-field-extraction
+
+    Fields of a Zod object literal after the inherited ones (`Base.extend`).
+    A shorthand `{ address }` is a reference to that schema; spreads are not
+    resolved.
+    """
+    fields: dict[str, ExtractedField] = {f.name: f for f in inherited}
+    for c in obj.named_children:
+        if c.type == "pair":
+            name = _ts_property_name(c.child_by_field_name("key"), text)
+            value = c.child_by_field_name("value")
+            if name is None or value is None:
+                continue
+            mapped = zod_type(value, text, receivers)
+            raw = " ".join(text(value).split())
+        elif c.type == "shorthand_property_identifier":
+            name = raw = text(c)
+            mapped = MappedType("ref", ref_target=name)
+        else:
+            continue
+        fields[name] = make_schema_field(name, mapped, raw, c.start_point[0] + 1)
+    return list(fields.values())
 
 
 def _collect_calls(func_node: ast.AST, src_qname: str, out: ExtractResult) -> None:
@@ -1499,6 +1772,35 @@ def _ts_extract(
     def text(n) -> str:
         return src_bytes[n.start_byte : n.end_byte].decode("utf-8", errors="replace")
 
+    # Schema declarations. TS interfaces and object type aliases are resolved
+    # after the walk (an interface may extend one declared below it); Zod
+    # schemas as they are met (`.extend` needs a const declared above it).
+    is_ts = language in ("typescript", "tsx")
+    zod_receivers: frozenset[str] = frozenset()
+    if language in ("javascript", "typescript", "tsx"):
+        zod_receivers = frozenset(
+            {"z", *(k for k, v in out.imports.items() if v == "zod" or v.startswith("zod/"))}
+        )
+    ts_enum_names = _ts_enum_names(tree.root_node, text) if is_ts else frozenset()
+    # (qname, name, declaration node, body node, flavor)
+    ts_schema_decls: list[tuple[str, str, object, object, str]] = []
+    zod_schemas: dict[str, list[ExtractedField]] = {}
+
+    def zod_decl(declarator, value):
+        name = declarator.child_by_field_name("name")
+        if not zod_receivers or name is None or name.type != "identifier":
+            return None
+        if not _ts_is_module_level_declarator(declarator):
+            return None
+        return _zod_object_decl(value, text, zod_receivers, zod_schemas)
+
+    def record_zod(name: str, qname: str, decl) -> None:
+        base, obj = decl
+        inherited = zod_schemas.get(base, []) if base else []
+        fields = _zod_object_fields(obj, text, zod_receivers, inherited)
+        zod_schemas[name] = fields
+        out.schemas.append(ExtractedSchema(src_qname=qname, flavor="zod", fields=fields))
+
     def find_name(n) -> str | None:
         # Try common child field names
         for field_name in ("name", "identifier"):
@@ -1643,9 +1945,31 @@ def _ts_extract(
                         wrapper_call=True,
                     )
                     _ts_collect_calls(value, qname, src_bytes, out, http_wrappers)
+                    # A Zod object holding a callback (`.refine(v => …)`,
+                    # `.transform(…)`) is already this function symbol, which
+                    # owns its calls; its fields hang off it rather than off
+                    # a second symbol with the same name.
+                    decl = zod_decl(node, value)
+                    if decl is not None:
+                        record_zod(name, qname, decl)
                     for c in value.children:
                         walk(c, parent_qname)
                     return
+            # `export const User = z.object({...})`: a `variable` symbol named
+            # after the binding, carrying the schema. No _ts_collect_calls: the
+            # module pass keeps the z.string()/… calls it always attributed.
+            decl = zod_decl(node, value) if value is not None else None
+            if decl is not None:
+                name = text(node.child_by_field_name("name"))
+                qname = emit_symbol(
+                    node,
+                    name,
+                    parent_qname,
+                    "variable",
+                    decl_node=getattr(node, "parent", None),
+                    doc_node=_ts_declaration_anchor(node) or node,
+                )
+                record_zod(name, qname, decl)
             # otherwise let normal recursion continue
 
         # Object-literal arrow properties (`{ handler: async (c) => {...} }`)
@@ -1711,6 +2035,16 @@ def _ts_extract(
                     walk(c, parent_qname)
                 return
 
+        # `type User = { id: number }`: a `type_alias` symbol with a schema.
+        # Other aliases (`type Id = string`) stay symbol-less, as before.
+        if is_ts and node.type == "type_alias_declaration":
+            value = node.child_by_field_name("value")
+            name = find_name(node)
+            if name and value is not None and value.type == "object_type":
+                qname = emit_symbol(node, name, parent_qname, "type_alias")
+                ts_schema_decls.append((qname, name, node, value, "ts_type"))
+                return
+
         # ----- Standard def nodes -----
         if node.type in _DEF_NODE_TYPES:
             name = find_name(node)
@@ -1736,6 +2070,10 @@ def _ts_extract(
                         base = parent_qname or module_name
                         override = f"{base}.{label}.{name}"
                 qname = emit_symbol(node, name, parent_qname, kind, qname=override)
+                if is_ts and node.type == "interface_declaration":
+                    body = node.child_by_field_name("body")
+                    if body is not None:
+                        ts_schema_decls.append((qname, name, node, body, "ts_interface"))
                 _ts_collect_calls(node, qname, src_bytes, out, http_wrappers)
                 for c in node.children:
                     walk(c, qname)
@@ -1756,6 +2094,26 @@ def _ts_extract(
             walk_rust_method(c, parent_qname)
 
     walk(tree.root_node, None)
+
+    if ts_schema_decls:
+        by_name = {name: (node, body) for _, name, node, body, _ in ts_schema_decls}
+        resolved: dict[str, list[ExtractedField]] = {}
+
+        def ts_fields(node, body, seen: frozenset[str]) -> list[ExtractedField]:
+            inherited: list[ExtractedField] = []
+            for base in _ts_extends_names(node, text):
+                if base in by_name and base not in seen:
+                    inherited.extend(resolve(base, seen | {base}))
+            return _ts_object_fields(body, text, ts_enum_names, inherited)
+
+        def resolve(name: str, seen: frozenset[str]) -> list[ExtractedField]:
+            if name not in resolved:
+                resolved[name] = ts_fields(*by_name[name], seen)
+            return resolved[name]
+
+        for qname, name, node, body, flavor in ts_schema_decls:
+            fields = ts_fields(node, body, frozenset({name}))
+            out.schemas.append(ExtractedSchema(src_qname=qname, flavor=flavor, fields=fields))
 
     # Bug #7/#8 fix: calls issued directly at module top level — never inside
     # any named function/class — have no enclosing symbol to attribute to.
@@ -3100,5 +3458,11 @@ def extract(path: Path, source: str, project_root: Path) -> tuple[str, ExtractRe
     module_name = ".".join(rel.with_suffix("").parts)
     if lang == "python":
         return lang, _py_extract(source, module_name)
+    if lang in SCHEMA_ONLY_LANGUAGES:
+        # Imported here: sql_schema builds this module's dataclasses, so a
+        # top-level import would be circular.
+        from livespec_mcp.domain.sql_schema import extract_sql_schemas
+
+        return lang, extract_sql_schemas(source, module_name)
     current_dir = rel.parent.parts
     return lang, _ts_extract(source, lang, module_name, current_dir)

@@ -30,6 +30,7 @@ EXT_LANGUAGE: dict[str, str] = {
     ".kt": "kotlin",
     ".swift": "swift",
     ".scala": "scala",
+    ".sql": "sql",
 }
 
 
@@ -56,6 +57,11 @@ EXTRACTOR_SUPPORTED: frozenset[str] = frozenset(
     }
 )
 
+# Languages read only for their schema declarations, by a pure-Python parser
+# (domain/sql_schema.py). Kept out of EXTRACTOR_SUPPORTED because that set
+# drives the tree-sitter grammar prefetch, and these never load a grammar.
+SCHEMA_ONLY_LANGUAGES: frozenset[str] = frozenset({"sql"})
+
 
 # Languages whose extractor populates `symbol.docstring` so the @spec:
 # annotation matcher can find tags. Used by audit_coverage to separate
@@ -67,6 +73,7 @@ ANNOTATION_SUPPORTED_LANGUAGES: frozenset[str] = frozenset(
         "typescript",
         "tsx",
         "java",
+        "sql",
     }
 )
 
