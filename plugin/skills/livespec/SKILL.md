@@ -53,6 +53,7 @@ Call tools from **any** member workspace (usually the hub/composer). Then:
 | Symbol in another repo | `find_symbol` / `get_symbol_source` / `quick_orient` (group-wide lookup) |
 | Shared Specs across repos | Mirror Spec ids as `xrepo-*` in **each** repo + `@spec:xrepo-…`; `get_cross_repo_guide` / `list_specs` / `get_spec_implementation`; `project://group` |
 | Likely-unused HTTP flows | `find_legacy_flows(summary_only=True)` — then full list |
+| Do the repos' schemas of one entity agree? | `schema_drift(entity?)` — every `@schema: <entity>` declaration of the group, field by field; `project://schemas` |
 | Human view of the group | `/livespec-ui` (or `livespec ui`) — group page lists repos, cross-repo Specs, route hops; read-only, writes nothing into any repo |
 
 **Cross-repo Specs (`xrepo-*`):** livespec does not invent one global Spec row.
@@ -133,6 +134,38 @@ CHANGELOG. When a PR is ready (or right after an OpenSpec change is archived),
 run `propose_track(base_ref=<merge base>, head_ref="HEAD")`, write one line per
 changed Spec from the diff and the change's proposal (touched Specs need none;
 they go on one `Also touched:` line), show them, then record.
+
+### Schema drift — one entity, many declarations
+
+Schemas stay where they live (Zod / TS types in a frontend, Pydantic models,
+dataclasses or TS interfaces in a backend, `CREATE TABLE` in a migration).
+Bind each declaration of one entity with a `@schema: <entity>` line — any
+spelling, `user-profile` = `UserProfile`:
+
+- Python: a line in the class docstring (`@schema: user`).
+- TypeScript / Zod: the leading comment (`/** @schema: user */` above the
+  `interface`, `type` or `const X = z.object(...)`).
+- SQL: a `-- @schema: user` line right above the `CREATE TABLE`.
+
+It is not a Spec annotation: it creates no Spec link and
+`scan_annotation_verbs` does not flag it. Re-run `index_project` after adding
+one. In a shared `[workspace] group_db` the declarations of every repository
+of the group are compared; without one, only the repository's own.
+
+| Intent | Tool |
+|--------|------|
+| "Do my frontend, backend and database schemas agree?" | `schema_drift()` — per entity: `missing_field`, `type_mismatch`, `nullability_mismatch`, `optional_mismatch`, each side with project, file, line; `summary_only=True` for counts |
+| One entity only | `schema_drift(entity="user")` — unknown names return `did_you_mean` |
+| Read drift without paging | resources `project://schemas` (counts) and `project://schemas/{entity}` (every finding) |
+
+Not mismatches by design: `snake_case` vs `camelCase` names, types JSON
+carries as strings or one number type (TS `string` vs `UUID` / `datetime`,
+`number` vs `int`), a SQL JSON column vs a nested model, and optional against a
+SQL column (a DB default is not an omittable field). `uncomparable` counts
+fields whose type no rule maps — they were not judged, not found equal. A
+binding on a non-schema symbol shows under `not_schemas`. A `hint` about
+`group_db` means the entity has one schema in scope: the other repo is not in
+the group, or its declaration is not annotated.
 
 ### A second extractor (Graphify) — optional, zero LLM
 
@@ -292,7 +325,7 @@ Unlock with doc rows or `LIVESPEC_PLUGINS=docs|all`. (The old `export_explorer` 
 ## Pagination contract
 
 Aggregators (`find_dead_code`, `audit_coverage`, `find_orphan_tests`, `find_endpoints`,
-`find_legacy_flows`, `git_diff_impact`) accept `limit` (default 200) + `cursor` +
+`find_legacy_flows`, `git_diff_impact`, `schema_drift`) accept `limit` (default 200) + `cursor` +
 `summary_only=False`. Counts are always exact regardless of pagination. If a
 payload comes back with `payload_warning`, switch to `summary_only=True` and paginate.
 

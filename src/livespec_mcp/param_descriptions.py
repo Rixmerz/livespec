@@ -147,6 +147,10 @@ PARAM_DESCRIPTIONS: dict[str, str] = {
     "name": "OpenSpec change proposal name (directory under ``openspec/changes/``).",
     "query": "Search query string (tool-specific semantics — see tool description).",
     "kind": "Optional kind filter (tool-specific — symbol kind, Spec kind, or dependency kind).",
+    "entity": (
+        "Optional entity name from a ``@schema: <entity>`` annotation; any spelling "
+        "matches (``user-profile`` = ``UserProfile``). Omit for every bound entity."
+    ),
 }
 
 # Disambiguate params whose meaning depends on the tool.
