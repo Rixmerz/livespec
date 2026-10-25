@@ -132,6 +132,58 @@ CREATE TABLE IF NOT EXISTS route_ref (
 CREATE INDEX IF NOT EXISTS idx_route_ref_symbol ON route_ref(symbol_id);
 CREATE INDEX IF NOT EXISTS idx_route_ref_match ON route_ref(role, norm_path);
 
+-- v0.34: schema declarations (Pydantic/dataclass, TS interface/type, Zod,
+-- SQL CREATE TABLE) with their fields in source order, `@schema: <entity>`
+-- bindings, and links between symbols bound to the same entity. Linking is
+-- DB-wide like route_ref, so a shared group DB links schemas across repos.
+-- Links live here, never in symbol_edge. Cascade on symbol delete keeps every
+-- table consistent across re-extract.
+CREATE TABLE IF NOT EXISTS schema_decl (
+    symbol_id INTEGER PRIMARY KEY REFERENCES symbol(id) ON DELETE CASCADE,
+    flavor TEXT NOT NULL            -- pydantic | dataclass | ts_interface | ts_type | zod | sql_table
+);
+
+CREATE TABLE IF NOT EXISTS schema_field (
+    id INTEGER PRIMARY KEY,
+    symbol_id INTEGER NOT NULL REFERENCES symbol(id) ON DELETE CASCADE,
+    ordinal INTEGER NOT NULL,
+    name TEXT NOT NULL,             -- as written
+    field_key TEXT NOT NULL,        -- convention-free: user_id / userId -> userid
+    type TEXT NOT NULL,             -- neutral type (domain/schema_types.py)
+    item_type TEXT,
+    ref_target TEXT,
+    raw_type TEXT,
+    optional INTEGER NOT NULL DEFAULT 0,  -- may be absent
+    nullable INTEGER NOT NULL DEFAULT 0,  -- may hold NULL
+    line INTEGER NOT NULL,
+    UNIQUE(symbol_id, name)
+);
+
+CREATE INDEX IF NOT EXISTS idx_schema_field_symbol ON schema_field(symbol_id);
+
+CREATE TABLE IF NOT EXISTS schema_binding (
+    id INTEGER PRIMARY KEY,
+    symbol_id INTEGER NOT NULL REFERENCES symbol(id) ON DELETE CASCADE,
+    entity TEXT NOT NULL,
+    entity_key TEXT NOT NULL,
+    line INTEGER,
+    UNIQUE(symbol_id, entity_key)
+);
+
+CREATE INDEX IF NOT EXISTS idx_schema_binding_key ON schema_binding(entity_key);
+
+CREATE TABLE IF NOT EXISTS schema_link (
+    id INTEGER PRIMARY KEY,
+    entity_key TEXT NOT NULL,
+    a_symbol_id INTEGER NOT NULL REFERENCES symbol(id) ON DELETE CASCADE,
+    b_symbol_id INTEGER NOT NULL REFERENCES symbol(id) ON DELETE CASCADE,
+    UNIQUE(entity_key, a_symbol_id, b_symbol_id),
+    CHECK (a_symbol_id < b_symbol_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_schema_link_a ON schema_link(a_symbol_id);
+CREATE INDEX IF NOT EXISTS idx_schema_link_b ON schema_link(b_symbol_id);
+
 -- ===== Specs =====
 CREATE TABLE IF NOT EXISTS module (
     id INTEGER PRIMARY KEY,
