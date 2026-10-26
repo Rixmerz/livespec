@@ -634,6 +634,12 @@ async def test_a_file_changed_between_check_and_write_is_not_overwritten(tmp_pat
             None,
         ),
         (
+            {"entity": "user", "change": "remove", "field": " "},
+            "field is required",
+            None,
+            None,
+        ),
+        (
             {"entity": "user", "change": "add", "field": "avatar_url"},
             "add needs new_type",
             None,
@@ -706,6 +712,7 @@ async def test_a_file_changed_between_check_and_write_is_not_overwritten(tmp_pat
         "rename-without-new-name",
         "retype-without-new-type",
         "unknown-field",
+        "empty-field",
         "add-without-new-type",
         "unrenderable-type",
         "unknown-type",
