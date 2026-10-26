@@ -361,7 +361,10 @@ def apply_plan(
             # Two declarations of one file may ask for the same import line.
             fw.edits.extend(e for e in d.edits if e not in fw.edits)
     if stale:
-        listed = ", ".join(f"{d.side.ref.project}:{d.side.ref.file} ({d.reason})" for d in stale)
+        # One file can hold several stale declarations (a TS interface + its Zod schema).
+        listed = ", ".join(
+            dict.fromkeys(f"{d.side.ref.project}:{d.side.ref.file} ({d.reason})" for d in stale)
+        )
         return None, PlanProblem(
             f"Nothing was written: {listed}",
             hint=f"re-run index_project on {', '.join(dict.fromkeys(d.root for d in stale))} "

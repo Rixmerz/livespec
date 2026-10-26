@@ -476,6 +476,8 @@ async def test_a_target_edited_after_indexing_refuses_the_whole_apply(tmp_path):
 
     assert out["isError"] is True and set(out) <= _ERROR_KEYS, out
     assert "Nothing was written" in out["error"] and USER_TS in out["error"]
+    # Both stale declarations live in user.ts: the refusal names the file once.
+    assert out["error"].count(USER_TS) == 1, out["error"]
     assert after == before
 
 

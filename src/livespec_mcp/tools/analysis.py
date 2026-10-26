@@ -5526,7 +5526,9 @@ def register(mcp: FastMCP) -> None:
            the entity's other declarations across the `group_db`, reader
            counts per project with a sample (dropped by `summary_only`), and
            `follow_up` calls of `schema_impact`. Absent when no bound schema
-           changed (@spec:schemas-schema-impact-of-a-diff).
+           changed.
+
+        @spec:schemas-schema-impact-of-a-diff
 
         Returns an empty result with `error` if either ref is unknown to git.
         Run `index_project` first if results look stale.

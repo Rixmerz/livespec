@@ -305,12 +305,19 @@ def import_specs_from_markdown_file(
             capability=pspec.module,
             taken=incoming_ids,
         )
+    # Code indexed before these specs existed carried annotations that matched
+    # no id then, and the index only re-scans when files change, so without
+    # this an index -> import order left every new spec at zero links.
+    from livespec_mcp.domain.matcher import scan_annotations
+
+    links_created = scan_annotations(st.conn, pid).created
     st.conn.commit()
     out: dict[str, Any] = {
         "source": str(p),
         "parsed": len(parsed),
         "created": created,
         "updated": updated,
+        "spec_links_created": links_created,
         "spec_ids": [ps.spec_id for ps in parsed],
     }
     if adopted:

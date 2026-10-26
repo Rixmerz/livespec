@@ -46,17 +46,40 @@ Todo el stack es local-first: 0 servicios externos, 0 API keys obligatorias, 0 D
 
 **HEAD: `02ac6a5` (part release: OpenSpec deltas, archive, CHANGELOG,
 ROADMAP, cross-repo guide, HANDOFF), on top of part plan-tool `400d73b` and
-part schema-edit `5def9f9`, plus a docs-only follow-up that adds the dogfood's
-`force=True` caveat to ROADMAP. Not pushed, not tagged; `pyproject.toml` stays
-at 0.33.0.**
+part schema-edit `5def9f9`, plus a docs-only follow-up `17dd70b` and the
+dogfood follow-up fix on top of it (below). Not pushed, not tagged;
+`pyproject.toml` stays at 0.33.0.**
 Virtual schema-first is complete, all three phases, under `[Unreleased]`:
 **41 core / 56 tools** in all, no new migration (27 is still the last). The
 OpenSpec change is archived (`openspec/changes/archive/2026-10-25-virtual-schema-first/`),
 so `openspec/specs/schemas/spec.md` holds the ten `schemas-*` requirements.
-Tests measured in this tree: **1259 collected, 1259 passed**. The owner's
+Tests measured in this tree: **1263 collected, 1263 passed**. The owner's
 rule: nothing is pushed, tagged or version-bumped until all three phases are
 done and validated; they are done, and the push, tag and release wait for the
 owner.
+
+### Dogfood follow-up (Unreleased) — the plain index, then sync order links
+
+A full dogfood of phases 1-3 on a fresh copy of livespec (this tree's `src`
+on `PYTHONPATH`, temp `LIVESPEC_HOME`, `Client(mcp)`) fixed three bugs, on
+top of `17dd70b`:
+
+- **3a item 10, fixed.** `import_specs_from_markdown_file` (behind
+  `sync_openspec`, `import_specs_from_markdown` and the `[specs]` re-import of
+  `index_project`) runs `scan_annotations` after writing the specs and returns
+  `spec_links_created`. In the order `index_project` → `sync_openspec` the ten
+  `schemas-*` ids now have 27 links, the same as after `force=True`; the sync
+  creates 45 links over all 34 specs (the old "44 after force" was that total
+  minus the next bug).
+- **`git_diff_impact`'s `@spec:` was mid-sentence**, so it never linked
+  (`_PREFIX_HEAD_RE` reads annotations at line start only). Moved to its own
+  line; `tests/test_spec_import_links.py` now fails on any `@spec:<real id>`
+  in `src` the parser would not read.
+- **The stale refusal of `plan_schema_change(apply=True)` named
+  `web:src/user.ts` twice** (interface + Zod in one file); deduplicated.
+- Tests: `tests/test_spec_import_links.py` (4, each red before its fix) and
+  one assertion in `test_a_target_edited_after_indexing_refuses_the_whole_apply`.
+  1259 → 1263.
 
 ### v0.34 (Unreleased) — virtual schema-first, phase 3 of 3
 
@@ -113,7 +136,7 @@ gained `Coordinated schema change plan` and `Applying a schema change plan`
   `plan_schema_change` tool, `schemas-applying-a-schema-change-plan` to
   `schema_plan.apply_plan`, and the other eight to 1-7 symbols each (26 in
   all).
-- **Dogfood finding (code left alone)**: `sync_openspec` imports the specs
+- **Dogfood finding (fixed since, see the follow-up above)**: `sync_openspec` imports the specs
   but links no existing `@spec:` annotation to them, and an incremental
   `index_project` with no changed file skips `scan_annotations` (it runs only
   when a file changed, on `force=True` or after a deletion,
@@ -1592,7 +1615,9 @@ from the phase 3 dogfood:
    did find readers through the Pydantic side. If real repositories come back
    with empty or Pydantic-only readers, revisit with type-position references
    kept out of `symbol_edge` (`design.md`, "Risks / Trade-offs").
-10. **`sync_openspec` does not link existing annotations.** After
+10. ✅ *Fixed in the dogfood follow-up (see section 3):
+    `import_specs_from_markdown_file` re-scans annotations.*
+    **`sync_openspec` does not link existing annotations.** After
     `index_project` then `sync_openspec`, every new spec has 0 symbols, and a
     plain `index_project` does not fix it: `scan_annotations` runs only when a
     file changed, on `force=True` or after a deletion (`domain/indexer.py:366`).

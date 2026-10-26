@@ -6,6 +6,23 @@ follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed — specs imported after indexing link their annotations
+
+- `sync_openspec`, `import_specs_from_markdown` and the `[specs]`
+  `sync_from` / `openspec_dir` re-import of `index_project` now re-scan the
+  `@spec:` annotations once the specs are written, and report it as
+  `spec_links_created` in the import result (`specs.spec_links_created` for
+  `sync_openspec`). Before, an annotation indexed while its spec did not exist
+  yet matched nothing, and an incremental `index_project` with no changed file
+  skips the scan, so the order index, then sync left every new spec at 0
+  symbols until `index_project(force=True)`. On livespec itself the ten
+  `schemas-*` ids go from 0 to 27 links in that order.
+- `git_diff_impact` now carries its `@spec:schemas-schema-impact-of-a-diff`
+  annotation on a line of its own: written mid-sentence it linked nothing,
+  because annotations are read only at the start of a line.
+- `plan_schema_change(apply=True)` refusing a stale target names each file
+  once: a TS interface and its Zod schema in one file listed it twice.
+
 ### Added — virtual schema-first, phase 3: coordinated cross-repo schema edits
 
 - Phase 3 of 3 turns *what breaks if I change this field?* into *what exactly
