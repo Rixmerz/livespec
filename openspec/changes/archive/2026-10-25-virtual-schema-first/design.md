@@ -10,8 +10,11 @@ repositories is `_resolve_routes`, which joins HTTP routes of every project in
 a shared `group_db`. Phase 1 adds fields, bindings, links and drift; phases 2
 and 3 build on them. Phase 2 adds the cross-repo impact of changing one field
 (`schema_impact` and a `schema_impact` section in `git_diff_impact`) and fixes
-two extraction bugs (SQL backslash escapes, Pydantic aliases). The change stays
-unarchived until phase 3.
+two extraction bugs (SQL backslash escapes, Pydantic aliases). Phase 3 turns
+one field change into the exact edits of every declaration
+(`plan_schema_change`), with an apply mode that writes them; the change is
+archived at the end of phase 3, which makes its ten `schemas-*` requirement
+ids real specs.
 
 ## Decisions
 
@@ -283,6 +286,131 @@ unarchived until phase 3.
 - **Tool count.** `schema_impact` is core, since it answers "what breaks if I
   change this field?": 40 core + 12 Spec plugin + 3 docs plugin = 55 tools.
 
+## Phase 3 decisions
+
+- **One core tool, two new modules, nothing frozen touched.**
+  `plan_schema_change` is registered by `tools/schemas.py` next to
+  `schema_drift` and `schema_impact`: 41 core + 12 Spec plugin + 3 docs plugin
+  = 56 tools. It is core because it answers the agent's next question after
+  `schema_impact`, "what exactly do I write in each repository?". The text
+  engine (`domain/schema_edit.py`) is pure: it takes a source string and
+  returns edits, with no database and no filesystem, so every flavor and
+  every change kind can be tested by applying the edits and re-extracting the
+  result. The planner and the writer (`domain/schema_plan.py`) own the
+  database, the file reads and the writes. `domain/schema_impact.py`,
+  `schema_drift.py`, `schema_types.py`, `extractors.py`, `sql_schema.py`,
+  `indexer.py` and `storage/` are unchanged, so phases 1 and 2 behave as
+  before. `domain/` does not import `tools/`; the test-path rule is injected,
+  as `schema_impact` does.
+- **No migration 28.** The index stores a field's line, not its column span.
+  Rather than store spans, the engine re-parses each declaration from its
+  file (`ast` for Python, tree-sitter for TypeScript and Zod, the
+  `sql_schema` lexer for SQL) and places every field by its own span, after
+  checking that the file still hashes as indexed. The indexed line is
+  verified against the parse, never trusted: a field not at its indexed line
+  is `manual`. A stored span would add a migration and a re-extract for data
+  that a hash-verified re-parse gives exactly.
+- **Five change kinds; `optionality` is planner-only.** `add`, `remove`,
+  `rename` and `retype` delegate to `schema_impact.declaration_action`, so a
+  declaration gets the same action from both tools. `optionality` (with
+  `optional`, `nullable` or both) exists only in the planner: it returns `set`
+  when the side holds the field and a requested flag differs (a SQL table
+  compares `nullable` only), `unchanged` or `absent`. `schema_impact` keeps
+  its four kinds and its payload; its readers for `set` declarations are
+  found with the same `find_readers`.
+- **Nine renderable types.** A type is written only when every flavor has an
+  exact spelling for it:
+
+  | Neutral | Pydantic / dataclass | TypeScript | Zod | SQL |
+  |---|---|---|---|---|
+  | `string` | `str` | `string` | `z.string()` | `TEXT` |
+  | `int` | `int` | `number` | `z.number().int()` | `INTEGER` |
+  | `float` | `float` | `number` | `z.number()` | `DOUBLE PRECISION` |
+  | `decimal` | `Decimal` | `string` | `z.string()` | `NUMERIC` |
+  | `bool` | `bool` | `boolean` | `z.boolean()` | `BOOLEAN` |
+  | `datetime` | `datetime` | `string` | `z.string().datetime()` | `TIMESTAMP` |
+  | `date` | `date` | `string` | `z.string().date()` | `DATE` |
+  | `uuid` | `UUID` | `string` | `z.string().uuid()` | `UUID` |
+  | `json` | `dict[str, Any]` | `unknown` | `z.unknown()` | `JSON` |
+
+  `list`, `ref`, `enum` and `unknown` need an item type, a target or a member
+  list that one `new_type` word cannot carry, so `add` or `retype` to them is
+  an `mcp_error` that points to a hand edit and to `schema_impact`. A Python
+  name the module does not bind gets one import line after its last top-level
+  import (`from uuid import UUID`, `from decimal import Decimal`, `from
+  datetime import datetime` / `date`, `from typing import Any`). The
+  invariant, tested for every flavor and type: re-extracting the edited source
+  gives the field a type that carries the requested one under the side's
+  flavor, by the drift comparator's wire rules. Optional and nullable follow
+  each language: Python `X | None` (`Optional[X]` when the file already uses
+  it and never `| None`), an optional Python field needs a default (`= None`
+  when nullable); TypeScript `name?:` and `| null`; Zod `.optional()`,
+  `.nullable()`, both `.nullish()`; SQL `NOT NULL`, and a column's
+  "optional" is never edited, for the reason phase 1 gives.
+- **Each side keeps its naming style.** A new or renamed field is spelled in
+  the style of the side's matched field, else the most common style among its
+  fields, else the flavor's default (snake for Pydantic, dataclass and SQL;
+  camel for TypeScript and Zod). Python attributes and SQL columns are always
+  snake. So one rename of `email` to `contact_email` writes `contact_email`
+  in Python and SQL and `contactEmail` in TypeScript and Zod: the
+  convention-free key stays the same on every side, and `schema_drift` stays
+  clean after the apply.
+- **Aliases are renamed at the wire name.** A Pydantic field keyed by
+  `Field(alias='...')` is renamed by rewriting the alias literal, in the
+  alias's style, and keeps its Python attribute, since the alias is what the
+  other repositories see and the attribute is what the Python code calls.
+  `retype` and `optionality` edit only the annotation or the default. An
+  alias keyed like its attribute moves with it, or the field would keep its
+  old key.
+- **Four statuses, and no guessing.** `edit` carries non-overlapping whole-line
+  edits sorted by line: a 1-based inclusive range, the exact current text
+  (line endings included) and the new text, `''` to delete; an insertion
+  replaces its anchor line with the anchor plus the new lines. `none` means
+  the side needs nothing (`present`, `absent`, `renamed`, `compatible`,
+  `unchanged`). `manual` carries a one-sentence reason whenever an exact edit
+  cannot be placed: a field inherited from a same-file base (editing the base
+  changes every subclass), a field not at its indexed line, a field sharing
+  its line with another statement, an optional non-nullable Python field (it
+  needs a default value), a dataclass required field after a defaulted one, a
+  SQL column a table constraint names, a file that is not UTF-8, a missing
+  grammar, anything else that cannot be placed exactly, and a rename whose
+  side already holds both names (`both_present`). `stale` means
+  the file changed since indexing, is missing or resolves outside its project
+  root, and no edit is computed for it. Declarations are never paged; the
+  readers are, under the aggregator pagination contract.
+- **The SQL migration hint is text.** A `CREATE TABLE` edit carries a
+  PostgreSQL statement (`ADD COLUMN`, `DROP COLUMN`, `RENAME COLUMN`, `ALTER
+  COLUMN ... TYPE`, `DROP` / `SET NOT NULL`) naming the table as written. It is
+  never written: livespec does not know the project's migration tool,
+  numbering or dialect, and creating a migration file is a decision for the
+  person.
+- **Freshness and containment.** A declaration's file is `Path(project.root)
+  / file.path`, resolved, and it must lie inside the resolved project root, so
+  a symlink or a `..` path cannot lead a write elsewhere (CWE-22). It is fresh
+  when it exists and hashes (`indexer._hash_bytes`) to the indexed
+  `content_hash`. Plan mode reads and never writes.
+- **Apply is explicit and all-or-nothing on its checks.** `apply=True` with
+  `apply_workspaces` (default: the calling workspace; each entry must be the
+  root of a project in scope) writes only the files of those projects. Edits
+  elsewhere, `manual` declarations and `both_present` go to
+  `apply.not_applied` with their reason. Every check runs before the first
+  byte: a `stale` declaration inside `apply_workspaces`, or a file that no
+  longer takes its edits, refuses the whole apply with an `mcp_error` and
+  nothing written. Each file is hashed again right before it is replaced
+  through a temp file in its directory and `os.replace`, keeping its mode and
+  line endings, under `st.lock()`. No file is created, the migration hint is
+  not written, and nothing is re-indexed: `apply.reindex` names the roots to
+  index again.
+- **Why a second write path exists.** livespec writes into a project only
+  what a person asked for by name: `CHANGESPEC.md` through `record_track` was
+  the one such write. A coordinated field change across repositories is
+  exactly the edit an agent would otherwise make by hand, file by file, from
+  the plan, with no hash check and no containment; doing it in the tool keeps
+  those guarantees. It stays opt-in (`apply=True`), scoped
+  (`apply_workspaces`) and hash-checked, it only rewrites existing schema
+  declaration files, and the single-write rule now names both writes
+  (`CLAUDE.md`, `README.md`, `tools/tracks.py`, `domain/changespec.py`).
+
 ## Risks / Trade-offs
 
 - **`ALTER TABLE` is not folded.** A column added or dropped by a later
@@ -295,10 +423,12 @@ unarchived until phase 3.
 - **Heuristic type mapping.** A custom type that a rule maps to `ref` or
   `unknown` may hide a real mismatch; `unknown` is counted, never silently
   dropped.
-- **Ids unknown until archive.** The change stays unarchived until phase 3
-  finishes, so the eight `schemas-*` requirement ids exist only as change
-  deltas. Until the archive, the store reports the `@spec:` annotations on the
-  new code as unknown ids. This is expected.
+- **Ids unknown until archive.** The change stayed unarchived until phase 3
+  finished, so until then its `schemas-*` requirement ids (eight after phase
+  2, ten after phase 3) existed only as change deltas and the store reported
+  the `@spec:` annotations on the new code as unknown ids. Archiving at the
+  end of phase 3 moves all ten requirements into `openspec/specs/schemas/`,
+  and the next `sync_openspec` makes them known.
 - **Re-extract on upgrade.** Migration 27 queues a full re-extract of any
   index that already holds symbols, a one-time cost on the first
   `index_project` after the upgrade.
@@ -323,3 +453,24 @@ unarchived until phase 3.
 - **Spec-linked readers can be broad.** A Spec linked to a schema may also be
   linked to many symbols that never touch the entity; every one of them is
   listed with `via` `spec:<id>`, so an agent can tell them from graph readers.
+- **A `CREATE TABLE` edit may rewrite an applied migration.** When the table
+  lives in a migration that has already run, editing its `CREATE TABLE`
+  changes history: a migration tool that checksums applied files (Flyway and
+  Liquibase do) will refuse it, and an existing database never sees the
+  change. Leave that repository out of `apply_workspaces` and
+  use the migration hint to write a new migration. Revisit (for example, a
+  flag that skips `sql_table` edits) if users report checksum breaks.
+- **`list`, `ref` and `enum` are not rendered.** An `add` or `retype` to
+  them, or to `unknown`, is an `mcp_error`; the field is edited by hand and
+  `schema_impact` still gives its impact.
+- **An optional non-nullable Python field is manual.** Python has no way to
+  say "may be absent" without a default, and livespec does not invent one, so
+  such a declaration is `manual` with the reason `needs a default value`.
+- **Apply is all-or-nothing on its checks, not atomic across files.** Every
+  check runs before the first write and each file is replaced atomically, but
+  an `OSError` on the third of four files leaves the first two written. The
+  error names the files already written, so the person can finish or revert
+  them; nothing rolls them back.
+- **Readers are per declaration.** As in phase 2, a reader of `User` is listed
+  for every field of `User`; the plan does not narrow its readers to the
+  field it changes.

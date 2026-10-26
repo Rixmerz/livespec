@@ -13,7 +13,7 @@ routes across the repositories of a `group_db`; it records none of the fields.
 Schema-first tooling fixes this by making one file the source and generating
 the others. This change keeps every schema where it lives and makes livespec
 know which declarations describe the same entity and where they drift, field by
-field. The change now carries phases 1 and 2 of 3.
+field. The change carries all three phases.
 
 ## What Changes
 
@@ -79,14 +79,50 @@ wire name, so `schema_drift` reported a false `missing_field`.
 - Core tool count goes from 39 to 40 (55 in all with the Spec and docs
   plugins).
 
+Phase 3 turns the impact into the edit: once `schema_impact` has said which
+declarations a field change touches, the same change should come back as the
+exact text to write in each of them, in every repository of the group.
+
+- **`plan_schema_change` core tool** (paginated, exact counts). For an `add`,
+  `remove`, `rename`, `retype` or `optionality` change of one field of an
+  entity bound with `@schema:`, it returns every declaration of that entity
+  across the group's repositories (Pydantic, dataclass, TypeScript interface
+  and object type, Zod, SQL `CREATE TABLE`) with a status (`edit`, `none`,
+  `manual` with a one-sentence reason, or `stale`) and, for an `edit`, the
+  exact file, 1-based line range, current text and proposed new text. Each
+  side is spelled in its own convention (`contact_email` in Python and SQL,
+  `contactEmail` in TypeScript and Zod), a Pydantic `Field(alias=...)` is
+  renamed by rewriting its alias, a missing Python import is added, and a
+  `CREATE TABLE` edit carries a PostgreSQL migration hint (`ALTER TABLE ...`),
+  which is text and is never written. The readers are the ones
+  `schema_impact` finds. Types that cannot be written exactly (`list`, `ref`,
+  `enum`, `unknown`) are an `mcp_error`.
+- **Read-only by default, with an explicit apply mode.** `apply=True` writes
+  the edits of the projects named in `apply_workspaces` (default: the calling
+  workspace), lists everything else under `apply.not_applied`, and refuses
+  the whole apply with nothing written when any file it would write changed
+  since indexing, is missing, resolves outside its project root, or no longer
+  takes its edits. An `apply_workspaces` entry that is not a project root of
+  the group is refused. It writes through a temp file and `os.replace`, keeps
+  the file mode and line endings, never creates a file and never re-indexes:
+  `apply.reindex` names the roots to index again.
+- **A second sanctioned write path.** Until now `CHANGESPEC.md`, written by
+  `record_track`, was the one file livespec writes into a project.
+  `plan_schema_change(apply=True)` is the second: it rewrites existing schema
+  declaration files, only inside `apply_workspaces` and only when each still
+  hashes as indexed.
+- Core tool count goes from 40 to 41 (56 in all with the Spec and docs
+  plugins).
+
 ## Capabilities
 
 ### New Capabilities
 
 - `schemas`: schema declarations with typed fields, `@schema:` entity
   bindings, links between schemas of one entity across repositories,
-  field-level drift between them, and the cross-repo impact of changing one of
-  their fields.
+  field-level drift between them, the cross-repo impact of changing one of
+  their fields, and the plan (and, on request, the write) of that change in
+  every declaration.
 
 ### Modified Capabilities
 
@@ -116,3 +152,15 @@ and the three reader channels, shared by both tools), `domain/schema_drift.py`,
 (backslash escapes), `domain/extractors.py` and `domain/schema_types.py`
 (Pydantic aliases), and the docs: the Skill, the agent playbook, `README.md`,
 `CLAUDE.md` and `CHANGELOG.md`.
+
+Phase 3: `domain/schema_edit.py` (new: the pure text engine that renders one
+field change as line edits per flavor, the name styles, the renderable types
+and the SQL migration hint), `domain/schema_plan.py` (new: the planner, the
+freshness check by content hash and the apply writer), `tools/schemas.py`
+(`plan_schema_change`), `param_descriptions.py`, the record_track docstring
+in `tools/tracks.py` and `domain/changespec.py` (the single-write rule now
+names two sanctioned writes), the fixtures of a three-repository group in
+`tests/fixtures/schema_group/`, and the docs: the Skill, the agent playbook,
+`README.md`, `CLAUDE.md`, `docs/AGENT_QUICKSTART.md`,
+`docs/BETA_CHECKLIST.md`, the cross-repo guide, `CHANGELOG.md`, `HANDOFF.md`
+and `ROADMAP.md`. No storage change: there is no migration 28.

@@ -117,7 +117,7 @@ este repo, 95% de acuerdo en las que ambos ven), etiquetadas y reversibles. La
 tabla de símbolos sigue siendo nuestra, sin excepción. La capa de documentación
 (prosa + `rationale_for`) sigue diferida: es la única que necesitaría un LLM.
 
-### Pillar: virtual schema-first (v0.34, phases 1-2 of 3 done)
+### Pillar: virtual schema-first (v0.34, phases 1-3 of 3 done)
 
 Shared data schemas stay where they live: Zod schemas and TypeScript types in
 a frontend, Pydantic models, dataclasses and TypeScript interfaces in a
@@ -139,7 +139,8 @@ contract tied to the code that implements it, in every repository.
 |---|---|---|
 | 1 | Field-level extraction (6 flavors, 13 neutral types), `@schema: <entity>`, database-wide links, `schema_drift` + `project://schemas`, migration 27 | **done** (Unreleased, 39 core / 54 tools) |
 | 2 | `schema_impact` (declarations + readers of one field change, across the group), the `schema_impact` section of `git_diff_impact`, SQL backslash escapes, Pydantic `Field(alias=...)` as the match key; `analyze_impact` does not follow schema links (decided: `schema_impact` is the explicit path) | **done** (Unreleased, 40 core / 55 tools) |
-| 3 | `ALTER TABLE` folding, cross-file bases, comparing `ref` targets, type-position readers if real repos come back empty, archiving the OpenSpec change, then the release | open |
+| 3 | `plan_schema_change`: one field change (`add`, `remove`, `rename`, `retype`, `optionality`) as exact line edits for every declaration across the group, each side in its own spelling, aliases renamed at the wire name, a SQL migration hint; read-only by default, `apply=True` writes only inside `apply_workspaces` and refuses when a target changed since indexing (the second sanctioned write path, after `CHANGESPEC.md`); the OpenSpec change archived (ten `schemas-*` requirements) | **done** (Unreleased, 41 core / 56 tools) |
+| later | `ALTER TABLE` folding, cross-file bases, comparing `ref` targets, type-position readers if real repos come back empty, rendering `list` / `ref` / `enum` in `plan_schema_change`; then the v0.34 release | open |
 
 Phase 1 evidence (dogfood): a two-repo group (Pydantic + SQL backend, TS
 interface + Zod frontend) reports one finding of each of the four kinds with
@@ -157,6 +158,14 @@ commit that drops the field reports the same entity, the field change read
 from git, and the same readers. The cost is the one the design names: type
 positions are not call edges, so every reader came through the Pydantic
 model; the table and the interface had none of their own.
+
+Phase 3 evidence: in a three-repo group (Pydantic, TS interface + Zod, SQL),
+one rename of `email` to `contact_email` plans four exact edits, each in its
+side's spelling, plus `ALTER TABLE users RENAME COLUMN email TO
+contact_email;`; an apply into two of the three repos writes exactly those two
+files, and a target edited after indexing refuses the whole apply with nothing
+written (`tests/test_plan_schema_change.py`). On an archived copy of
+livespec, the ten `schemas-*` ids are real specs and all ten link to code.
 
 ---
 

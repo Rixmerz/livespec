@@ -1,4 +1,16 @@
-## ADDED Requirements
+# schemas Specification
+
+## Purpose
+
+The `schemas` capability of livespec (dogfood OpenSpec SSoT): virtual
+schema-first. Every declaration of a shared entity stays where it lives
+(Pydantic models and dataclasses, TypeScript interfaces and types, Zod
+schemas, SQL tables); livespec records their fields, binds them to one entity
+with `@schema:`, links them across the repositories of a `group_db`, reports
+where they drift, lists what a field change touches, and plans (and, on
+request, writes) that change in every declaration.
+
+## Requirements
 
 ### Requirement: Schema field extraction
 
@@ -301,3 +313,86 @@ The livespec MCP server SHALL expose `schema_impact(entity, change, field, new_n
 
 - **WHEN** `git_diff_impact` runs with `summary_only=True`
 - **THEN** each `schema_impact` entry keeps its counts and drops the reader sample
+
+### Requirement: Coordinated schema change plan
+
+The livespec MCP server SHALL expose `plan_schema_change(entity, change, field, new_name?, new_type?, optional?, nullable?)`, which, for an `add`, `remove`, `rename`, `retype` or `optionality` change of one field of an entity bound with `@schema:`, returns every schema declaration of that entity in the workspace's projects (every project of a `group_db`), home project first, with the action the change asks of it and a status: `edit` with, for each edit, the exact file, 1-based line range, current text and proposed new text; `none` when the side needs nothing; `manual` with a one-sentence reason when no exact edit can be placed; or `stale`, with no edit, when its file changed since indexing. New and renamed fields SHALL be spelled in each side's naming style, a Pydantic field keyed by `Field(alias=...)` SHALL be renamed by rewriting its alias, and a SQL table edit SHALL carry a migration hint. The payload SHALL also list the readers `schema_impact` finds for the same change. Without `apply=True` the tool SHALL NOT write any file. It SHALL answer an unknown entity, an unknown change kind, a field no declaration holds and a `new_type` it cannot render with an `mcp_error`, and SHALL follow the aggregator pagination contract for its readers.
+
+#### Scenario: Rename across four flavors
+
+- **WHEN** a backend Pydantic `user` schema declares `email: str`, a frontend TypeScript interface declares `email: string;` and a Zod schema `email: z.string(),`, a SQL `users` table declares `email TEXT NOT NULL,`, the three repositories share one `group_db`, and `plan_schema_change(entity='user', change='rename', field='email', new_name='contact_email')` runs from the backend
+- **THEN** the four declarations come in the order backend, frontend interface, frontend Zod schema, table, each with status `edit` and one edit whose current text is the field's line as it is in the file and whose new text is `contact_email: str`, `contactEmail: string;`, `contactEmail: z.string(),` and `contact_email TEXT NOT NULL,`; the table's migration hint is `ALTER TABLE users RENAME COLUMN email TO contact_email;` and the other sides have none
+
+#### Scenario: Aliased Pydantic rename
+
+- **WHEN** the Pydantic schema declares `display: str = Field(alias="fullName")` and a rename of `fullName` to `displayName` runs
+- **THEN** the Pydantic edit turns that line into `display: str = Field(alias="displayName")`, keeping the attribute `display`, the TypeScript sides get `displayName`, and the table gets `display_name` with the hint `ALTER TABLE users RENAME COLUMN full_name TO display_name;`
+
+#### Scenario: Retype carried by the wire type
+
+- **WHEN** a retype of `id` to `uuid` runs, the Pydantic schema declares `id: int`, the TypeScript sides declare `id` as a string and the table declares `id INTEGER PRIMARY KEY`
+- **THEN** the TypeScript and Zod declarations have action `compatible`, status `none` and no edit; the Pydantic declaration gets `id: UUID` plus the import `from uuid import UUID` after its last import; and the table gets `id UUID PRIMARY KEY,` with the hint `ALTER TABLE users ALTER COLUMN id TYPE UUID;`
+
+#### Scenario: Nullability change
+
+- **WHEN** an `optionality` change with `nullable=True` runs for `email`
+- **THEN** every declaration has action `set` and status `edit`, the new texts are `email: str | None`, `email: string | null;`, `email: z.string().nullable(),` and `email TEXT,`, and the hint is `ALTER TABLE users ALTER COLUMN email DROP NOT NULL;`
+
+#### Scenario: Add with a type
+
+- **WHEN** an `add` of `avatar_url` with `new_type='string'` runs
+- **THEN** each declaration gets one insertion that keeps its anchor line and adds `avatar_url: str`, `avatarUrl: string;`, `avatarUrl: z.string(),` or `avatar_url TEXT NOT NULL`, and the hint is `ALTER TABLE users ADD COLUMN avatar_url TEXT NOT NULL; -- NOT NULL needs a DEFAULT or a backfill on a table with rows`
+
+#### Scenario: Read-only by default
+
+- **WHEN** an `add`, a `remove`, a `rename`, a `retype` and an `optionality` change are planned without `apply`
+- **THEN** each payload has mode `plan` and at least one edit, and every file of the three repositories is byte-for-byte unchanged
+
+#### Scenario: Unrenderable type
+
+- **WHEN** an `add` passes `new_type='list'`
+- **THEN** the tool returns an `mcp_error` saying the type cannot be written, with a hint that it needs a hand edit, and no file is changed
+
+#### Scenario: Inherited field
+
+- **WHEN** `class User(Base)` inherits `id` from a `Base` model declared in the same file and a `remove` of `id` is planned for `User`
+- **THEN** `User` has status `manual`, no edit, no migration hint and a reason saying the field is inherited
+
+#### Scenario: Pagination
+
+- **WHEN** a rename with three readers runs with `limit=2`, then with `cursor=2`, then with `summary_only=True`
+- **THEN** the first page holds two readers with `next_cursor` 2, the second holds the third with `next_cursor` null, the summary has no reader rows, and every page has the same counts, `by_project` and declarations
+
+### Requirement: Applying a schema change plan
+
+When `plan_schema_change` runs with `apply=True`, the livespec MCP server SHALL write the edits of the declarations whose project root is in `apply_workspaces` (default: the calling workspace) and no other file, SHALL list every other declaration the change asks to edit under `apply.not_applied` with its reason, and SHALL list the roots to index again under `apply.reindex` without re-indexing. It SHALL refuse the whole apply with an `mcp_error`, writing nothing, when a file it would write changed since indexing, is missing, resolves outside its project root or no longer takes its edits, and when an `apply_workspaces` entry is not the root of a project in scope. It SHALL keep each file's mode and line endings, SHALL NOT create a file, SHALL NOT write the migration hint, and SHALL name the files already written when a write fails after the first.
+
+#### Scenario: Apply into two workspaces
+
+- **WHEN** the rename of `email` to `contact_email` runs with `apply=True` and `apply_workspaces` naming the backend and the frontend roots
+- **THEN** the backend model file is written with one edit and the frontend file with two, each equal to its file with the planned edits applied, `apply.reindex` lists both roots, and after both are indexed again the same plan gives those declarations action `renamed` with no edit
+
+#### Scenario: Target outside apply_workspaces
+
+- **WHEN** the same apply runs and the SQL repository is not in `apply_workspaces`
+- **THEN** the table is listed under `apply.not_applied` with reason `outside apply_workspaces` and its file, migration hint included, is not written
+
+#### Scenario: Target changed since indexing
+
+- **WHEN** the frontend file is edited after indexing and the apply names the backend and the frontend roots
+- **THEN** the plan marks the frontend declarations `stale` with reason `changed since indexing` and a hint to re-run `index_project` on the frontend, and the apply returns an `mcp_error` saying nothing was written, naming that file, with every file unchanged
+
+#### Scenario: Apply root outside the group
+
+- **WHEN** `apply_workspaces` names a directory that is not the root of a project in the group
+- **THEN** the tool returns an `mcp_error` naming it, whose `did_you_mean` lists the group's roots, and no file is changed
+
+#### Scenario: Path escaping its project root
+
+- **WHEN** the backend model file is replaced by a symlink to a file outside its project root with the same bytes
+- **THEN** the plan marks that declaration `stale` with reason `resolves outside its project root`, the apply returns an `mcp_error` naming that reason, and the file outside the root is unchanged
+
+#### Scenario: Write failure after the first file
+
+- **WHEN** writing the second of two files fails with a permission error
+- **THEN** the tool returns an `mcp_error` naming the file that failed and the file already written

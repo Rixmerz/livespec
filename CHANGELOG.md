@@ -6,6 +6,64 @@ follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Added — virtual schema-first, phase 3: coordinated cross-repo schema edits
+
+- Phase 3 of 3 turns *what breaks if I change this field?* into *what exactly
+  do I write in each repository?*. The OpenSpec change `virtual-schema-first`
+  gains `Coordinated schema change plan` and `Applying a schema change plan`
+  and is **archived**: `openspec/specs/schemas/spec.md` now holds all ten
+  `schemas-*` requirements, so their ids are real specs after `sync_openspec`.
+  No migration (27 is still the last): fields are placed by re-parsing each
+  declaration's file, not by stored spans.
+- New core tool **`plan_schema_change(entity, change, field, new_name=None,
+  new_type=None, optional=None, nullable=None, apply=False,
+  apply_workspaces=None, max_depth=3, limit, cursor, summary_only)`** (40 → 41
+  core, 55 → 56 total). `change` is `add` (needs `new_type`), `remove`,
+  `rename` (needs `new_name`), `retype` (needs `new_type`) or `optionality`
+  (needs `optional`, `nullable` or both).
+  - `declarations`: every declaration of the entity in the group (home
+    project first; Pydantic, dataclass, TS interface and object type, Zod,
+    SQL `CREATE TABLE`), never paged, each with its `action` and a `status`:
+    `edit` with `edits` (`file`, 1-based inclusive `start_line` /
+    `end_line`, the exact `old_text` and the proposed `new_text`), `none`,
+    `manual` with a one-sentence `reason` (an inherited field, a field not at
+    its indexed line, an optional non-nullable Python field, a rename whose
+    side already holds both names, ...), or `stale` when the file changed
+    since indexing, is missing or resolves outside its project root.
+  - Each side keeps its spelling: one rename writes `contact_email` in
+    Python and SQL and `contactEmail` in TypeScript and Zod. A Pydantic
+    `Field(alias=...)` is renamed by rewriting the alias; a missing Python
+    import (`from uuid import UUID`, ...) is added; a side whose type already
+    carries the new one on the wire (a TS `string` for `uuid`) needs no edit.
+  - A `CREATE TABLE` edit carries `migration_hint`, a PostgreSQL `ALTER
+    TABLE ...` statement. It is text for a person and is never written.
+  - `readers`, `by_project` and `counts` (`declarations`, `to_change`,
+    `edits`, `manual`, `stale`, `files`, `readers`, `endpoints`, `tests`,
+    `symbols`) are exact; the readers are `schema_impact`'s for the same
+    change, paged by `limit` / `cursor` and dropped by `summary_only`.
+  - Nine types can be written: `string`, `int`, `float`, `decimal`, `bool`,
+    `datetime`, `date`, `uuid`, `json`. `list`, `ref`, `enum` and `unknown`
+    are an `mcp_error` (a hand edit; `schema_impact` still gives the impact).
+    So are an unknown entity, change kind or field, a missing argument,
+    `optional` / `nullable` with `remove`, `rename` or `retype`, and
+    `apply_workspaces` without `apply=True`.
+- **Read-only by default; `apply=True` writes.** The edits of the projects
+  in `apply_workspaces` (default: the calling workspace; each entry must be
+  a project root in scope, else an `mcp_error` with `did_you_mean`) are
+  written; everything else is listed under `apply.not_applied` with its
+  reason (`outside apply_workspaces`, or the manual reason). The whole apply
+  is refused, with nothing written, when any file it would write is stale,
+  missing, outside its project root or no longer takes its edits. Each file
+  is hashed again right before it is replaced through a temp file and
+  `os.replace`; its mode and line endings are kept, no file is created, and
+  nothing is re-indexed: `apply.reindex` lists the roots to index again. A
+  write that fails after the first names the files already written.
+- **A second sanctioned write into a project.** `CHANGESPEC.md` via
+  `record_track` was the one file livespec writes into a repository;
+  `plan_schema_change(apply=True)` is the second, and it only rewrites
+  existing schema declaration files, inside `apply_workspaces`, when each
+  still hashes as indexed.
+
 ### Added — virtual schema-first, phase 2: cross-repo schema impact
 
 - Phase 2 of 3 answers the question after "do these declarations still

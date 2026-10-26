@@ -18,7 +18,7 @@ Two complementary layers share one SQLite when configured:
 |-------|-----|------------|
 | **HTTP hops** | Client `requests`/`fetch` → server route | `who_does_this_call` → `invokes_endpoints`; `who_calls` → `route_callers`; `find_legacy_flows` |
 | **Shared Specs** | Same Spec id `xrepo-*` in **each** participating repo | `list_specs` / `get_spec_implementation`; the `livespec ui` group page |
-| **Shared schemas** | Same `@schema: <entity>` on each declaration of one entity | `schema_drift`, `schema_impact`; resources `project://schemas` / `project://schemas/{entity}` |
+| **Shared schemas** | Same `@schema: <entity>` on each declaration of one entity | `schema_drift`, `schema_impact`, `plan_schema_change`; resources `project://schemas` / `project://schemas/{entity}` |
 
 livespec does **not** invent a single global Spec row. You **mirror** the same
 `xrepo-<slug>` id (and usually the same OpenSpec capability) in each repo that
@@ -179,6 +179,58 @@ per project, and gives the `schema_impact(...)` calls to follow up with.
 `analyze_impact` does not follow schema links; for a shared field, call
 `schema_impact`.
 
+### Changing a shared field across repositories: plan_schema_change
+
+Once `schema_impact` has shown what a change touches, `plan_schema_change`
+gives the exact edits for every declaration of the entity in the group. It
+takes the same `entity`, `change` and `field`, plus `optionality` (with
+`optional` and/or `nullable`) as a fifth kind.
+
+1. **Plan.** The default writes nothing:
+
+   ```
+   plan_schema_change(entity="user", change="rename", field="email", new_name="contact_email", workspace=<repo>)
+   plan_schema_change(entity="user", change="add", field="avatar_url", new_type="string", workspace=<repo>)
+   plan_schema_change(entity="user", change="optionality", field="email", nullable=True, workspace=<repo>)
+   ```
+
+   `new_type` is one of `string`, `int`, `float`, `decimal`, `bool`,
+   `datetime`, `date`, `uuid`, `json`; `list`, `ref` and `enum` are edited
+   by hand.
+2. **Review the edits** with the person. Each declaration has a `status`:
+   - `edit`: `edits` give the file, the 1-based line range, the current
+     `old_text` and the proposed `new_text`, in that side's spelling
+     (`contact_email` in Python and SQL, `contactEmail` in TS and Zod; a
+     Pydantic `Field(alias=...)` is renamed through its alias).
+   - `none`: nothing to do there (for example `compatible`: a TS `string`
+     already carries a `uuid`).
+   - `manual`: `reason` says why no exact edit exists (an inherited field,
+     an optional Python field with no default, a side that holds both names
+     of a rename); change it by hand.
+   - `stale`: the file changed since indexing; re-run `index_project` on that
+     repo and plan again.
+
+   A SQL table's `migration_hint` is an `ALTER TABLE` statement for a new
+   migration. It is never written. If the table lives in a migration that has
+   already run, leave that repo out of the apply and write a new migration
+   from the hint.
+3. **Apply with `apply_workspaces`**, only once the person agreed:
+
+   ```
+   plan_schema_change(entity="user", change="rename", field="email", new_name="contact_email",
+                      apply=True, apply_workspaces=["/abs/path/api", "/abs/path/web"], workspace=<repo>)
+   ```
+
+   Only files of the repos named in `apply_workspaces` (default: the calling
+   workspace) are written; the rest, and every `manual` declaration, are
+   listed in `apply.not_applied`. If any file it would write changed since
+   indexing, the whole apply is refused and nothing is written.
+4. **Re-run `index_project`** on each root in `apply.reindex`; the tool does
+   not re-index. The same plan then gives the written sides `renamed` /
+   `none`, and once every side is changed (a SQL repo left out gets its new
+   migration first), `schema_drift(entity="user")` reports nothing for the
+   field.
+
 ---
 
 ## 5. Traps
@@ -204,5 +256,8 @@ per project, and gives the `schema_impact(...)` calls to follow up with.
 5. who_does_this_call / find_legacy_flows as needed
 6. schema_drift(summary_only=True) if declarations carry @schema:;
    schema_impact(entity=..., change=..., field=...) before changing a shared field
-7. `livespec ui` (`/livespec-ui`) if the user wants to browse the map
+7. plan_schema_change(entity=..., change=..., field=...) for the exact edits;
+   apply=True with apply_workspaces only once the person agreed, then
+   index_project on each root in apply.reindex
+8. `livespec ui` (`/livespec-ui`) if the user wants to browse the map
 ```

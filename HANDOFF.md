@@ -44,17 +44,82 @@ Todo el stack es local-first: 0 servicios externos, 0 API keys obligatorias, 0 D
 
 ## 3. Estado actual
 
-**HEAD: `974024a` (merge of `cauce/task-838` into `main`; it holds P6
-`57cd00b` + `61d9d60`, P7 `71e733b` and the P8 docs `8424fc2`), plus the
-SQL-tokenizer and alias follow-up fixes of this tree on top. Not pushed, not
-tagged; `pyproject.toml` stays at 0.33.0.**
-Virtual schema-first phase 2 of 3 is complete under `[Unreleased]`: **40 core /
-55 tools** in all, no new migration (27 is still the last). Tests measured in
-this tree: **1097 collected, 1097 passed** (1060 at `a44cf22`; P7 adds 28,
-P6 adds 5, the SQL-tokenizer and alias follow-up fixes add 4, P6's `tests/test_schema_extraction_fixes.py` is in this tree). The owner's rule: nothing is pushed, tagged or
-version-bumped until all three phases are done.
+**HEAD: `400d73b` (part plan-tool, on top of part schema-edit `5def9f9`)
+plus this docs commit (part release: OpenSpec deltas, archive, CHANGELOG,
+ROADMAP, cross-repo guide, HANDOFF). Not pushed, not tagged; `pyproject.toml`
+stays at 0.33.0.**
+Virtual schema-first is complete, all three phases, under `[Unreleased]`:
+**41 core / 56 tools** in all, no new migration (27 is still the last). The
+OpenSpec change is archived (`openspec/changes/archive/2026-10-25-virtual-schema-first/`),
+so `openspec/specs/schemas/spec.md` holds the ten `schemas-*` requirements.
+Tests measured in this tree: **1259 collected, 1259 passed**. The owner's
+rule: nothing is pushed, tagged or version-bumped until all three phases are
+done and validated; they are done, and the push, tag and release wait for the
+owner.
 
-### v0.34 (Unreleased) — virtual schema-first, phase 2 of 3
+### v0.34 (Unreleased) — virtual schema-first, phase 3 of 3
+
+Phase 3 answers *what exactly do I write in each repository?* The core tool
+`plan_schema_change(entity, change, field, ...)` (`tools/schemas.py`, planner
+and writer in `domain/schema_plan.py`, text engine in `domain/schema_edit.py`)
+takes `add`, `remove`, `rename`, `retype` or `optionality` and returns every
+declaration of the entity in the group with its action and a status: `edit`
+with exact line edits (file, 1-based range, current and new text), `none`,
+`manual` with a one-sentence reason, or `stale` when the file no longer
+hashes as indexed. Each side keeps its spelling (`contact_email` in Python
+and SQL, `contactEmail` in TS and Zod), a Pydantic `Field(alias=...)` is
+renamed through the alias, a missing Python import is added, a SQL table
+edit carries a PostgreSQL migration hint that is never written, and the
+readers are `schema_impact`'s. Nine types can be written; `list` / `ref` /
+`enum` / `unknown` are an `mcp_error`. It is read-only by default;
+`apply=True` writes only the files of the projects in `apply_workspaces`,
+refuses the whole apply with nothing written when a target changed since
+indexing, resolves outside its root or no longer takes its edits, keeps mode
+and line endings, never creates a file and never re-indexes. That is the
+second sanctioned write into a project, after `CHANGESPEC.md`. No migration:
+fields are placed by re-parsing the hash-verified file. The OpenSpec change
+gained `Coordinated schema change plan` and `Applying a schema change plan`
+(15 scenarios, each mirroring a named test) and is archived.
+
+- **Commits**: `5def9f9` part schema-edit (`domain/schema_edit.py` +
+  `tests/test_schema_edit.py`), `37b0f53` part plan-tool
+  (`domain/schema_plan.py`, the tool, the `tests/fixtures/schema_group/`
+  three-repo group, `tests/test_plan_schema_change.py`, README / CLAUDE.md /
+  AGENT_QUICKSTART / BETA_CHECKLIST / Skill / both playbooks), `400d73b` (the
+  empty-field validation case), then part release (this docs commit). Tests,
+  by `pytest --collect-only` at each commit: 1097 (`ca8bbdb`) → 1222
+  (`5def9f9`) → 1258 (`37b0f53`) → 1259 (`400d73b`); `test_schema_edit.py`
+  124, `test_plan_schema_change.py` 36.
+- **Verify** (this tree): `pytest -q` 1259 passed; `ruff check src tests`
+  clean; `ruff format --check src tests scripts bench` clean (task 6.11 ticked:
+  clean on `main` since `a298e7b`, 182 files); `openspec validate --all
+  --strict` 13 passed, 0 failed (the change is archived, so 13 specs and no
+  change); `docs/CROSS_REPO.md` = `templates/CROSS_REPO.md` and
+  `docs/AGENT_PLAYBOOK.md` = `templates/AGENT_PLAYBOOK.md` by `cmp`.
+- **Archive**: `openspec archive virtual-schema-first --yes` → `schemas:
+  create`, `+ 10 added`; the placeholder Purpose of `openspec/specs/schemas/spec.md`
+  is replaced with a real one; `grep -c '^### Requirement:'` on it gives 10.
+- **Dogfood: archived copy** (`/tmp` copy, no `.git`, no `.venv`, a temp
+  `LIVESPEC_HOME`, the copy's `src` on `PYTHONPATH`, `fastmcp` `Client(mcp)`):
+  `index_project` (231 files, 2536 symbols), `sync_openspec` (34 specs
+  created, 3 archived changes, `2026-10-25-virtual-schema-first` with 10
+  deltas), `list_specs(capability="schemas")` returns exactly the ten ids.
+  After a plain `index_project` the Spec links are still 0;
+  `index_project(force=True)` creates 44, and `get_spec_implementation` then
+  links all ten ids: `schemas-coordinated-schema-change-plan` to
+  `schema_edit.edit_declaration`, `schema_plan.plan_change` and the
+  `plan_schema_change` tool, `schemas-applying-a-schema-change-plan` to
+  `schema_plan.apply_plan`, and the other eight to 1-7 symbols each (26 in
+  all).
+- **Dogfood finding (code left alone)**: `sync_openspec` imports the specs
+  but links no existing `@spec:` annotation to them, and an incremental
+  `index_project` with no changed file skips `scan_annotations` (it runs only
+  when a file changed, on `force=True` or after a deletion,
+  `domain/indexer.py:366`). So the documented "index, then sync" order leaves
+  every new spec at 0 symbols until `index_project(force=True)` or
+  `scan_spec_annotations`. Pre-existing; item 10 in 3a.
+
+### v0.34 phase 2 summary (reference)
 
 Phase 2 answers *what breaks, here and in the other repositories, if I change
 this field?* The core tool `schema_impact(entity, change, field, ...)`
@@ -1478,12 +1543,13 @@ v0.10 entera ejecutada en una sesión post-v0.9.0:
 
 ---
 
-## 3a. Next: virtual schema-first phases 2-3
+## 3a. Next: after virtual schema-first
 
-To resume: `read HANDOFF.md and continue`. Phases 1 and 2 sit on the branch,
-unpushed: no push, tag or `pyproject.toml` bump until all three phases are
-done. Phase 2 is done; items 2-4 and 6 are open for phase 3, 7-9 come from the
-phase 2 release:
+To resume: `read HANDOFF.md and continue`. All three phases sit on the
+branch, unpushed. They are done; the push, the tag and the `pyproject.toml`
+bump wait for the owner's go-ahead (release flow in `CLAUDE.md`). Items 2-4
+and 9 stayed out of phase 3 and are still open; 6 and 7 are closed; 10 comes
+from the phase 3 dogfood:
 
 1. **`analyze_impact` following schema links — closed in phase 2.**
    `analyze_impact` does not follow schema links; `schema_impact` is the
@@ -1505,16 +1571,12 @@ phase 2 release:
    candidates and none `table` or `variable` (the phase 1 run listed all 28
    tables of `storage/schema.sql`). TS object `type_alias` schemas are not in
    that rule; none showed up on livespec.
-6. **Archiving the change.** `openspec archive virtual-schema-first -y` in the
-   real tree, then replace the placeholder Purpose it writes for `schemas` (the
-   phase 1 and phase 2 dogfoods did both on a copy and validated strict). That
-   makes the eight `schemas-*` ids known to the store. Then cut the release per
-   the release flow in `CLAUDE.md`.
-7. **`ruff format --check` fails on `tests/test_schema_index.py:316`**, a
-   `find_dead_code` call argument dict longer than the line limit. It came in
-   with `a44cf22` and is the same on `main`; CI's lint-build job runs this
-   check, so fix it (`ruff format tests/test_schema_index.py`) before the
-   push.
+6. **Archiving the change — closed in phase 3.** Archived in the real tree
+   (`openspec/changes/archive/2026-10-25-virtual-schema-first/`) with a real
+   Purpose for `schemas`; the ten `schemas-*` ids are real specs. What is left
+   is the release itself, per the release flow in `CLAUDE.md`.
+7. **`ruff format --check` — closed.** Clean on `main` since `a298e7b`
+   (182 files); clean with phase 3 in the tree (`src tests scripts bench`).
 8. **Re-extract after P6.** The SQL escape and Pydantic alias fixes change
    extraction only: a local index built before P6 (`57cd00b`) keeps the old
    tables and field keys until `index_project(force=True)`. Users upgrading
@@ -1528,6 +1590,14 @@ phase 2 release:
    did find readers through the Pydantic side. If real repositories come back
    with empty or Pydantic-only readers, revisit with type-position references
    kept out of `symbol_edge` (`design.md`, "Risks / Trade-offs").
+10. **`sync_openspec` does not link existing annotations.** After
+    `index_project` then `sync_openspec`, every new spec has 0 symbols, and a
+    plain `index_project` does not fix it: `scan_annotations` runs only when a
+    file changed, on `force=True` or after a deletion (`domain/indexer.py:366`).
+    `index_project(force=True)` (or `scan_spec_annotations`) does. Either
+    `sync_openspec` runs `scan_annotations` for the projects it imported into,
+    or the docs say to force the next index; measured in the phase 3 dogfood
+    (0 links, then 44).
 
 ## 3b. Plan v0.12 (reference)
 

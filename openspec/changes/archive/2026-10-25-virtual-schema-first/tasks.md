@@ -43,5 +43,29 @@
 - [x] 6.8 P7 tests: `tests/test_schema_impact.py` and `tests/test_git_diff_schema_impact.py`; full suite in the P7 tree 1085 collected, 1085 passed (1060 at `a44cf22`); `ruff check src tests` clean; `openspec validate --all --strict` 13 passed
 - [x] 6.9 P6 tests: `tests/test_schema_extraction_fixes.py`, 5 collected, 5 passed
 - [x] 6.10 Full suite with P6 and P7 in one tree: 1093 collected, 1093 passed
-- [ ] 6.11 `ruff format --check src tests` clean: not met, `tests/test_schema_index.py:316` would be reformatted (pre-existing since `a44cf22`, the same on `main`)
+- [x] 6.11 `ruff format --check src tests` clean: 'ruff format --check src tests' has been clean on main since a298e7b (182 files already formatted); 190 files already formatted with phase 3 in the tree
 - [x] 6.12 Dogfood: an archived copy validates strict and links `schemas-cross-repo-schema-impact` and `schemas-schema-impact-of-a-diff` to code; a two-repo group lists declarations with actions and per-project readers with file:line for remove, rename and retype, and `git_diff_impact` reports the same entity for a commit that drops a field; livespec itself answers with the expected hints
+
+## 7. Phase 3
+
+- [x] 7.1 Part schema-edit (`5def9f9`): `domain/schema_edit.py`, the pure text engine (`RENDERABLE_TYPES`, `PLAN_CHANGE_KINDS`, `PlannedChange`, `TextEdit`, `DeclarationEdit`, `plan_action`, `edit_declaration`, `apply_text_edits`, `render_type`, `name_style`, `render_name`): line edits per flavor (`ast`, tree-sitter, the `sql_schema` lexer), each side's naming style, aliases, Python imports, `manual` with a reason, the PostgreSQL migration hint
+- [x] 7.2 Part plan-tool (`37b0f53`, `400d73b`): `domain/schema_plan.py` (planner, freshness by content hash, containment, apply writer), the core tool `plan_schema_change` in `tools/schemas.py` with its parameter descriptions, the three-repository fixtures in `tests/fixtures/schema_group/` (api: Pydantic, web: TS interface + Zod, db: SQL), and the docs: README, CLAUDE.md, AGENT_QUICKSTART, BETA_CHECKLIST, the Skill and both AGENT_PLAYBOOK copies (41 core, 56 total); the single-write rule names two sanctioned writes
+- [x] 7.3 OpenSpec deltas: requirements `Coordinated schema change plan` and `Applying a schema change plan`, phase 3 decisions and risks in `design.md`, phase 3 in `proposal.md`; the change holds ten `schemas-*` requirements
+- [x] 7.4 Each phase 3 scenario mirrors a test:
+  - Rename across four flavors: `tests/test_plan_schema_change.py::test_rename_plans_every_declaration_across_the_group` (spelling per language: `tests/test_schema_edit.py::test_rename_spelling_follows_each_language`)
+  - Aliased Pydantic rename: `test_rename_through_a_pydantic_alias_rewrites_only_the_alias` (engine: `test_schema_edit.py::test_aliased_pydantic_rename_rewrites_only_the_alias_literal`)
+  - Retype carried by the wire type: `test_retype_to_uuid_leaves_wire_strings_alone_and_imports_uuid`
+  - Nullability change: `test_optionality_makes_a_field_nullable_on_every_side`
+  - Add with a type: `test_add_and_remove`
+  - Read-only by default: `test_plan_mode_writes_nothing`
+  - Unrenderable type: `test_validation_errors_have_the_mcp_error_shape[unrenderable-type]`
+  - Inherited field: `tests/test_schema_edit.py::test_inherited_field_is_manual`
+  - Pagination: `test_summary_only_and_pagination_keep_exact_counts`
+  - Apply into two workspaces: `test_apply_writes_only_inside_apply_workspaces`
+  - Target outside apply_workspaces: `test_apply_writes_only_inside_apply_workspaces` and `test_apply_defaults_to_the_calling_workspace`
+  - Target changed since indexing: `test_a_target_edited_after_indexing_refuses_the_whole_apply`
+  - Apply root outside the group: `test_an_apply_workspace_outside_the_group_is_an_error`
+  - Path escaping its project root: `test_a_declaration_reached_through_a_symlink_outside_its_root_is_refused`
+  - Write failure after the first file: `test_a_write_failure_names_the_files_already_written`
+- [x] 7.5 Test counts, observed by `pytest --collect-only` at each commit: 1097 (`ca8bbdb`) -> 1222 (`5def9f9`) -> 1258 (`37b0f53`) -> 1259 (`400d73b`); `tests/test_schema_edit.py` 124 collected, `tests/test_plan_schema_change.py` 36 collected; full suite at `400d73b` 1259 passed
+- [x] 7.6 Release: CHANGELOG `[Unreleased]`, ROADMAP, the cross-repo guide (`docs/CROSS_REPO.md` = `templates/CROSS_REPO.md`), HANDOFF; the change archived, so `openspec/specs/schemas/spec.md` holds the ten requirements
