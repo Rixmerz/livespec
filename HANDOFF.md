@@ -44,10 +44,11 @@ Todo el stack es local-first: 0 servicios externos, 0 API keys obligatorias, 0 D
 
 ## 3. Estado actual
 
-**HEAD: `400d73b` (part plan-tool, on top of part schema-edit `5def9f9`)
-plus this docs commit (part release: OpenSpec deltas, archive, CHANGELOG,
-ROADMAP, cross-repo guide, HANDOFF). Not pushed, not tagged; `pyproject.toml`
-stays at 0.33.0.**
+**HEAD: `02ac6a5` (part release: OpenSpec deltas, archive, CHANGELOG,
+ROADMAP, cross-repo guide, HANDOFF), on top of part plan-tool `400d73b` and
+part schema-edit `5def9f9`, plus a docs-only follow-up that adds the dogfood's
+`force=True` caveat to ROADMAP. Not pushed, not tagged; `pyproject.toml` stays
+at 0.33.0.**
 Virtual schema-first is complete, all three phases, under `[Unreleased]`:
 **41 core / 56 tools** in all, no new migration (27 is still the last). The
 OpenSpec change is archived (`openspec/changes/archive/2026-10-25-virtual-schema-first/`),
@@ -86,7 +87,8 @@ gained `Coordinated schema change plan` and `Applying a schema change plan`
   (`domain/schema_plan.py`, the tool, the `tests/fixtures/schema_group/`
   three-repo group, `tests/test_plan_schema_change.py`, README / CLAUDE.md /
   AGENT_QUICKSTART / BETA_CHECKLIST / Skill / both playbooks), `400d73b` (the
-  empty-field validation case), then part release (this docs commit). Tests,
+  empty-field validation case), then part release `02ac6a5` and its ROADMAP
+  wording follow-up. Tests,
   by `pytest --collect-only` at each commit: 1097 (`ca8bbdb`) → 1222
   (`5def9f9`) → 1258 (`37b0f53`) → 1259 (`400d73b`); `test_schema_edit.py`
   124, `test_plan_schema_change.py` 36.

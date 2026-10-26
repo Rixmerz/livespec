@@ -165,7 +165,9 @@ side's spelling, plus `ALTER TABLE users RENAME COLUMN email TO
 contact_email;`; an apply into two of the three repos writes exactly those two
 files, and a target edited after indexing refuses the whole apply with nothing
 written (`tests/test_plan_schema_change.py`). On an archived copy of
-livespec, the ten `schemas-*` ids are real specs and all ten link to code.
+livespec, the ten `schemas-*` ids are real specs and all ten link to code
+after `index_project(force=True)`: in the order index, then `sync_openspec`,
+they have 0 symbols until a forced re-index (HANDOFF 3a item 10).
 
 ---
 
