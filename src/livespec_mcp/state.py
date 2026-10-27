@@ -174,15 +174,18 @@ def get_state(workspace: str | Path | None = None, *, create: bool = False) -> A
             "Pass workspace='/absolute/path/to/project' on the tool call."
         )
     with _cache_lock:
-        st = _cache.get(ws)
-        if st is not None:
-            _cache.move_to_end(ws)  # mark as most-recent
-            return st
-        # New workspace — build state, evict LRU if needed.
         # A `[workspace] group_db` reroutes only the DB to a shared file (each
         # repo keeps its own project_id inside it); docs/explorer stay per-repo.
         group_db = _read_group_db(ws)
         db_path = group_db if group_db is not None else workspace_db_path(ws)
+        st = _cache.get(ws)
+        if st is not None and st.settings.db_path == db_path:
+            _cache.move_to_end(ws)  # mark as most-recent
+            return st
+        # New workspace, or `.livespec.toml` changed `group_db` since the state
+        # was cached: a stale connection would keep writing to the old DB while
+        # index_project reports the new one. Validate and open the new DB
+        # before dropping the old state, so a failure leaves it usable.
         if not create and not db_path.is_file():
             raise WorkspaceNotIndexedError(
                 f"workspace not indexed: {ws}. run index_project(workspace='{ws}') first."
@@ -197,19 +200,26 @@ def get_state(workspace: str | Path | None = None, *, create: bool = False) -> A
         settings.ensure_dirs()
         conn = connect(settings.db_path)
         new_state = AppState(settings=settings, conn=conn, _lock=threading.Lock())
+        if st is not None:
+            _close_state(ws, st)
         _cache[ws] = new_state
+        _cache.move_to_end(ws)
         if len(_cache) > _LRU_MAX:
-            evicted_ws, evicted = _cache.popitem(last=False)
-            # Stop any live watcher FIRST — otherwise its debounced reindex
-            # keeps firing against the connection we are about to close and
-            # dies with "Cannot operate on a closed database", silently
-            # killing the "live" index for that workspace.
-            _stop_watcher_for(evicted_ws)
-            try:
-                evicted.conn.close()
-            except Exception:
-                pass
+            _close_state(*_cache.popitem(last=False))
         return new_state
+
+
+def _close_state(workspace: Path, st: AppState) -> None:
+    """Stop the workspace's watcher, then close its connection.
+
+    The watcher goes FIRST — otherwise its debounced reindex keeps firing
+    against the connection we are about to close and dies with "Cannot
+    operate on a closed database", silently killing the "live" index."""
+    _stop_watcher_for(workspace)
+    try:
+        st.conn.close()
+    except Exception:
+        pass
 
 
 def _stop_watcher_for(workspace: Path) -> None:

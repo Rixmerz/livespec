@@ -173,3 +173,60 @@ async def test_group_aware_tools_answer_the_group_question_the_same_way(tmp_path
             alone = (await c.call_tool(tool, {"workspace": str(solo), **args})).data
             assert alone["grouped"] is False, (tool, alone)
             assert alone["group_db"] is None, (tool, alone)
+
+
+def test_get_state_follows_group_db_added_after_the_state_was_cached(tmp_path):
+    """A cached state must not keep the per-repo DB once `.livespec.toml` names
+    a `group_db` — index_project writes through the cached connection."""
+    repo = _make_repo(tmp_path / "repo", "m", "f", group_db=None)
+    before = state_module.get_state(str(repo), create=True)
+    assert before.settings.db_path == repo / ".mcp-docs" / "docs.db"
+    assert before.settings.grouped is False
+
+    (repo / ".livespec.toml").write_text('[workspace]\ngroup_db = "../grp/shared.db"\n')
+    after = state_module.get_state(str(repo), create=True)
+
+    shared = (tmp_path / "grp" / "shared.db").resolve()
+    assert after.settings.db_path == shared
+    assert after.settings.grouped is True
+    assert shared.is_file()
+    assert after is not before
+
+
+def test_get_state_follows_group_db_removed_after_the_state_was_cached(tmp_path):
+    shared = tmp_path / "grp" / "shared.db"
+    repo = _make_repo(tmp_path / "repo", "m", "f", group_db=shared)
+    before = state_module.get_state(str(repo), create=True)
+    assert before.settings.grouped is True
+
+    (repo / ".livespec.toml").unlink()
+    after = state_module.get_state(str(repo), create=True)
+
+    assert after.settings.db_path == repo / ".mcp-docs" / "docs.db"
+    assert after.settings.grouped is False
+    assert after is not before
+
+
+def test_get_state_reuses_the_cached_state_while_group_db_is_unchanged(tmp_path):
+    repo = _make_repo(tmp_path / "repo", "m", "f", group_db=tmp_path / "grp" / "shared.db")
+    first = state_module.get_state(str(repo), create=True)
+    assert state_module.get_state(str(repo)) is first
+
+
+@pytest.mark.asyncio
+async def test_index_project_writes_to_the_group_db_added_after_first_use(tmp_path):
+    """The reported symptom: the workspace was used before `.livespec.toml`
+    existed, then index_project reported the group DB but wrote elsewhere."""
+    repo = _make_repo(tmp_path / "repo", "m", "f", group_db=None)
+    shared = tmp_path / "grp" / "shared.db"
+
+    async with Client(mcp) as c:
+        await c.call_tool("index_project", {"workspace": str(repo)})
+        (repo / ".livespec.toml").write_text('[workspace]\ngroup_db = "../grp/shared.db"\n')
+        await c.call_tool("index_project", {"workspace": str(repo)})
+        out = (await c.call_tool("find_symbol", {"workspace": str(repo), "query": "f"})).data
+
+    assert shared.is_file()
+    assert out["grouped"] is True
+    assert out["group_db"] == str(shared.resolve())
+    assert any(m["qualified_name"] == "pkg.m.f" for m in out["matches"])

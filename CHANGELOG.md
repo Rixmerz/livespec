@@ -6,6 +6,18 @@ follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed — a `group_db` set after first use is honoured
+
+- `get_state` now compares the cached workspace state's `db_path` with the one
+  `.livespec.toml` resolves to on every call and, when they differ (a
+  `[workspace] group_db` added, changed or removed since the state was
+  cached), stops that workspace's watcher, closes the old connection and
+  opens the new database. Before, a workspace used before `.livespec.toml`
+  existed kept writing through the cached connection to `.mcp-docs/docs.db`
+  while `index_project` reported the new `group_db`: the shared DB stayed
+  empty and `find_legacy_flows` answered `grouped: false, group_db: null`.
+  If the new database cannot be opened the old state is kept.
+
 ### Fixed — specs imported after indexing link their annotations
 
 - `sync_openspec`, `import_specs_from_markdown` and the `[specs]`

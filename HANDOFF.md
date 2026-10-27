@@ -53,10 +53,26 @@ Virtual schema-first is complete, all three phases, under `[Unreleased]`:
 **41 core / 56 tools** in all, no new migration (27 is still the last). The
 OpenSpec change is archived (`openspec/changes/archive/2026-10-25-virtual-schema-first/`),
 so `openspec/specs/schemas/spec.md` holds the ten `schemas-*` requirements.
-Tests measured in this tree: **1263 collected, 1263 passed**. The owner's
+Tests measured in this tree: **1267 collected, 1267 passed**. The owner's
 rule: nothing is pushed, tagged or version-bumped until all three phases are
 done and validated; they are done, and the push, tag and release wait for the
 owner.
+
+### Fix (Unreleased) — `get_state` follows a `group_db` that changes after first use
+
+On top of `ff7afef`. `state.get_state` read `[workspace] group_db` only when it
+built the `AppState`; a workspace used before `.livespec.toml` existed (or
+before `group_db` changed) kept writing through the cached connection to
+`.mcp-docs/docs.db` while `index_project` reported the new `group_db`, so the
+shared DB stayed empty and `find_legacy_flows` said `grouped: false`. Now every
+call compares the cached `settings.db_path` with `_read_group_db(ws) or
+workspace_db_path(ws)`; on a mismatch it opens the new DB first (so a failure
+keeps the old state), then `_close_state` (watcher, then connection) drops the
+old one. The eviction path uses the same `_close_state`.
+Spec: new requirement in `openspec/specs/storage/spec.md`. Tests: 4 new in
+`tests/test_grouped_db.py` (group_db added, removed, unchanged keeps the same
+state, `index_project` end to end); the three that change state were red before
+the fix. 1263 → 1267.
 
 ### Dogfood follow-up (Unreleased) — the plain index, then sync order links
 
