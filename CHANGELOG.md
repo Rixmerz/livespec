@@ -6,6 +6,8 @@ follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.34.0] - 2026-10-27
+
 ### Fixed — a `group_db` set after first use is honoured
 
 - `get_state` now compares the cached workspace state's `db_path` with the one
