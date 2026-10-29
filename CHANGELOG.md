@@ -6,6 +6,18 @@ follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.35.0] - 2026-10-29
+
+### Added — livespec tells cauce how to use it
+
+- `plugin/.claude-plugin/plugin.json` carries a `cauce` block (format 1): what
+  each tool is for and the line a cauce worker gets per kind of work
+  (`implement`, `refactor`, `test`, …). cauce reads it from the installed
+  plugin when it plans a task, so a livespec update changes what its workers
+  are told with no cauce release. Words only: which servers a worker gets and
+  every guard stay in cauce. Claude Code ignores the key (`claude plugin
+  validate` warns about it).
+
 ## [0.34.0] - 2026-10-27
 
 ### Fixed — a `group_db` set after first use is honoured
