@@ -6,6 +6,33 @@ follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed — a range that edits a spec's definition touches that spec; the PR comment sees the specs
+
+- The "Livespec — Spec impact" PR comment said "No tracked specs are touched
+  by these changes." on a PR that added scenarios to
+  `openspec/specs/indexer/spec.md` and `openspec/specs/analysis/spec.md`, and
+  again on one that changed `extractors.py`, `indexer.py` and `rag.py`. Two
+  causes:
+  - `scripts/pr_diff_impact.py` indexed the repository without importing its
+    specs (this repo has no `.livespec.toml`, and the script never ran even
+    the `[specs]` sync `index_project` runs), so the index it built held 0
+    specs and 0 links: nothing could be touched. It now imports specs after
+    indexing — `[specs]` in `.livespec.toml` when set, else the conventional
+    `openspec/` tree — which also creates the `@spec:` annotation links. On
+    the second PR's range the comment now lists 10 specs reached through the
+    changed code.
+  - Only code was traced to specs. `git_diff_impact` gains
+    `spec_definitions_changed` (and `counts.spec_definitions_changed`): each
+    requirement of `openspec/specs/**/spec.md` the range added, modified
+    (title, prose or a scenario) or removed, read from git, so it counts even
+    if the index never imported the spec. `affected_specs` keeps its meaning
+    (reached through code). `compute_diff_spec_impact` (explorer, PR comment)
+    marks each touched spec with `via` (`definition`, `code`), adds
+    `definition_change` / `definition_path`, and reports `specs_indexed`.
+- The comment says how each spec was touched (a `How` column), and when
+  nothing is touched it says whether the index holds no specs at all instead
+  of "No tracked specs are touched".
+
 ### Changed — faster indexing and a CLI that does not load the server
 
 - `livespec --version`, `index`, `status` and `grammars` no longer import the

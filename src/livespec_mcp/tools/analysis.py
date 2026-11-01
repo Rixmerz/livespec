@@ -46,7 +46,7 @@ from livespec_mcp.domain.languages import detect_language
 from livespec_mcp.domain.legacy_flows import compute_legacy_flows
 from livespec_mcp.domain.schema_impact import diff_schema_impact
 from livespec_mcp.domain.test_coverage_reports import discover_report_coverage
-from livespec_mcp.domain.tracks import changed_qnames_by_path
+from livespec_mcp.domain.tracks import changed_qnames_by_path, spec_definition_edits
 from livespec_mcp.state import AppState, get_state
 from livespec_mcp.tool_params import (
     Cursor,
@@ -2553,67 +2553,69 @@ def compute_diff_spec_impact(
     head: str,
     max_depth: int = 5,
 ) -> dict[str, Any]:
-    """Spec-centric impact of a git range, for the explorer export (v0.16 A).
+    """Spec-centric impact of a git range, for the explorer export (v0.16 A)
+    and the PR comment (``scripts/pr_diff_impact.py``).
 
-    Walks the diff the same way ``git_diff_impact`` does (changed files →
-    indexed symbols → backward caller cone → touched Specs), then folds each
-    touched Spec down to ``{spec_id, title, files, test_coverage_ratio}``:
+    A Spec is touched two ways, and each row says which (``via``):
 
-    * ``files`` — the CHANGED files that contribute symbols to that Spec
-      (either directly linked or whose change reaches the Spec's symbols
-      through the caller cone), sorted.
-    * ``test_coverage_ratio`` — pulled from ``compute_spec_test_coverage`` so
-      the explorer can flag "touched but under-tested" Specs.
+    * ``definition`` — the range edited the Spec's own requirement in the
+      canonical OpenSpec tree (``openspec/specs/**/spec.md``): added, modified
+      (title, prose or a scenario) or removed (``definition_change``,
+      ``definition_path``). Read from git, so a Spec the index never imported
+      still counts.
+    * ``code`` — a changed file's symbols, or their backward caller cone,
+      reach a symbol linked to the Spec (``files``: those changed files).
 
-    Returns ``{base, head, files_changed, specs_touched}``. When git
-    or the range is unavailable, returns the same keys with empty lists so
-    the caller can simply omit the section.
+    ``test_coverage_ratio`` comes from ``compute_spec_test_coverage`` so the
+    explorer can flag "touched but under-tested" Specs. ``specs_indexed`` is
+    how many Specs the index holds: with none, no change can reach a Spec
+    through code, and "no Spec touched" means nothing.
+
+    Returns ``{base, head, files_changed, specs_touched, specs_indexed}``.
+    When git or the range is unavailable, returns the same keys with empty
+    lists so the caller can simply omit the section.
     """
-    empty: dict[str, Any] = {
+    pid = st.project_id
+    specs_indexed = int(
+        st.conn.execute("SELECT COUNT(*) c FROM spec WHERE project_id=?", (pid,)).fetchone()["c"]
+    )
+    result: dict[str, Any] = {
         "base": base,
         "head": head,
         "files_changed": [],
         "specs_touched": [],
+        "specs_indexed": specs_indexed,
     }
 
-    changed_paths, err = _git_diff_changed_files(str(st.settings.workspace), base, head)
-    if err is not None or not changed_paths:
-        return empty
+    ws_root = str(st.settings.workspace)
+    entries, problem = diff_name_status(ws_root, base, head)
+    if problem is not None or not entries:
+        return result
+    changed_paths = changed_paths_of(entries)
+    if not changed_paths:
+        return result
+    result["files_changed"] = sorted(changed_paths)
 
-    pid = st.project_id
+    # Specs whose definition the range edited (git only).
+    definitions: dict[str, Any] = {}
+    for edit in spec_definition_edits(ws_root, base, head, entries):
+        definitions.setdefault(edit.spec_id, edit)
+
+    # Specs reached through changed code: changed file -> its symbols + their
+    # backward callers -> spec_symbol links.
     view = load_graph(st.conn, pid)
-    all_changed = sorted(changed_paths)
-
-    # changed file -> set of symbol ids defined in it
-    sids_by_file: dict[str, set[int]] = {}
-    changed_sym_ids: set[int] = set()
-    for path in changed_paths:
-        rows = st.conn.execute(
-            """SELECT s.id FROM symbol s JOIN file f ON f.id = s.file_id
-               WHERE f.project_id=? AND f.path=?""",
-            (pid, path),
-        ).fetchall()
-        if not rows:
-            continue
-        ids = {int(r["id"]) for r in rows}
-        sids_by_file[path] = ids
-        changed_sym_ids |= ids
-
-    if not changed_sym_ids:
-        # Still surface every path from git — Explorer lists them even when
-        # none are indexed / Spec-linked.
-        return {
-            "base": base,
-            "head": head,
-            "files_changed": all_changed,
-            "specs_touched": [],
-        }
-
-    # For each changed file, the cone of symbols its change touches
-    # (the file's own symbols + their backward callers). Used to map a
-    # touched Spec back to the changed file(s) responsible.
     cone_by_file: dict[str, set[int]] = {}
-    for path, ids in sids_by_file.items():
+    for path in changed_paths:
+        ids = {
+            int(r["id"])
+            for r in st.conn.execute(
+                """SELECT s.id FROM symbol s JOIN file f ON f.id = s.file_id
+                   WHERE f.project_id=? AND f.path=?""",
+                (pid, path),
+            )
+        }
+        if not ids:
+            continue
         cone: set[int] = set(ids)
         for sid in ids:
             if sid in view.g:
@@ -2623,62 +2625,54 @@ def compute_diff_spec_impact(
     all_touched: set[int] = set()
     for cone in cone_by_file.values():
         all_touched |= cone
-    if not all_touched:
-        return {
-            "base": base,
-            "head": head,
-            "files_changed": all_changed,
-            "specs_touched": [],
-        }
-
-    # Map every touched symbol id -> the Specs that link it.
     sym_to_specs: dict[int, list[str]] = {}
     spec_titles: dict[str, str] = {}
-    for r in _select_in_chunks(
-        st.conn,
-        """SELECT rs.symbol_id, r.spec_id, r.title
-            FROM spec_symbol rs JOIN spec r ON r.id = rs.spec_id
-            WHERE r.project_id=? AND rs.symbol_id IN ({in})""",
-        all_touched,
-        prefix_params=(pid,),
-    ):
-        sym_to_specs.setdefault(int(r["symbol_id"]), []).append(r["spec_id"])
-        spec_titles[r["spec_id"]] = r["title"]
+    if all_touched:
+        for r in _select_in_chunks(
+            st.conn,
+            """SELECT rs.symbol_id, r.spec_id, r.title
+                FROM spec_symbol rs JOIN spec r ON r.id = rs.spec_id
+                WHERE r.project_id=? AND rs.symbol_id IN ({in})""",
+            all_touched,
+            prefix_params=(pid,),
+        ):
+            sym_to_specs.setdefault(int(r["symbol_id"]), []).append(r["spec_id"])
+            spec_titles[r["spec_id"]] = r["title"]
 
-    if not spec_titles:
-        return {
-            "base": base,
-            "head": head,
-            "files_changed": all_changed,
-            "specs_touched": [],
-        }
-
-    # Per-Spec: which CHANGED files reach it (via that file's cone).
     files_by_spec: dict[str, set[str]] = {}
     for path, cone in cone_by_file.items():
         for sid in cone:
             for spec_id in sym_to_specs.get(sid, ()):
                 files_by_spec.setdefault(spec_id, set()).add(path)
 
+    touched_ids = sorted(set(files_by_spec) | set(definitions))
+    if not touched_ids:
+        return result
+
     coverage_map = compute_spec_test_coverage(st, view)
-    specs_touched = [
-        {
+    rows: list[dict[str, Any]] = []
+    for spec_id in touched_ids:
+        edit = definitions.get(spec_id)
+        via = []
+        if edit is not None:
+            via.append("definition")
+        if spec_id in files_by_spec:
+            via.append("code")
+        row: dict[str, Any] = {
             "spec_id": spec_id,
-            "title": spec_titles[spec_id],
+            "title": spec_titles.get(spec_id) or (edit.title if edit else ""),
+            "via": via,
             "files": sorted(files_by_spec.get(spec_id, set())),
             "test_coverage_ratio": (
                 coverage_map[spec_id]["test_coverage_ratio"] if spec_id in coverage_map else 0.0
             ),
         }
-        for spec_id in sorted(spec_titles)
-    ]
-
-    return {
-        "base": base,
-        "head": head,
-        "files_changed": all_changed,
-        "specs_touched": specs_touched,
-    }
+        if edit is not None:
+            row["definition_change"] = edit.change
+            row["definition_path"] = edit.path
+        rows.append(row)
+    result["specs_touched"] = rows
+    return result
 
 
 def compute_project_overview(
@@ -5640,7 +5634,11 @@ def register(mcp: FastMCP) -> None:
            symbols the range really added, modified (normalised body hash
            differs, so reformat-only edits do not count) or removed
         3. unions the backward cone of callers across them
-        4. unions the affected Specs
+        4. unions the affected Specs — `affected_specs` are the Specs linked to
+           a changed or impacted symbol (reached through code);
+           `spec_definitions_changed` lists the requirements whose own text the
+           range added, modified or removed in the canonical OpenSpec tree
+           (`openspec/specs/**/spec.md`, read from git, even if never imported)
         5. suggests test files: any file under `tests/` (or `*_test.*`) whose
            symbols call any impacted symbol — those are likely to break.
         6. when a changed symbol is a schema bound with `@schema: <entity>`,
@@ -5753,6 +5751,14 @@ def register(mcp: FastMCP) -> None:
             ):
                 affected_specs.append(dict(r))
 
+        # Specs whose own definition the range edited (canonical OpenSpec
+        # files, read from git). `affected_specs` only follows code to its
+        # spec links, so a range that edits `openspec/specs/x/spec.md` used to
+        # read as touching no Spec at all.
+        spec_definitions_changed = [
+            e.as_payload() for e in spec_definition_edits(ws_root, base_ref, head_ref, entries)
+        ]
+
         # Suggested tests: files under a tests/ folder OR matching *_test.* /
         # test_*.* whose symbols are in `impacted` (i.e. test functions that call
         # something we touched). v0.8 P2 session-02 fix (bug #7): exclude
@@ -5800,6 +5806,7 @@ def register(mcp: FastMCP) -> None:
             "changed_symbols": len(changed_symbol_meta),
             "impacted_callers": len(impacted_meta),
             "affected_specs": len(affected_specs),
+            "spec_definitions_changed": len(spec_definitions_changed),
             "suggested_tests": len(suggested_tests),
         }
         unindexed_paths = sorted(set(changed_paths) - indexed_paths)
@@ -5807,6 +5814,7 @@ def register(mcp: FastMCP) -> None:
             "base_ref": base_ref,
             "head_ref": head_ref,
             "affected_specs": affected_specs,
+            "spec_definitions_changed": spec_definitions_changed,
             "suggested_tests": suggested_tests,
             "counts": counts,
         }

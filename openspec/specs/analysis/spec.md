@@ -74,3 +74,9 @@ The livespec MCP server SHALL ensure that the system SHALL answer blast-radius q
 
 - **WHEN** a range changes one function of a file and leaves another untouched
 - **THEN** `git_diff_impact` lists the changed function in `changed_symbols` and not the untouched one
+
+#### Scenario: Editing a spec's own definition
+
+- **WHEN** a range adds a scenario to a requirement in `openspec/specs/<capability>/spec.md`
+- **THEN** `git_diff_impact` lists that requirement in `spec_definitions_changed` as `modified`, apart from the `affected_specs` reached through code
+- **AND** the PR comment counts it as a definition change, even when the index never imported the spec

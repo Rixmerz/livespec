@@ -8,6 +8,12 @@ runnable locally:
     uv run python scripts/pr_diff_impact.py
     GITHUB_BASE_SHA=main GITHUB_HEAD_SHA=HEAD uv run python scripts/pr_diff_impact.py
 
+Specs: after indexing, the script imports the repository's specs the way
+``index_project`` would (``[specs]`` in ``.livespec.toml``) and, with no such
+section, the conventional ``openspec/`` tree when it exists. Without that the
+index it builds holds no Spec, every code change "touches" none, and the
+comment said "No tracked specs are touched" on a PR that edited the specs.
+
 Environment:
     LIVESPEC_WORKSPACE — project root (default: cwd)
     GITHUB_BASE_SHA / GITHUB_HEAD_SHA — git range (default: main..HEAD)
@@ -36,6 +42,7 @@ def render_markdown(
     files_changed: list[str],
     specs_touched: list[dict],
     workspace: Path,
+    specs_indexed: int | None = None,
 ) -> str:
     """Build the PR comment body."""
     lines: list[str] = [
@@ -57,9 +64,20 @@ def render_markdown(
     lines.append(f"**{len(files_changed)}** file(s) changed.")
     lines.append("")
     if not specs_touched:
+        if specs_indexed == 0:
+            verdict = (
+                "No spec definition changed, and the index holds **no specs** "
+                "(no `[specs]` in `.livespec.toml`, no `openspec/`), so changed "
+                "code cannot be traced to any spec."
+            )
+        else:
+            verdict = (
+                "No spec is touched: no spec definition changed, and no changed "
+                "code reaches a spec-linked symbol."
+            )
         lines.extend(
             [
-                "No tracked specs are touched by these changes.",
+                verdict,
                 "",
                 "<details><summary>Changed files</summary>",
                 "",
@@ -73,19 +91,33 @@ def render_markdown(
         lines.append("")
         return "\n".join(lines)
 
-    lines.append(f"**{len(specs_touched)}** spec(s) touched:")
+    defined = [r for r in specs_touched if "definition" in (r.get("via") or [])]
+    by_code = [r for r in specs_touched if "code" in (r.get("via") or [])]
+    lines.append(
+        f"**{len(specs_touched)}** spec(s) touched: {len(defined)} definition(s) "
+        f"changed, {len(by_code)} reached through changed code."
+    )
     lines.append("")
-    lines.append("| Spec | Title | Test coverage | Changed files |")
-    lines.append("|---|---|---:|---|")
+    lines.append("| Spec | Title | How | Test coverage | Changed files |")
+    lines.append("|---|---|---|---:|---|")
     for row in specs_touched:
         spec_id = row.get("spec_id", "")
         title = (row.get("title") or "").replace("|", "\\|")
         cov = _pct(float(row.get("test_coverage_ratio") or 0))
-        files = row.get("files") or []
+        how: list[str] = []
+        if row.get("definition_change"):
+            how.append(f"definition {row['definition_change']}")
+        if "code" in (row.get("via") or []):
+            how.append("code")
+        files = list(row.get("files") or [])
+        if row.get("definition_path") and row["definition_path"] not in files:
+            files.insert(0, row["definition_path"])
         file_cell = ", ".join(f"`{f}`" for f in files[:5])
         if len(files) > 5:
             file_cell += f" (+{len(files) - 5} more)"
-        lines.append(f"| `{spec_id}` | {title} | {cov} | {file_cell or '—'} |")
+        lines.append(
+            f"| `{spec_id}` | {title} | {', '.join(how) or '—'} | {cov} | {file_cell or '—'} |"
+        )
     lines.append("")
     under_tested = [r for r in specs_touched if float(r.get("test_coverage_ratio") or 0) < 0.5]
     if under_tested:
@@ -97,6 +129,25 @@ def render_markdown(
     )
     lines.append("")
     return "\n".join(lines)
+
+
+def import_specs(st) -> dict | None:
+    """Import the repository's specs into the index just built, so changed
+    code can be traced to them (annotation links are created on import).
+
+    ``[specs]`` in ``.livespec.toml`` wins, exactly as ``index_project`` runs
+    it; otherwise the conventional ``openspec/`` tree, when present. Reads the
+    repository, writes only the index."""
+    from livespec_mcp.domain.openspec_discover import discover_openspec_root, sync_openspec_tree
+    from livespec_mcp.domain.specs_sync import sync_specs_from_config
+
+    configured = sync_specs_from_config(st)
+    if configured is not None:
+        return configured
+    root = discover_openspec_root(st.settings.workspace)
+    if root is None:
+        return None
+    return {"openspec": sync_openspec_tree(st, root)}
 
 
 def main() -> int:
@@ -116,6 +167,7 @@ def main() -> int:
     # it returns is the same one the pipeline then populates.
     st = get_state(str(workspace), create=True)
     run_index_pipeline(st, force=False)
+    import_specs(st)
 
     impact = compute_diff_spec_impact(st, base, head)
     body = render_markdown(
@@ -124,6 +176,7 @@ def main() -> int:
         files_changed=list(impact.get("files_changed") or []),
         specs_touched=list(impact.get("specs_touched") or []),
         workspace=workspace,
+        specs_indexed=impact.get("specs_indexed"),
     )
     sys.stdout.write(body)
     return 0

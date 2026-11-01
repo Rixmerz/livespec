@@ -552,7 +552,10 @@ Always registered (including markdown Spec import + OpenSpec sync).
   symbol of a touched file (a Deno Fresh app's 39-file commit: 274 → 25).
   **(v0.34)** When the range changes a schema bound with `@schema:`, the
   payload gains `schema_impact` (see *Schemas* below) and
-  `counts.schema_entities`; otherwise it is unchanged.
+  `counts.schema_entities`; otherwise it is unchanged. `affected_specs` are
+  reached through code; `spec_definitions_changed` lists the requirements
+  whose own text the range added, modified or removed under
+  `openspec/specs/` (read from git).
 - `find_dead_code(include_infrastructure=False, corroborate_with=None)` —
   symbols with zero callers and zero Spec links. Skips entry-point paths,
   framework decorators, `__main__` guards, list-stored callbacks.

@@ -51,6 +51,7 @@ _FULL_KEYS = {
     "base_ref",
     "head_ref",
     "affected_specs",
+    "spec_definitions_changed",
     "suggested_tests",
     "counts",
     "changed_files",
@@ -65,6 +66,7 @@ _COUNT_KEYS = {
     "changed_symbols",
     "impacted_callers",
     "affected_specs",
+    "spec_definitions_changed",
     "suggested_tests",
 }
 
