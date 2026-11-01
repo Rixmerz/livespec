@@ -516,8 +516,8 @@ def _replace_symbols(conn: sqlite3.Connection, *, file_id: int, result: ExtractR
     """
     import json as _json
 
-    qname_to_id: dict[str, int] = {}
     seen_keys: set[tuple[str, int]] = set()
+    rows: list[tuple[Any, ...]] = []
     for s in result.symbols:
         key = (s.qualified_name, s.start_line)
         if key in seen_keys:
@@ -530,11 +530,7 @@ def _replace_symbols(conn: sqlite3.Connection, *, file_id: int, result: ExtractR
             else None
         )
         decorators_json = _json.dumps(s.decorators) if s.decorators else None
-        cur = conn.execute(
-            """INSERT INTO symbol(file_id, parent_symbol_id, name, qualified_name, kind,
-                signature, signature_hash, docstring, body_hash, decorators,
-                visibility, start_line, end_line)
-               VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+        rows.append(
             (
                 file_id,
                 None,
@@ -549,37 +545,68 @@ def _replace_symbols(conn: sqlite3.Connection, *, file_id: int, result: ExtractR
                 s.visibility,
                 s.start_line,
                 s.end_line,
-            ),
-        )
-        qname_to_id[s.qualified_name] = int(cur.lastrowid)
-    for s in result.symbols:
-        if s.parent_qname and s.parent_qname in qname_to_id:
-            conn.execute(
-                "UPDATE symbol SET parent_symbol_id=? WHERE id=?",
-                (qname_to_id[s.parent_qname], qname_to_id[s.qualified_name]),
             )
-    for r in result.refs:
-        src_id = qname_to_id.get(r.src_qname)
-        if src_id is None:
-            continue
-        conn.execute(
-            """INSERT INTO symbol_ref(src_symbol_id, target_name, ref_type, line, scope_module,
-                                     receiver)
-               VALUES(?,?,?,?,?,?)""",
-            (src_id, r.target_name, r.ref_type, r.line, r.scope_module, r.receiver),
         )
+    # One statement for the file's symbols, then their ids read back in
+    # insertion order: the same rows and rowids as one INSERT per symbol, and
+    # the same qname -> id map (a qname inserted twice maps to its last row).
+    conn.executemany(
+        """INSERT INTO symbol(file_id, parent_symbol_id, name, qualified_name, kind,
+            signature, signature_hash, docstring, body_hash, decorators,
+            visibility, start_line, end_line)
+           VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+        rows,
+    )
+    qname_to_id: dict[str, int] = {
+        r[0]: int(r[1])
+        for r in conn.execute(
+            "SELECT qualified_name, id FROM symbol WHERE file_id=? ORDER BY id", (file_id,)
+        )
+    }
+    conn.executemany(
+        "UPDATE symbol SET parent_symbol_id=? WHERE id=?",
+        [
+            (qname_to_id[s.parent_qname], qname_to_id[s.qualified_name])
+            for s in result.symbols
+            if s.parent_qname and s.parent_qname in qname_to_id
+        ],
+    )
+    conn.executemany(
+        """INSERT INTO symbol_ref(src_symbol_id, target_name, ref_type, line, scope_module,
+                                 receiver)
+           VALUES(?,?,?,?,?,?)""",
+        [
+            (
+                qname_to_id[r.src_qname],
+                r.target_name,
+                r.ref_type,
+                r.line,
+                r.scope_module,
+                r.receiver,
+            )
+            for r in result.refs
+            if r.src_qname in qname_to_id
+        ],
+    )
     # v0.21 P2: persist route sites (client fetch/axios/requests + server
     # handlers). Cascade on symbol delete keeps these consistent on re-extract,
     # exactly like symbol_ref.
-    for rt in result.routes:
-        src_id = qname_to_id.get(rt.src_qname)
-        if src_id is None:
-            continue
-        conn.execute(
-            """INSERT INTO route_ref(symbol_id, role, method, path, norm_path, line)
-               VALUES(?,?,?,?,?,?)""",
-            (src_id, rt.role, rt.method, rt.path, normalize_route_path(rt.path), rt.line),
-        )
+    conn.executemany(
+        """INSERT INTO route_ref(symbol_id, role, method, path, norm_path, line)
+           VALUES(?,?,?,?,?,?)""",
+        [
+            (
+                qname_to_id[rt.src_qname],
+                rt.role,
+                rt.method,
+                rt.path,
+                normalize_route_path(rt.path),
+                rt.line,
+            )
+            for rt in result.routes
+            if rt.src_qname in qname_to_id
+        ],
+    )
     _insert_schemas(conn, result=result, qname_to_id=qname_to_id)
 
 
@@ -901,6 +928,7 @@ def _resolve_refs(
     # reach the same callee with different evidence (`helper()` and
     # `obj.helper()`): the stronger one must win whatever the row order.
     seen_pairs: dict[tuple[int, int], float] = {}
+    pending_edges: list[tuple[int, int, str, float]] = []
     for u in rows:
         candidates = name_index.get(u["target_name"], [])
         if not candidates:
@@ -1049,14 +1077,17 @@ def _resolve_refs(
             # (0.5 fan-out) upgrades once disambiguation makes it unambiguous.
             # MAX avoids a stray targeted re-resolve DOWNGRADING a confirmed
             # 1.0 edge back to 0.5.
-            conn.execute(
-                """INSERT INTO symbol_edge(src_symbol_id, dst_symbol_id, edge_type, weight)
-                   VALUES(?,?,?,?)
-                   ON CONFLICT(src_symbol_id, dst_symbol_id, edge_type)
-                   DO UPDATE SET weight = MAX(symbol_edge.weight, excluded.weight),
-                                 origin = 'livespec'""",
-                (src_id, tid, "calls", weight),
-            )
+            pending_edges.append((src_id, tid, "calls", weight))
             if previous is None:
                 edge_count += 1
+    # One statement for every edge, in the order they were decided: an upsert
+    # per row, exactly as one execute() each.
+    conn.executemany(
+        """INSERT INTO symbol_edge(src_symbol_id, dst_symbol_id, edge_type, weight)
+           VALUES(?,?,?,?)
+           ON CONFLICT(src_symbol_id, dst_symbol_id, edge_type)
+           DO UPDATE SET weight = MAX(symbol_edge.weight, excluded.weight),
+                         origin = 'livespec'""",
+        pending_edges,
+    )
     return edge_count

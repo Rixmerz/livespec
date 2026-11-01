@@ -13,6 +13,7 @@ from collections import OrderedDict
 from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 import xxhash
 
@@ -223,6 +224,72 @@ def upsert_chunks(conn: sqlite3.Connection, project_id: int, chunks: Iterable[Ch
     return ids
 
 
+_CHUNK_INSERT = """INSERT INTO chunk(project_id, source_type, source_id, text_kind, file_path,
+    start_line, end_line, text, content_hash)
+   VALUES(?,?,?,?,?,?,?,?,?)"""
+
+
+class _ChunkWriter:
+    """``upsert_chunks`` for a whole rebuild, in a handful of statements.
+
+    The project's existing chunks are read once instead of one SELECT per
+    source, and inserts are queued and sent with ``executemany``. A queue is
+    flushed before every DELETE, so rows are deleted and inserted in exactly
+    the order the per-source loop did: same rows, same rowids (SQLite hands an
+    INSERT ``max(rowid)+1``, which a DELETE before it can change).
+    """
+
+    def __init__(self, conn: sqlite3.Connection, project_id: int) -> None:
+        self.conn = conn
+        self.project_id = project_id
+        self.existing: dict[tuple[str, int | None], list[str]] = {}
+        for r in conn.execute(
+            "SELECT source_type, source_id, content_hash FROM chunk WHERE project_id=? ORDER BY id",
+            (project_id,),
+        ):
+            self.existing.setdefault((r["source_type"], r["source_id"]), []).append(
+                r["content_hash"]
+            )
+        self.queued: list[tuple[Any, ...]] = []
+        # Sources whose chunks this rebuild keeps (reused or rewritten).
+        self.kept: set[tuple[str, int | None]] = set()
+
+    def upsert(self, chunks: Iterable[Chunk]) -> None:
+        grouped: OrderedDict[tuple[str, int | None], list[Chunk]] = OrderedDict()
+        for ch in chunks:
+            grouped.setdefault((ch.source_type, ch.source_id), []).append(ch)
+        for key, group in grouped.items():
+            self.kept.add(key)
+            old = self.existing.get(key, [])
+            if old == [c.content_hash for c in group]:
+                continue  # identical chunk set in the same order — reuse rows
+            if old:
+                self.flush()
+                self.conn.execute(
+                    "DELETE FROM chunk WHERE project_id=? AND source_type=? AND source_id IS ?",
+                    (self.project_id, key[0], key[1]),
+                )
+            self.queued.extend(
+                (
+                    self.project_id,
+                    ch.source_type,
+                    ch.source_id,
+                    ch.text_kind,
+                    ch.file_path,
+                    ch.start_line,
+                    ch.end_line,
+                    ch.text,
+                    ch.content_hash,
+                )
+                for ch in group
+            )
+
+    def flush(self) -> None:
+        if self.queued:
+            self.conn.executemany(_CHUNK_INSERT, self.queued)
+            self.queued = []
+
+
 def rebuild_chunks(conn: sqlite3.Connection, project_id: int) -> dict[str, int]:
     """Re-chunk every symbol and Spec for the project. Idempotent.
 
@@ -236,7 +303,7 @@ def rebuild_chunks(conn: sqlite3.Connection, project_id: int) -> dict[str, int]:
 
     sym_count = 0
     spec_count = 0
-    kept_ids: list[int] = []
+    writer = _ChunkWriter(conn, project_id)
 
     rows = conn.execute(
         """SELECT s.id, s.qualified_name, s.kind, s.signature, s.docstring,
@@ -259,7 +326,7 @@ def rebuild_chunks(conn: sqlite3.Connection, project_id: int) -> dict[str, int]:
         for r in file_rows:
             body = "\n".join(lines[max(r["start_line"] - 1, 0) : min(r["end_line"], len(lines))])
             chunks = chunk_symbol(r, body)
-            kept_ids.extend(upsert_chunks(conn, project_id, chunks))
+            writer.upsert(chunks)
             sym_count += len(chunks)
 
     specs = conn.execute(
@@ -267,17 +334,18 @@ def rebuild_chunks(conn: sqlite3.Connection, project_id: int) -> dict[str, int]:
     ).fetchall()
     for r in specs:
         chunks = chunk_spec(r)
-        kept_ids.extend(upsert_chunks(conn, project_id, chunks))
+        writer.upsert(chunks)
         spec_count += len(chunks)
+    writer.flush()
 
-    conn.execute("CREATE TEMP TABLE IF NOT EXISTS _kept_chunks(id INTEGER PRIMARY KEY)")
-    conn.execute("DELETE FROM _kept_chunks")
-    conn.executemany("INSERT OR IGNORE INTO _kept_chunks(id) VALUES(?)", [(i,) for i in kept_ids])
-    conn.execute(
-        "DELETE FROM chunk WHERE project_id=? AND id NOT IN (SELECT id FROM _kept_chunks)",
-        (project_id,),
+    # Drop the chunks of every source this rebuild did not keep. A kept
+    # source's rows are exactly the ones reused or just written, so this is
+    # the old "every id not returned by upsert_chunks", read by source.
+    gone = [key for key in writer.existing if key not in writer.kept]
+    conn.executemany(
+        "DELETE FROM chunk WHERE project_id=? AND source_type=? AND source_id IS ?",
+        [(project_id, st, sid) for st, sid in gone],
     )
-    conn.execute("DELETE FROM _kept_chunks")
 
     return {"symbol_chunks": sym_count, "spec_chunks": spec_count}
 
