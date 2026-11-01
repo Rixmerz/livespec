@@ -58,6 +58,23 @@ rule: nothing is pushed, tagged or version-bumped until all three phases are
 done and validated; they are done, and the push, tag and release wait for the
 owner.
 
+### Perf (Unreleased) — index pipeline and a CLI that skips the server
+
+Branch `perf/index-pipeline`, stacked on `fix/attribute-call-resolution`
+(not on `main`, no PR). `server.py` keeps `main()` and builds `mcp` lazily
+from the new `app.py` (PEP 562 `__getattr__`), so `index`/`status`/
+`grammars`/`--version` never import fastmcp (`tools/indexing.py` imports
+`FastMCP` only for typing). `_py_extract` finds nested imports and classes
+with `_py_walk_statements` (statements only, `ast.walk` order) and
+`_collect_calls` uses `_py_children`; `_py_enum_names` takes the class list.
+`_replace_symbols`, `_resolve_refs` and `rag.rebuild_chunks` (`_ChunkWriter`)
+batch with `executemany` and keep the same rowids. `body_hash` is unchanged
+(the `ast.dump` cost was a profiler artefact; see CHANGELOG). Proof: table
+dumps of a fresh index of the cauce copy and of livespec, and of an
+incremental re-index, are byte-identical before/after. Tests:
+`tests/test_python_extract_equivalence.py`, `tests/test_cli_lazy_server.py`.
+Numbers in CHANGELOG.
+
 ### Fix (Unreleased) — attribute calls need receiver evidence; orphan tests are tests
 
 On top of `f8268d2` (release 0.35.0), branch `fix/attribute-call-resolution`

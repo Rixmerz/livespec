@@ -6,6 +6,37 @@ follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed — faster indexing and a CLI that does not load the server
+
+- `livespec --version`, `index`, `status` and `grammars` no longer import the
+  MCP server. The FastMCP app (middleware, every tool module) moved to
+  `livespec_mcp.app`; `livespec_mcp.server.mcp` is built on first access, so
+  `livespec`, `livespec serve`, `from livespec_mcp.server import mcp` and
+  `fastmcp.json`'s `server.py:mcp` work as before, and the console entry
+  point is still `livespec_mcp.server:main`. `livespec --version`
+  1.86 s → 0.11 s, `livespec status` 2.03 s → 0.21 s (median of 3).
+- Python extraction walks less: the nested imports and the classes the enum
+  scan needs come from one walk over statements only (it used to be two full
+  `ast.walk`s per file), and call collection iterates child nodes without
+  `ast.iter_child_nodes`' generators or the `ctx` leaves. Extracting the 236
+  Python files of a mid-size repo: 3.76 s → 2.41 s.
+- SQLite writes are batched with `executemany` inside the same transaction:
+  a file's symbols, parent links, refs and routes; every resolved edge; and
+  the chunk rebuild, which reads the project's chunks once instead of one
+  SELECT per symbol and flushes queued inserts before each DELETE so rowids
+  come out the same.
+- Fresh `livespec index` of that repo (268 Python + JS/TS files):
+  8.98-9.42 s → 5.90-6.42 s; of livespec itself 4.86 s → 2.64 s (median of 3,
+  two series on a shared machine). The index is identical: every table,
+  dumped row by row with ids and the FTS content, matches the one built
+  before the change, on a fresh index of both repositories and on an
+  incremental re-index after a file edit and a deletion.
+- Not changed: a Python symbol's `body_hash` is still seeded from
+  `ast.dump`. Under cProfile it looked like 3.7 s; unprofiled it is 0.82 s of
+  that repo's index, and a memoised clone of `ast.dump` measured slower, so
+  stored hashes (generated docs' drift check, the fingerprint cache) keep
+  their values.
+
 ### Fixed — an attribute call links to a function only on evidence about its receiver
 
 - The resolver linked `X.f()` to every project symbol named `f`, whatever `X`

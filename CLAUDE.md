@@ -145,6 +145,10 @@ tools/          MCP-exposed surface (56 tools: 41 core + 12 Spec + 3 docs)
   _errors.py      mcp_error() helper — every tool error returns
                   {error, isError, did_you_mean?, hint?}
 
+server.py       console entry (`livespec_mcp.server:main`); `mcp` built lazily
+app.py          the FastMCP app: middleware + every tool module. Only MCP
+                serving imports it — the CLI subcommands must not
+
 domain/         Pure business logic, no MCP coupling
   extractors.py   tree-sitter dispatcher per language; _ts_extract handles
                   JS/TS/Go/Ruby/PHP/Rust/Java; _py_extract uses ast for
