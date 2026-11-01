@@ -6,6 +6,8 @@ follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.36.0] - 2026-11-01
+
 ### Fixed — a range that edits a spec's definition touches that spec; the PR comment sees the specs
 
 - The "Livespec — Spec impact" PR comment said "No tracked specs are touched

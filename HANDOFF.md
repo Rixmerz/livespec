@@ -44,6 +44,17 @@ Todo el stack es local-first: 0 servicios externos, 0 API keys obligatorias, 0 D
 
 ## 3. Estado actual
 
+### v0.36.0 (released 2026-11-01)
+
+Release of three fixes found running livespec on a mid-size Python + TypeScript repository:
+attribute calls resolved by their receiver (migration 28, `symbol_ref.receiver`; a str method no
+longer links to a project function of the same name, calls never cross language families) and
+`find_orphan_tests` counting tests only (#24); a 35% faster fresh index with byte-identical
+output and CLI subcommands that no longer import the MCP server (#25); and the PR spec-impact
+comment, which imported no specs and never counted a spec definition edit (#26). Suite: 1323
+passed. See CHANGELOG [0.36.0].
+
+
 **HEAD: `02ac6a5` (part release: OpenSpec deltas, archive, CHANGELOG,
 ROADMAP, cross-repo guide, HANDOFF), on top of part plan-tool `400d73b` and
 part schema-edit `5def9f9`, plus a docs-only follow-up `17dd70b` and the
