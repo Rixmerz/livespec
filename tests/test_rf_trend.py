@@ -163,6 +163,8 @@ async def test_compute_diff_spec_impact_empty_shape_without_git(workspace, sampl
         st = get_state()
         result = compute_diff_spec_impact(st, "HEAD~1", "HEAD")
 
+    specs_indexed = result.pop("specs_indexed")
+    assert isinstance(specs_indexed, int)
     assert result == {
         "base": "HEAD~1",
         "head": "HEAD",

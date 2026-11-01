@@ -339,6 +339,101 @@ def openspec_deltas(
     return out
 
 
+@dataclass
+class SpecDefinitionEdit:
+    """One requirement of a canonical OpenSpec spec file whose own text a
+    range changed: ``added``, ``modified`` (title, prose or a scenario) or
+    ``removed``."""
+
+    spec_id: str
+    title: str
+    change: str  # added | modified | removed
+    path: str
+
+    def as_payload(self) -> dict[str, Any]:
+        return {
+            "spec_id": self.spec_id,
+            "title": self.title,
+            "change": self.change,
+            "path": self.path,
+        }
+
+
+def _canonical_spec_file(path: str | None) -> str | None:
+    """The capability when ``path`` is a canonical OpenSpec spec
+    (``openspec/specs/<capability>/spec.md``, at any depth), else None.
+    Change deltas (``openspec/changes/...``) are ``openspec_deltas``' job."""
+    if not path:
+        return None
+    parts = PurePosixPath(path).parts
+    if len(parts) < 4 or parts[-1] != "spec.md":
+        return None
+    for i in range(len(parts) - 3):
+        if parts[i] == "openspec" and parts[i + 1] == "specs":
+            return parts[-2]
+    return None
+
+
+def _parsed_canonical(text: str | None, capability: str) -> dict[str, Any]:
+    if not text:
+        return {}
+    try:
+        parsed = parse_openspec_markdown(text, capability=capability)
+    except ValueError:
+        return {}
+    return {p.spec_id: p for p in parsed}
+
+
+def spec_definition_edits(
+    ws_root: str, base_sha: str, head_sha: str, entries: list[DiffEntry]
+) -> list[SpecDefinitionEdit]:
+    """@spec:tracks-openspec-deltas-in-a-track
+
+    Requirements whose definition a range changed in the canonical OpenSpec
+    tree (``openspec/specs/**/spec.md``): each requirement is compared between
+    the file at base and at head, so an edited file yields only the
+    requirements whose title or text (scenarios included) changed, an added
+    file all of its requirements and a deleted one all of its own as
+    ``removed``. Reading git only, never the index: a spec the index never
+    imported still counts."""
+    picked = [
+        (e, _canonical_spec_file(e.old_path), _canonical_spec_file(e.new_path)) for e in entries
+    ]
+    picked = [(e, old_cap, new_cap) for e, old_cap, new_cap in picked if old_cap or new_cap]
+    if not picked:
+        return []
+    want: list[tuple[str, str]] = []
+    for e, old_cap, new_cap in picked:
+        if old_cap and e.old_path:
+            want.append((base_sha, e.old_path))
+        if new_cap and e.new_path:
+            want.append((head_sha, e.new_path))
+    blobs = read_blobs(ws_root, want)
+    out: list[SpecDefinitionEdit] = []
+    for e, old_cap, new_cap in picked:
+        base = (
+            _parsed_canonical(blobs.get((base_sha, e.old_path)), old_cap)
+            if old_cap and e.old_path
+            else {}
+        )
+        head = (
+            _parsed_canonical(blobs.get((head_sha, e.new_path)), new_cap)
+            if new_cap and e.new_path
+            else {}
+        )
+        where = e.new_path or e.old_path or ""
+        for sid, p in head.items():
+            prev = base.get(sid)
+            if prev is None:
+                out.append(SpecDefinitionEdit(sid, p.title, "added", where))
+            elif (prev.title, prev.description) != (p.title, p.description):
+                out.append(SpecDefinitionEdit(sid, p.title, "modified", where))
+        for sid, p in base.items():
+            if sid not in head:
+                out.append(SpecDefinitionEdit(sid, p.title, "removed", e.old_path or where))
+    return out
+
+
 def spec_ids_in_tree(ws_root: str, sha: str) -> set[str] | None:
     """Spec ids the OpenSpec tree (``openspec/specs/**/spec.md``) holds at
     ``sha``, or None when that commit has no OpenSpec specs.

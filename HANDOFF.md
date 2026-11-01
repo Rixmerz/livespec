@@ -58,6 +58,22 @@ rule: nothing is pushed, tagged or version-bumped until all three phases are
 done and validated; they are done, and the push, tag and release wait for the
 owner.
 
+### Fix (Unreleased) — diff impact sees spec definitions; the PR comment sees specs
+
+Branch `fix/diff-impact-spec-files` from `origin/main` (`9478b92`). The PR
+comment job said "No tracked specs are touched" on PR #24 (which edited two
+`openspec/specs/*/spec.md`) and PR #25 (core indexer code). Reproduced on a
+fresh clone: the index `scripts/pr_diff_impact.py` builds held 0 specs and 0
+links — the script never imported `openspec/` (no `.livespec.toml`, and it
+skipped even the `[specs]` sync). It now calls `import_specs` (config, else
+`openspec/`). Separately, spec definition edits were never a touch:
+`domain/tracks.spec_definition_edits` reads them from git; `git_diff_impact`
+adds `spec_definitions_changed`, `compute_diff_spec_impact` adds `via`,
+`definition_change`, `definition_path`, `specs_indexed`; the comment has a
+`How` column and says when the index holds no specs. Tests:
+`tests/test_diff_spec_definitions.py` (5); key-set tests updated in
+`test_git_diff_schema_impact.py` and `test_rf_trend.py`. 1275 → 1280.
+
 ### Fix (Unreleased) — attribute calls need receiver evidence; orphan tests are tests
 
 On top of `f8268d2` (release 0.35.0), branch `fix/attribute-call-resolution`
