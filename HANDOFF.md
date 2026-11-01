@@ -50,13 +50,46 @@ part schema-edit `5def9f9`, plus a docs-only follow-up `17dd70b` and the
 dogfood follow-up fix on top of it (below). Not pushed, not tagged;
 `pyproject.toml` stays at 0.33.0.**
 Virtual schema-first is complete, all three phases, under `[Unreleased]`:
-**41 core / 56 tools** in all, no new migration (27 is still the last). The
+**41 core / 56 tools** in all, no new migration in that batch (27 was the last; 28 came with the attribute-call fix below). The
 OpenSpec change is archived (`openspec/changes/archive/2026-10-25-virtual-schema-first/`),
 so `openspec/specs/schemas/spec.md` holds the ten `schemas-*` requirements.
 Tests measured in this tree: **1267 collected, 1267 passed**. The owner's
 rule: nothing is pushed, tagged or version-bumped until all three phases are
 done and validated; they are done, and the push, tag and release wait for the
 owner.
+
+### Fix (Unreleased) — attribute calls need receiver evidence; orphan tests are tests
+
+On top of `f8268d2` (release 0.35.0), branch `fix/attribute-call-resolution`
+(owner opens the PR; not on `main`). Two bugs found indexing a mixed Python +
+TypeScript repo with 0.35.0. **Migration 28** (`symbol_ref.receiver`) is now
+the last; it queues a re-extract on a DB that holds symbols.
+
+1. The resolver linked `X.f()` to any symbol named `f`: one module-level
+   `join` got 457 callers (2 real) from `"".join`, `os.path.join`,
+   `sep.join` and TS `parts.join`, and led `get_project_overview`.
+   `_py_extract` / `_ts_collect_calls` now classify the receiver
+   (`RECEIVER_MODULE|SELF|OBJECT`; literals emit no ref) and scope an
+   imported receiver to the dotted path it names (`ExtractResult.bindings`;
+   imports nested in functions count). `_resolve_refs` keeps a call inside
+   its language family, sends `self`/object receivers to methods only
+   (`self.f()` in a base-less Python class: its own methods), and caps a
+   method matched on an unknown object at 0.6. Python and JS/TS receivers
+   only; other tree-sitter languages drop literal receivers and otherwise
+   resolve as before. Call edges on that repo 29,363 → 16,195; livespec
+   4,265 → 3,863.
+2. `find_orphan_tests` took every function in a test file as a test (203 of
+   219 rows were helpers). `_is_test_function` follows each runner's
+   collection rule; `test_helper_symbols_skipped` is new. 218 → 28 on that
+   repo, 46 → 18 on livespec.
+
+Tests: `tests/test_attribute_call_resolution.py` (6), one new in
+`tests/test_aggregator_tools.py`, one new + one rewritten in
+`tests/test_test_file_detection.py` (an `orphanHelper` in a `*.test.ts` was
+asserted to be an orphan test; it is a helper), and the
+`tests/test_weight_filter.py` fixture moved from `obj.helper()` (no longer
+a fan-out) to a bare `helper()`. All new tests fail on `f8268d2`.
+1267 → 1275 passed. Two refs of one caller reaching one callee now keep the stronger weight whatever their order (`seen_pairs` holds the best weight, not a set).
 
 ### Fix (Unreleased) — `get_state` follows a `group_db` that changes after first use
 

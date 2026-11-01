@@ -25,10 +25,11 @@ def _make_short_name_fanout(workspace: Path) -> None:
     (pkg / "__init__.py").write_text("")
     (pkg / "alpha.py").write_text("def helper():\n    return 'alpha'\n")
     (pkg / "beta.py").write_text("def helper():\n    return 'beta'\n")
-    # Caller doesn't import anything; `obj.helper()` style — resolver
+    # Caller calls `helper()` by bare name without importing it — resolver
     # has no scope, falls back to short-name match weight 0.5 against
-    # both helper symbols.
-    (pkg / "caller.py").write_text("def driver(obj):\n    return obj.helper()\n")
+    # both helper symbols. (`obj.helper()` no longer fans out at all: a call
+    # on an unknown object can only reach a method, and both are functions.)
+    (pkg / "caller.py").write_text("def driver():\n    return helper()\n")
 
 
 @pytest.mark.asyncio

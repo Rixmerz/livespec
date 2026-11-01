@@ -6,6 +6,53 @@ follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed — an attribute call links to a function only on evidence about its receiver
+
+- The resolver linked `X.f()` to every project symbol named `f`, whatever `X`
+  was. On a mixed Python + TypeScript repo (~4.6k symbols) its one
+  module-level `join` collected 457 callers, two of them real: every
+  `"\n".join(...)`, `os.path.join(...)`, `sep.join(...)` and TypeScript
+  `parts.join(", ")`; it ranked first in `get_project_overview`. Now the
+  extractors record what the receiver is (`symbol_ref.receiver`, migration
+  28, which queues a re-extract): a literal (`"".join`, `[a].map`,
+  `"x".to_string()`) emits no ref at all; a receiver rooted in an imported
+  name (`import pkg.mod as m; m.f()`, `from pkg import mod; mod.f()`, an
+  import inside the function, `import * as m`) is scoped to the module it
+  names; `self.f()` / `cls.f()` / `super().f()` / `this.f()` and any other
+  object reach **methods only**, and `self.f()` in a Python class with no
+  declared base only that class's own. A method matched on an object of
+  unknown type keeps weight 0.6 at most (still shown at the default
+  `min_weight`; `min_weight=0.7` hides it): livespec infers no types.
+  A call by bare name (`join()` after `from pkg.mod import join`) resolves as
+  before. Receivers are classified for Python and JS/TS; other tree-sitter
+  languages only drop literal receivers.
+- A call never crosses language families: a JS/TS call site no longer links
+  to a Python function of the same name (2,728 of 29,363 call edges on that
+  repo did).
+- Measured: that repo 29,363 → 16,195 call edges, `who_calls
+  src.cauce.isolate.join` 457 → 2 (the two real callers), the top symbol of
+  the overview is no longer `join`; livespec itself 4,265 → 3,863 call
+  edges, 69 → 0 cross-language.
+
+### Fixed — `find_orphan_tests` reports tests, not the helpers beside them
+
+- Every function and method in a test file was a candidate, so fakes,
+  helpers, fixtures and nested closures (which call no production code by
+  design) came out as `no_outgoing_calls` orphans: 203 of 219 rows on the
+  repo above. Only what the runner collects is a candidate now: pytest and
+  unittest `test*` functions at module level and `test*` methods of a class
+  (never a `@pytest.fixture`, never a nested function), Go
+  `Test`/`Benchmark`/`Fuzz`/`Example`, a JUnit/TestNG `@Test`-style
+  annotation or JUnit 3 `test*` method, PHPUnit/minitest `test*`, Rust
+  `#[test]`, and a JS/TS function passed to `test(`/`it(` by name. New payload
+  field `test_helper_symbols_skipped`; `test_function_symbols` counts tests
+  only. A JS/TS test file whose named functions are all helpers (its tests
+  are anonymous callbacks) is reported in `test_files_without_symbols`.
+  Measured: 218 → 28 orphans on that repo, 46 → 18 on livespec. The rest are
+  real tests that call no project function (they read files, run a
+  subprocess or check constants); the call graph cannot say what they
+  exercise.
+
 ## [0.35.0] - 2026-10-29
 
 ### Added — livespec tells cauce how to use it

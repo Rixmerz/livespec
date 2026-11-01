@@ -106,7 +106,7 @@ it is not a background watcher you should lean on while editing.
 | Literal string search over indexed files | `grep_in_indexed_files(pattern)` — check `scope_fresh`, see the staleness trap below |
 | Dead-code candidates | `find_dead_code()` — respects entry points / `pub` / frameworks; TS-only auto-enables `include_non_python` |
 | Likely-unused HTTP flows | `find_legacy_flows()` — see polyrepo section; graph ≠ traffic |
-| Orphan tests | `find_orphan_tests()` — check `test_files_count` / `test_function_symbols` + `hint` (Jest anonymous `test()` → honest zero) |
+| Orphan tests | `find_orphan_tests()` — tests only (helpers counted in `test_helper_symbols_skipped`); check `test_files_count` / `test_function_symbols` + `hint` (Jest anonymous `test()` → honest zero) |
 | HTTP/CLI entry points | `find_endpoints(framework=None)` — see the Hono trap below; prefer `summary_only=True` if JSON is huge |
 | Project snapshot | `get_project_overview()` — test-file symbols are excluded from `top_symbols` |
 | Everything needed to change one symbol | `read_unit(qname, depth=1, token_budget=2000)` — body + callee signatures + the types in them + what it raises + covering tests, in one payload |

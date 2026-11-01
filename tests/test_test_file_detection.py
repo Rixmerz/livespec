@@ -152,12 +152,21 @@ async def test_find_orphan_tests_flags_blind_files_in_polyglot_repo(workspace):
 async def test_find_orphan_tests_sees_typescript_tests(workspace):
     """`find_orphan_tests` must not report a flat zero on a TS repo.
 
-    `orphanHelper` lives in `*.test.ts` and calls nothing → orphan.
-    `createMockDb` reaches production code → not an orphan. Before the fix
-    neither was even recognised as a test, so count was 0 for the wrong
-    reason.
+    A named function handed to `test(`/`it(` is a test: `lonelyCheck` calls
+    nothing of production → orphan; `chargesTwice` reaches `chargeCard` → not
+    an orphan. `orphanHelper` and `createMockDb` are helpers of the test file,
+    not tests, so they are no candidates at all (they used to be reported as
+    orphan tests themselves).
     """
     _write_ts_repo(workspace)
+    test_file = workspace / "src" / "core.test.ts"
+    test_file.write_text(
+        test_file.read_text()
+        + f"function chargesTwice() {{\n{_BODY}\n  return chargeCard(1) === 2;\n}}\n"
+        + f"function lonelyCheck() {{\n{_BODY}\n  return 7;\n}}\n"
+        + 'test("charges", chargesTwice);\n'
+        + "it.only('is lonely', lonelyCheck);\n"
+    )
 
     async with Client(mcp) as c:
         await c.call_tool("index_project", {})
@@ -165,8 +174,27 @@ async def test_find_orphan_tests_sees_typescript_tests(workspace):
 
     qnames = {o["qualified_name"] for o in out["orphan_tests"]}
     assert out["count"] == 1, f"expected exactly 1 orphan, got {out}"
-    assert any(q.endswith("orphanHelper") for q in qnames), qnames
-    assert not any(q.endswith("createMockDb") for q in qnames), qnames
+    assert any(q.endswith("lonelyCheck") for q in qnames), qnames
+    assert out["test_function_symbols"] == 2, out
+    assert out["test_helper_symbols_skipped"] == 2, out
+    assert out["test_files_without_symbols"] == 0, out
+
+
+@pytest.mark.asyncio
+async def test_find_orphan_tests_ts_helpers_only_file_is_blind(workspace):
+    """A `*.test.ts` whose named functions are all helpers holds its tests in
+    anonymous callbacks: it is reported as a file the scan could not see,
+    never as orphan tests."""
+    _write_ts_repo(workspace)
+
+    async with Client(mcp) as c:
+        await c.call_tool("index_project", {})
+        out = (await c.call_tool("find_orphan_tests", {})).data
+
+    assert out["count"] == 0, out
+    assert out["test_function_symbols"] == 0, out
+    assert out["test_helper_symbols_skipped"] == 2, out
+    assert out["test_files_without_symbols_sample"] == ["src/core.test.ts"], out
 
 
 @pytest.mark.asyncio

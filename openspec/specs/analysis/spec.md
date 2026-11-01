@@ -21,6 +21,12 @@ The livespec MCP server SHALL ensure that the system SHALL detect unreachable sy
 - **THEN** `find_dead_code` SHALL NOT list them as dead candidates by default
 - **AND** `find_dead_code(include_tests=True)` SHALL include them
 
+#### Scenario: Only tests are orphan-test candidates
+
+- **WHEN** a test file defines helpers, fakes, fixtures or nested functions beside its tests
+- **THEN** `find_orphan_tests` SHALL consider only what the runner collects (pytest `test*` functions and `test*` methods of a class, Go `TestX`, `@Test`, a function passed to `test(`/`it(` by name)
+- **AND** the helpers are counted in `test_helper_symbols_skipped`, never reported as orphan tests
+
 ### Requirement: Endpoint discovery (framework-aware)
 
 The livespec MCP server SHALL ensure that the system SHALL discover HTTP/CLI entry points across supported frameworks via `find_endpoints`, including Express/Hono in the default sweep.
