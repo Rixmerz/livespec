@@ -832,6 +832,18 @@ def _m027_schema_symbols(conn: sqlite3.Connection) -> None:
         _flag_reextract(conn)
 
 
+def _m028_symbol_ref_receiver(conn: sqlite3.Connection) -> None:
+    """symbol_ref.receiver (after v0.35.0) — what ``X`` is in an attribute call
+    ``X.f()`` (an imported module, ``self``, or any other object). The resolver
+    stops linking ``"".join(x)`` to a project function named ``join`` by bare
+    name. Re-extract is queued only on a DB that already holds symbols, so the
+    existing refs get the column filled; until then a NULL receiver resolves as
+    before. Rolling back is ignoring the column, which v27 code never reads."""
+    _try_add_column(conn, "symbol_ref", "receiver", "TEXT")
+    if conn.execute("SELECT 1 FROM symbol LIMIT 1").fetchone() is not None:
+        _flag_reextract(conn)
+
+
 # Ordered registry. Append-only — never reuse a version number.
 MIGRATIONS: list[Migration] = [
     (1, "drop_dead_tables", _m001_drop_dead_tables),
@@ -861,6 +873,7 @@ MIGRATIONS: list[Migration] = [
     (25, "tracks", _m025_tracks),
     (26, "track_spec_tier", _m026_track_spec_tier),
     (27, "schema_symbols", _m027_schema_symbols),
+    (28, "symbol_ref_receiver", _m028_symbol_ref_receiver),
 ]
 
 

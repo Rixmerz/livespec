@@ -578,7 +578,10 @@ Always registered (including markdown Spec import + OpenSpec sync).
   no indexed client hop + clients with no matched server. Graph only —
   confirm with traffic before deleting.
 - `find_orphan_tests(max_depth=10, corroborate_with=None)` — test functions
-  whose forward cone never reaches a non-test symbol. `corroborate_with` drops
+  whose forward cone never reaches a non-test symbol. Only what a runner
+  collects is a candidate (pytest `test*`, Go `TestX`, `@Test`, a function
+  passed to `test(`/`it(`); helpers in test files are counted in
+  `test_helper_symbols_skipped`, never reported. `corroborate_with` drops
   tests a Graphify graph sees reaching production (a Java service went 17 → 9;
   livespec's own suite went 26 → 26, because its in-process harness is a blind
   spot **both** extractors share — corroboration only helps where blind spots

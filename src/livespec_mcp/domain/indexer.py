@@ -22,6 +22,9 @@ from pathspec import GitIgnoreSpec
 
 from livespec_mcp.config import RepoConfig, Settings, load_repo_config
 from livespec_mcp.domain.extractors import (
+    RECEIVER_MODULE,
+    RECEIVER_OBJECT,
+    RECEIVER_SELF,
     ExtractResult,
     extract,
     normalize_route_path,
@@ -560,9 +563,10 @@ def _replace_symbols(conn: sqlite3.Connection, *, file_id: int, result: ExtractR
         if src_id is None:
             continue
         conn.execute(
-            """INSERT INTO symbol_ref(src_symbol_id, target_name, ref_type, line, scope_module)
-               VALUES(?,?,?,?,?)""",
-            (src_id, r.target_name, r.ref_type, r.line, r.scope_module),
+            """INSERT INTO symbol_ref(src_symbol_id, target_name, ref_type, line, scope_module,
+                                     receiver)
+               VALUES(?,?,?,?,?,?)""",
+            (src_id, r.target_name, r.ref_type, r.line, r.scope_module, r.receiver),
         )
     # v0.21 P2: persist route sites (client fetch/axios/requests + server
     # handlers). Cascade on symbol delete keeps these consistent on re-extract,
@@ -736,6 +740,45 @@ def _is_caller_parameter(signature: str | None, target_name: str) -> bool:
     return False
 
 
+# Languages whose symbols call each other: one family per runtime.
+_LANGUAGE_FAMILIES: dict[str, str] = {
+    "javascript": "js",
+    "typescript": "js",
+    "tsx": "js",
+}
+
+
+def _language_family(language: str | None) -> str:
+    return _LANGUAGE_FAMILIES.get(language or "", language or "")
+
+
+def _under_scope(candidates: list[tuple[int, str, int]], scope: str) -> list[tuple[int, str, int]]:
+    # Match either the exact module prefix or its tail (because the extractor
+    # may emit module names without the package prefix that the indexer
+    # assigns to qualified_name).
+    return [c for c in candidates if f".{scope}." in f".{c[1]}" or c[1].startswith(f"{scope}.")]
+
+
+def _declares_base(signature: str | None) -> bool:
+    """True unless a Python class signature (`class A(B, C)`) lists no base
+    other than ``object`` (a metaclass keyword is no base either)."""
+    if not signature or "(" not in signature:
+        return False
+    inner = signature[signature.index("(") + 1 : signature.rfind(")")]
+    bases = [b.strip() for b in inner.split(",") if b.strip()]
+    return any(b != "object" and "=" not in b for b in bases)
+
+
+def _enclosing_class(src_qname: str, class_bases: dict[str, bool]) -> str | None:
+    """The innermost Python class that encloses the caller, if any."""
+    parts = src_qname.split(".")
+    for depth in range(len(parts) - 1, 0, -1):
+        prefix = ".".join(parts[:depth])
+        if prefix in class_bases:
+            return prefix
+    return None
+
+
 def _resolve_refs(
     conn: sqlite3.Connection,
     *,
@@ -773,7 +816,14 @@ def _resolve_refs(
        call site.
     4. otherwise: keep all candidates at weight 0.5 (legacy behavior). True
        cross-file ambiguous call where the extractor missed the import.
-    Single-candidate matches are always weight 1.0.
+    Single-candidate matches are weight 1.0, except a method matched on an
+    object of unknown type (``x.f()``, receiver ``object``), capped at 0.6.
+
+    Before any of that, candidates are narrowed by the call itself: a call
+    never crosses language families, and an attribute call ``X.f()`` reaches
+    a module-level function only when ``X`` is an imported name (receiver
+    ``module``); ``self.f()`` and a call on any other object reach methods
+    only, and ``self.f()`` in a class with no declared base only its own.
     """
     if changed_file_ids:
         placeholders = ",".join("?" * len(changed_file_ids))
@@ -786,7 +836,8 @@ def _resolve_refs(
         }
         params: list[Any] = [project_id, *changed_file_ids]
         sql = (
-            f"SELECT u.src_symbol_id, u.target_name, u.scope_module, s.file_id AS src_file_id, "
+            f"SELECT u.src_symbol_id, u.target_name, u.scope_module, u.receiver, "
+            f"       s.file_id AS src_file_id, f.language AS src_language, "
             f"       s.qualified_name AS src_qname, s.signature AS src_signature "
             f"FROM symbol_ref u "
             f"JOIN symbol s ON s.id = u.src_symbol_id "
@@ -802,7 +853,8 @@ def _resolve_refs(
         rows = conn.execute(sql, params).fetchall()
     else:
         rows = conn.execute(
-            """SELECT u.src_symbol_id, u.target_name, u.scope_module, s.file_id AS src_file_id,
+            """SELECT u.src_symbol_id, u.target_name, u.scope_module, u.receiver,
+                      s.file_id AS src_file_id, f.language AS src_language,
                       s.qualified_name AS src_qname, s.signature AS src_signature
                FROM symbol_ref u
                JOIN symbol s ON s.id = u.src_symbol_id
@@ -813,14 +865,25 @@ def _resolve_refs(
 
     # name_index: short name -> [(symbol_id, qualified_name, file_id)]
     name_index: dict[str, list[tuple[int, str, int]]] = {}
+    # Per symbol id: its language family and whether it is a method. A call
+    # never crosses languages (a `.tsx` `parts.join(",")` is not a Python
+    # `join`), and a call on an object can only reach a method.
+    family_of: dict[int, str] = {}
+    methods: set[int] = set()
+    # Python class qname -> whether it declares a base (`class A(B)`).
+    class_bases: dict[str, bool] = {}
     for r in conn.execute(
-        """SELECT s.id, s.name, s.qualified_name, s.file_id FROM symbol s
-           JOIN file f ON f.id=s.file_id WHERE f.project_id=?""",
+        """SELECT s.id, s.name, s.qualified_name, s.file_id, s.kind, s.signature, f.language
+           FROM symbol s JOIN file f ON f.id=s.file_id WHERE f.project_id=?""",
         (project_id,),
     ):
-        name_index.setdefault(r["name"], []).append(
-            (int(r["id"]), r["qualified_name"], int(r["file_id"]))
-        )
+        sid = int(r["id"])
+        name_index.setdefault(r["name"], []).append((sid, r["qualified_name"], int(r["file_id"])))
+        family_of[sid] = _language_family(r["language"])
+        if r["kind"] == "method":
+            methods.add(sid)
+        elif r["kind"] == "class" and r["language"] == "python":
+            class_bases[r["qualified_name"]] = _declares_base(r["signature"])
 
     # Every module prefix this project defines. Used to tell "the import names
     # a project module and we failed to match the symbol" (ambiguous — keep the
@@ -834,11 +897,41 @@ def _resolve_refs(
             project_scopes.add(parts[i - 1])
 
     edge_count = 0
-    seen_pairs: set[tuple[int, int]] = set()
+    # (src, dst) -> best weight written this walk. Two refs of one caller can
+    # reach the same callee with different evidence (`helper()` and
+    # `obj.helper()`): the stronger one must win whatever the row order.
+    seen_pairs: dict[tuple[int, int], float] = {}
     for u in rows:
         candidates = name_index.get(u["target_name"], [])
         if not candidates:
             continue
+
+        # Calls stay inside their language family: a JS/TS call site cannot
+        # call a Python function. 2.7k of 29k call edges on a mixed
+        # Python + TypeScript repo crossed languages by bare name.
+        src_family = _language_family(u["src_language"])
+        candidates = [c for c in candidates if family_of.get(c[0]) == src_family]
+        if not candidates:
+            continue
+
+        # The receiver of an attribute call (`X.f()`). Only an imported
+        # receiver is evidence of a module; `self.f()` and a call on any other
+        # object (`"".join`, `parts.join`, `self.store.add`) can only reach a
+        # METHOD. Linking them to a module-level function of the same name by
+        # bare name made every `"\n".join(...)` in a repo a caller of the one
+        # project function named `join`. Rows written before the column
+        # existed carry NULL and resolve as they always did.
+        receiver = u["receiver"]
+        if receiver in (RECEIVER_SELF, RECEIVER_OBJECT):
+            candidates = [c for c in candidates if c[0] in methods]
+            if receiver == RECEIVER_SELF:
+                # `self.f()` in a class that declares no base can only reach its
+                # own methods (or ones nested in it): nothing is inherited.
+                owner = _enclosing_class(str(u["src_qname"]), class_bases)
+                if owner is not None and not class_bases[owner]:
+                    candidates = [c for c in candidates if c[1].startswith(f"{owner}.")]
+            if not candidates:
+                continue
 
         # A call to one of the caller's OWN PARAMETERS is a call through a
         # value, not to any project symbol — the callee is whatever the caller
@@ -855,12 +948,21 @@ def _resolve_refs(
         scope = u["scope_module"]
         scoped: list[tuple[int, str, int]] = []
         if scope:
-            for sid, qname, fid in candidates:
-                # Match either the exact module prefix or its tail (because the
-                # extractor may emit module names without the package prefix that
-                # the indexer assigns to qualified_name).
-                if f".{scope}." in f".{qname}" or qname.startswith(f"{scope}."):
-                    scoped.append((sid, qname, fid))
+            scoped = _under_scope(candidates, scope)
+            if not scoped and receiver == RECEIVER_MODULE and scope not in project_scopes:
+                # `from pkg import client; client.get()`: the receiver scope is
+                # `pkg.client`, which names no project module when `client` is
+                # a VALUE (an instance) rather than a module. Fall back to the
+                # nearest enclosing scope that is a project module, the
+                # package the name was imported from — what this resolved to
+                # before receivers were classified. `os.path` has no such
+                # parent and is still dropped below.
+                parent = scope
+                while "." in parent and not scoped:
+                    parent = parent.rsplit(".", 1)[0]
+                    if parent in project_scopes:
+                        scoped = _under_scope(candidates, parent)
+                        break
             if scoped:
                 candidates = scoped
             elif scope not in project_scopes:
@@ -926,14 +1028,22 @@ def _resolve_refs(
             weight = 0.7
         else:
             weight = 0.5
+        if receiver == RECEIVER_OBJECT:
+            # A method matched by name on an object whose type is not known
+            # (`store.add()`, `sep.join()`): plausible, never confirmed. 0.6 is
+            # the default traversal threshold, so these stay visible, and
+            # `min_weight=0.7` keeps only edges backed by an import, `self`
+            # or a bare name in scope.
+            weight = min(weight, 0.6)
         for tid, _qname, _fid in candidates:
             src_id = int(u["src_symbol_id"])
             if tid == src_id:
                 continue
             key = (src_id, tid)
-            if key in seen_pairs:
+            previous = seen_pairs.get(key)
+            if previous is not None and previous >= weight:
                 continue
-            seen_pairs.add(key)
+            seen_pairs[key] = weight
             # Never DELETE (edges from unchanged files must survive); but DO
             # refresh the weight monotonically so a previously-ambiguous edge
             # (0.5 fan-out) upgrades once disambiguation makes it unambiguous.
@@ -947,5 +1057,6 @@ def _resolve_refs(
                                  origin = 'livespec'""",
                 (src_id, tid, "calls", weight),
             )
-            edge_count += 1
+            if previous is None:
+                edge_count += 1
     return edge_count

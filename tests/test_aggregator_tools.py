@@ -508,6 +508,65 @@ async def test_find_orphan_tests(workspace):
 
 
 @pytest.mark.asyncio
+async def test_find_orphan_tests_skips_helpers_in_test_files(workspace):
+    """Only what pytest collects is a candidate: helpers, fakes, fixtures and
+    nested closures in a test file call nothing of production by design and
+    used to drown the real orphans as `no_outgoing_calls` (203 of 219 rows on
+    a mid-size repo)."""
+    (workspace / "src").mkdir()
+    (workspace / "src" / "__init__.py").write_text("")
+    (workspace / "src" / "real.py").write_text("def production_fn():\n    return 1\n")
+    (workspace / "tests").mkdir()
+    (workspace / "tests" / "test_mixed.py").write_text(
+        "import pytest\n"
+        "from src.real import production_fn\n"
+        "\n"
+        "class FakeClock:\n"
+        "    def now(self):\n"
+        "        return 0\n"
+        "\n"
+        "def cart():\n"
+        "    return {'items': []}\n"
+        "\n"
+        "@pytest.fixture\n"
+        "def test_user():\n"
+        "    return {}\n"
+        "\n"
+        "def test_real():\n"
+        "    assert production_fn() == 1\n"
+        "\n"
+        "def test_lonely():\n"
+        "    def inner():\n"
+        "        return 1\n"
+        "    assert inner() == 1\n"
+        "\n"
+        "class TestThing:\n"
+        "    def helper(self):\n"
+        "        return 2\n"
+        "\n"
+        "    def test_method(self):\n"
+        "        assert self.helper() == 2\n"
+    )
+
+    async with Client(mcp) as c:
+        await c.call_tool("index_project", {})
+        out = (await c.call_tool("find_orphan_tests", {})).data
+
+    qnames = {o["qualified_name"] for o in out["orphan_tests"]}
+    assert qnames == {
+        "tests.test_mixed.test_lonely",
+        "tests.test_mixed.TestThing.test_method",
+    }, out
+    assert out["count"] == 2, out
+    # test_real, test_lonely, TestThing.test_method — not the fixture.
+    assert out["test_function_symbols"] == 3, out
+    # FakeClock.now, cart, the test_user fixture, inner, TestThing.helper.
+    assert out["test_helper_symbols_skipped"] == 5, out
+    # A Python test file of helpers holds no hidden tests: not blind.
+    assert out["test_files_without_symbols"] == 0, out
+
+
+@pytest.mark.asyncio
 async def test_find_endpoints_detects_plugin_decorator_alias(workspace):
     """v0.14 (F4): a tool decorated via an alias factory
     (`mutation_tool = mcp.tool if X else _noop`) — the pattern the Spec

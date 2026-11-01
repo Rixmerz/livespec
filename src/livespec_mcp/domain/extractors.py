@@ -51,6 +51,9 @@ class ExtractedRef:
     line: int
     ref_type: str = "call"
     scope_module: str | None = None  # P0.4: module name imported as the source of `target_name`
+    # What `X` is in an attribute call `X.f()` (RECEIVER_* below); None for a
+    # call by bare name, and for languages whose receivers are not classified.
+    receiver: str | None = None
 
 
 @dataclass
@@ -107,6 +110,11 @@ class ExtractResult:
     # P0.4: per-file imports map. local_name -> source_module (qualified name of
     # the module providing it). Used by the resolver to scope short-name lookups.
     imports: dict[str, str] = field(default_factory=dict)
+    # Python only: local_name -> the dotted path the name itself is bound to
+    # (`from pkg import mod` binds `mod` to `pkg.mod`; `import a.b as m` binds
+    # `m` to `a.b`; `import a.b` binds `a` to `a`). Scopes an attribute call's
+    # receiver to the module it names, not the package it came from.
+    bindings: dict[str, str] = field(default_factory=dict)
     # True when the source could not be parsed (Python ast.parse SyntaxError).
     # The indexer uses this to PRESERVE the file's existing symbols instead of
     # wiping them (and their spec_symbol links) on a transient parse failure —
@@ -221,17 +229,42 @@ def _py_extract(source: str, module_name: str) -> ExtractResult:
         return out
 
     # P0.4: collect imports for resolver scoping. Maps `local_name` -> source module.
-    for node in tree.body:
+    # Module-level imports first; then the ones nested in a function, a class,
+    # a `try:` or an `if TYPE_CHECKING:` block, which never override a
+    # module-level binding of the same name. A lazy `from pkg import mod`
+    # inside a function is the evidence that `mod.f()` there is a module call:
+    # without it the receiver reads as an unknown object.
+    def _bind(node: ast.Import | ast.ImportFrom, *, nested: bool) -> None:
+        # (local name, source module, what the local name itself is bound to)
+        triples: list[tuple[str, str, str]] = []
         if isinstance(node, ast.Import):
             for alias in node.names:
-                out.imports[alias.asname or alias.name.split(".")[0]] = alias.name
-        elif isinstance(node, ast.ImportFrom):
+                top = alias.name.split(".")[0]
+                triples.append(
+                    (alias.asname or top, alias.name, alias.name if alias.asname else top)
+                )
+        else:
             mod = node.module or ""
             for alias in node.names:
-                local = alias.asname or alias.name
                 if alias.name == "*":
                     continue
+                bound = f"{mod}.{alias.name}" if mod else alias.name
+                triples.append((alias.asname or alias.name, mod, bound))
+        for local, mod, bound in triples:
+            if nested:
+                out.imports.setdefault(local, mod)
+                out.bindings.setdefault(local, bound)
+            else:
                 out.imports[local] = mod
+                out.bindings[local] = bound
+
+    top_level = {id(n) for n in tree.body}
+    for node in tree.body:
+        if isinstance(node, (ast.Import, ast.ImportFrom)):
+            _bind(node, nested=False)
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.Import, ast.ImportFrom)) and id(node) not in top_level:
+            _bind(node, nested=True)
 
     enum_names = _py_enum_names(tree)
     # Same-file schema classes by name, in source order: a base declared
@@ -674,22 +707,27 @@ def _collect_calls(func_node: ast.AST, src_qname: str, out: ExtractResult) -> No
                 )
             target = _call_target_name(node.func)
             if target:
-                # P0.4: if the target name was imported in this file, tag the
-                # ref with the originating module so the resolver can scope.
-                scope = out.imports.get(target)
-                # For attribute access `mod.func()`, also try the leftmost name
-                # against imports (e.g. `from pkg import mod; mod.func()`).
-                if scope is None and isinstance(node.func, ast.Attribute):
-                    leftmost = _leftmost_name(node.func)
-                    if leftmost is not None and leftmost in out.imports:
-                        # The function lives inside the imported module
-                        scope = out.imports[leftmost]
+                receiver: str | None = None
+                if isinstance(node.func, ast.Attribute):
+                    # An attribute call is scoped by its RECEIVER only, never by
+                    # its bare name: `"".join(x)` in a file that imported some
+                    # project `join` is still str.join.
+                    receiver, scope = _py_receiver(node.func, out.bindings)
+                    if receiver == RECEIVER_LITERAL:
+                        # A method of a builtin value; no project symbol.
+                        continue
+                else:
+                    # P0.4: if the target name was imported in this file, tag
+                    # the ref with the originating module so the resolver can
+                    # scope.
+                    scope = out.imports.get(target)
                 out.refs.append(
                     ExtractedRef(
                         src_qname=src_qname,
                         target_name=target,
                         line=getattr(node, "lineno", 0),
                         scope_module=scope,
+                        receiver=receiver,
                     )
                 )
 
@@ -1039,6 +1077,64 @@ def _leftmost_name(node: ast.AST) -> str | None:
     if isinstance(node, ast.Name):
         return node.id
     return None
+
+
+# What the receiver of an attribute call (`X.f()`) is known to be. Stored on
+# symbol_ref.receiver; the resolver reads it (indexer._resolve_refs). A call by
+# bare name (`f()`) has no receiver (None) and resolves as it always did.
+RECEIVER_MODULE = "module"  # X is a name this file imports: `mod.f()`, `os.path.join()`
+RECEIVER_SELF = "self"  # `self.f()`, `cls.f()`, `super().f()`: a method of a class
+RECEIVER_OBJECT = "object"  # anything else: a local, a parameter, `a.b.f()`, `g().f()`
+RECEIVER_LITERAL = "literal"  # `"".join()`, `[].append()`: never emitted as a ref
+
+_PY_LITERAL_RECEIVERS = (
+    ast.Constant,
+    ast.JoinedStr,
+    ast.List,
+    ast.Tuple,
+    ast.Dict,
+    ast.Set,
+    ast.ListComp,
+    ast.SetComp,
+    ast.DictComp,
+    ast.GeneratorExp,
+)
+
+
+def _py_receiver(func: ast.Attribute, bindings: dict[str, str]) -> tuple[str, str | None]:
+    """Classify the receiver of ``X.f()`` and return ``(receiver, scope_module)``.
+
+    For an imported receiver the scope is the dotted path it names: the
+    import's binding plus the attributes between it and the call
+    (``os.path.join`` → ``os.path``; ``from pkg import mod; mod.f()`` →
+    ``pkg.mod``; ``import pkg.mod as m; m.f()`` → ``pkg.mod``).
+
+    Only a receiver rooted in an imported name is evidence of a module (or of a
+    class imported from one); ``self``/``cls``/``super()`` are evidence of a
+    method; a literal is a builtin type. Everything else is an object of
+    unknown type, which can only reach a method, never a module-level function.
+    """
+    value = func.value
+    if isinstance(value, _PY_LITERAL_RECEIVERS):
+        return RECEIVER_LITERAL, None
+    if isinstance(value, ast.Name) and value.id in ("self", "cls"):
+        return RECEIVER_SELF, None
+    if (
+        isinstance(value, ast.Call)
+        and isinstance(value.func, ast.Name)
+        and value.func.id == "super"
+    ):
+        return RECEIVER_SELF, None
+    chain: list[str] = []
+    cur: ast.AST = value
+    while isinstance(cur, ast.Attribute):
+        chain.append(cur.attr)
+        cur = cur.value
+    if isinstance(cur, ast.Name) and cur.id in bindings:
+        # The function lives inside the imported module (`from pkg import mod;
+        # mod.func()`), or is a method of a class imported from one.
+        return RECEIVER_MODULE, ".".join([bindings[cur.id], *reversed(chain)])
+    return RECEIVER_OBJECT, None
 
 
 def _call_target_name(node: ast.AST) -> str | None:
@@ -2624,6 +2720,85 @@ def _ts_leftmost_ident(node, text) -> str | None:
     return None
 
 
+# tree-sitter node types of a literal value across the grammars livespec reads.
+# A call whose receiver is one of these (`"a".concat()`, `[1, 2].map()`,
+# `"x".to_string()`, `"s".upcase`) is a method of a builtin type: no project
+# symbol is its target, whatever its name.
+_TS_LITERAL_RECEIVER_TYPES = frozenset(
+    {
+        "string",
+        "template_string",
+        "array",
+        "object",
+        "number",
+        "regex",
+        "true",
+        "false",
+        "null",
+        "string_literal",
+        "raw_string_literal",
+        "interpreted_string_literal",
+        "character_literal",
+        "char_literal",
+        "integer",
+        "float",
+        "integer_literal",
+        "float_literal",
+        "array_expression",
+        "hash",
+        "simple_symbol",
+    }
+)
+
+
+def _ts_receiver_is_literal(call_node) -> bool:
+    """True when the immediate receiver of a member call is a literal value."""
+    if not hasattr(call_node, "child_by_field_name"):
+        return False
+    receiver = None
+    fn = call_node.child_by_field_name("function")
+    if fn is not None:
+        receiver = fn.child_by_field_name("object") or fn.child_by_field_name("value")
+    if receiver is None:
+        receiver = call_node.child_by_field_name("receiver") or call_node.child_by_field_name(
+            "object"
+        )
+    if receiver is None:
+        return False
+    while receiver.type == "parenthesized_expression" and receiver.named_child_count == 1:
+        receiver = receiver.named_children[0]
+    return receiver.type in _TS_LITERAL_RECEIVER_TYPES
+
+
+def _js_receiver(call_node, text, imports: dict[str, str]) -> tuple[str | None, str | None]:
+    """Classify the receiver of a JS/TS member call ``X.f()`` (RECEIVER_*).
+
+    Only JS/TS grammars produce a ``member_expression`` callee, so every other
+    tree-sitter language keeps ``None`` and resolves as before. ``this.f()`` /
+    ``super.f()`` are methods; a receiver rooted in an imported name
+    (``import * as m``, a default import, ``require``) is a module; anything
+    else (``res.json()``, ``Object.keys()``, ``parts.join()``) is an object.
+    Returns ``(receiver, base identifier of the receiver chain or None)``.
+    """
+    if not hasattr(call_node, "child_by_field_name"):
+        return None, None
+    fn = call_node.child_by_field_name("function")
+    if fn is None or fn.type != "member_expression":
+        return None, None
+    obj = fn.child_by_field_name("object")
+    if obj is not None and obj.type in ("this", "super"):
+        return RECEIVER_SELF, None
+    # Only a chain of plain member accesses keeps the module evidence:
+    # `m.sub.f()` is still in module `m`, `m.make().f()` is a value.
+    base = obj
+    while base is not None and base.type == "member_expression":
+        base = base.child_by_field_name("object")
+    name = text(base).strip() if base is not None and base.type == "identifier" else None
+    if name and name in imports:
+        return RECEIVER_MODULE, name
+    return RECEIVER_OBJECT, name
+
+
 def _is_named_scope_boundary(node) -> bool:
     """True if `node` already has (or will get) its own collected symbol, so a
     surrounding `_ts_collect_calls` walk must not descend into it — that would
@@ -2981,21 +3156,32 @@ def _ts_collect_calls(
                         )
                     )
             tgt, leftmost = call_target_and_leftmost(node)
-            if tgt:
-                # P1.A1: scope_module from imports map. Direct hit on target name
-                # (named import), else leftmost identifier (namespace/default import
-                # used as `mod.func()`).
-                scope = out.imports.get(tgt)
-                if scope is None and leftmost and leftmost != tgt:
-                    scope = out.imports.get(leftmost)
+            # A method of a literal (`[a, b].join(",")`) reaches no project
+            # symbol; only the call's own ref is skipped, a handler passed to
+            # it still counts.
+            if tgt and not _ts_receiver_is_literal(node):
+                receiver, base = _js_receiver(node, text, out.imports)
+                if receiver is not None:
+                    # JS/TS member call: scoped by its receiver only. A named
+                    # import of `join` says nothing about `parts.join(",")`.
+                    scope = out.imports.get(base) if receiver == RECEIVER_MODULE else None
+                else:
+                    # P1.A1: scope_module from imports map. Direct hit on target
+                    # name (named import), else leftmost identifier
+                    # (namespace/default import used as `mod.func()`).
+                    scope = out.imports.get(tgt)
+                    if scope is None and leftmost and leftmost != tgt:
+                        scope = out.imports.get(leftmost)
                 out.refs.append(
                     ExtractedRef(
                         src_qname=src_qname,
                         target_name=tgt,
                         line=node.start_point[0] + 1,
                         scope_module=scope,
+                        receiver=receiver,
                     )
                 )
+            if tgt:
                 # v0.13 P3: named handlers passed to registration calls.
                 _callback_arg_refs(node, tgt)
         # v0.11 P2: JSX element references as call-graph edges (bug #20).

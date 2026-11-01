@@ -14,6 +14,7 @@ import fnmatch
 import json
 import re
 from collections import deque
+from collections.abc import Callable
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, Literal
@@ -3119,6 +3120,86 @@ def _is_fixture_only_path(file_path: str) -> bool:
     return False
 
 
+# Decorator / annotation last segments that mark a test (pytest, JUnit 4/5,
+# TestNG). Lowercased, compared with ``_decorator_lastseg``.
+_TEST_DECORATOR_LASTSEGS = frozenset(
+    {"test", "parameterizedtest", "repeatedtest", "testfactory", "testtemplate"}
+)
+# Go's `go test` runs these prefixes (`TestX(t *testing.T)`, `BenchmarkX`, ...).
+_GO_TEST_PREFIXES = ("Test", "Benchmark", "Fuzz", "Example")
+_RUST_TEST_ATTR = re.compile(r"#\[\s*(?:[\w:]+::)?test\b")
+
+
+def _js_named_test_callbacks(source: str) -> set[str]:
+    """Names handed to a Jest/vitest/mocha runner by reference:
+    ``test("adds", adds)``, ``it.only('x', check)``. A named function in a
+    ``*.test.ts`` is otherwise a helper — the tests themselves are anonymous
+    callbacks the extractor does not turn into symbols."""
+    found: set[str] = set()
+    for m in re.finditer(
+        r"\b(?:test|it)(?:\.\w+)*\s*\(\s*(?:'[^']*'|\"[^\"]*\"|`[^`]*`)\s*,"
+        r"\s*([A-Za-z_$][\w$]*)\s*[,)]",
+        source,
+    ):
+        found.add(m.group(1))
+    return found
+
+
+def _is_test_function(row: dict[str, Any], source: Callable[[], str]) -> bool:
+    """True when a function/method symbol in a test file is a TEST, the unit a
+    runner collects, rather than a helper, fake, fixture or nested closure.
+
+    Follows each runner's own collection rule: pytest/unittest collect
+    ``test*`` functions at module level and ``test*`` methods of a class
+    (never a nested function, never a ``@pytest.fixture``); Go collects
+    ``TestX``/``BenchmarkX``/``FuzzX``/``ExampleX``; JUnit/TestNG an
+    ``@Test``-style annotation or a JUnit 3 ``test*`` method; PHPUnit and
+    minitest ``test*`` methods; Rust ``#[test]`` (read off the lines above the
+    symbol, since Rust attributes are not extracted); Jest/vitest/mocha a
+    function handed to ``test(``/``it(`` by name. ``source`` reads the file
+    lazily, only for the languages that need it.
+    """
+    name = str(row.get("name") or "")
+    kind = row.get("kind")
+    parent_kind = row.get("parent_kind")
+    language = row.get("language") or ""
+    decorators = _decorator_lastsegs(row.get("decorators"))
+    if language == "python":
+        if "fixture" in decorators or not name.startswith("test"):
+            return False
+        if kind == "method":
+            return parent_kind == "class"
+        return parent_kind in (None, "module")
+    if language == "go":
+        return parent_kind in (None, "module") and name.startswith(_GO_TEST_PREFIXES)
+    if language == "java":
+        return bool(decorators & _TEST_DECORATOR_LASTSEGS) or (
+            kind == "method" and name.startswith("test")
+        )
+    if language in ("php", "ruby"):
+        return name.startswith("test")
+    if language == "rust":
+        if name.startswith("test"):
+            return True
+        start = int(row.get("start_line") or 0)
+        lines = source().splitlines()
+        above = lines[max(start - 6, 0) : max(start, 0)]
+        return any(_RUST_TEST_ATTR.search(line) for line in above)
+    if language in ("javascript", "typescript", "tsx"):
+        return name in _js_named_test_callbacks(source())
+    return name.startswith("test")
+
+
+def _decorator_lastsegs(decorators_json: Any) -> set[str]:
+    if not decorators_json:
+        return set()
+    try:
+        names = json.loads(decorators_json) if isinstance(decorators_json, str) else decorators_json
+    except (TypeError, ValueError):
+        return set()
+    return {_decorator_lastseg(str(n)) for n in names or []}
+
+
 _HARNESS_MARKERS = (
     "from fastmcp",
     "import fastmcp",
@@ -5340,9 +5421,12 @@ def register(mcp: FastMCP) -> None:
     ) -> dict[str, Any]:
         """Test functions whose descendant cone never reaches production code.
 
-        Heuristic: any function/method in a test path whose forward call graph
-        contains zero non-test symbols. Either disconnected fixtures, helpers
-        used only by other tests, or actually orphaned tests.
+        Heuristic: any TEST in a test path whose forward call graph contains
+        zero non-test symbols. A test is what the runner collects (pytest
+        ``test*`` functions and ``test*`` methods, Go ``TestX``, ``@Test``,
+        a function handed to ``test(``/``it(`` by name, ...); helpers, fakes,
+        fixtures and nested closures in test files are not candidates and are
+        counted in ``test_helper_symbols_skipped``.
 
         - ``min_weight`` (try 0.6): skip ambiguous resolver edges in the cone.
         - ``include_fixtures=False`` (default): skip conftest/fixtures/helpers.
@@ -5385,23 +5469,58 @@ def register(mcp: FastMCP) -> None:
         test_files_count = len(test_file_paths)
 
         test_rows = st.conn.execute(
-            """SELECT s.id, s.qualified_name, s.kind, f.path AS file_path
+            """SELECT s.id, s.name, s.qualified_name, s.kind, s.decorators, s.start_line,
+                      f.path AS file_path, f.language, p.kind AS parent_kind
                FROM symbol s JOIN file f ON f.id=s.file_id
+               LEFT JOIN symbol p ON p.id = s.parent_symbol_id
                WHERE f.project_id=? AND s.kind IN ('function', 'method')
                ORDER BY f.path, s.start_line, s.qualified_name""",
             (pid,),
         ).fetchall()
-        test_syms = [dict(r) for r in test_rows if is_test_path(r["file_path"])]
+        in_test_files = [dict(r) for r in test_rows if is_test_path(r["file_path"])]
 
-        # A test file the extractor saw no function/method in is invisible to
-        # the orphan scan (Jest/vitest write anonymous `it()` callbacks). Track
-        # it per file: a project-wide "no test symbols at all" check goes quiet
-        # as soon as one other language contributes a named test.
+        # Only TESTS are candidates. A helper, fake, fixture or nested closure
+        # defined in a test file is not a test: it calls nothing of production
+        # because it is not meant to (a fake returns a canned value), so it
+        # came out as `no_outgoing_calls` and drowned the real orphans — 203 of
+        # 219 rows on a mid-size Python + TS repo.
+        sources: dict[str, str] = {}
+
+        def _source_of(fp: str) -> Callable[[], str]:
+            def read() -> str:
+                if fp not in sources:
+                    try:
+                        sources[fp] = (ws / fp).read_text(encoding="utf-8", errors="replace")
+                    except OSError:
+                        sources[fp] = ""
+                return sources[fp]
+
+            return read
+
+        test_ids = {
+            int(r["id"]) for r in in_test_files if _is_test_function(r, _source_of(r["file_path"]))
+        }
+        test_syms = [r for r in in_test_files if int(r["id"]) in test_ids]
+
+        # A test file the extractor saw no test in is invisible to the orphan
+        # scan. Jest/vitest write anonymous `it()` callbacks, so such a file
+        # shows no symbol, or only its helpers. Track it per file: a
+        # project-wide "no test symbols at all" check goes quiet as soon as
+        # one other language contributes a named test. A Python/Go/Java/...
+        # file whose functions are all helpers is not blind — those runners'
+        # tests are named symbols, so it simply holds none.
         files_with_test_syms = {r["file_path"] for r in test_syms}
+        files_with_any_syms = {r["file_path"] for r in in_test_files}
+        js_test_files = {
+            r["file_path"]
+            for r in in_test_files
+            if r["language"] in ("javascript", "typescript", "tsx")
+        }
         blind_test_files = [
             p
             for p in test_file_paths
             if p not in files_with_test_syms
+            and (p not in files_with_any_syms or p in js_test_files)
             and (include_fixtures or not _is_fixture_only_path(p))
             # A package marker holds no tests by design, so reporting it as a
             # file the extractor couldn't read sends the reader after nothing.
@@ -5412,10 +5531,14 @@ def register(mcp: FastMCP) -> None:
         orphans: list[dict[str, Any]] = []
         harness_skipped = 0
         fixture_skipped = 0
-        for r in test_syms:
+        helper_symbols = 0
+        for r in in_test_files:
             fp = r["file_path"]
             if not include_fixtures and _is_fixture_only_path(fp):
                 fixture_skipped += 1
+                continue
+            if int(r["id"]) not in test_ids:
+                helper_symbols += 1
                 continue
             if fp not in harness_cache:
                 harness_cache[fp] = _file_has_harness_indirection(ws / fp)
@@ -5475,6 +5598,7 @@ def register(mcp: FastMCP) -> None:
             "fixture_skipped_count": fixture_skipped,
             "test_files_count": test_files_count,
             "test_function_symbols": len(test_syms),
+            "test_helper_symbols_skipped": helper_symbols,
             "test_files_without_symbols": len(blind_test_files),
             "test_files_without_symbols_sample": sorted(blind_test_files)[:10],
         }
