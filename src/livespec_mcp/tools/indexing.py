@@ -12,15 +12,16 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Any
-
-from fastmcp import FastMCP
+from typing import TYPE_CHECKING, Any
 
 from livespec_mcp.domain.indexer import index_project as run_index
 from livespec_mcp.domain.languages import EXTRACTOR_SUPPORTED, grammar_fix_hint
 from livespec_mcp.domain.rag import rebuild_chunks
 from livespec_mcp.state import AppState, get_state
 from livespec_mcp.workspace_param import WORKSPACE_DOCSTRING_NOTE, Workspace
+
+if TYPE_CHECKING:
+    from fastmcp import FastMCP
 
 _log = logging.getLogger("livespec.indexing")
 

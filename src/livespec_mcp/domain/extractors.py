@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import ast
 import re as _re_rs
+from collections import deque
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -262,11 +264,17 @@ def _py_extract(source: str, module_name: str) -> ExtractResult:
     for node in tree.body:
         if isinstance(node, (ast.Import, ast.ImportFrom)):
             _bind(node, nested=False)
-    for node in ast.walk(tree):
-        if isinstance(node, (ast.Import, ast.ImportFrom)) and id(node) not in top_level:
-            _bind(node, nested=True)
+    # One walk of the file's statements (breadth-first, in ast.walk's order)
+    # for both the nested imports and the classes `_py_enum_names` needs.
+    classes: list[ast.ClassDef] = []
+    for node in _py_walk_statements(tree):
+        if isinstance(node, (ast.Import, ast.ImportFrom)):
+            if id(node) not in top_level:
+                _bind(node, nested=True)
+        elif isinstance(node, ast.ClassDef):
+            classes.append(node)
 
-    enum_names = _py_enum_names(tree)
+    enum_names = _py_enum_names(classes)
     # Same-file schema classes by name, in source order: a base declared
     # earlier in the file contributes its fields to a subclass.
     schema_classes: dict[str, tuple[str, list[ExtractedField]]] = {}
@@ -468,10 +476,10 @@ def _py_base_name(node: ast.expr) -> str | None:
     return _call_target_name(node.value if isinstance(node, ast.Subscript) else node)
 
 
-def _py_enum_names(tree: ast.Module) -> frozenset[str]:
-    """Enum subclasses declared anywhere in the file, including subclasses of
-    a same-file enum. A field may name one declared after its model."""
-    classes = [n for n in ast.walk(tree) if isinstance(n, ast.ClassDef)]
+def _py_enum_names(classes: list[ast.ClassDef]) -> frozenset[str]:
+    """Enum subclasses declared anywhere in the file (``classes``: every class
+    of it), including subclasses of a same-file enum. A field may name one
+    declared after its model."""
     names: set[str] = set()
     changed = True
     while changed:
@@ -679,19 +687,84 @@ def _zod_object_fields(obj, text, receivers: frozenset[str], inherited: list[Ext
     return list(fields.values())
 
 
+# Per AST class, the fields that can hold child nodes, in `_fields` order.
+# `ctx` (Load/Store/Del) is left out: it is a leaf no walk here acts on.
+_PY_CHILD_FIELDS: dict[type, tuple[str, ...]] = {}
+_AST = ast.AST
+
+
+def _py_children(node: ast.AST) -> list[ast.AST]:
+    """``list(ast.iter_child_nodes(node))`` without the generator machinery
+    and without ``ctx`` leaves. Same nodes, same order otherwise."""
+    cls = type(node)
+    fields = _PY_CHILD_FIELDS.get(cls)
+    if fields is None:
+        fields = _PY_CHILD_FIELDS[cls] = tuple(f for f in cls._fields if f != "ctx")
+    out: list[ast.AST] = []
+    for name in fields:
+        value = getattr(node, name, None)
+        if value is None:
+            continue
+        if isinstance(value, _AST):
+            out.append(value)
+        elif isinstance(value, list):
+            for item in value:
+                if isinstance(item, _AST):
+                    out.append(item)
+    return out
+
+
+# The fields that hold statements (or the handlers / match cases that hold
+# them). An expression never contains a statement, so these are the only
+# paths from the module to an import or a class.
+_PY_STATEMENT_FIELDS = ("body", "handlers", "orelse", "finalbody", "cases")
+
+
+def _py_walk_statements(tree: ast.AST) -> Iterator[ast.AST]:
+    """The statements of ``tree`` (plus except handlers and match cases), in
+    the order ``ast.walk`` yields them, without visiting a single expression.
+
+    ``ast.walk`` is breadth-first. A statement's depth in the whole tree is
+    its depth along this statement-only tree (every step from a statement to
+    another goes through a statement, a handler or a case), and within one
+    depth the order is inherited from the parents in field order, so the
+    statements come out in the same relative order."""
+    todo = deque([tree])
+    while todo:
+        node = todo.popleft()
+        cls = type(node)
+        fields = _PY_STMT_FIELDS_OF.get(cls)
+        if fields is None:
+            fields = _PY_STMT_FIELDS_OF[cls] = tuple(
+                f for f in cls._fields if f in _PY_STATEMENT_FIELDS
+            )
+        for name in fields:
+            value = getattr(node, name, None)
+            if type(value) is list:
+                todo.extend(value)
+        yield node
+
+
+_PY_STMT_FIELDS_OF: dict[type, tuple[str, ...]] = {}
+
+
+_PY_SCOPE_NODES = (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
+
+
 def _collect_calls(func_node: ast.AST, src_qname: str, out: ExtractResult) -> None:
     # Walk this symbol's body but STOP at nested def/class boundaries — their
     # call sites belong to the nested symbol (extracted separately), not to
     # every enclosing def. ast.walk() would descend into them and attribute an
     # inner call to each ancestor, inflating the edge table and making
     # who_calls report a class/outer that never issues the call.
-    stack: list[ast.AST] = list(ast.iter_child_nodes(func_node))
+    stack: list[ast.AST] = _py_children(func_node)
+    call_type = ast.Call
     while stack:
         node = stack.pop()
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+        if isinstance(node, _PY_SCOPE_NODES):
             continue
-        stack.extend(ast.iter_child_nodes(node))
-        if isinstance(node, ast.Call):
+        stack.extend(_py_children(node))
+        if type(node) is call_type:
             _emit_py_callback_refs(node, src_qname, out)
             client = _py_client_route(node)
             if client is not None:
