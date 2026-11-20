@@ -118,10 +118,13 @@ def _current_symbols(conn: sqlite3.Connection, project_id: int) -> dict[str, dic
         (project_id,),
     ).fetchall()
     out: dict[str, dict[str, Any]] = {}
+    seen: dict[str, int] = {}
     for r in rows:
-        key = symbol_key(project_id, r["path"], r["qualified_name"])
-        if key in out:  # overloads / shims: keep the first, as _replace_symbols does
-            continue
+        base = symbol_key(project_id, r["path"], r["qualified_name"])
+        # Same qname twice in one file (Rust `impl X` blocks, if/else shims):
+        # the n-th occurrence in source order gets `#n`, so none is dropped.
+        seen[base] = seen.get(base, 0) + 1
+        key = base if seen[base] == 1 else f"{base}#{seen[base]}"
         out[key] = {
             "key": key,
             "sqlite_id": r["id"],
@@ -221,7 +224,18 @@ def sync(conn: sqlite3.Connection, project_id: int, db_path: Path) -> dict[str, 
         removed += 1
 
     sync_id, sync_state = _sync_unit(db, project_id)
-    log = {"project_id": project_id, "index_run": run_id, "symbols": len(current)}
+    # index_run ids restart when docs.db is rebuilt: a run id that does not
+    # grow starts a new generation, and as-of reads stay inside one.
+    generation = int(sync_state.get("generation", 1))
+    last_run = sync_state.get("index_run")
+    if last_run is not None and run_id is not None and run_id <= last_run:
+        generation += 1
+    log = {
+        "project_id": project_id,
+        "index_run": run_id,
+        "generation": generation,
+        "symbols": len(current),
+    }
     if sync_id is None:
         ops.append(("store", SYNC_TYPE, _dump(log)))
     else:
@@ -263,6 +277,7 @@ def sync(conn: sqlite3.Connection, project_id: int, db_path: Path) -> dict[str, 
         "edges_added": added,
         "edges_removed": len(stale),
         "first_sync": not sync_state,
+        "generation": generation,
     }
 
 
@@ -311,9 +326,14 @@ def _seq_for_run(db: Any, project_id: int, run_id: int) -> int | None:
     if sync_id is None:
         return None
     best: int | None = None
-    for r in db.history(sync_id, limit=10_000, with_payload=True):
-        run = _decode(r.payload).get("index_run")
-        if run is not None and run <= run_id:
+    revs = db.history(sync_id, limit=10_000, with_payload=True)
+    if not revs:
+        return None
+    current_gen = _decode(revs[0].payload).get("generation", 1)
+    for r in revs:
+        p = _decode(r.payload)
+        run = p.get("index_run")
+        if p.get("generation", 1) == current_gen and run is not None and run <= run_id:
             best = max(best or 0, r.commit_seq)
     return best
 

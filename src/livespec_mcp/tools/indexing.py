@@ -111,6 +111,11 @@ def _attach_kerno_history(st: AppState, payload: dict[str, Any]) -> None:
 
     if not kerno_history.enabled():
         return
+    if not (payload.get("files_changed") or payload.get("files_deleted")) and (
+        kerno_history.store_path(st.settings.db_path).exists()
+    ):
+        payload["kerno_history"] = {"skipped": "no file changes"}
+        return
     try:
         with st.lock():
             result = kerno_history.sync(st.conn, st.project_id, st.settings.db_path)

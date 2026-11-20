@@ -116,3 +116,37 @@ def test_removing_both_ends_of_an_edge_does_not_wedge_the_sync(workspace):
     assert "error" not in h, h
     assert h["symbols_removed"] == 2
     assert kh.verify(st.settings.db_path)["relations"] == 0
+
+
+def test_same_qname_twice_in_a_file_keeps_both(workspace):
+    (workspace / "a.py").write_text(
+        "if True:\n    def f():\n        return 1\nelse:\n    def f():\n        return 2\n"
+    )
+    st, out = _index(workspace)
+    n = st.conn.execute("SELECT COUNT(*) FROM symbol").fetchone()[0]
+    assert out["kerno_history"]["symbols"] == n
+
+
+def test_rebuilt_index_starts_a_new_generation(workspace):
+    from livespec_mcp import state as state_module
+
+    f = workspace / "a.py"
+    for v in (1, 2):
+        f.write_text(f"def g():\n    return {v}\n")
+        _index(workspace)
+    state_module.reset_state()
+    kh.close_all()
+    for p in (workspace / ".mcp-docs").glob("docs.db*"):
+        p.unlink()
+    f.write_text("def g():\n    return 3\n")
+    st, out = _index(workspace)
+    assert out["kerno_history"]["generation"] == 2
+    a = kh.symbol_as_of(st.project_id, st.settings.db_path, "a.g", 1)
+    assert a["states"][0]["same_as_now"] is True  # run 1 of the new generation, not the old one
+
+
+def test_unchanged_run_skips_the_sync(workspace):
+    (workspace / "a.py").write_text("def f():\n    return 1\n")
+    _index(workspace)
+    _, out = _index(workspace)
+    assert out["kerno_history"] == {"skipped": "no file changes"}
