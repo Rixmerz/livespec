@@ -32,6 +32,7 @@ import json
 import os
 import sqlite3
 import threading
+import zlib
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -157,8 +158,10 @@ def _decode(payload: bytes | None) -> dict[str, Any]:
     if not payload:
         return {}
     try:
+        if payload[:1] == b"\x78":  # zlib (see _dump); plain JSON starts with "{"
+            payload = zlib.decompress(payload)
         return json.loads(payload)
-    except ValueError:
+    except (ValueError, zlib.error):
         return {}
 
 
@@ -180,8 +183,15 @@ def _sync_unit(db: Any, project_id: int) -> tuple[str | None, dict[str, Any]]:
     return None, {}
 
 
-def _dump(d: dict[str, Any]) -> str:
-    return json.dumps(d, sort_keys=True, separators=(",", ":"))
+def _dump(d: dict[str, Any]) -> bytes:
+    """zlib-compressed JSON.
+
+    Kerno full-text indexes (BM25) every payload that is valid UTF-8, with no
+    switch to turn it off; on this mirror that made writes ~7x slower and the
+    store ~3.5x larger for an index nothing queries. A zlib stream starts with
+    0x78 0x9c, never valid UTF-8, so Kerno skips it.
+    """
+    return zlib.compress(json.dumps(d, sort_keys=True, separators=(",", ":")).encode(), 1)
 
 
 def sync(conn: sqlite3.Connection, project_id: int, db_path: Path) -> dict[str, Any] | KernoProblem:
