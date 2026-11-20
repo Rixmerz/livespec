@@ -42,21 +42,21 @@ LIVESPEC_KERNO=1 uv run livespec index /path/to/repo
 
 ## Measured (kernodb repository, 16 real commits, ~9.7k symbols, ~272k call edges)
 
-| | without Kerno | first version | now |
+| | without Kerno | first version | kernodb alpha.2 branch |
 |---|---|---|---|
-| 16 index runs, total | 27.4 s | 135.8 s | 55.1 s |
-| first index | 4.8 s | 18.6 s | 6.9 s |
+| 16 index runs, total | 27.4 s | 135.8 s | 56–59 s |
+| first index | 4.8 s | 18.6 s | 6.4–6.9 s |
 | run with no file changes | 0.06 s | ~4 s | 0.07 s (skipped) |
-| symbols / edges mirrored | | 8,868 / 266,571 (lossy) | 9,663 / 271,655 (exact) |
+| symbols / edges mirrored | | 8,868 / 266,571 (lossy) | 9,663 / 271,655 (exact, verify clean) |
+| Kerno store on disk | | 95 MB | 35 MB (LZ4 blocks, no keyword index) |
 
-Kerno full-text indexes every UTF-8 payload by default. With a kernodb that has
-`set_fulltext` (ADR-0022, units layer v7), the store turns that off for its two types when
-it is created and keeps plain JSON. On older bindings, or on a store that already holds units, it
-writes zlib-compressed JSON instead (never valid UTF-8, so never indexed). Both decode.
+With the kernodb alpha.2 branch, a sync is one change set when it fits in 10,000 operations
+(`atomic: true`), else a few, with the sync log written last. Kerno's keyword index is off by
+default there, so the store keeps plain JSON. With kernodb 1.0.0a1 (no `set_fulltext`, no batch
+relations) the mirror falls back to zlib-compressed payloads and one `relate` call per edge.
 
-With a kernodb that has batch relations (`relate` ops) and `relations()`, a sync is one change
-set when it fits in 10,000 operations (`atomic: true`), else a few, with the sync log written
-last. Older bindings fall back to one `relate` call per edge.
+The `kerno` extra still says `kernodb>=1.0.0a1`; once 1.0.0a2 is on PyPI, raise it to
+`kernodb>=1.0.0a2` and run `uv lock`.
 
 ## Limits (known)
 
