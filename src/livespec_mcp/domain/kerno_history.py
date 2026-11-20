@@ -210,9 +210,12 @@ def sync(conn: sqlite3.Connection, project_id: int, db_path: Path) -> dict[str, 
     removed_ids = {uid for key, (uid, _) in stored.items() if key not in current}
 
     # Relations touching a removed unit go first (Kerno wants unrelate before delete).
+    # An edge between two removed units shows up from both ends: unrelate it once.
+    doomed_rels: dict[str, None] = {}
     for uid in removed_ids:
         for rel in db.related(uid, "out", CALLS) + db.related(uid, "in", CALLS):
-            ops.append(("unrelate", rel.id))
+            doomed_rels[rel.id] = None
+    ops.extend(("unrelate", rid) for rid in doomed_rels)
     for uid in removed_ids:
         ops.append(("delete", uid))
         removed += 1

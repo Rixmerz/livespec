@@ -102,3 +102,17 @@ async def test_tools_shape(workspace):
             )
         ).data
         assert miss["isError"] is True
+
+
+def test_removing_both_ends_of_an_edge_does_not_wedge_the_sync(workspace):
+    # The edge shows up from both removed units; unrelating it twice made Kerno
+    # reject the change set, and every later sync retried the same batch.
+    src = workspace / "mod.py"
+    src.write_text("def helper():\n    return 1\n\n\ndef caller():\n    return helper()\n")
+    st, _ = _index(workspace)
+    src.unlink()
+    _, out = _index(workspace)
+    h = out["kerno_history"]
+    assert "error" not in h, h
+    assert h["symbols_removed"] == 2
+    assert kh.verify(st.settings.db_path)["relations"] == 0
