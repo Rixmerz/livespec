@@ -89,7 +89,26 @@ def open_store(db_path: Path) -> Any | KernoProblem:
             except Exception as e:  # KernoError: locked by another process, damaged, ...
                 return KernoProblem(f"could not open the Kerno store at {path}: {e}")
             _handles[path] = db
+            _plain_json[path] = _opt_out_of_fulltext(db)
         return db
+
+
+#: Stores whose types are out of Kerno's keyword index: plain JSON payloads.
+_plain_json: dict[Path, bool] = {}
+
+
+def _opt_out_of_fulltext(db: Any) -> bool:
+    """Turn Kerno's keyword index off for livespec's types (kernodb with
+    `set_fulltext`, ADR-0022). It can change only while a type has no active
+    unit, so a store that already holds units keeps compressed payloads."""
+    if not hasattr(db, "set_fulltext"):
+        return False
+    try:
+        db.set_fulltext(SYMBOL_TYPE, False)
+        db.set_fulltext(SYNC_TYPE, False)
+    except Exception:
+        return False
+    return True
 
 
 def close_all() -> None:
@@ -100,6 +119,7 @@ def close_all() -> None:
             except Exception:
                 pass
         _handles.clear()
+        _plain_json.clear()
 
 
 atexit.register(close_all)
@@ -183,7 +203,7 @@ def _sync_unit(db: Any, project_id: int) -> tuple[str | None, dict[str, Any]]:
     return None, {}
 
 
-def _dump(d: dict[str, Any]) -> bytes:
+def _dump(d: dict[str, Any], plain: bool = False) -> bytes:
     """zlib-compressed JSON.
 
     Kerno full-text indexes (BM25) every payload that is valid UTF-8, with no
@@ -191,7 +211,8 @@ def _dump(d: dict[str, Any]) -> bytes:
     store ~3.5x larger for an index nothing queries. A zlib stream starts with
     0x78 0x9c, never valid UTF-8, so Kerno skips it.
     """
-    return zlib.compress(json.dumps(d, sort_keys=True, separators=(",", ":")).encode(), 1)
+    raw = json.dumps(d, sort_keys=True, separators=(",", ":")).encode()
+    return raw if plain else zlib.compress(raw, 1)
 
 
 def sync(conn: sqlite3.Connection, project_id: int, db_path: Path) -> dict[str, Any] | KernoProblem:
@@ -206,6 +227,7 @@ def sync(conn: sqlite3.Connection, project_id: int, db_path: Path) -> dict[str, 
     ).fetchone()
     run_id = int(run[0]) if run else None
 
+    plain = _plain_json.get(store_path(db_path), False)
     batched = hasattr(db, "last_commit_seq")  # kernodb with relations inside a batch
     ops: list[tuple[Any, ...]] = []
     new_keys: list[str] = []
@@ -214,12 +236,12 @@ def sync(conn: sqlite3.Connection, project_id: int, db_path: Path) -> dict[str, 
         payload = {k: v for k, v in sym.items() if k != "sqlite_id"}
         payload["index_run"] = run_id
         if key not in stored:
-            ops.append(("store", SYMBOL_TYPE, _dump(payload)))
+            ops.append(("store", SYMBOL_TYPE, _dump(payload, plain)))
             new_keys.append(key)
         else:
             uid, old = stored[key]
             if any(old.get(f) != payload.get(f) for f in _SEMANTIC):
-                ops.append(("update", uid, _dump(payload)))
+                ops.append(("update", uid, _dump(payload, plain)))
                 changed += 1
     removed_ids = {uid for key, (uid, _) in stored.items() if key not in current}
 
@@ -288,9 +310,9 @@ def sync(conn: sqlite3.Connection, project_id: int, db_path: Path) -> dict[str, 
     }
     # The sync log goes last, so the indexes of the symbol "store" ops stay 0..n-1.
     if sync_id is None:
-        ops.append(("store", SYNC_TYPE, _dump(log)))
+        ops.append(("store", SYNC_TYPE, _dump(log, plain)))
     else:
-        ops.append(("update", sync_id, _dump(log)))
+        ops.append(("update", sync_id, _dump(log, plain)))
 
     if batched and len(ops) > MAX_BATCH_OPS:
         stored_ids, change_sets = _commit_chunked(db, ops)

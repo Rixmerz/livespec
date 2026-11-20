@@ -49,6 +49,11 @@ LIVESPEC_KERNO=1 uv run livespec index /path/to/repo
 | run with no file changes | 0.06 s | ~4 s | 0.07 s (skipped) |
 | symbols / edges mirrored | | 8,868 / 266,571 (lossy) | 9,663 / 271,655 (exact) |
 
+Kerno full-text indexes every UTF-8 payload by default. With a kernodb that has
+`set_fulltext` (ADR-0022, units layer v7), the store turns that off for its two types when
+it is created and keeps plain JSON. On older bindings, or on a store that already holds units, it
+writes zlib-compressed JSON instead (never valid UTF-8, so never indexed). Both decode.
+
 With a kernodb that has batch relations (`relate` ops) and `relations()`, a sync is one change
 set when it fits in 10,000 operations (`atomic: true`), else a few, with the sync log written
 last. Older bindings fall back to one `relate` call per edge.
