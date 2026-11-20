@@ -652,6 +652,19 @@ wheels = [
 ]
 
 [[package]]
+name = "kernodb"
+version = "1.0.0a1"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/98/9a/2be755c7f4dacb1a61530dcb8ca7e16a8c2b0524abef344d7b5e542536a9/kernodb-1.0.0a1.tar.gz", hash = "sha256:9ca2b563e5900ad10ce22758c2454e6501837e6fe7156231362de26bb98801d8", size = 1324614, upload-time = "2026-11-20T17:47:59.305Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/1f/ab/e3fc643cd791e4a5c3ad43b3db0847747c37f3008f1652c95c8bdab36cd1/kernodb-1.0.0a1-cp39-abi3-macosx_10_12_x86_64.whl", hash = "sha256:157462b4365aea5b517347dcf1f0ec5939f1ca4e346a837091f8f7b96d574c99", size = 879470, upload-time = "2026-11-20T17:47:52.391Z" },
+    { url = "https://files.pythonhosted.org/packages/84/96/37ca4066ed07565dfaeeb24d231f598e3bb874951f01486d8ba79f75a06a/kernodb-1.0.0a1-cp39-abi3-macosx_11_0_arm64.whl", hash = "sha256:6965d8730412a25e8c26dcab268b5e546675e0844099138b3da67545bbfb0ccf", size = 835476, upload-time = "2026-11-20T17:47:53.89Z" },
+    { url = "https://files.pythonhosted.org/packages/ee/ea/321c7ebaf9085c6d7c0ce16b1c666d971aa133b66dff6383171c2ea5c25e/kernodb-1.0.0a1-cp39-abi3-manylinux2014_aarch64.manylinux_2_17_aarch64.whl", hash = "sha256:88c47977795bc1ee139b58b1d40eac859546386bf22d657b826b2f9db8aa6838", size = 930294, upload-time = "2026-11-20T17:47:55.184Z" },
+    { url = "https://files.pythonhosted.org/packages/0b/1f/fd617c96be916fca20f3f582172c19bc415e708893a071ed305b6d9c8d9d/kernodb-1.0.0a1-cp39-abi3-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:b607964924be7200a1161b6b36cfca0ec3ba315f03d9e360e63f1b9fd95ff05b", size = 975141, upload-time = "2026-11-20T17:47:56.587Z" },
+    { url = "https://files.pythonhosted.org/packages/ae/b7/55e6be90c2e56f097cb75d071952c200c885f86169f92312d00828ae5ccd/kernodb-1.0.0a1-cp39-abi3-win_amd64.whl", hash = "sha256:61f5170907f5c5d3c6984183c33865700f70ab3b2dc8f750ac9c1997dc39dc80", size = 748957, upload-time = "2026-11-20T17:47:57.962Z" },
+]
+
+[[package]]
 name = "keyring"
 version = "25.7.0"
 source = { registry = "https://pypi.org/simple" }
@@ -695,11 +708,15 @@ dev = [
     { name = "pytest-asyncio" },
     { name = "ruff" },
 ]
+kerno = [
+    { name = "kernodb" },
+]
 
 [package.metadata]
 requires-dist = [
     { name = "fastmcp", specifier = ">=3,<4" },
     { name = "hypothesis", marker = "extra == 'dev'", specifier = ">=6.100" },
+    { name = "kernodb", marker = "extra == 'kerno'", specifier = ">=1.0.0a1" },
     { name = "networkx", specifier = ">=3.2" },
     { name = "pathspec", specifier = ">=0.12" },
     { name = "psutil", marker = "extra == 'dev'", specifier = ">=5.9" },
@@ -714,7 +731,7 @@ requires-dist = [
     { name = "xxhash", specifier = ">=3.4" },
     { name = "zstandard", marker = "python_full_version < '3.14'", specifier = ">=0.22" },
 ]
-provides-extras = ["dev"]
+provides-extras = ["kerno", "dev"]
 
 [[package]]
 name = "markdown-it-py"

@@ -6,6 +6,11 @@ follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Added (experimental branch) — Kerno-backed index history
+
+- With `LIVESPEC_KERNO=1` and the optional `kerno` extra, `index_project` mirrors the index into a Kerno database (`.mcp-docs/kerno/`): one revisioned unit per symbol (a revision per body/signature/kind change), tombstones for removed symbols, call edges as relations. New payload section `kerno_history`.
+- New tools, registered only with `LIVESPEC_KERNO=1`: `kerno_symbol_revisions`, `kerno_symbol_as_of`, `kerno_verify_history`. The default tool surface is unchanged. See `docs/EXPERIMENTAL_KERNO.md`.
+
 ## [0.36.0] - 2026-11-01
 
 ### Fixed — a range that edits a spec's definition touches that spec; the PR comment sees the specs
