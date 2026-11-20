@@ -44,6 +44,20 @@ Todo el stack es local-first: 0 servicios externos, 0 API keys obligatorias, 0 D
 
 ## 3. Estado actual
 
+### Rama experimental Kerno (ccr-5d0e38e9-1hmqh0, sin release)
+
+Integración opcional con Kerno (alpha) detrás de `LIVESPEC_KERNO=1`: `domain/kerno_history.py`
+espeja el índice en `.mcp-docs/kerno/` (revisiones por símbolo, tombstones, relaciones `calls`,
+as-of por index run, `verify`), `tools/kerno.py` registra 3 tools solo con el flag, y
+`run_index_pipeline` agrega `kerno_history`. Requiere los bindings Python extendidos de la rama
+homónima de kernodb. Tests: `tests/test_kerno_history.py` (4); suite completa sin regresiones
+(las 142 fallas del sandbox son gramáticas tree-sitter no descargables, idénticas antes y después).
+Con la rama alpha.2 de kernodb (relaciones en lote, `relations()`, índice full-text opt-in,
+bloques LZ4): 16 corridas sobre kernodb en 56–59 s (27,4 s sin Kerno), espejo exacto
+(9.663 símbolos, 271.655 aristas, verify limpio), store de 35 MB. Pendiente al publicar
+kernodb 1.0.0a2: subir el extra `kerno` a `kernodb>=1.0.0a2` y `uv lock`.
+Detalle y límites: `docs/EXPERIMENTAL_KERNO.md`.
+
 ### v0.36.0 (released 2026-11-01)
 
 Release of three fixes found running livespec on a mid-size Python + TypeScript repository:

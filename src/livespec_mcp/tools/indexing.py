@@ -97,8 +97,36 @@ def run_index_pipeline(st: AppState, *, force: bool = False) -> dict[str, Any]:
     _attach_grammar_failures(payload, stats)
     _attach_zero_symbol_warning(payload, stats, st)
     _attach_tracks(st, payload)
+    _attach_kerno_history(st, payload)
     _record_in_registry(st)
     return payload
+
+
+def _attach_kerno_history(st: AppState, payload: dict[str, Any]) -> None:
+    """Experimental: mirror the index into the Kerno history store.
+
+    Only with ``LIVESPEC_KERNO=1``. Best-effort: a failure is reported under
+    ``kerno_history`` and never costs the index run."""
+    from livespec_mcp.domain import kerno_history
+
+    if not kerno_history.enabled():
+        return
+    if not (payload.get("files_changed") or payload.get("files_deleted")) and (
+        kerno_history.store_path(st.settings.db_path).exists()
+    ):
+        payload["kerno_history"] = {"skipped": "no file changes"}
+        return
+    try:
+        with st.lock():
+            result = kerno_history.sync(st.conn, st.project_id, st.settings.db_path)
+    except Exception as e:
+        _log.exception("Kerno history sync failed; skipping")
+        payload["kerno_history"] = {"error": f"Kerno history sync failed: {e}"}
+        return
+    if isinstance(result, kerno_history.KernoProblem):
+        payload["kerno_history"] = {"error": result.message, "hint": result.hint}
+    else:
+        payload["kerno_history"] = result
 
 
 def _attach_tracks(st: AppState, payload: dict[str, Any]) -> None:

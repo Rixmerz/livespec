@@ -30,6 +30,8 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# Experimental Kerno-backed index history (LIVESPEC_KERNO=1). Alpha engine.
+kerno = ["kernodb>=1.0.0a1"]
 dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.23",

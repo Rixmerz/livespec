@@ -59,3 +59,12 @@ prompts.register(mcp)
 # Multi-tenant: plugins registered at boot; PluginVisibilityMiddleware gates
 # list/call per workspace (LRU session cache + LIVESPEC_PLUGINS override).
 register_all_plugins(mcp)
+
+# Experimental (branch experimental/kerno): Kerno-backed index history. Only
+# registered with LIVESPEC_KERNO=1, so the default surface is unchanged.
+from livespec_mcp.domain.kerno_history import enabled as _kerno_enabled  # noqa: E402
+
+if _kerno_enabled():
+    from livespec_mcp.tools import kerno as _kerno_tools
+
+    _kerno_tools.register(mcp)
