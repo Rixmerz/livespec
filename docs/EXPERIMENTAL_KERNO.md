@@ -40,13 +40,25 @@ uv pip install /path/to/kernodb/bindings/python    # builds with maturin (Rust t
 LIVESPEC_KERNO=1 uv run livespec index /path/to/repo
 ```
 
+## Measured (kernodb repository, 16 real commits, ~9.7k symbols, ~272k call edges)
+
+| | without Kerno | first version | now |
+|---|---|---|---|
+| 16 index runs, total | 27.4 s | 135.8 s | 55.1 s |
+| first index | 4.8 s | 18.6 s | 6.9 s |
+| run with no file changes | 0.06 s | ~4 s | 0.07 s (skipped) |
+| symbols / edges mirrored | | 8,868 / 266,571 (lossy) | 9,663 / 271,655 (exact) |
+
+With a kernodb that has batch relations (`relate` ops) and `relations()`, a sync is one change
+set when it fits in 10,000 operations (`atomic: true`), else a few, with the sync log written
+last. Older bindings fall back to one `relate` call per edge.
+
 ## Limits (known)
 
-- Kerno allows one open handle per directory and process: two livespec processes on the
-  same workspace cannot both use the store.
-- Removed symbols are not looked up by name (the lookup scans active units).
-- Each sync reads every symbol unit (`query`) and, for edges, each unit's relations: fine
-  for small and mid-size repos, not measured on the `--large` Django bench.
-- Relations cannot yet be created inside a Kerno batch from Python, so the edge diff is a
-  second step after the symbol change set.
+- Kerno allows one open handle per directory, read-only included: two livespec processes on
+  the same workspace cannot both use the store (the second one reports it and skips).
+- Renaming a file, or deleting and recreating a symbol, starts a new history (the key holds
+  the file path); the old one stays readable but is not linked.
+- A sync larger than 10,000 operations (a first index of a big repository) spans several
+  change sets; an interruption between them is completed by the next run.
 - The watcher's background reindex does not sync to Kerno.

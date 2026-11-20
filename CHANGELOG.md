@@ -9,6 +9,7 @@ follows [SemVer](https://semver.org/).
 ### Added (experimental branch) — Kerno-backed index history
 
 - With `LIVESPEC_KERNO=1` and the optional `kerno` extra, `index_project` mirrors the index into a Kerno database (`.mcp-docs/kerno/`): one revisioned unit per symbol (a revision per body/signature/kind change), tombstones for removed symbols, call edges as relations. New payload section `kerno_history`.
+- The sync uses Kerno batch relations, cascading deletes and the bulk `relations()` read when the installed kernodb has them (one change set per sync up to 10,000 operations); on the kernodb repository the overhead went from 5x to 2x of a plain index, and the mirror now matches the index exactly (it dropped duplicate qnames before).
 - New tools, registered only with `LIVESPEC_KERNO=1`: `kerno_symbol_revisions`, `kerno_symbol_as_of`, `kerno_verify_history`. The default tool surface is unchanged. See `docs/EXPERIMENTAL_KERNO.md`.
 
 ## [0.36.0] - 2026-11-01

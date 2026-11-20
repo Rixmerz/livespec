@@ -196,9 +196,10 @@ def sync(conn: sqlite3.Connection, project_id: int, db_path: Path) -> dict[str, 
     ).fetchone()
     run_id = int(run[0]) if run else None
 
+    batched = hasattr(db, "last_commit_seq")  # kernodb with relations inside a batch
     ops: list[tuple[Any, ...]] = []
     new_keys: list[str] = []
-    changed = removed = 0
+    changed = 0
     for key, sym in current.items():
         payload = {k: v for k, v in sym.items() if k != "sqlite_id"}
         payload["index_run"] = run_id
@@ -212,16 +213,55 @@ def sync(conn: sqlite3.Connection, project_id: int, db_path: Path) -> dict[str, 
                 changed += 1
     removed_ids = {uid for key, (uid, _) in stored.items() if key not in current}
 
-    # Relations touching a removed unit go first (Kerno wants unrelate before delete).
-    # An edge between two removed units shows up from both ends: unrelate it once.
-    doomed_rels: dict[str, None] = {}
-    for uid in removed_ids:
-        for rel in db.related(uid, "out", CALLS) + db.related(uid, "in", CALLS):
-            doomed_rels[rel.id] = None
-    ops.extend(("unrelate", rid) for rid in doomed_rels)
-    for uid in removed_ids:
-        ops.append(("delete", uid))
-        removed += 1
+    # Units new in this sync are addressed by the index of their "store" op.
+    store_index = {key: i for i, key in enumerate(new_keys)}
+
+    def ref(key: str) -> Any:
+        return store_index[key] if key in store_index else stored[key][0]
+
+    key_of = {sym["sqlite_id"]: key for key, sym in current.items()}
+    wanted_keys = {
+        (key_of[a], key_of[b])
+        for a, b in _current_edges(conn, project_id)
+        if a in key_of and b in key_of
+    }
+    have: dict[tuple[str, str], str] = {}
+    if hasattr(db, "relations"):  # one scan instead of one call per unit
+        project_units = {uid for uid, _ in stored.values()} - removed_ids
+        for rel in db.relations(CALLS):
+            if rel.from_id in project_units:
+                have[(rel.from_id, rel.to_id)] = rel.id
+    else:
+        for uid, _ in stored.values():
+            if uid in removed_ids:
+                continue
+            for rel in db.related(uid, "out", CALLS):
+                have[(rel.from_id, rel.to_id)] = rel.id
+    wanted_existing = {
+        (stored[a][0], stored[b][0])
+        for a, b in wanted_keys
+        if a not in store_index and b not in store_index
+    }
+    stale = [rid for pair, rid in have.items() if pair not in wanted_existing]
+    to_add = [
+        (a, b)
+        for a, b in wanted_keys
+        if a in store_index or b in store_index or (stored[a][0], stored[b][0]) not in have
+    ]
+
+    if batched:
+        ops.extend(("unrelate", rid) for rid in stale)
+        ops.extend(("delete_cascade", uid) for uid in removed_ids)
+        ops.extend(("relate", ref(a), ref(b), CALLS) for a, b in to_add)
+    else:
+        # Older bindings: unrelate (once) before delete, relations after the commit.
+        doomed: dict[str, None] = {}
+        for uid in removed_ids:
+            for rel in db.related(uid, "out", CALLS) + db.related(uid, "in", CALLS):
+                doomed[rel.id] = None
+        ops.extend(("unrelate", rid) for rid in doomed)
+        ops.extend(("unrelate", rid) for rid in stale if rid not in doomed)
+        ops.extend(("delete", uid) for uid in removed_ids)
 
     sync_id, sync_state = _sync_unit(db, project_id)
     # index_run ids restart when docs.db is rebuilt: a run id that does not
@@ -236,36 +276,24 @@ def sync(conn: sqlite3.Connection, project_id: int, db_path: Path) -> dict[str, 
         "generation": generation,
         "symbols": len(current),
     }
+    # The sync log goes last, so the indexes of the symbol "store" ops stay 0..n-1.
     if sync_id is None:
         ops.append(("store", SYNC_TYPE, _dump(log)))
     else:
         ops.append(("update", sync_id, _dump(log)))
 
-    stored_ids = db.commit(ops) if ops else []
-    new_ids = dict(zip(new_keys, stored_ids, strict=False))
-
-    # Edges: relations cannot be created inside a Kerno batch from the Python
-    # bindings, so they are diffed and applied after the symbol change set.
-    unit_of = {key: (new_ids.get(key) or stored[key][0]) for key in current}
-    sqlite_to_unit = {sym["sqlite_id"]: unit_of[key] for key, sym in current.items()}
-    wanted = {
-        (sqlite_to_unit[a], sqlite_to_unit[b])
-        for a, b in _current_edges(conn, project_id)
-        if a in sqlite_to_unit and b in sqlite_to_unit
-    }
-    have: dict[tuple[str, str], str] = {}
-    for uid, _ in stored.values():
-        if uid in removed_ids:
-            continue
-        for rel in db.related(uid, "out", CALLS):
-            have[(rel.from_id, rel.to_id)] = rel.id
-    stale = [rid for pair, rid in have.items() if pair not in wanted]
-    if stale:
-        db.commit([("unrelate", rid) for rid in stale])
-    added = 0
-    for src, dst in wanted - have.keys():
-        db.relate(src, dst, CALLS)
-        added += 1
+    if batched and len(ops) > MAX_BATCH_OPS:
+        stored_ids, change_sets = _commit_chunked(db, ops)
+    else:
+        stored_ids, change_sets = db.commit(ops), 1
+    if not batched:
+        new_ids = dict(zip(new_keys, stored_ids, strict=False))
+        for a, b in to_add:
+            src = new_ids.get(a) or stored[a][0]
+            dst = new_ids.get(b) or stored[b][0]
+            db.relate(src, dst, CALLS)
+    added = len(to_add)
+    removed = len(removed_ids)
 
     return {
         "store": str(store_path(db_path)),
@@ -278,7 +306,44 @@ def sync(conn: sqlite3.Connection, project_id: int, db_path: Path) -> dict[str, 
         "edges_removed": len(stale),
         "first_sync": not sync_state,
         "generation": generation,
+        "atomic": batched and change_sets == 1,
+        "change_sets": change_sets,
     }
+
+
+#: Kerno's default limit of operations per change set.
+MAX_BATCH_OPS = 10_000
+
+
+def _commit_chunked(db: Any, ops: list[tuple[Any, ...]]) -> tuple[list[str], int]:
+    """Commit more ops than one Kerno change set holds.
+
+    Stores go first (their ids resolve the batch-local indexes of "relate"
+    ops), then everything else; the last op (the sync log) is in the final
+    change set, so a sync interrupted in between does not record its run.
+    """
+    stores = [op for op in ops if op[0] == "store" and op[1] == SYMBOL_TYPE]
+    rest = [op for op in ops if not (op[0] == "store" and op[1] == SYMBOL_TYPE)]
+    ids: list[str] = []
+    change_sets = 0
+    for i in range(0, len(stores), MAX_BATCH_OPS):
+        ids.extend(db.commit(stores[i : i + MAX_BATCH_OPS]))
+        change_sets += 1
+
+    def resolve(end: Any) -> Any:
+        return ids[end] if isinstance(end, int) else end
+
+    rest = [
+        (op[0], resolve(op[1]), resolve(op[2]), op[3])
+        if op[0] in ("relate", "relate_unique")
+        else op
+        for op in rest
+    ]
+    tail: list[str] = []
+    for i in range(0, len(rest), MAX_BATCH_OPS):
+        tail = db.commit(rest[i : i + MAX_BATCH_OPS])
+        change_sets += 1
+    return ids + tail, change_sets
 
 
 def _find_units(db: Any, project_id: int, qname: str) -> list[tuple[str, dict[str, Any]]]:
