@@ -368,6 +368,41 @@ django) and substring search by parallel scan (2.1x, 4.3x, 2.6x), with the
 same match counts as SQLite. Single-run numbers on a shared sandbox; treat
 differences under about 1.2x as noise.
 
+## Round 7: filtered neighbors, no-op shortcut, tuple-speed diff
+
+kernodb build: branch `perf/neighbors-filter` (commit ad81a9e, one commit on top
+of `main` d9c2908; not merged).
+
+What changed:
+
+- `Database.neighbors` takes `type_prefix=`. Relations whose type does not start
+  with it are skipped before the unit at their other end is loaded. The mirror
+  passes `e:<edge_type>` and still checks the parsed edge type exactly, so
+  `e:calls_x` cannot pass as `calls`. It feature-detects the argument once and
+  falls back to the unfiltered call on older builds.
+- `sync()` returns immediately when the stored fingerprint (run id + edge set)
+  equals the current one and is not `incomplete`, and, for `chunks=True`, a
+  second stamp also matches. That stamp is `COUNT(*), MAX(id), SUM(LENGTH(text))`
+  of the project's chunks, kept in its own `meta` unit (key `chunks`) so the
+  fingerprint read by `load_graph_inputs` is unchanged.
+- The edge diff and the symbol and chunk scans use tuple cursors, `itemgetter`
+  / `attrgetter` / `map`, set differences, and one `_edge_type` call per distinct
+  `(edge_type, weight, origin)`. Stats and semantics are the same.
+
+| Repo | callers 1 hop, SQLite / Kerno (us) | symbols in file, SQLite / Kerno (us) | 1-file re-sync, SQLite re-index / Kerno mirror only (ms) | No-op re-sync, Kerno (ms) | Open + first query, SQLite / Kerno (ms) |
+|---|---|---|---|---|---|
+| requests | 2.7 / 5.0 | 24.0 / 31.6 | 67.7 / 36.3 | 1.3 | 0.258 / 0.179 |
+| fastapi | 3.2 / 5.8 | 7.4 / 9.8 | 985.8 / 684.3 | 30.6 | 0.301 / 0.612 |
+| django | 9.1 / 9.9 | 60.8 / 96.0 | 1877.8 / 3461.8 | 163.9 | 2.536 / 5.99 |
+
+Callers 1 hop on fastapi went from 9.2 to 5.8 us (SQLite 3.2) and on django is
+now within 1.1x of SQLite. The no-op re-sync on django went from 3.8 s to
+0.16 s. The 1-file re-sync on django is 3.5 s against 3.6 s before: it changes
+one file, so the shortcut does not apply, and the cost is dominated by the
+engine commits and the unit reads, not the Python diff. Ingest, disk, graph
+load, name lookups, keyword and substring search are unchanged in substance.
+All parity checks pass, including `noop_resync_wrote_nothing`.
+
 ## If this continues
 
 - Report finding 1 upstream; it is the only correctness problem found.

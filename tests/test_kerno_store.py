@@ -162,3 +162,25 @@ def test_shadow_mode_serves_load_graph_and_falls_back_when_stale(tmp_path, monke
     stale = _sql_view(conn, pid)
     assert kerno_store.COUNTERS["graph_fallback"] == fallback + 1
     assert stale.sym_meta == sql_view.sym_meta
+
+
+def test_noop_resync_writes_nothing_and_chunk_edit_is_still_seen(tmp_path):
+    settings, conn, pid = _index(tmp_path)
+    with KernoMirror(tmp_path / "k") as m:
+        m.sync(conn, pid, run_id=1)
+        seq = m.db.last_commit_seq()
+        again = m.sync(conn, pid, run_id=1)
+        assert again.get("skipped") == "unchanged"
+        assert again["chunks"]["created"] == again["chunks"]["updated"] == 0
+        assert m.db.last_commit_seq() == seq
+
+        # a chunk text change with the same run id and edge set is not skipped
+        conn.execute(
+            "UPDATE chunk SET text = text || ' edited' WHERE id = (SELECT MIN(id) FROM chunk WHERE project_id = ?)",
+            (pid,),
+        )
+        conn.commit()
+        changed = m.sync(conn, pid, run_id=1)
+        assert "skipped" not in changed
+        assert changed["chunks"]["updated"] == 1
+        assert m.sync(conn, pid, run_id=1).get("skipped") == "unchanged"

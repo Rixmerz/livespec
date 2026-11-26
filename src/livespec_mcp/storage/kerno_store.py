@@ -28,6 +28,7 @@ import atexit
 import os
 import sqlite3
 import time
+from operator import attrgetter, itemgetter
 from pathlib import Path
 from typing import Any
 
@@ -62,6 +63,20 @@ _META_SCHEMA = [
     {"name": "run_id", "type": "int"},
     {"name": "fp", "type": "text"},
 ]
+
+
+_NEIGHBORS_PREFIX: bool | None = None  # does `Database.neighbors` take `type_prefix`?
+
+
+def _detect_neighbors_prefix(db: Any) -> None:
+    global _NEIGHBORS_PREFIX
+    fn = getattr(db, "neighbors", None)
+    try:
+        import inspect
+
+        _NEIGHBORS_PREFIX = fn is not None and "type_prefix" in inspect.signature(fn).parameters
+    except (TypeError, ValueError):  # builtin without a text signature
+        _NEIGHBORS_PREFIX = False
 
 
 def _doc(db: Any, unit: Any) -> dict[str, Any]:
@@ -104,24 +119,25 @@ def _parse_edge_type(rel_type: str) -> tuple[str, float, str]:
     return parts[0], 1.0, "livespec"
 
 
-def _symbol_doc(r: sqlite3.Row) -> dict[str, Any]:
+def _symbol_doc(r: tuple) -> dict[str, Any]:
+    """`r` is `(id, name, qualified_name, kind, start_line, end_line, body_hash, path)`."""
     doc: dict[str, Any] = {
-        "sid": int(r["id"]),
-        "name": _key(r["name"]),
-        "qkey": _key(r["qualified_name"]),
-        "fkey": _key(r["path"]),
-        "qname": r["qualified_name"],
-        "file_path": r["path"],
-        "kind": r["kind"],
-        "start_line": int(r["start_line"]),
-        "end_line": int(r["end_line"]),
+        "sid": int(r[0]),
+        "name": _key(r[1]),
+        "qkey": _key(r[2]),
+        "fkey": _key(r[7]),
+        "qname": r[2],
+        "file_path": r[7],
+        "kind": r[3],
+        "start_line": int(r[4]),
+        "end_line": int(r[5]),
     }
-    if r["body_hash"]:
-        doc["body_hash"] = r["body_hash"]
+    if r[6]:
+        doc["body_hash"] = r[6]
     return doc
 
 
-def _chunk_payload(r: sqlite3.Row) -> str:
+def _chunk_payload(r: tuple) -> str:
     """A chunk as a RAW text payload: one tab-separated header line, then the text.
 
     Not a typed document on purpose. In kernodb 1.0.0a4 the keyword index
@@ -130,20 +146,22 @@ def _chunk_payload(r: sqlite3.Row) -> str:
     text field is >= 128 bytes long -- measured here: 5% of the chunks were
     searchable as documents. A raw `str` payload is indexed in full. The price
     is no schema, so no `upsert` by natural key: sync keeps its own
-    `cid -> unit` map from the header line."""
+    `cid -> unit` map from the header line.
+
+    `r` is `(id, source_type, source_id, text_kind, file_path, start_line, end_line, text)`."""
     head = "\t".join(
         str(v if v is not None else "")
         for v in (
-            r["id"],
-            r["source_type"],
-            r["source_id"],
-            r["text_kind"],
-            r["start_line"],
-            r["end_line"],
-            (r["file_path"] or "").replace("\t", " ").replace("\n", " "),
+            r[0],
+            r[1],
+            r[2],
+            r[3],
+            r[5],
+            r[6],
+            (r[4] or "").replace("\t", " ").replace("\n", " "),
         )
     )
-    return head + "\n" + r["text"]
+    return head + "\n" + r[7]
 
 
 def _parse_chunk(payload: bytes) -> dict[str, Any]:
@@ -179,6 +197,16 @@ def fingerprint(conn: sqlite3.Connection, project_id: int, run_id: int) -> str:
         (project_id,),
     ).fetchone()
     return f"{run_id}:{r['n']}:{r['mx']}:{r['w']!r}:{r['own']}"
+
+
+def chunk_signature(conn: sqlite3.Connection, project_id: int) -> str:
+    """Cheap signature of the project's chunk table: row count, newest id and total
+    text length. Chunks are rebuilt (new ids) or edited (length moves) by indexing."""
+    r = conn.execute(
+        "SELECT COUNT(*), COALESCE(MAX(id), 0), COALESCE(SUM(LENGTH(text)), 0) FROM chunk WHERE project_id = ?",
+        (project_id,),
+    ).fetchone()
+    return f"{r[0]}:{r[1]}:{r[2]}"
 
 
 class KernoMirror:
@@ -279,8 +307,29 @@ class KernoMirror:
         reason = f"index run {run_id}"
         stats: dict[str, Any] = {}
 
+        # -- no-op shortcut: the stored fingerprint covers run + edge set; the
+        # chunk signature (own meta unit, written only by a chunks=True sync)
+        # covers the chunk table.
+        edge_fp = fingerprint(conn, project_id, run_id)
+        csig = chunk_signature(conn, project_id) if chunks else None
+        if self.fingerprint() == edge_fp and (not chunks or self._chunk_sig() == csig):
+            zero = {"created": 0, "updated": 0, "unchanged": None, "deleted": 0}
+            stats = {
+                "skipped": "unchanged",
+                "symbols": dict(zero),
+                "edges": {"added": 0, "removed": 0, "total": None, "cross_project_skipped": 0},
+            }
+            if chunks:
+                stats["chunks"] = dict(zero)
+            stats["seconds"] = round(time.perf_counter() - t0, 3)
+            return stats
+
+        # Tuple cursors: index access, no per-row sqlite3.Row name lookups.
+        cur = conn.cursor()
+        cur.row_factory = None
+
         # -- symbols
-        rows = conn.execute(
+        rows = cur.execute(
             """SELECT s.id, s.name, s.qualified_name, s.kind, s.start_line, s.end_line,
                       s.body_hash, f.path
                FROM symbol s JOIN file f ON f.id = s.file_id
@@ -288,37 +337,49 @@ class KernoMirror:
             (project_id,),
         ).fetchall()
         before = self._existing("symbol", "sid")
-        docs = [_symbol_doc(r) for r in rows]
+        docs = list(map(_symbol_doc, rows))
         sym_ids, outcomes = self._upsert_all("symbol", "sid", docs, reason)
         gone = [uid for sid, uid in before.items() if sid not in sym_ids]
         self._delete_all(gone, reason)
         stats["symbols"] = {**outcomes, "deleted": len(gone)}
 
         # -- edges: diff the live relations against the SQL edge set
-        want: set[tuple[str, str, str]] = set()
-        cross = 0
-        for r in conn.execute(
+        erows = cur.execute(
             """SELECT e.src_symbol_id, e.dst_symbol_id, e.edge_type, e.weight, e.origin
                FROM symbol_edge e
                JOIN symbol s ON s.id = e.src_symbol_id
                JOIN file f ON f.id = s.file_id
                WHERE f.project_id = ?""",
             (project_id,),
-        ):
-            src = sym_ids.get(int(r["src_symbol_id"]))
-            dst = sym_ids.get(int(r["dst_symbol_id"]))
-            if src and dst:
-                want.add((src, dst, _edge_type(r["edge_type"], float(r["weight"]), r["origin"])))
-            else:  # dst lives in another project of a group DB: not mirrored
-                cross += 1
-        have = {
-            (rel.from_id, rel.to_id, rel.relation_type): rel.id
-            for rel in self.db.relations()
-            if rel.relation_type.startswith(_EDGE_PREFIX)
-        }
-        ops: list[tuple] = [("unrelate", rid) for key, rid in have.items() if key not in want]
+        ).fetchall()
+        get = sym_ids.get
+        srcs = list(map(get, map(itemgetter(0), erows)))
+        dsts = list(map(get, map(itemgetter(1), erows)))
+        triples = list(map(itemgetter(2, 3, 4), erows))
+        tcache = {t: _edge_type(t[0], float(t[1]), t[2]) for t in set(triples)}
+        types = list(map(tcache.__getitem__, triples))
+        if None in srcs or None in dsts:  # dst lives in another project of a group DB: not mirrored
+            keep = [i for i, (a, b) in enumerate(zip(srcs, dsts, strict=True)) if a and b]
+            cross = len(erows) - len(keep)
+            srcs = [srcs[i] for i in keep]
+            dsts = [dsts[i] for i in keep]
+            types = [types[i] for i in keep]
+        else:
+            cross = 0
+        want = set(zip(srcs, dsts, types, strict=True))
+        rels = self.db.relations()
+        keys = list(map(attrgetter("from_id", "to_id", "relation_type"), rels))
+        if not all(t.startswith(_EDGE_PREFIX) for t in set(map(attrgetter("relation_type"), rels))):
+            mine = [i for i, rel in enumerate(rels) if rel.relation_type.startswith(_EDGE_PREFIX)]
+            rels = [rels[i] for i in mine]
+            keys = [keys[i] for i in mine]
+        have = set(keys)
+        stale = have - want
+        ops: list[tuple] = []
+        if stale:
+            ops = [("unrelate", rel.id) for key, rel in zip(keys, rels, strict=True) if key in stale]
         removed = len(ops)
-        ops += [("relate", *key) for key in want if key not in have]
+        ops += [("relate", *key) for key in want - have]
         for i in range(0, len(ops), _BATCH):
             self.db.commit(ops[i : i + _BATCH], reason=reason, actor="livespec-indexer")
         stats["edges"] = {
@@ -337,7 +398,7 @@ class KernoMirror:
                 "chunk"
             ):
                 self.db.set_substring("chunk", True)
-            crows = conn.execute(
+            crows = cur.execute(
                 """SELECT id, source_type, source_id, text_kind, file_path, start_line,
                           end_line, text
                    FROM chunk WHERE project_id = ?""",
@@ -350,7 +411,7 @@ class KernoMirror:
             counts = {"created": 0, "updated": 0, "unchanged": 0}
             seen: set[int] = set()
             for r in crows:
-                cid = int(r["id"])
+                cid = int(r[0])
                 seen.add(cid)
                 payload = _chunk_payload(r)
                 old = cbefore.get(cid)
@@ -369,7 +430,9 @@ class KernoMirror:
 
         # A mirror that had to skip cross-project edges is not the graph SQL
         # would build, so it never claims the state: readers fall back to SQL.
-        fp = "incomplete" if cross else fingerprint(conn, project_id, run_id)
+        fp = "incomplete" if cross else edge_fp
+        if chunks:  # before the index meta: a torn sync leaves the older stamp
+            self.db.upsert("meta", "key", {"key": "chunks", "run_id": int(run_id), "fp": csig})
         self.db.upsert("meta", "key", {"key": "index", "run_id": int(run_id), "fp": fp})
         stats["seconds"] = round(time.perf_counter() - t0, 3)
         return stats
@@ -390,6 +453,13 @@ class KernoMirror:
     def fingerprint(self) -> str | None:
         meta = self._index_meta()
         return meta.get("fp") if meta else None
+
+    def _chunk_sig(self) -> str | None:
+        try:
+            units = self.db.find("meta", "key", "chunks")
+        except kerno.KernoError:
+            return None
+        return self.db.read_document(units[0].id).get("fp") if units else None
 
     @staticmethod
     def _meta(doc: dict[str, Any]) -> dict[str, Any]:
@@ -437,8 +507,14 @@ class KernoMirror:
             return []
         out = []
         seen: set[str] = set()
+        if _NEIGHBORS_PREFIX is None:
+            _detect_neighbors_prefix(self.db)
         if hasattr(self.db, "neighbors"):  # relation + other end in one call
-            for rel, other in self.db.neighbors(units[0].id, direction):
+            if _NEIGHBORS_PREFIX:  # relations of other types never load their unit
+                pairs = self.db.neighbors(units[0].id, direction, type_prefix=_EDGE_PREFIX + edge_type)
+            else:
+                pairs = self.db.neighbors(units[0].id, direction)
+            for rel, other in pairs:
                 rtype = rel.relation_type
                 if not rtype.startswith(_EDGE_PREFIX) or _parse_edge_type(rtype)[0] != edge_type:
                     continue
