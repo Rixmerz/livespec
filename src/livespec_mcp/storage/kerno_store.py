@@ -66,6 +66,12 @@ _META_SCHEMA = [
 ]
 
 
+# The symbol fields a lookup returns, as the mirror stores them and as callers
+# see them. `fields=` (kernodb >= 9bac40e+) skips building the other values.
+_META_FIELDS = ("sid", "name", "qname", "kind", "file_path", "start_line", "end_line")
+_META_KEYS = ("id", "name", "qualified_name", "kind", "file_path", "start_line", "end_line")
+_META_GET = itemgetter(*_META_FIELDS)
+_DOC_FIELDS: bool | None = None  # do the `*_documents` calls take `fields`?
 _NEIGHBORS_PREFIX: bool | None = None  # does `Database.neighbors` take `type_prefix`?
 
 
@@ -647,15 +653,7 @@ class KernoMirror:
 
     @staticmethod
     def _meta(doc: dict[str, Any]) -> dict[str, Any]:
-        return {
-            "id": int(doc["sid"]),
-            "name": doc["name"],
-            "qualified_name": doc["qname"],
-            "kind": doc["kind"],
-            "file_path": doc["file_path"],
-            "start_line": doc["start_line"],
-            "end_line": doc["end_line"],
-        }
+        return dict(zip(_META_KEYS, _META_GET(doc), strict=True))
 
     def graph(self) -> tuple[dict[int, dict], list[tuple[int, int, str, float, str]]]:
         """Every symbol's meta and every edge as `(src, dst, type, weight, origin)`,
@@ -679,6 +677,17 @@ class KernoMirror:
         when kernodb has `find_documents`)."""
         fd = getattr(self.db, "find_documents", None)
         if fd is not None:
+            global _DOC_FIELDS
+            if _DOC_FIELDS:
+                return fd("symbol", field, value, fields=_META_FIELDS)
+            if _DOC_FIELDS is None:
+                try:
+                    out = fd("symbol", field, value, fields=_META_FIELDS)
+                except TypeError:
+                    _DOC_FIELDS = False
+                else:
+                    _DOC_FIELDS = True
+                    return out
             return fd("symbol", field, value)
         return [_doc(self.db, u) for u in self.db.find("symbol", field, value)]
 
@@ -700,7 +709,8 @@ class KernoMirror:
             prefix = (_EDGE_PREFIX + edge_type) if _NEIGHBORS_PREFIX else _EDGE_PREFIX
             seen_sids: set[int] = set()
             out = []
-            for rtype, doc in self.db.neighbor_documents("symbol", "sid", int(sid), direction, prefix):
+            kw = {"fields": _META_FIELDS} if _DOC_FIELDS else {}
+            for rtype, doc in self.db.neighbor_documents("symbol", "sid", int(sid), direction, prefix, **kw):
                 if _parse_edge_type(rtype)[0] != edge_type or doc["sid"] in seen_sids:
                     continue
                 seen_sids.add(doc["sid"])
