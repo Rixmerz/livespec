@@ -118,6 +118,9 @@ def _edge_type(edge_type: str, weight: float, origin: str | None) -> str:
     return f"{_EDGE_PREFIX}{edge_type}~{weight!r}~{origin}"[:64]
 
 
+_EDGE_NAMES: dict[str, str] = {}
+
+
 def _parse_edge_type(rel_type: str) -> tuple[str, float, str]:
     parts = rel_type[len(_EDGE_PREFIX) :].split("~", 2)
     if len(parts) == 3:
@@ -720,10 +723,15 @@ class KernoMirror:
             seen_sids: set[int] = set()
             out = []
             kw = {"fields": _META_FIELDS} if _DOC_FIELDS else {}
+            names = _EDGE_NAMES  # relation type -> edge type; few distinct strings, parsed once
             for rtype, doc in self.db.neighbor_documents("symbol", "sid", int(sid), direction, prefix, **kw):
-                if _parse_edge_type(rtype)[0] != edge_type or doc["sid"] in seen_sids:
+                name = names.get(rtype)
+                if name is None:
+                    name = names[rtype] = _parse_edge_type(rtype)[0]
+                dsid = doc["sid"]
+                if name != edge_type or dsid in seen_sids:
                     continue
-                seen_sids.add(doc["sid"])
+                seen_sids.add(dsid)
                 out.append(self._meta(doc))
             return out
         units = self.db.find("symbol", "sid", int(sid))
