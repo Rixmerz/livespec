@@ -692,6 +692,37 @@ SQLite keeps: Django ingest (1.3x here), open + first query on fastapi and
 Django, ingest and disk on requests. Django graph load is level across runs
 (1.1x either way). Everything else is Kerno's. All parity checks pass.
 
+## Round 14: large WAL frames written in pieces (kernodb `main` at ff32492)
+
+Wall-clock timers inside the three large commits of a Django ingest found what
+instruction counts could not (it is kernel time): the WAL. Every large commit
+is written to the log and then again to its table, and the 94 MB frame of the
+chunk commit was first built as one fresh 94 MB buffer (245 ms) and then
+written (138 ms). Frames above 4 MiB are now encoded into a reused 1 MiB
+buffer, checksummed incrementally and written piece by piece with the header
+last; a crash before the header leaves what replay already treats as a torn
+tail, and the bytes on disk are the same. That write went from 392 ms to
+124 ms. The sorted writes of a commit are also deduplicated in place.
+
+Two earlier attempts on ingest in this round were not merged: sorting a
+commit's entries by a cached key prefix (the standard stable sort already uses
+the long sorted runs), and resolving a batch of upserts' existing units in one
+ordered scan (ingest unchanged, re-upsert slower).
+
+| Django, two runs | SQLite | Kerno |
+|---|---|---|
+| Ingest (ms) | 3049, 2927 | 3701, 4083 |
+| open + first query (ms) | 2.23, 2.36 | 3.57, 3.50 |
+| graph load (ms) | 1131, 1398 | 1248, 1234 |
+| callers (us) | 7.9, 8.1 | 6.2, 5.7 |
+
+The chunk commit phase measured alone went from 1.7-2.1 s to 1.24-1.42 s, but
+the machine carried outside load during these runs and the ingest row did not
+change sides: SQLite keeps Django ingest (1.2-1.4x) and open + first query.
+fastapi ingest is level to faster (668 / 676, 753 / 699 ms). The requests graph
+load is one cold sample of a 5 ms operation and read 8, 32 and 34 ms in three
+repeats; it was bimodal before this round too. All parity checks pass.
+
 ## If this continues
 
 - Report finding 1 upstream; it is the only correctness problem found.
