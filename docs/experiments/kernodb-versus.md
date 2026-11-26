@@ -239,6 +239,34 @@ lookups. Profiling says why, and none of it is a quick fix:
 Closing those needs format or design changes in kernodb (a denormalised current record, lazy
 table open, deferred index builds), not tuning.
 
+## Round 3: read cache and parallel open (kernodb `main` at 9c19a99)
+
+kernodb now keeps what a read verified (schemas, units, indexed-field ranges, the relations of
+a unit) until the next commit, and opens its tables in parallel. Clean run, Django:
+
+| Round | SQLite | Kerno round 2 | Kerno round 3 |
+|---|---|---|---|
+| find_symbol_by_name | 5.8 us | 21.6 us | 6.3 us |
+| find_by_qualified_name | 5.4 us | 14.5 us | **4.7 us** |
+| symbols_in_file | 47 us | 284 us | 104 us |
+| callers_1_hop | 7.2 us | 79 us | 8.7 us |
+| Graph load | 968 ms | 1137 ms | 1195 ms (FastAPI: **273 ms vs 299 ms**) |
+| Open + first query | 3.8 ms | 25.2 ms | 19.7 ms |
+| Keyword search top 10 | 3.1 ms | 0.33 ms | **0.21 ms** |
+| Substring search | 69 ms | 27.9 ms | **21.6 ms** |
+| Ingest the same rows | 2.5 s | 29.5 s | 32.9 s (noise; unchanged) |
+
+Read the lookup rows with their condition: they are repeated reads between two commits (the
+harness takes the best of three passes), which is what the cache serves. A first read of a
+key costs what it did in round 2. That is the workload of an agent querying an index that is
+not being rewritten, but it is not a cold-read win.
+
+Where it stands: point lookups and one-hop callers are at parity with SQLite (within 1.2x
+either way), search is 3-16x faster, graph load is within 1.2x either way. SQLite still wins
+cold reads, open (5x), ingest (4-13x) and disk (1.5-3.3x). Of the 33 s Django ingest, the
+trigram index is 17 s, relations 10 s, the keyword index 3.5 s and the units 2.5 s; with the
+keyword index only (what the SQLite side builds) it is 20 s, still 7x.
+
 ## If this continues
 
 - Report finding 1 upstream; it is the only correctness problem found.
