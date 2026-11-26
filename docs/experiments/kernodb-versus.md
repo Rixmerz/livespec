@@ -282,6 +282,33 @@ The open itself stopped scaling with the database, but a short-lived reader is s
 slower than SQLite: every table a read touches costs about a millisecond to load and check
 (index decode, filter check), and a first read of a unit is still three point reads.
 
+## Round 5: units layer 10 and cheaper bulk writes (kernodb `main` at 04abc45)
+
+With the owner's go-ahead for format changes, kernodb now keeps a copy of a small payload in
+the unit's head (one point read per unit instead of three; a format cut, layer 10) and
+writes posting and adjacency blocks more cheaply. Same harness, Django:
+
+| Round | SQLite | Kerno round 4 | Kerno round 5 |
+|---|---|---|---|
+| Ingest the same rows | 2.4 s | 32.9 s | 19.6 s |
+| Open + first query (911 hits) | 2.2 ms | 14.3 ms | 5.7 ms |
+| Graph load | 955 ms | 1195 ms | 1042 ms (FastAPI: **240 vs 267 ms**) |
+| find_symbol_by_name | 6.8 us | 6.3 us | **6.2 us** |
+| find_by_qualified_name | 3.9 us | 4.7 us | 4.2 us |
+| symbols_in_file | 58 us | 104 us | 92 us |
+| callers_1_hop | 7.1 us | 8.7 us | 8.1 us |
+| Keyword search top 10 | 2.6 ms | 0.21 ms | **0.14 ms** |
+| Substring search | 61 ms | 21.6 ms | **17.8 ms** |
+| Disk | 132 MB | 355 MB | 356 MB |
+
+Parity is unchanged (identical answers on the three repos). Kerno now leads on search
+(3-19x) and is within 1.1-1.6x of SQLite, either way, on lookups, callers and graph load.
+SQLite still leads on ingest (2.5-8x), on a short-lived reader (1.1-2.6x) and on disk
+(1.5-3.5x). The profiled reason for the ingest gap is the stored design: one
+read-modify-write per posting or adjacency list a change set touches, plus two count records
+per relation. Closing it means writing a change set's relations and postings as sorted runs
+merged later, which redefines adjacency, counts and `verify`: a project of its own.
+
 ## If this continues
 
 - Report finding 1 upstream; it is the only correctness problem found.
