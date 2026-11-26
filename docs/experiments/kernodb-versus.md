@@ -487,6 +487,23 @@ Disk on Django is now 0.80x of SQLite's and on fastapi 0.75x. Django ingest is
 SQLite still wins on Django are ingest, open + first query and symbols in file.
 All parity checks pass.
 
+### Round 10b: mimalloc in the Python extension (kernodb `main` at 89ed8ca)
+
+malloc and free were a quarter of the main thread in a profile of bulk relation
+writes. The extension now uses mimalloc for its own allocations.
+
+| Repo | Ingest, SQLite / Kerno (ms) | open + first query (ms) | by name (us) | by qualified name (us) | symbols in file (us) | callers (us) |
+|---|---|---|---|---|---|---|
+| requests | 23 / 60 | 0.19 / 0.17 | 4.0 / 3.6 | 4.0 / 3.7 | 21.7 / 24.7 | 2.6 / 2.5 |
+| fastapi | 649 / 661 | 0.40 / 0.91 | 6.6 / 6.7 | 4.9 / 4.3 | 9.0 / 8.1 | 3.2 / 3.3 |
+| django | 3099 / 3680 | 2.42 / 4.14 | 7.2 / 6.4 | 5.1 / 4.4 | 56.2 / 68.1 | 7.8 / 6.8 |
+
+Django ingest is 1.2x slower than SQLite (was 1.4x). Point lookups and callers
+are now equal or faster on all three repos. SQLite still wins Django ingest,
+open + first query on fastapi and Django, symbols in file on Django, and ingest
+and disk on requests (a fixed cost that matters only at that size). All parity
+checks pass.
+
 ## If this continues
 
 - Report finding 1 upstream; it is the only correctness problem found.

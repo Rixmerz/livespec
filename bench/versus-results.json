@@ -10,17 +10,17 @@
         "symbols": 753,
         "edges": 1481,
         "chunks": 778,
-        "index_project_ms": 222.3,
-        "rebuild_chunks_ms": 147.9
+        "index_project_ms": 202.9,
+        "rebuild_chunks_ms": 125.1
       },
       "ingest": {
-        "sqlite_normal_ms": 25.2,
-        "sqlite_full_ms": 26.7,
-        "sqlite_trigram_ms": 79.4,
-        "kerno_noop_resync_ms": 1.3,
-        "kerno_ms": 62.5,
-        "kerno_write_ms": 50.3,
-        "kerno_close_ms": 12.7,
+        "sqlite_normal_ms": 23.1,
+        "sqlite_full_ms": 25.6,
+        "sqlite_trigram_ms": 80.6,
+        "kerno_noop_resync_ms": 1.2,
+        "kerno_ms": 71.4,
+        "kerno_write_ms": 60.1,
+        "kerno_close_ms": 16.5,
         "kerno_stats": {
           "symbols": {
             "created": 753,
@@ -40,7 +40,7 @@
             "unchanged": 0,
             "deleted": 0
           },
-          "seconds": 0.049
+          "seconds": 0.055
         }
       },
       "disk": {
@@ -55,43 +55,43 @@
         "kerno_after_compact_bytes": 2618425
       },
       "open_plus_first_query": {
-        "sqlite_ms": 0.206,
-        "kerno_ms": 0.222
+        "sqlite_ms": 0.188,
+        "kerno_ms": 0.168
       },
       "reads": {
         "graph_load": {
-          "sqlite_ms": 5.81,
-          "kerno_ms": 4.83
+          "sqlite_ms": 5.32,
+          "kerno_ms": 4.53
         },
         "find_symbol_by_name": {
-          "sqlite_ms": 0.0041,
-          "kerno_ms": 0.0043
+          "sqlite_ms": 0.004,
+          "kerno_ms": 0.0036
         },
         "find_by_qualified_name": {
-          "sqlite_ms": 0.0042,
-          "kerno_ms": 0.0044
+          "sqlite_ms": 0.004,
+          "kerno_ms": 0.0037
         },
         "symbols_in_file": {
-          "sqlite_ms": 0.0223,
-          "kerno_ms": 0.0277
+          "sqlite_ms": 0.0217,
+          "kerno_ms": 0.0247
         },
         "callers_1_hop": {
-          "sqlite_ms": 0.0028,
-          "kerno_ms": 0.0035
+          "sqlite_ms": 0.0026,
+          "kerno_ms": 0.0025
         },
         "keyword_search_top10": {
-          "sqlite_ms": 0.3002,
-          "kerno_ms": 0.0621
+          "sqlite_ms": 0.2825,
+          "kerno_ms": 0.0586
         },
         "substring_search": {
-          "sqlite_ms": 1.0395,
-          "kerno_ms": 0.5071
+          "sqlite_ms": 0.9727,
+          "kerno_ms": 0.4397
         }
       },
       "incremental": {
         "file": "src/requests/models.py",
-        "sqlite_reindex_ms": 69.3,
-        "kerno_resync_ms": 25.7,
+        "sqlite_reindex_ms": 58.6,
+        "kerno_resync_ms": 22.9,
         "kerno_stats": {
           "symbols": {
             "created": 50,
@@ -112,7 +112,7 @@
             "deleted": 52
           },
           "fast_path": true,
-          "seconds": 0.026
+          "seconds": 0.023
         },
         "kerno_commit_seq": 16,
         "kerno_history_of_new_symbol": [
@@ -146,17 +146,17 @@
         "symbols": 4495,
         "edges": 145591,
         "chunks": 4615,
-        "index_project_ms": 2481.5,
-        "rebuild_chunks_ms": 800.0
+        "index_project_ms": 2352.4,
+        "rebuild_chunks_ms": 838.5
       },
       "ingest": {
-        "sqlite_normal_ms": 642.8,
-        "sqlite_full_ms": 731.7,
-        "sqlite_trigram_ms": 1087.3,
-        "kerno_noop_resync_ms": 30.6,
-        "kerno_ms": 1154.0,
-        "kerno_write_ms": 689.8,
-        "kerno_close_ms": 124.8,
+        "sqlite_normal_ms": 649.3,
+        "sqlite_full_ms": 684.0,
+        "sqlite_trigram_ms": 1019.8,
+        "kerno_noop_resync_ms": 32.7,
+        "kerno_ms": 1087.7,
+        "kerno_write_ms": 660.9,
+        "kerno_close_ms": 144.0,
         "kerno_stats": {
           "symbols": {
             "created": 4495,
@@ -176,58 +176,58 @@
             "unchanged": 0,
             "deleted": 0
           },
-          "seconds": 0.997
+          "seconds": 0.91
         }
       },
       "disk": {
         "sqlite_full_index_bytes": 33550336,
         "sqlite_subset_bytes": 28409856,
         "sqlite_trigram_bytes": 39968768,
-        "kerno_bytes": 21220240,
+        "kerno_bytes": 21201855,
         "kerno_compact": {
-          "before": 21219626,
-          "after": 21215172
+          "before": 21201198,
+          "after": 21197930
         },
-        "kerno_after_compact_bytes": 21215556
+        "kerno_after_compact_bytes": 21198330
       },
       "open_plus_first_query": {
-        "sqlite_ms": 0.305,
-        "kerno_ms": 0.84
+        "sqlite_ms": 0.403,
+        "kerno_ms": 0.907
       },
       "reads": {
         "graph_load": {
-          "sqlite_ms": 354.28,
-          "kerno_ms": 314.64
+          "sqlite_ms": 418.06,
+          "kerno_ms": 265.35
         },
         "find_symbol_by_name": {
-          "sqlite_ms": 0.0058,
-          "kerno_ms": 0.0077
+          "sqlite_ms": 0.0066,
+          "kerno_ms": 0.0067
         },
         "find_by_qualified_name": {
-          "sqlite_ms": 0.0048,
-          "kerno_ms": 0.0051
+          "sqlite_ms": 0.0049,
+          "kerno_ms": 0.0043
         },
         "symbols_in_file": {
-          "sqlite_ms": 0.0075,
-          "kerno_ms": 0.009
+          "sqlite_ms": 0.009,
+          "kerno_ms": 0.0081
         },
         "callers_1_hop": {
-          "sqlite_ms": 0.0035,
-          "kerno_ms": 0.0046
+          "sqlite_ms": 0.0032,
+          "kerno_ms": 0.0033
         },
         "keyword_search_top10": {
-          "sqlite_ms": 0.8579,
-          "kerno_ms": 0.0852
+          "sqlite_ms": 0.5796,
+          "kerno_ms": 0.1006
         },
         "substring_search": {
-          "sqlite_ms": 5.4674,
-          "kerno_ms": 1.3708
+          "sqlite_ms": 5.2528,
+          "kerno_ms": 1.4842
         }
       },
       "incremental": {
         "file": "fastapi/applications.py",
-        "sqlite_reindex_ms": 962.2,
-        "kerno_resync_ms": 201.4,
+        "sqlite_reindex_ms": 1182.6,
+        "kerno_resync_ms": 241.6,
         "kerno_stats": {
           "symbols": {
             "created": 33,
@@ -248,7 +248,7 @@
             "deleted": 84
           },
           "fast_path": true,
-          "seconds": 0.201
+          "seconds": 0.242
         },
         "kerno_commit_seq": 16,
         "kerno_history_of_new_symbol": [
@@ -282,17 +282,17 @@
         "symbols": 40263,
         "edges": 413714,
         "chunks": 41881,
-        "index_project_ms": 17257.5,
-        "rebuild_chunks_ms": 10670.9
+        "index_project_ms": 16753.5,
+        "rebuild_chunks_ms": 10436.2
       },
       "ingest": {
-        "sqlite_normal_ms": 3047.1,
-        "sqlite_full_ms": 3030.9,
-        "sqlite_trigram_ms": 9584.1,
-        "kerno_noop_resync_ms": 163.6,
-        "kerno_ms": 5840.0,
-        "kerno_write_ms": 4144.9,
-        "kerno_close_ms": 590.4,
+        "sqlite_normal_ms": 3098.8,
+        "sqlite_full_ms": 3130.8,
+        "sqlite_trigram_ms": 9729.0,
+        "kerno_noop_resync_ms": 133.6,
+        "kerno_ms": 5320.7,
+        "kerno_write_ms": 3680.1,
+        "kerno_close_ms": 512.3,
         "kerno_stats": {
           "symbols": {
             "created": 40263,
@@ -312,58 +312,58 @@
             "unchanged": 0,
             "deleted": 0
           },
-          "seconds": 5.113
+          "seconds": 4.692
         }
       },
       "disk": {
         "sqlite_full_index_bytes": 168173568,
         "sqlite_subset_bytes": 138432512,
         "sqlite_trigram_bytes": 260997120,
-        "kerno_bytes": 111307895,
+        "kerno_bytes": 111286428,
         "kerno_compact": {
-          "before": 111306783,
-          "after": 111302165
+          "before": 111285279,
+          "after": 111283121
         },
-        "kerno_after_compact_bytes": 111303234
+        "kerno_after_compact_bytes": 111284181
       },
       "open_plus_first_query": {
-        "sqlite_ms": 2.705,
-        "kerno_ms": 5.157
+        "sqlite_ms": 2.416,
+        "kerno_ms": 4.139
       },
       "reads": {
         "graph_load": {
-          "sqlite_ms": 1281.0,
-          "kerno_ms": 1263.31
+          "sqlite_ms": 1133.36,
+          "kerno_ms": 1123.21
         },
         "find_symbol_by_name": {
-          "sqlite_ms": 0.0076,
-          "kerno_ms": 0.0066
+          "sqlite_ms": 0.0072,
+          "kerno_ms": 0.0064
         },
         "find_by_qualified_name": {
-          "sqlite_ms": 0.0046,
-          "kerno_ms": 0.0046
+          "sqlite_ms": 0.0051,
+          "kerno_ms": 0.0044
         },
         "symbols_in_file": {
-          "sqlite_ms": 0.0617,
-          "kerno_ms": 0.0729
+          "sqlite_ms": 0.0562,
+          "kerno_ms": 0.0681
         },
         "callers_1_hop": {
-          "sqlite_ms": 0.008,
-          "kerno_ms": 0.0076
+          "sqlite_ms": 0.0078,
+          "kerno_ms": 0.0068
         },
         "keyword_search_top10": {
-          "sqlite_ms": 3.0022,
-          "kerno_ms": 0.1486
+          "sqlite_ms": 2.7113,
+          "kerno_ms": 0.1456
         },
         "substring_search": {
-          "sqlite_ms": 75.6902,
-          "kerno_ms": 24.4786
+          "sqlite_ms": 74.3525,
+          "kerno_ms": 20.2662
         }
       },
       "incremental": {
         "file": "django/db/models/sql/query.py",
-        "sqlite_reindex_ms": 1836.9,
-        "kerno_resync_ms": 925.6,
+        "sqlite_reindex_ms": 1828.9,
+        "kerno_resync_ms": 808.7,
         "kerno_stats": {
           "symbols": {
             "created": 116,
@@ -384,7 +384,7 @@
             "deleted": 135
           },
           "fast_path": true,
-          "seconds": 0.926
+          "seconds": 0.809
         },
         "kerno_commit_seq": 16,
         "kerno_history_of_new_symbol": [
