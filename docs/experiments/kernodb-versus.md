@@ -763,6 +763,33 @@ The pass costs a few milliseconds of the requests close. Requests ingest stays
 with SQLite (24-28 ms against 44-52 ms in quiet samples, up to 110 ms under
 load in this container), and so does Django ingest (2956 / 3671 ms).
 
+## Round 16: ingest CPU (kernodb `main` at 715fd6b)
+
+Wall-clock ingest in this container moves by +-0.4 s between identical runs,
+so this round was decided on process CPU and callgrind instruction counts.
+
+- `close_compaction=False` (`CloseBudget::Deferred`): a close always compacted
+  L0 below its trigger, 335 ms of a 490 ms close after the Django load. The
+  mirror's close now only flushes; the next writer session compacts in the
+  background. This defers work rather than removing it.
+- LZ4 through the crate's fast encoder (decoding stays on the safe one):
+  process CPU of the Django ingest 6.1 -> 5.4 s.
+- Op conversion in the Python binding (ids through a hex table and a per-call
+  cache), upsert without a snapshot read when the unique field has no stored
+  entry, one parse less per upsert, and a table-driven ASCII tokenizer:
+  `Database.commit` on the fastapi load 1.538 -> 1.305 G instructions (-15%).
+
+| Ingest (ms), three runs | SQLite | Kerno |
+|---|---|---|
+| requests | 28.9, 30.7, 29.4 | 110.3, 48.6, 70.3 |
+| fastapi | 724.6, 704.4, 751.6 | 676.3, 714.8, 735.1 |
+| Django | 2916, 3065, 3283 | 3560, 3665, 3551 |
+
+The container was slower during these runs than in round 15 (SQLite's own
+Django ingest rose from 2.7-2.9 s). SQLite keeps Django ingest by 1.1-1.2x and
+requests ingest by 1.6x or more; fastapi is level. Disk and open + first query
+stay with Kerno in all three repos. All parity checks pass.
+
 ## If this continues
 
 - Report finding 1 upstream; it is the only correctness problem found.
