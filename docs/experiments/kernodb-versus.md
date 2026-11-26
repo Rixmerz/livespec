@@ -602,6 +602,36 @@ keeps: ingest (Django 2979 / 3808 ms, fastapi 681 / 717 ms, requests 28 / 58
 ms), open + first query (Django 2.5 / 5.3 ms, fastapi 0.55 / 1.00 ms) and disk
 on requests (1.45 / 2.50 MB). All parity checks pass.
 
+### Round 12b: content hashes off the commit thread, chunks committed first (kernodb `main` at 587b800)
+
+A profile of the commit thread alone put 6.6% of a bulk ingest in the content
+hash of each payload; it now runs in the parallel pass that already tokenizes
+(175M instructions to 0 on that thread). The mirror commits chunks before
+symbols and edges, so the largest table is written out in the background
+during the other two commits and close has less left (close 0.7-0.8 s to
+0.45-0.6 s).
+
+Ingest did not get closer in this round's runs, and the reason is the machine,
+not the build: with the same wheel and data, Kerno's Django commit + close read
+3.7 s earlier in the day and 4.1 to 4.7 s now, for the previous build as well
+as this one, while SQLite's single-threaded ingest stayed at 2.9 to 3.0 s.
+Kerno's ingest leans on background threads (tokenizing, hashing, compressing,
+flushing), and this box gives it about 1.5 cores, less at times.
+
+| Django, two runs | SQLite | Kerno |
+|---|---|---|
+| Ingest (ms) | 3030, 2892 | 4299, 4396 |
+| open + first query (ms) | 2.61, 3.32 | 4.27, 4.97 |
+| by name (us) | 6.7, 6.6 | 4.6, 4.5 |
+| by qualified name (us) | 5.0, 4.5 | 3.6, 3.2 |
+| symbols in file (us) | 65.8, 59.3 | 47.9, 41.7 |
+| callers (us) | 8.0, 8.0 | 6.3, 6.1 |
+| graph load (ms) | 1302, 1221 | 1304, 1071 |
+
+SQLite keeps ingest and open + first query on Django, open + first query on
+fastapi (0.3 / 0.7 ms; fastapi ingest is level at 685 / 675 ms), and ingest and
+disk on requests. All parity checks pass.
+
 ## If this continues
 
 - Report finding 1 upstream; it is the only correctness problem found.
