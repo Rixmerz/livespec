@@ -79,7 +79,6 @@ _META_MAP = {
     "start_line": "start_line",
     "end_line": "end_line",
 }
-_META_FIELDS = tuple(_META_MAP)
 _DOC_FIELDS: bool | None = None  # does `find_documents` take `fields` as a mapping?
 _NEIGHBORS_PREFIX: bool | None = None  # does `Database.neighbors` take `type_prefix`?
 
@@ -740,9 +739,10 @@ class KernoMirror:
             prefix = (_EDGE_PREFIX + edge_type) if _NEIGHBORS_PREFIX else _EDGE_PREFIX
             seen_sids: set[int] = set()
             out = []
-            kw = {"fields": _META_FIELDS} if _DOC_FIELDS else {}
+            # No `fields=` here: a symbol has few callers, and the keyword costs more
+            # per call than the three values it would skip.
             names = _EDGE_NAMES  # relation type -> edge type; few distinct strings, parsed once
-            for rtype, doc in self.db.neighbor_documents("symbol", "sid", int(sid), direction, prefix, **kw):
+            for rtype, doc in self.db.neighbor_documents("symbol", "sid", int(sid), direction, prefix):
                 name = names.get(rtype)
                 if name is None:
                     name = names[rtype] = _parse_edge_type(rtype)[0]

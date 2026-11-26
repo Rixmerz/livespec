@@ -632,6 +632,34 @@ SQLite keeps ingest and open + first query on Django, open + first query on
 fastapi (0.3 / 0.7 ms; fastapi ingest is level at 685 / 675 ms), and ingest and
 disk on requests. All parity checks pass.
 
+## Round 13: result dicts from the binding, callers without `fields=` (kernodb `main` at a94760c)
+
+Wall-clock timers inside a cold 911-hit lookup (about 3.0 ms in the Rust
+harness) gave: reading the 730 blocks 1.3-1.5 ms, decoding and caching the
+units 0.34-0.38, close 0.35-0.43, the first schema read 0.30-0.34, the
+agreement check of each hit 0.30, the index scan 0.27-0.31, open 0.2. Of the
+five cuts tried, two held: the batch goes into the read cache under one lock
+(0.31-0.34 to 0.25 ms), and `fields=` may be a mapping that renames, so the
+mirror's many-hit lookups get their result dicts from the binding. Not kept: a
+persistent pool for the batched read (it saved 0.1 ms in the read and added
+0.17 ms to close); close has nothing avoidable (freeing 730 blocks and 911
+units, unmapping); the agreement check already compared encoded bytes.
+
+On the mirror side, callers no longer passes `fields=`: for the few callers a
+symbol has, the keyword cost close to 1 us a call.
+
+| Repo, second of two runs | by name, SQLite / Kerno (us) | by qualified name (us) | symbols in file (us) | callers (us) | open + first query (ms) | ingest (ms) |
+|---|---|---|---|---|---|---|
+| requests | 4.5 / 3.6 | 4.5 / 3.6 | 22.3 / 17.0 | 3.1 / 2.4 | 0.23 / 0.17 | 24 / 45 |
+| fastapi | 7.8 / 4.5 | 4.2 / 3.2 | 6.8 / 5.3 | 3.0 / 2.0 | 0.29 / 0.50 | 665 / 552 |
+| django | 6.9 / 4.6 | 4.6 / 3.3 | 56.7 / 35.6 | 8.3 / 5.6 | 2.19 / 3.49 | 2766 / 4077 |
+
+Every warm lookup is 1.2x to 1.8x faster on Kerno in both runs, and fastapi
+ingest is faster in both (813 / 717 and 665 / 552 ms). SQLite keeps Django
+ingest (1.4-1.5x on this machine, see round 12b), open + first query on fastapi
+and Django (1.4-2.0x), and ingest and disk on requests. Django graph load is
+level (1146 / 1230 and 1151 / 1185 ms). All parity checks pass.
+
 ## If this continues
 
 - Report finding 1 upstream; it is the only correctness problem found.
