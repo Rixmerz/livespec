@@ -583,6 +583,25 @@ other row is Kerno's or level. On fastapi SQLite keeps open + first query
 (0.35 / 0.83 ms) and callers (3.1 / 4.3 us); on requests, ingest and disk. All
 parity checks pass.
 
+## Round 12: point lookups without per-call schema work (kernodb `main` at 253326b)
+
+A warm one-hit `find` spent about 18,500 instructions, most of it independent
+of the data: the schema's field list was cloned on every call, the schema and
+range caches hashed their keys with SipHash, and the value was escaped byte by
+byte. With a shared schema, a cheap hasher and a scan-then-copy escape, the
+find in the Rust harness went from 1.8-2.1 us to 0.8 us.
+
+| Repo | by name, SQLite / Kerno (us) | by qualified name (us) | symbols in file (us) | callers (us) |
+|---|---|---|---|---|
+| requests | 4.6 / 3.4 | 4.6 / 3.4 | 24.4 / 19.4 | 2.9 / 2.7 |
+| fastapi | 6.9 / 6.1 | 4.9 / 3.7 | 8.3 / 7.1 | 3.5 / 3.5 |
+| django | 11.0 / 8.8 | 8.0 / 6.5 | 87.5 / 61.0 | 8.3 / 6.6 |
+
+Every warm lookup row is now Kerno's or level on all three repos. What SQLite
+keeps: ingest (Django 2979 / 3808 ms, fastapi 681 / 717 ms, requests 28 / 58
+ms), open + first query (Django 2.5 / 5.3 ms, fastapi 0.55 / 1.00 ms) and disk
+on requests (1.45 / 2.50 MB). All parity checks pass.
+
 ## If this continues
 
 - Report finding 1 upstream; it is the only correctness problem found.
