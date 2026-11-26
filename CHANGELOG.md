@@ -6,6 +6,8 @@ follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.37.0] - 2026-11-26
+
 ### Added — spec verification and staleness
 
 - `livespec verify` records, per requirement and implementing symbol, the commit, what checked it (`test`, `reviewer`, `verifier`), its evidence and the symbol's body and signature hashes, in `openspec/verifications.json` (committed with the code).
