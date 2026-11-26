@@ -746,6 +746,23 @@ in that pair and stays below SQLite (111-117 vs 132 MB).
 Still with SQLite: Django ingest (2673 / 3263, 2841 / 3721 ms), and ingest
 and disk on requests (22 / 44 ms, 1.45 / 2.75 MB). All parity checks pass.
 
+### Round 15b: small close-time flushes are compressed (kernodb `main` at 6d68689)
+
+A close skipped the LZ4 pass on the table it writes. For requests that table
+is the whole mirror: 2.7 MB of records stored as 2.75 MB. A close now
+compresses a memtable of up to 8 MiB (larger ones still skip the pass, which
+keeps the Django close as it was).
+
+| Disk (MB) | SQLite | Kerno |
+|---|---|---|
+| requests | 1.45 | 1.33 |
+| fastapi | 27.09 | 20.71 |
+| Django | 132.02 | 111.37 |
+
+The pass costs a few milliseconds of the requests close. Requests ingest stays
+with SQLite (24-28 ms against 44-52 ms in quiet samples, up to 110 ms under
+load in this container), and so does Django ingest (2956 / 3671 ms).
+
 ## If this continues
 
 - Report finding 1 upstream; it is the only correctness problem found.
