@@ -557,6 +557,32 @@ against 0.85 to 1.08 s measured alone, the same as with the previous build.
 Django ingest (3377 / 3672 ms here, 2988 / 3798 ms in the other run) and open +
 first query (2.5 / 3.6 ms) remain SQLite's. All parity checks pass.
 
+### Round 11b: one-pass table index decode (kernodb `main` at f911d9a)
+
+A profile of the main thread alone (the helper threads of the batched read are
+not the wall-clock limit) put 29% of a cold 911-hit lookup in loading tables.
+The index is now decoded and checked in one pass without an allocation per
+entry: cold lookup in the Rust harness 3.4-3.5 ms to 2.9-3.2 ms. The re-check
+of each hit against the looked-up value stays: it guards index and unit
+consistency. An experiment with block compression off settled an earlier
+guess: Django ingest was unchanged (3.6 s), the cold lookup went from 3.66 to
+3.43 ms and disk doubled (107 to 208 MB), so compression is not what these two
+rows cost.
+
+| Django | SQLite | Kerno |
+|---|---|---|
+| Ingest (ms) | 3092 | 3884 |
+| open + first query (ms) | 2.56 | 4.14 |
+| graph load (ms) | 1362 | 1207 |
+| by name / by qualified name (us) | 7.4 / 4.7 | 6.3 / 4.6 |
+| symbols in file (us) | 62.4 | 48.3 |
+| callers (us) | 8.2 | 7.5 |
+
+On Django, SQLite keeps ingest (1.3x) and open + first query (1.6x); every
+other row is Kerno's or level. On fastapi SQLite keeps open + first query
+(0.35 / 0.83 ms) and callers (3.1 / 4.3 us); on requests, ingest and disk. All
+parity checks pass.
+
 ## If this continues
 
 - Report finding 1 upstream; it is the only correctness problem found.
