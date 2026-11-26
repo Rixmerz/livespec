@@ -504,6 +504,32 @@ open + first query on fastapi and Django, symbols in file on Django, and ingest
 and disk on requests (a fixed cost that matters only at that size). All parity
 checks pass.
 
+### Round 10c: content hash on read optional, cheaper op conversion (kernodb `main` at 63b06f2)
+
+Two changes. A unit's content hash is no longer recomputed on every read unless
+the database is opened with `verify_payload_on_read` (the block checksum still
+covers the bytes; `verify`, history, export and import always check it). And
+`commit` converts Python ops without a string allocation per op (relate
+conversion 0.44 to 0.21 us/op). Two more were tried and dropped: decompressing
+without zeroing the buffer is not possible with the safe LZ4 decoder, and the
+table index has no random access, so opening a table still decodes it.
+
+| Django | SQLite | Kerno |
+|---|---|---|
+| Ingest (ms) | 2983 | 3676 |
+| Disk (MB) | 132.0 | 106.2 |
+| open + first query (ms) | 2.39 | 4.24 |
+| symbols in file (us) | 65.5 | 76.7 |
+| by name / by qualified name (us) | 7.0 / 5.0 | 5.2 / 4.0 |
+| callers (us) | 8.8 | 7.6 |
+
+No row changed sides. The cold 911-hit lookup in the Rust harness went from
+about 4.0 ms to 3.2 ms, which the end-to-end row does not show above its noise.
+SQLite keeps Django ingest (1.2x), open + first query (1.8x) and symbols in file
+(1.2x). What is left in those is LZ4 decompression, block checksums, opening
+tables and the revision records written per unit: none has a fix that keeps the
+feature. All parity checks pass.
+
 ## If this continues
 
 - Report finding 1 upstream; it is the only correctness problem found.
