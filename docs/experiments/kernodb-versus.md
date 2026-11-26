@@ -267,6 +267,21 @@ cold reads, open (5x), ingest (4-13x) and disk (1.5-3.3x). Of the 33 s Django in
 trigram index is 17 s, relations 10 s, the keyword index 3.5 s and the units 2.5 s; with the
 keyword index only (what the SQLite side builds) it is 20 s, still 7x.
 
+## Round 4: lazy tables (kernodb `main` at 1a52d2e)
+
+A read-only handle now loads each table at the first read that needs it. On the Django mirror
+(356 MB, 50 tables), from Python:
+
+| | SQLite | Kerno round 3 | Kerno round 4 |
+|---|---|---|---|
+| Open and close | ~0.05 ms | 11 ms | 1.1 ms |
+| Open + one lookup by qualified name + close | 0.12 ms | - | 4.6 ms |
+| Open + `find("__init__")` (911 hits) + close | 1.9 ms | 19.7 ms | 14.3 ms |
+
+The open itself stopped scaling with the database, but a short-lived reader is still 7-38x
+slower than SQLite: every table a read touches costs about a millisecond to load and check
+(index decode, filter check), and a first read of a unit is still three point reads.
+
 ## If this continues
 
 - Report finding 1 upstream; it is the only correctness problem found.
