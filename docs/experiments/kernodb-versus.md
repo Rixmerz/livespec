@@ -530,6 +530,33 @@ SQLite keeps Django ingest (1.2x), open + first query (1.8x) and symbols in file
 tables and the revision records written per unit: none has a fix that keeps the
 feature. All parity checks pass.
 
+## Round 11: shared cached units, cheaper document dicts (kernodb `main` at 0566ff3)
+
+A warm `find` served every hit from the read cache and then deep-cloned it;
+the cache also hashed 16-byte ids with SipHash. kernodb now hands out the shared
+unit and uses its id hasher (175-hit find in the Rust harness: 34 us to 8 us).
+That did not move the end-to-end row, because building the Python dicts was
+the larger cost: 160 us of 185 us for those 175 symbols. The binding now reuses
+one interned str per field name per call (185 us to 131 us) and takes
+`fields=` on `find_documents` and `neighbor_documents`. The mirror passes
+`fields=` for symbols in file only: it costs 0.4 us a call, which a one-hit
+lookup does not earn back.
+
+| Repo | symbols in file, SQLite / Kerno (us) | by name (us) | by qualified name (us) | callers (us) |
+|---|---|---|---|---|
+| requests | 23.7 / 21.1 | 4.5 / 4.0 | 4.6 / 4.3 | 3.1 / 3.3 |
+| fastapi | 8.0 / 7.6 | 6.0 / 6.4 | 4.7 / 4.4 | 3.3 / 6.2 |
+| django | 95.6 / 46.9 | 10.5 / 9.2 | 7.2 / 7.0 | 8.0 / 8.1 |
+
+Symbols in file is now faster on Kerno in all three repos, in each of the two
+runs made after the change (Django 59.3 / 48.1 us in the other run). The
+machine was noisy for this round: between those two runs SQLite's Django ingest
+read 2988 and 3377 ms, the fastapi callers figure above is an outlier (3.7 us in
+the other run), and Django graph load read 1.5 s for Kerno inside the benchmark
+against 0.85 to 1.08 s measured alone, the same as with the previous build.
+Django ingest (3377 / 3672 ms here, 2988 / 3798 ms in the other run) and open +
+first query (2.5 / 3.6 ms) remain SQLite's. All parity checks pass.
+
 ## If this continues
 
 - Report finding 1 upstream; it is the only correctness problem found.
