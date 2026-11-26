@@ -362,6 +362,42 @@ class KernoMirror:
             fast["seconds"] = round(time.perf_counter() - t0, 3)
             return fast
 
+        # -- chunks (keyword + substring indexes). First: theirs is the largest table,
+        # and kernodb writes it out in the background while the symbols and edges
+        # below are prepared and committed, instead of all of it at close.
+        chunk_stats: dict[str, Any] | None = None
+        if chunks:
+            self._ensure_chunk_indexes()
+            crows = cur.execute(
+                """SELECT id, source_type, source_id, text_kind, file_path, start_line,
+                          end_line, text
+                   FROM chunk WHERE project_id = ?""",
+                (project_id,),
+            )
+            cbefore = {
+                int(u.payload.split(b"\t", 1)[0]): (u.id, u.payload) for u in self.db.query("chunk")
+            }
+            cops: list[tuple] = []
+            counts = {"created": 0, "updated": 0, "unchanged": 0}
+            seen: set[int] = set()
+            for r in crows:
+                cid = int(r[0])
+                seen.add(cid)
+                payload = _chunk_payload(r)
+                old = cbefore.get(cid)
+                if old is None:
+                    cops.append(("store", "chunk", payload))
+                    counts["created"] += 1
+                elif old[1] != payload.encode("utf-8"):
+                    cops.append(("update", old[0], payload))
+                    counts["updated"] += 1
+                else:
+                    counts["unchanged"] += 1
+            cgone = [uid for cid, (uid, _) in cbefore.items() if cid not in seen]
+            cops += [("delete", uid) for uid in cgone]
+            self._commit_split(cops, reason)
+            chunk_stats = {**counts, "deleted": len(cgone)}
+
         # -- symbols
         rows = cur.execute(
             """SELECT s.id, s.name, s.qualified_name, s.kind, s.start_line, s.end_line,
@@ -423,38 +459,8 @@ class KernoMirror:
             "cross_project_skipped": cross,
         }
 
-        # -- chunks (keyword + substring indexes)
-        if chunks:
-            self._ensure_chunk_indexes()
-            crows = cur.execute(
-                """SELECT id, source_type, source_id, text_kind, file_path, start_line,
-                          end_line, text
-                   FROM chunk WHERE project_id = ?""",
-                (project_id,),
-            )
-            cbefore = {
-                int(u.payload.split(b"\t", 1)[0]): (u.id, u.payload) for u in self.db.query("chunk")
-            }
-            cops: list[tuple] = []
-            counts = {"created": 0, "updated": 0, "unchanged": 0}
-            seen: set[int] = set()
-            for r in crows:
-                cid = int(r[0])
-                seen.add(cid)
-                payload = _chunk_payload(r)
-                old = cbefore.get(cid)
-                if old is None:
-                    cops.append(("store", "chunk", payload))
-                    counts["created"] += 1
-                elif old[1] != payload.encode("utf-8"):
-                    cops.append(("update", old[0], payload))
-                    counts["updated"] += 1
-                else:
-                    counts["unchanged"] += 1
-            cgone = [uid for cid, (uid, _) in cbefore.items() if cid not in seen]
-            cops += [("delete", uid) for uid in cgone]
-            self._commit_split(cops, reason)
-            stats["chunks"] = {**counts, "deleted": len(cgone)}
+        if chunk_stats is not None:
+            stats["chunks"] = chunk_stats
 
         # A mirror that had to skip cross-project edges is not the graph SQL
         # would build, so it never claims the state: readers fall back to SQL.
