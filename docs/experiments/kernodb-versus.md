@@ -443,6 +443,30 @@ fastapi they are 1.3x slower. Symbols in file and open + first query moved
 little. The no-op re-sync, ingest, disk, graph load, keyword and substring
 search are unchanged in substance. All parity checks pass.
 
+## Round 9: units layer 11, batched unit heads (kernodb `main` at cfe3875)
+
+What changed, all in kernodb:
+
+- Units layer 11: a payload small enough to live in the unit head is stored only
+  there. Its `REV_PAYLOAD` record is written when a later revision supersedes it
+  and history keeps it. Layer 10 files are refused (`LayerTooOld`); the mirror
+  was rebuilt.
+- `find` reads all unit heads of its hits in one sorted multi-get (each block
+  once, threaded past 64 keys); read-only lazy tables are memory-mapped.
+
+| Repo | Ingest, SQLite NORMAL / Kerno commit()+close (ms) | Disk, SQLite / Kerno (MB) | open + first query (ms) |
+|---|---|---|---|
+| requests | 24 / 83 | 1.45 / 3.25 | 0.38 / 0.43 |
+| fastapi | 783 / 692 | 27.1 / 22.7 | 0.56 / 1.20 |
+| django | 3005 / 4395 | 132.0 / 133.5 | 2.52 / 5.72 |
+
+Disk on Django went from 147 MB to 133.5 MB (SQLite 132.0) and on fastapi Kerno
+is now smaller. fastapi ingest is 1.1x faster than SQLite; Django is still 1.5x
+slower. Open + first query did not move on Django: the 911-hit lookup spends its
+time decompressing and checksumming about 770 blocks, not in the reads the batch
+removed. Point lookups, callers, graph load, searches and re-syncs are within
+run-to-run noise of round 8. All parity checks pass.
+
 ## If this continues
 
 - Report finding 1 upstream; it is the only correctness problem found.
