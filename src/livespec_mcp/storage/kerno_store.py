@@ -64,6 +64,14 @@ _META_SCHEMA = [
 ]
 
 
+def _doc(db: Any, unit: Any) -> dict[str, Any]:
+    """A unit's document. `Unit.document()` decodes the payload the unit already
+    carries; older kernodb builds need a second read of the database."""
+    if hasattr(unit, "document"):
+        return unit.document()
+    return db.read_document(unit.id)
+
+
 def enabled() -> bool:
     return kerno is not None and os.environ.get(ENV_FLAG, "") not in ("", "0")
 
@@ -201,10 +209,9 @@ class KernoMirror:
     def _existing(self, unit_type: str, field: str) -> dict[int, str]:
         """`{natural key: unit id}` of every active unit of a type.
 
-        One `read_document` per unit: `query()` returns the raw payload bytes
-        and the bindings expose no bulk document read."""
-        read = self.db.read_document
-        return {int(read(u.id)[field]): u.id for u in self.db.query(unit_type)}
+        `Unit.document()` decodes the payload `query()` already returned; without
+        it (kernodb <= 1.0.0a4) this is one extra `read_document` per unit."""
+        return {int(_doc(self.db, u)[field]): u.id for u in self.db.query(unit_type)}
 
     def _upsert_all(
         self, unit_type: str, field: str, docs: list[dict[str, Any]], reason: str
@@ -396,11 +403,10 @@ class KernoMirror:
     def graph(self) -> tuple[dict[int, dict], list[tuple[int, int, str, float, str]]]:
         """Every symbol's meta and every edge as `(src, dst, type, weight, origin)`,
         keyed by the SQLite symbol ids -- the inputs `load_graph` needs."""
-        read = self.db.read_document
         by_unit: dict[str, int] = {}
         sym_meta: dict[int, dict] = {}
         for u in self.db.query("symbol"):
-            m = self._meta(read(u.id))
+            m = self._meta(_doc(self.db, u))
             by_unit[u.id] = m["id"]
             sym_meta[m["id"]] = m
         edges = []
@@ -412,26 +418,32 @@ class KernoMirror:
         return sym_meta, edges
 
     def find_symbol(self, name: str) -> list[dict[str, Any]]:
-        read = self.db.read_document
-        return [self._meta(read(u.id)) for u in self.db.find("symbol", "name", _key(name))]
+        return [self._meta(_doc(self.db, u)) for u in self.db.find("symbol", "name", _key(name))]
 
     def find_qname(self, qname: str) -> list[dict[str, Any]]:
-        read = self.db.read_document
-        out = [self._meta(read(u.id)) for u in self.db.find("symbol", "qkey", _key(qname))]
+        out = [self._meta(_doc(self.db, u)) for u in self.db.find("symbol", "qkey", _key(qname))]
         return [m for m in out if m["qualified_name"] == qname]
 
     def symbols_in_file(self, path: str) -> list[dict[str, Any]]:
-        read = self.db.read_document
-        out = [self._meta(read(u.id)) for u in self.db.find("symbol", "fkey", _key(path))]
+        out = [self._meta(_doc(self.db, u)) for u in self.db.find("symbol", "fkey", _key(path))]
         return [m for m in out if m["file_path"] == path]
 
     def _neighbours(self, sid: int, direction: str, edge_type: str) -> list[dict[str, Any]]:
         units = self.db.find("symbol", "sid", int(sid))
         if not units:
             return []
-        read = self.db.read_document
-        seen: set[str] = set()
         out = []
+        seen: set[str] = set()
+        if hasattr(self.db, "neighbors"):  # relation + other end in one call
+            for rel, other in self.db.neighbors(units[0].id, direction):
+                rtype = rel.relation_type
+                if not rtype.startswith(_EDGE_PREFIX) or _parse_edge_type(rtype)[0] != edge_type:
+                    continue
+                if other.id not in seen:
+                    seen.add(other.id)
+                    out.append(self._meta(other.document()))
+            return out
+        read = self.db.read_document
         for rel in self.db.related(units[0].id, direction):
             if not rel.relation_type.startswith(_EDGE_PREFIX):
                 continue

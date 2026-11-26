@@ -205,6 +205,40 @@ vouch for the current state.
    only through `upsert`, not `store`; a unit can be written once per change
    set.
 
+## Round 2: after the kernodb fixes (kernodb `main` at 7d020f6)
+
+Findings 1 and 3 are fixed upstream (kernodb issues #12 and #13), and the Python binding gained
+`Unit.document()` (no second read per unit) and `Database.neighbors()` (relations with the unit
+at the other end, in one call); the mirror uses both when the installed build has them. Same
+harness, same machine, kernodb built from source with LTO:
+
+| Round (Django) | SQLite | Kerno before | Kerno after |
+|---|---|---|---|
+| Ingest the same rows | 2.6 s | 32.8 s | 29.5 s |
+| Open + first query | 2.3 ms | 28.8 ms | 25.2 ms |
+| Graph load | 923 ms | 1576 ms | 1137 ms |
+| find_symbol_by_name | 6.1 us | 22.8 us | 21.6 us |
+| find_by_qualified_name | 4.1 us | 17.0 us | 14.5 us |
+| symbols_in_file | 48 us | 420 us | 284 us |
+| callers_1_hop | 8.2 us | 59 us | 79 us (noise; unchanged) |
+| Keyword search top 10 | 3.1 ms | 0.21 ms | 0.33 ms |
+| Substring search | 70 ms | 27.5 ms | 27.9 ms |
+
+Parity is unchanged (identical answers). The verdict does not move: Kerno narrowed the read
+gaps (graph load is now 1.0-1.2x of SQLite) and still loses ingest, disk, open and point
+lookups. Profiling says why, and none of it is a quick fix:
+
+- a unit read is three point reads (head, revision metadata, payload) plus a content-hash
+  check, where SQLite does one B-tree lookup;
+- each neighbour of a relation read costs its `REL` record, the other end's head and a count
+  check, by design (the engine verifies what it returns);
+- every chunk is written into two inline text indexes (BM25 and trigram) through an LSM tree;
+  SQLite builds one FTS index in one transaction;
+- opening verifies every table's index and filter up front.
+
+Closing those needs format or design changes in kernodb (a denormalised current record, lazy
+table open, deferred index builds), not tuning.
+
 ## If this continues
 
 - Report finding 1 upstream; it is the only correctness problem found.
