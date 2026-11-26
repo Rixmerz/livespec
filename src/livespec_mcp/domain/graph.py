@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import sqlite3
 import threading
 from dataclasses import dataclass
@@ -86,6 +87,43 @@ def load_graph(conn: sqlite3.Connection, project_id: int) -> GraphView:
         if cached is not None:
             return cached
 
+    view = _load_from_kerno(conn, key[0], project_id, run_id) or _load_from_sql(conn, project_id)
+    with _GRAPH_CACHE_LOCK:
+        # Drop stale entries for THIS (db, project) at older run_ids; apply
+        # a coarse size cap.
+        for k in list(_GRAPH_CACHE.keys()):
+            if k[0] == key[0] and k[1] == project_id and k != key:
+                _GRAPH_CACHE.pop(k, None)
+        if len(_GRAPH_CACHE) >= _GRAPH_CACHE_MAX:
+            _GRAPH_CACHE.pop(next(iter(_GRAPH_CACHE)), None)
+        _GRAPH_CACHE[key] = view
+    return view
+
+
+def _load_from_kerno(
+    conn: sqlite3.Connection, db_path: str, project_id: int, run_id: int
+) -> GraphView | None:
+    """EXPERIMENTAL (branch-only): build the graph from the Kerno mirror.
+
+    Off unless LIVESPEC_EXPERIMENTAL_KERNO is set. None -- and the SQL path
+    runs -- whenever the mirror is absent, stale for this edge set, or unreadable.
+    See docs/experiments/kernodb-versus.md."""
+    if not os.environ.get("LIVESPEC_EXPERIMENTAL_KERNO"):
+        return None
+    from livespec_mcp.storage.kerno_store import load_graph_inputs
+
+    inputs = load_graph_inputs(conn, db_path, project_id, run_id)
+    if inputs is None:
+        return None
+    sym_meta, edges = inputs
+    g = nx.DiGraph()
+    g.add_nodes_from(sym_meta)
+    for src, dst, edge_type, weight, origin in edges:
+        g.add_edge(src, dst, edge_type=edge_type, weight=weight, origin=origin)
+    return GraphView(g=g, sym_meta=sym_meta)
+
+
+def _load_from_sql(conn: sqlite3.Connection, project_id: int) -> GraphView:
     g = nx.DiGraph()
     sym_meta: dict[int, dict] = {}
     for r in conn.execute(
@@ -125,17 +163,7 @@ def load_graph(conn: sqlite3.Connection, project_id: int) -> GraphView:
             origin=r["origin"] or "livespec",
         )
 
-    view = GraphView(g=g, sym_meta=sym_meta)
-    with _GRAPH_CACHE_LOCK:
-        # Drop stale entries for THIS (db, project) at older run_ids; apply
-        # a coarse size cap.
-        for k in list(_GRAPH_CACHE.keys()):
-            if k[0] == key[0] and k[1] == project_id and k != key:
-                _GRAPH_CACHE.pop(k, None)
-        if len(_GRAPH_CACHE) >= _GRAPH_CACHE_MAX:
-            _GRAPH_CACHE.pop(next(iter(_GRAPH_CACHE)), None)
-        _GRAPH_CACHE[key] = view
-    return view
+    return GraphView(g=g, sym_meta=sym_meta)
 
 
 def invalidate_graph_cache(project_id: int | None = None) -> int:
