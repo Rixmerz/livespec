@@ -267,10 +267,20 @@ class KernoMirror:
             # The mirror is derived from SQLite and rebuilt when its stamp does not
             # match, so a commit need not wait for stable storage: SQLite's own
             # `synchronous=NORMAL`. close() still makes everything durable.
-            try:
-                self.db = kerno.open(str(self.path), durability="buffered", **kw)
-            except TypeError:  # a kernodb without the keyword
-                self.db = kerno.open(str(self.path), **kw)
+            # close() only flushes: the compaction it would do on the newest
+            # tables is a third of a full sync's close and the next writer
+            # session does it in the background.
+            for extra in (
+                {"durability": "buffered", "close_compaction": False},
+                {"durability": "buffered"},
+                {},  # a kernodb without the keywords
+            ):
+                try:
+                    self.db = kerno.open(str(self.path), **extra, **kw)
+                    break
+                except TypeError:
+                    if not extra:
+                        raise
         else:
             self.db = kerno.open(str(self.path), **kw)
         if not read_only:
