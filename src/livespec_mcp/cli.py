@@ -104,12 +104,29 @@ def _cmd_verify(args: argparse.Namespace) -> int:
 
     from livespec_mcp import verification
 
-    commit = args.commit or subprocess.run(
-        ["git", "-C", args.path, "rev-parse", "HEAD"], capture_output=True, text=True, check=False
-    ).stdout.strip()
-    written = verification.record(Path(args.path), _current_links(args.path), args.spec, by=args.by,
-                                  commit=commit, evidence=args.evidence or "")
-    print(json.dumps({"record": str(verification.ledger_path(Path(args.path))), "verified": written}, indent=2))
+    commit = (
+        args.commit
+        or subprocess.run(
+            ["git", "-C", args.path, "rev-parse", "HEAD"],
+            capture_output=True,
+            text=True,
+            check=False,
+        ).stdout.strip()
+    )
+    written = verification.record(
+        Path(args.path),
+        _current_links(args.path),
+        args.spec,
+        by=args.by,
+        commit=commit,
+        evidence=args.evidence or "",
+    )
+    print(
+        json.dumps(
+            {"record": str(verification.ledger_path(Path(args.path))), "verified": written},
+            indent=2,
+        )
+    )
     missing = sorted(set(args.spec) - {w["spec"] for w in written})
     if missing:
         print(f"error: no code implements {', '.join(missing)}: nothing to verify", file=sys.stderr)
@@ -121,8 +138,12 @@ def _cmd_stale(args: argparse.Namespace) -> int:
     """The requirements an edit made stale since they were checked; exit 1 while any is."""
     from livespec_mcp import verification
 
-    found = verification.stale(Path(args.path), _current_links(args.path), strict=args.strict,
-                               require_test=args.require_test)
+    found = verification.stale(
+        Path(args.path),
+        _current_links(args.path),
+        strict=args.strict,
+        require_test=args.require_test,
+    )
     print(json.dumps({"stale": found, "count": len(found)}, indent=2))
     return 1 if found else 0
 
@@ -218,18 +239,29 @@ def main(argv: list[str] | None = None) -> int:
         help="report what is cached without downloading anything",
     )
 
-    p_verify = sub.add_parser("verify", help="mark specs verified on the code that implements them now")
+    p_verify = sub.add_parser(
+        "verify", help="mark specs verified on the code that implements them now"
+    )
     p_verify.add_argument("path", help="the repo root (indexed)")
     p_verify.add_argument("--spec", action="append", required=True, help="a spec id (repeatable)")
     p_verify.add_argument("--by", required=True, choices=("test", "reviewer", "verifier"))
     p_verify.add_argument("--commit", help="the commit it was checked on (default: HEAD)")
     p_verify.add_argument("--evidence", help="what showed it: the test, the command, the review")
 
-    p_stale = sub.add_parser("stale", help="the spec requirements an edit made stale; exit 1 while any is")
+    p_stale = sub.add_parser(
+        "stale", help="the spec requirements an edit made stale; exit 1 while any is"
+    )
     p_stale.add_argument("path", help="the repo root (indexed)")
-    p_stale.add_argument("--strict", action="store_true", help="a requirement never verified is stale too")
-    p_stale.add_argument("--require-test", action="append", default=[], metavar="PRIORITY",
-                         help="a requirement of this priority counts only when a test verified it (repeatable)")
+    p_stale.add_argument(
+        "--strict", action="store_true", help="a requirement never verified is stale too"
+    )
+    p_stale.add_argument(
+        "--require-test",
+        action="append",
+        default=[],
+        metavar="PRIORITY",
+        help="a requirement of this priority counts only when a test verified it (repeatable)",
+    )
 
     p_ui = sub.add_parser(
         "ui",

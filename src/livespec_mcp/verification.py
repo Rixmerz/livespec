@@ -18,7 +18,7 @@ from __future__ import annotations
 import json
 import sqlite3
 from collections.abc import Iterable
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -40,7 +40,11 @@ def read(workspace: Path) -> dict[str, Any]:
     if not path.is_file():
         return {"format": FORMAT, "verified": {}}
     data = json.loads(path.read_text(encoding="utf-8"))
-    if not isinstance(data, dict) or data.get("format") != FORMAT or not isinstance(data.get("verified"), dict):
+    if (
+        not isinstance(data, dict)
+        or data.get("format") != FORMAT
+        or not isinstance(data.get("verified"), dict)
+    ):
         raise ValueError(f"{path} is not a livespec verification record of format {FORMAT}")
     return data
 
@@ -58,8 +62,16 @@ def links(conn: sqlite3.Connection, project_id: int) -> list[dict[str, Any]]:
     return [dict(zip(keys, tuple(r), strict=True)) for r in rows]
 
 
-def record(workspace: Path, current: Iterable[dict[str, Any]], specs: Iterable[str], *, by: str,
-           commit: str, evidence: str = "", now: datetime | None = None) -> list[dict[str, Any]]:
+def record(
+    workspace: Path,
+    current: Iterable[dict[str, Any]],
+    specs: Iterable[str],
+    *,
+    by: str,
+    commit: str,
+    evidence: str = "",
+    now: datetime | None = None,
+) -> list[dict[str, Any]]:
     """Mark `specs` verified on the code that implements them now, and write the record. Returns the
     entries written; a spec with no implementing symbol has nothing to verify and is said so by its absence."""
     if by not in BY:
@@ -68,13 +80,20 @@ def record(workspace: Path, current: Iterable[dict[str, Any]], specs: Iterable[s
         raise ValueError("a verification names the commit it was checked on")
     wanted = set(specs)
     data = read(workspace)
-    at = (now or datetime.now(UTC)).isoformat(timespec="seconds")
+    at = (now or datetime.now(timezone.utc)).isoformat(timespec="seconds")
     written = []
     for link in current:
         if link["spec"] not in wanted:
             continue
-        entry = {"body_hash": link["body_hash"], "signature_hash": link["signature_hash"], "path": link["path"],
-                 "commit": commit, "by": by, "evidence": evidence, "at": at}
+        entry = {
+            "body_hash": link["body_hash"],
+            "signature_hash": link["signature_hash"],
+            "path": link["path"],
+            "commit": commit,
+            "by": by,
+            "evidence": evidence,
+            "at": at,
+        }
         data["verified"].setdefault(link["spec"], {})[link["symbol"]] = entry
         written.append({"spec": link["spec"], "symbol": link["symbol"], **entry})
     path = ledger_path(workspace)
@@ -83,8 +102,13 @@ def record(workspace: Path, current: Iterable[dict[str, Any]], specs: Iterable[s
     return written
 
 
-def stale(workspace: Path, current: Iterable[dict[str, Any]], *, strict: bool = False,
-          require_test: Iterable[str] = ()) -> list[dict[str, Any]]:
+def stale(
+    workspace: Path,
+    current: Iterable[dict[str, Any]],
+    *,
+    strict: bool = False,
+    require_test: Iterable[str] = (),
+) -> list[dict[str, Any]]:
     """The requirements whose implementing code changed since they were checked (`changed`), with
     `strict` the ones never checked (`never`), and those whose priority is in `require_test` but were
     checked by something other than a test (`untested`)."""
@@ -93,13 +117,35 @@ def stale(workspace: Path, current: Iterable[dict[str, Any]], *, strict: bool = 
     out = []
     for link in current:
         seen = verified.get(link["spec"], {}).get(link["symbol"])
-        base = {"spec": link["spec"], "title": link["title"], "symbol": link["symbol"], "path": link["path"]}
+        base = {
+            "spec": link["spec"],
+            "title": link["title"],
+            "symbol": link["symbol"],
+            "path": link["path"],
+        }
         if seen is None:
             if strict:
                 out.append({**base, "reason": "never"})
             continue
-        if seen.get("body_hash") != link["body_hash"] or seen.get("signature_hash") != link["signature_hash"]:
-            out.append({**base, "reason": "changed", "verified_at": seen.get("commit"), "by": seen.get("by")})
+        if (
+            seen.get("body_hash") != link["body_hash"]
+            or seen.get("signature_hash") != link["signature_hash"]
+        ):
+            out.append(
+                {
+                    **base,
+                    "reason": "changed",
+                    "verified_at": seen.get("commit"),
+                    "by": seen.get("by"),
+                }
+            )
         elif link["priority"] in demanding and seen.get("by") != "test":
-            out.append({**base, "reason": "untested", "verified_at": seen.get("commit"), "by": seen.get("by")})
+            out.append(
+                {
+                    **base,
+                    "reason": "untested",
+                    "verified_at": seen.get("commit"),
+                    "by": seen.get("by"),
+                }
+            )
     return out
