@@ -467,6 +467,26 @@ time decompressing and checksumming about 770 blocks, not in the reads the batch
 removed. Point lookups, callers, graph load, searches and re-syncs are within
 run-to-run noise of round 8. All parity checks pass.
 
+## Round 10: units layer 12, keyword postings by document ordinal (kernodb `main` at eab92e0)
+
+A posting was 24 bytes (16-byte unit id, term frequency, document length) and
+the posting records were 54 MB of the 248 MB the Django mirror holds before
+compression. Layer 12 gives every indexed document a dense 32-bit ordinal, as
+FTS5 does with rowids, and stores postings as varint deltas. Equal scores now
+tie by ordinal (indexing order). Layer 11 files are refused; the mirror was
+rebuilt.
+
+| Repo | Ingest, SQLite NORMAL / Kerno commit()+close (ms) | Disk, SQLite / Kerno (MB) | open + first query (ms) | symbols in file (us) |
+|---|---|---|---|---|
+| requests | 25 / 50 | 1.45 / 2.50 | 0.21 / 0.22 | 22.3 / 27.7 |
+| fastapi | 643 / 690 | 27.1 / 20.2 | 0.31 / 0.84 | 7.5 / 9.0 |
+| django | 3047 / 4145 | 132.0 / 106.2 | 2.71 / 5.16 | 61.7 / 72.9 |
+
+Disk on Django is now 0.80x of SQLite's and on fastapi 0.75x. Django ingest is
+1.4x slower (was 1.5x); fastapi ingest is within noise of SQLite. The rows
+SQLite still wins on Django are ingest, open + first query and symbols in file.
+All parity checks pass.
+
 ## If this continues
 
 - Report finding 1 upstream; it is the only correctness problem found.
