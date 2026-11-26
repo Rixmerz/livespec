@@ -103,7 +103,9 @@ def _median_ms(fn: Callable[[Any], Any], inputs: list[Any], rounds: int = 3) -> 
     return best
 
 
-def _subset_ingest(src: sqlite3.Connection, pid: int, dest: Path, synchronous: str) -> float:
+def _subset_ingest(
+    src: sqlite3.Connection, pid: int, dest: Path, synchronous: str, trigram: bool = False
+) -> float:
     """Write the mirrored rows into an empty SQLite database, one transaction."""
     for p in dest.parent.glob(dest.name + "*"):
         p.unlink()
@@ -134,9 +136,37 @@ def _subset_ingest(src: sqlite3.Connection, pid: int, dest: Path, synchronous: s
         out.executemany("INSERT INTO symbol_edge VALUES (?,?,?,?,?,?)", [tuple(r) for r in edges])
         out.executemany("INSERT INTO chunk VALUES (?,?,?,?,?,?,?,?)", [tuple(r) for r in chunks])
         out.execute("INSERT INTO chunk_fts(rowid, text) SELECT id, text FROM chunk")
+        if trigram:
+            out.execute("CREATE VIRTUAL TABLE chunk_tri USING fts5(text, content='', tokenize='trigram')")
+            out.execute("INSERT INTO chunk_tri(rowid, text) SELECT id, text FROM chunk")
     out.execute("PRAGMA wal_checkpoint(TRUNCATE)")
     out.close()
     return (time.perf_counter() - t) * 1000
+
+
+class _TimedDb:
+    """Delegating proxy around a kerno handle: accumulates time in commit() and close()."""
+
+    def __init__(self, db: Any) -> None:
+        self._db = db
+        self.write_s = 0.0
+
+    def commit(self, *a: Any, **k: Any) -> Any:
+        t = time.perf_counter()
+        try:
+            return self._db.commit(*a, **k)
+        finally:
+            self.write_s += time.perf_counter() - t
+
+    def close(self) -> Any:
+        t = time.perf_counter()
+        try:
+            return self._db.close()
+        finally:
+            self.write_s += time.perf_counter() - t
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._db, name)
 
 
 def _sql_graph(conn: sqlite3.Connection, pid: int):
@@ -187,23 +217,32 @@ def _bench_repo(name: str, workspace: Path, scratch: Path) -> dict[str, Any]:
     ingest: dict[str, Any] = {}
     ingest["sqlite_normal_ms"] = round(_subset_ingest(conn, pid, subset, "NORMAL"), 1)
     ingest["sqlite_full_ms"] = round(_subset_ingest(conn, pid, subset, "FULL"), 1)
+    trisub = state_dir / "subset-trigram.db"
+    ingest["sqlite_trigram_ms"] = round(_subset_ingest(conn, pid, trisub, "NORMAL", trigram=True), 1)
     mirror = KernoMirror(kpath)
+    timed = _TimedDb(mirror.db)
+    mirror.db = timed
     kms, kstats = _ms(lambda: mirror.sync(conn, pid, run_id=run_id))
-    ingest["kerno_ms"] = round(kms, 1)
-    ingest["kerno_stats"] = kstats
+    commit_ms = timed.write_s * 1000
     noop_ms, noop_stats = _ms(lambda: mirror.sync(conn, pid, run_id=run_id))
     ingest["kerno_noop_resync_ms"] = round(noop_ms, 1)
     parity["noop_resync_wrote_nothing"] = (
         noop_stats["symbols"]["created"] + noop_stats["symbols"]["updated"] == 0
         and noop_stats["edges"]["added"] + noop_stats["edges"]["removed"] == 0
     )
+    # close() flushes/checkpoints the store, like SQLite's checkpoint+close.
+    close_ms, _ = _ms(mirror.close)
+    ingest["kerno_ms"] = round(kms + close_ms, 1)  # whole sync + close
+    ingest["kerno_write_ms"] = round(commit_ms + close_ms, 1)  # commit() calls + close
+    ingest["kerno_close_ms"] = round(close_ms, 1)
+    ingest["kerno_stats"] = kstats
     res["ingest"] = ingest
 
     # ---- 3. disk
-    mirror.close()
     disk = {
         "sqlite_full_index_bytes": _sqlite_bytes(settings.db_path),
         "sqlite_subset_bytes": _sqlite_bytes(subset),
+        "sqlite_trigram_bytes": _sqlite_bytes(trisub),
         "kerno_bytes": _dir_bytes(kpath),
     }
     mirror = KernoMirror(kpath)
@@ -414,9 +453,13 @@ def _report(r: dict[str, Any]) -> str:
         "",
         "| Round | SQLite | Kerno | Verdict |",
         "|---|---|---|---|",
-        f"| Ingest the same rows (ms) | {i['sqlite_normal_ms']} (NORMAL) / {i['sqlite_full_ms']} (FULL) "
-        f"| {i['kerno_ms']} | {_ratio(i['sqlite_full_ms'], i['kerno_ms'])} |",
+        f"| Ingest, headline: SQLite NORMAL vs Kerno commit()+close (ms) | {i['sqlite_normal_ms']} "
+        f"| {i['kerno_write_ms']} | {_ratio(i['sqlite_normal_ms'], i['kerno_write_ms'])} |",
+        f"| Ingest, beside it: SQLite FULL / SQLite NORMAL+trigram (ms) | {i['sqlite_full_ms']} / "
+        f"{i['sqlite_trigram_ms']} | whole sync+close {i['kerno_ms']} | "
+        f"{_ratio(i['sqlite_normal_ms'], i['kerno_ms'])} |",
         f"| Disk, same rows (MB) | {d['sqlite_subset_bytes'] / mb:.2f} "
+        f"({d['sqlite_trigram_bytes'] / mb:.2f} with trigram) "
         f"| {d['kerno_bytes'] / mb:.2f} ({d['kerno_after_compact_bytes'] / mb:.2f} compacted) "
         f"| {d['kerno_after_compact_bytes'] / d['sqlite_subset_bytes']:.2f}x |",
         f"| Open + first query (ms) | {r['open_plus_first_query']['sqlite_ms']} "

@@ -42,7 +42,7 @@ ENV_FLAG = "LIVESPEC_EXPERIMENTAL_KERNO"
 # paths can exceed that, so the indexed copy is truncated and the full value
 # rides in a second, unindexed field.
 _KEY_MAX = 240
-_BATCH = 5000
+_BATCH = 500_000
 _EDGE_PREFIX = "e:"
 
 _SYMBOL_SCHEMA = [
@@ -332,7 +332,10 @@ class KernoMirror:
         if chunks:
             if not self.db.fulltext("chunk"):
                 self.db.set_fulltext("chunk", True)
-            if not self.db.substring("chunk"):
+            # Trigram index is opt-in: without it grep() scans in parallel.
+            if os.environ.get("LIVESPEC_EXPERIMENTAL_KERNO_TRIGRAM") == "1" and not self.db.substring(
+                "chunk"
+            ):
                 self.db.set_substring("chunk", True)
             crows = conn.execute(
                 """SELECT id, source_type, source_id, text_kind, file_path, start_line,

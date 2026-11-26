@@ -309,6 +309,65 @@ read-modify-write per posting or adjacency list a change set touches, plus two c
 per relation. Closing it means writing a change set's relations and postings as sorted runs
 merged later, which redefines adjacency, counts and `verify`: a project of its own.
 
+## Round 6: staged relations, single large change sets, no trigram index
+
+Build: kernodb branch `perf/staged-relations` at d47d692 (the package still
+reports `1.0.0a4`). The mirror now sends one change set per type (`_BATCH` =
+500,000, the halve-on-`ChangeSetTooLargeError` logic is unchanged) and does not
+build the trigram index unless `LIVESPEC_EXPERIMENTAL_KERNO_TRIGRAM=1`, so
+`grep` is answered by kernodb's parallel scan. The sandbox has about 1.5
+effective cores, which limits the parallel scan. Parity checks all passed on
+the three repos (graph nodes and edges equal, lookups and callers equal, 0
+missing / 0 extra substring hits, keyword match counts equal).
+
+The ingest row changed. SQLite's number is the subset ingest including the
+checkpoint and close (rows are fetched before its timer). `Kerno write` is the
+time inside `db.commit(...)` plus `close()`; `Kerno whole` is the full `sync()`
+(SQL reads, Python diffing, writes) plus `close()`. `SQLite+trigram` adds an
+`fts5(text, content='', tokenize='trigram')` table filled from `chunk`, the
+equal-features reference for runs with the trigram flag.
+
+| Metric | requests SQLite | requests Kerno | fastapi SQLite | fastapi Kerno | django SQLite | django Kerno |
+|---|---|---|---|---|---|---|
+| Ingest NORMAL vs Kerno write (ms) | 32.7 | 61.4 | 739.9 | 664.5 | 2943.0 | 4063.2 |
+| Ingest SQLite FULL (ms) | 24.3 | - | 718.7 | - | 3276.0 | - |
+| Ingest SQLite+trigram (ms) | 79.8 | - | 1187.7 | - | 9871.8 | - |
+| Ingest Kerno whole sync+close (ms) | - | 73.0 | - | 1234.8 | - | 5909.8 |
+| Disk (MB) | 1.45 | 3.99 | 27.09 | 23.83 | 132.02 | 147.38 |
+| Disk with trigram (MB) | 3.12 | - | 38.12 | - | 248.91 | - |
+| Open + first query (ms) | 0.209 | 0.176 | 0.4 | 0.702 | 2.497 | 7.03 |
+| Graph load (ms) | 5.75 | 5.07 | 376.67 | 272.31 | 1350.55 | 1297.05 |
+| find_symbol by name (ms) | 0.0041 | 0.0048 | 0.006 | 0.007 | 0.0078 | 0.0073 |
+| find by qualified name (ms) | 0.0046 | 0.0051 | 0.0042 | 0.0046 | 0.0049 | 0.0047 |
+| symbols in file (ms) | 0.0251 | 0.0339 | 0.0067 | 0.0093 | 0.0741 | 0.0878 |
+| callers, 1 hop (ms) | 0.0031 | 0.0043 | 0.0032 | 0.0092 | 0.0084 | 0.0095 |
+| Keyword top 10 (ms) | 0.2685 | 0.0406 | 0.5927 | 0.0559 | 3.0325 | 0.1978 |
+| Substring (ms) | 1.3612 | 0.6343 | 7.217 | 1.6953 | 78.333 | 30.6156 |
+| Re-sync after 1-file edit (ms) | 94.7 (whole re-index) | +60.0 | 948.8 (whole re-index) | +925.3 | 1816.9 (whole re-index) | +3609.6 |
+| No-op re-sync (ms) | - | 20.7 | - | 754.1 | - | 3785.1 |
+
+Where SQLite still wins:
+
+- requests: ingest (write-only 1.9x, whole sync 2.2x), disk (2.75x smaller),
+  and the four point lookups (1.1x to 1.4x).
+- fastapi: ingest of the whole sync (1.7x), open + first query (1.8x), the
+  four point lookups (1.1x to 2.9x; callers is the widest gap). Kerno is 1.1x
+  faster on write-only ingest and 0.88x the disk size.
+- django: ingest in both forms (write-only 1.4x, whole sync 2.0x), open + first
+  query (2.8x), disk (1.12x smaller), `symbols_in_file` and callers (1.2x and
+  1.1x), and the incremental and no-op re-sync, where the mirror alone costs
+  about twice the whole SQLite re-index. Name and qualified-name lookups and
+  graph load are within noise.
+- Against the equal-features reference, Kerno write-only ingest is faster than
+  SQLite+trigram on fastapi and django (4063 vs 9872 ms on django), but that
+  comparison does not apply to the default configuration, which has no trigram
+  index.
+
+Kerno wins on keyword search (6.6x, 10.6x, 15.3x faster on requests, fastapi,
+django) and substring search by parallel scan (2.1x, 4.3x, 2.6x), with the
+same match counts as SQLite. Single-run numbers on a shared sandbox; treat
+differences under about 1.2x as noise.
+
 ## If this continues
 
 - Report finding 1 upstream; it is the only correctness problem found.
