@@ -723,6 +723,29 @@ fastapi ingest is level to faster (668 / 676, 753 / 699 ms). The requests graph
 load is one cold sample of a 5 ms operation and read 8, 32 and 34 ms in three
 repeats; it was bimodal before this round too. All parity checks pass.
 
+## Round 15: covering index on `name` (kernodb `main` at 7cf62f6, units layer 13)
+
+The cold by-name lookup spent half its time reading the ~730 blocks that hold
+the 911 matching units. Layer 13 adds a per-field `covering` flag: the field's
+index entry carries the unit's inline payload, so the lookup reads the index
+range alone. The mirror sets it on `name` only (feature-detected;
+`LIVESPEC_KERNO_COVERING=0` turns it off). A layer-12 database opens as it is
+and is marked 13 when the first covering schema is defined.
+
+| Open + first query (ms), two runs | SQLite | Kerno |
+|---|---|---|
+| requests | 0.192, 0.192 | 0.107, 0.076 |
+| fastapi | 0.294, 0.290 | 0.209, 0.213 |
+| Django | 2.262, 2.463 | 1.327, 1.552 |
+
+Same window, covering off: Django 3.52 and 3.30 ms. The row changes sides in
+all three repos. Ingest with the flag on and off was within noise (Django
+write phase 3.52 vs 3.37 s in one pair); the mirror grows about 5 MB on Django
+in that pair and stays below SQLite (111-117 vs 132 MB).
+
+Still with SQLite: Django ingest (2673 / 3263, 2841 / 3721 ms), and ingest
+and disk on requests (22 / 44 ms, 1.45 / 2.75 MB). All parity checks pass.
+
 ## If this continues
 
 - Report finding 1 upstream; it is the only correctness problem found.

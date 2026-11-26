@@ -47,9 +47,19 @@ _KEY_MAX = 240
 _BATCH = 500_000
 _EDGE_PREFIX = "e:"
 
+# Units layer 13: a covering field keeps each symbol's inline payload in its
+# index entry, so a by-name lookup reads the index alone and never the units.
+_COVERING: dict[str, bool] = (
+    {"covering": True}
+    if kerno is not None
+    and "covering" in (getattr(kerno.Database.define_schema, "__doc__", "") or "")
+    and os.environ.get("LIVESPEC_KERNO_COVERING", "1") != "0"
+    else {}
+)
+
 _SYMBOL_SCHEMA = [
     {"name": "sid", "type": "int", "unique": True},
-    {"name": "name", "type": "text", "indexed": True},
+    {"name": "name", "type": "text", "indexed": True, **_COVERING},
     {"name": "qkey", "type": "text", "indexed": True},
     {"name": "fkey", "type": "text", "indexed": True},
     {"name": "qname", "type": "text"},
