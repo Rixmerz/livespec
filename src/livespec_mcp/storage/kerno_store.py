@@ -252,7 +252,17 @@ class KernoMirror:
         self.path = Path(path)
         if not read_only:
             self.path.mkdir(parents=True, exist_ok=True)
-        self.db = kerno.open(str(self.path), read_only=read_only, max_batch_ops=min(_BATCH * 2, 1 << 20))
+        kw: dict[str, Any] = {"read_only": read_only, "max_batch_ops": min(_BATCH * 2, 1 << 20)}
+        if not read_only and os.environ.get("LIVESPEC_KERNO_DURABILITY", "buffered") == "buffered":
+            # The mirror is derived from SQLite and rebuilt when its stamp does not
+            # match, so a commit need not wait for stable storage: SQLite's own
+            # `synchronous=NORMAL`. close() still makes everything durable.
+            try:
+                self.db = kerno.open(str(self.path), durability="buffered", **kw)
+            except TypeError:  # a kernodb without the keyword
+                self.db = kerno.open(str(self.path), **kw)
+        else:
+            self.db = kerno.open(str(self.path), **kw)
         if not read_only:
             self.db.define_schema("symbol", _SYMBOL_SCHEMA)
             self.db.define_schema("meta", _META_SCHEMA)
