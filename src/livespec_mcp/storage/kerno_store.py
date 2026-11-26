@@ -25,6 +25,7 @@ no-op.
 from __future__ import annotations
 
 import atexit
+import json
 import os
 import sqlite3
 import time
@@ -187,26 +188,42 @@ def fingerprint(conn: sqlite3.Connection, project_id: int, run_id: int) -> str:
     a group DB is indexed, origin reclaims), and the SQL loader sees those at
     once. Found by running the test suite under the flag: 9 tests read a stale
     mirror when freshness was keyed on the run id only."""
-    r = conn.execute(
-        """SELECT COUNT(*) n, COALESCE(MAX(e.id), 0) mx, COALESCE(SUM(e.weight), 0) w,
-                  COALESCE(SUM(e.origin = 'livespec'), 0) own
+    return _fp(run_id, _edge_row(conn, project_id))
+
+
+def _edge_row(conn: sqlite3.Connection, project_id: int) -> tuple:
+    """`(count, max id, sum of weights, count of origin 'livespec')` of the project's edges."""
+    cur = conn.cursor()
+    cur.row_factory = None
+    return cur.execute(
+        """SELECT COUNT(*), COALESCE(MAX(e.id), 0), COALESCE(SUM(e.weight), 0),
+                  COALESCE(SUM(e.origin = 'livespec'), 0)
            FROM symbol_edge e
            JOIN symbol s ON s.id = e.src_symbol_id
            JOIN file f ON f.id = s.file_id
            WHERE f.project_id = ?""",
         (project_id,),
     ).fetchone()
-    return f"{run_id}:{r['n']}:{r['mx']}:{r['w']!r}:{r['own']}"
+
+
+def _fp(run_id: int, r: tuple) -> str:
+    return f"{run_id}:{r[0]}:{r[1]}:{r[2]!r}:{r[3]}"
+
+
+def _chunk_row(conn: sqlite3.Connection, project_id: int) -> tuple:
+    """`(count, max id, total text length)` of the project's chunks."""
+    cur = conn.cursor()
+    cur.row_factory = None
+    return cur.execute(
+        "SELECT COUNT(*), COALESCE(MAX(id), 0), COALESCE(SUM(LENGTH(text)), 0) FROM chunk WHERE project_id = ?",
+        (project_id,),
+    ).fetchone()
 
 
 def chunk_signature(conn: sqlite3.Connection, project_id: int) -> str:
     """Cheap signature of the project's chunk table: row count, newest id and total
     text length. Chunks are rebuilt (new ids) or edited (length moves) by indexing."""
-    r = conn.execute(
-        "SELECT COUNT(*), COALESCE(MAX(id), 0), COALESCE(SUM(LENGTH(text)), 0) FROM chunk WHERE project_id = ?",
-        (project_id,),
-    ).fetchone()
-    return f"{r[0]}:{r[1]}:{r[2]}"
+    return ":".join(map(str, _chunk_row(conn, project_id)))
 
 
 class KernoMirror:
@@ -310,8 +327,10 @@ class KernoMirror:
         # -- no-op shortcut: the stored fingerprint covers run + edge set; the
         # chunk signature (own meta unit, written only by a chunks=True sync)
         # covers the chunk table.
-        edge_fp = fingerprint(conn, project_id, run_id)
-        csig = chunk_signature(conn, project_id) if chunks else None
+        er = _edge_row(conn, project_id)
+        edge_fp = _fp(run_id, er)
+        crow = _chunk_row(conn, project_id) if chunks else None
+        csig = ":".join(map(str, crow)) if crow else None
         if self.fingerprint() == edge_fp and (not chunks or self._chunk_sig() == csig):
             zero = {"created": 0, "updated": 0, "unchanged": None, "deleted": 0}
             stats = {
@@ -327,6 +346,13 @@ class KernoMirror:
         # Tuple cursors: index access, no per-row sqlite3.Row name lookups.
         cur = conn.cursor()
         cur.row_factory = None
+
+        fast = self._sync_fast(cur, project_id, reason, chunks, er, crow)
+        if fast is not None:
+            self._finish(cur, project_id, run_id, edge_fp, csig, er, crow, cross=0)
+            fast["fast_path"] = True
+            fast["seconds"] = round(time.perf_counter() - t0, 3)
+            return fast
 
         # -- symbols
         rows = cur.execute(
@@ -391,13 +417,7 @@ class KernoMirror:
 
         # -- chunks (keyword + substring indexes)
         if chunks:
-            if not self.db.fulltext("chunk"):
-                self.db.set_fulltext("chunk", True)
-            # Trigram index is opt-in: without it grep() scans in parallel.
-            if os.environ.get("LIVESPEC_EXPERIMENTAL_KERNO_TRIGRAM") == "1" and not self.db.substring(
-                "chunk"
-            ):
-                self.db.set_substring("chunk", True)
+            self._ensure_chunk_indexes()
             crows = cur.execute(
                 """SELECT id, source_type, source_id, text_kind, file_path, start_line,
                           end_line, text
@@ -430,11 +450,175 @@ class KernoMirror:
 
         # A mirror that had to skip cross-project edges is not the graph SQL
         # would build, so it never claims the state: readers fall back to SQL.
-        fp = "incomplete" if cross else edge_fp
-        if chunks:  # before the index meta: a torn sync leaves the older stamp
-            self.db.upsert("meta", "key", {"key": "chunks", "run_id": int(run_id), "fp": csig})
-        self.db.upsert("meta", "key", {"key": "index", "run_id": int(run_id), "fp": fp})
+        self._finish(cur, project_id, run_id, edge_fp, csig, er, crow, cross=cross)
         stats["seconds"] = round(time.perf_counter() - t0, 3)
+        return stats
+
+    def _ensure_chunk_indexes(self) -> None:
+        if not self.db.fulltext("chunk"):
+            self.db.set_fulltext("chunk", True)
+        # Trigram index is opt-in: without it grep() scans in parallel.
+        if os.environ.get("LIVESPEC_EXPERIMENTAL_KERNO_TRIGRAM") == "1" and not self.db.substring("chunk"):
+            self.db.set_substring("chunk", True)
+
+    def _finish(self, cur, project_id, run_id, edge_fp, csig, er, crow, *, cross: int) -> None:
+        """Stamp the mirror: the state for the next incremental sync, then the chunk
+        signature, then the index meta LAST (a torn sync leaves the older stamps)."""
+        state: dict[str, Any] = {}
+        if not cross:
+            ns, smax = cur.execute(
+                """SELECT COUNT(*), COALESCE(MAX(s.id), 0)
+                   FROM symbol s JOIN file f ON f.id = s.file_id WHERE f.project_id = ?""",
+                (project_id,),
+            ).fetchone()
+            state = {"s": smax, "ns": ns, "e": er[1], "ne": er[0], "w": round(float(er[2]), 6)}
+            if crow:
+                state.update(c=crow[1], nc=crow[0], cl=crow[2])
+        self.db.upsert("meta", "key", {"key": "state", "run_id": int(run_id), "fp": json.dumps(state)})
+        if crow:
+            self.db.upsert("meta", "key", {"key": "chunks", "run_id": int(run_id), "fp": csig})
+        fp = "incomplete" if cross else edge_fp
+        self.db.upsert("meta", "key", {"key": "index", "run_id": int(run_id), "fp": fp})
+
+    def _state(self) -> dict[str, Any] | None:
+        try:
+            units = self.db.find("meta", "key", "state")
+            doc = self.db.read_document(units[0].id) if units else None
+            st = json.loads(doc["fp"]) if doc else None
+        except (kerno.KernoError, ValueError, KeyError):
+            return None
+        return st or None
+
+    def _sync_fast(self, cur, project_id, reason, chunks, er, crow) -> dict[str, Any] | None:
+        """Incremental sync from the ids SQLite hands out in order: a re-extracted
+        file's symbols and chunks are deleted and re-inserted with new ids, so what
+        changed is what lies above the stored maxima plus what disappeared. Every
+        number is verified against SQL BEFORE anything is written; on any mismatch
+        (an in-place edit, an edge dropped between surviving symbols) returns None
+        and the caller runs the full diff. Never reads `relations()`."""
+        st = self._state()
+        if not st or (chunks and "c" not in st):
+            return None
+        before = self._existing("symbol", "sid")
+        if len(before) != st["ns"]:
+            return None
+        sql_ids = set(
+            map(
+                itemgetter(0),
+                cur.execute(
+                    "SELECT s.id FROM symbol s JOIN file f ON f.id = s.file_id WHERE f.project_id = ?",
+                    (project_id,),
+                ).fetchall(),
+            )
+        )
+        gone = before.keys() - sql_ids
+        new_rows = cur.execute(
+            """SELECT s.id, s.name, s.qualified_name, s.kind, s.start_line, s.end_line,
+                      s.body_hash, f.path
+               FROM symbol s JOIN file f ON f.id = s.file_id
+               WHERE f.project_id = ? AND s.id > ?""",
+            (project_id, st["s"]),
+        ).fetchall()
+        new_ids = set(map(itemgetter(0), new_rows))
+        if new_ids & before.keys() or len(before) - len(gone) + len(new_rows) != len(sql_ids):
+            return None
+        erows = cur.execute(
+            """SELECT e.src_symbol_id, e.dst_symbol_id, e.edge_type, e.weight, e.origin
+               FROM symbol_edge e
+               JOIN symbol s ON s.id = e.src_symbol_id
+               JOIN file f ON f.id = s.file_id
+               WHERE f.project_id = ? AND e.id > ?""",
+            (project_id, st["e"]),
+        ).fetchall()
+        keep = (before.keys() - gone) | new_ids
+        ends = set(map(itemgetter(0), erows)) | set(map(itemgetter(1), erows))
+        if not ends <= keep:  # an end outside the mirror (cross-project)
+            return None
+        # What the cascade of the deleted symbols takes with it.
+        cascaded: dict[str, str] = {}
+        for sid in gone:
+            for direction in ("out", "in"):
+                for rel in self.db.related(before[sid], direction):
+                    if rel.relation_type.startswith(_EDGE_PREFIX):
+                        cascaded[rel.id] = rel.relation_type
+        removed_w = sum(_parse_edge_type(t)[1] for t in cascaded.values())
+        added_w = sum(map(itemgetter(3), erows))
+        if st["ne"] - len(cascaded) + len(erows) != er[0]:
+            return None
+        if abs(st["w"] - removed_w + added_w - float(er[2])) > 1e-4:
+            return None
+
+        cstats = None
+        cops: list[tuple] = []
+        if chunks:
+            cbefore = {
+                int(u.payload.split(b"\t", 1)[0]): (u.id, u.payload) for u in self.db.query("chunk")
+            }
+            if len(cbefore) != st["nc"]:
+                return None
+            sql_cids = set(
+                map(
+                    itemgetter(0),
+                    cur.execute("SELECT id FROM chunk WHERE project_id = ?", (project_id,)).fetchall(),
+                )
+            )
+            cgone = cbefore.keys() - sql_cids
+            crows_new = cur.execute(
+                """SELECT id, source_type, source_id, text_kind, file_path, start_line,
+                          end_line, text
+                   FROM chunk WHERE project_id = ? AND id > ?""",
+                (project_id, st["c"]),
+            ).fetchall()
+            if (
+                {r[0] for r in crows_new} & cbefore.keys()
+                or len(cbefore) - len(cgone) + len(crows_new) != crow[0]
+            ):
+                return None
+            gone_len = sum(
+                len(cbefore[c][1].split(b"\n", 1)[1].decode("utf-8", errors="replace")) for c in cgone
+            )
+            if st["cl"] - gone_len + sum(len(r[7]) for r in crows_new) != crow[2]:
+                return None
+            cops = [("delete", cbefore[c][0]) for c in cgone]
+            cops += [("store", "chunk", _chunk_payload(r)) for r in crows_new]
+            cstats = {
+                "created": len(crows_new),
+                "updated": 0,
+                "unchanged": len(cbefore) - len(cgone),
+                "deleted": len(cgone),
+            }
+
+        # -- verified: apply. Deletes (cascade), creates, then relates.
+        self._delete_all([before[s] for s in gone], reason)
+        new_units, outcomes = self._upsert_all("symbol", "sid", list(map(_symbol_doc, new_rows)), reason)
+        unit_of = {**before, **new_units}.__getitem__
+        tcache: dict[tuple, str] = {}
+        ops: list[tuple] = []
+        for src, dst, et, w, o in erows:
+            t = (et, w, o)
+            if t not in tcache:
+                tcache[t] = _edge_type(et, float(w), o)
+            ops.append(("relate", unit_of(src), unit_of(dst), tcache[t]))
+        for i in range(0, len(ops), _BATCH):
+            self.db.commit(ops[i : i + _BATCH], reason=reason, actor="livespec-indexer")
+        stats: dict[str, Any] = {
+            "symbols": {
+                "created": outcomes["created"],
+                "updated": outcomes["updated"],
+                "unchanged": len(before) - len(gone) + outcomes["unchanged"],
+                "deleted": len(gone),
+            },
+            "edges": {
+                "added": len(ops),
+                "removed": len(cascaded),
+                "total": er[0],
+                "cross_project_skipped": 0,
+            },
+        }
+        if chunks:
+            self._ensure_chunk_indexes()
+            self._commit_split(cops, reason)
+            stats["chunks"] = cstats
         return stats
 
     # ---------- read ----------
@@ -490,18 +674,38 @@ class KernoMirror:
             edges.append((by_unit[rel.from_id], by_unit[rel.to_id], et, weight, origin))
         return sym_meta, edges
 
+    def _find_docs(self, field: str, value: str) -> list[dict[str, Any]]:
+        """Documents of the symbols whose indexed `field` equals `value` (one call
+        when kernodb has `find_documents`)."""
+        fd = getattr(self.db, "find_documents", None)
+        if fd is not None:
+            return fd("symbol", field, value)
+        return [_doc(self.db, u) for u in self.db.find("symbol", field, value)]
+
     def find_symbol(self, name: str) -> list[dict[str, Any]]:
-        return [self._meta(_doc(self.db, u)) for u in self.db.find("symbol", "name", _key(name))]
+        return list(map(self._meta, self._find_docs("name", _key(name))))
 
     def find_qname(self, qname: str) -> list[dict[str, Any]]:
-        out = [self._meta(_doc(self.db, u)) for u in self.db.find("symbol", "qkey", _key(qname))]
+        out = map(self._meta, self._find_docs("qkey", _key(qname)))
         return [m for m in out if m["qualified_name"] == qname]
 
     def symbols_in_file(self, path: str) -> list[dict[str, Any]]:
-        out = [self._meta(_doc(self.db, u)) for u in self.db.find("symbol", "fkey", _key(path))]
+        out = map(self._meta, self._find_docs("fkey", _key(path)))
         return [m for m in out if m["file_path"] == path]
 
     def _neighbours(self, sid: int, direction: str, edge_type: str) -> list[dict[str, Any]]:
+        if hasattr(self.db, "neighbor_documents"):  # find + relations + documents in one call
+            if _NEIGHBORS_PREFIX is None:
+                _detect_neighbors_prefix(self.db)
+            prefix = (_EDGE_PREFIX + edge_type) if _NEIGHBORS_PREFIX else _EDGE_PREFIX
+            seen_sids: set[int] = set()
+            out = []
+            for rtype, doc in self.db.neighbor_documents("symbol", "sid", int(sid), direction, prefix):
+                if _parse_edge_type(rtype)[0] != edge_type or doc["sid"] in seen_sids:
+                    continue
+                seen_sids.add(doc["sid"])
+                out.append(self._meta(doc))
+            return out
         units = self.db.find("symbol", "sid", int(sid))
         if not units:
             return []

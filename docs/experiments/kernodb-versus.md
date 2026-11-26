@@ -403,6 +403,46 @@ engine commits and the unit reads, not the Python diff. Ingest, disk, graph
 load, name lookups, keyword and substring search are unchanged in substance.
 All parity checks pass, including `noop_resync_wrote_nothing`.
 
+## Round 8: incremental re-sync, one-call lookups
+
+kernodb build: branch `perf/neighbor-docs` (commit e48ab99, on top of
+`perf/neighbors-filter` ad81a9e; not merged).
+
+What changed:
+
+- `sync()` has an incremental path. After every sync the mirror stores, in a
+  `state` meta unit, the maximum symbol, edge and chunk ids, the symbol, edge and
+  chunk counts, the rounded edge weight sum and the chunk text length. SQLite
+  re-extracts a changed file under new ids, so the next sync reads only rows
+  above those maxima, finds deleted symbols and chunks by set difference against
+  the SQL id lists, and reads the relations of the deleted symbols to know what
+  the cascade removes. Before writing anything it checks that the stored edge
+  count, weight sum, symbol count and chunk count and length, adjusted by those
+  changes, equal what SQLite has now. Any mismatch (an edge weight updated in
+  place, an edge dropped between surviving symbols, a chunk edited in place with
+  a different length) falls back to the full diff. The path never calls
+  `relations()`. An edit that keeps a row's id and length (for example a symbol
+  renamed in place) is not seen by the path; indexing does not do that.
+- kernodb: `Database.find_documents(unit_type, field, value)` returns the hits'
+  documents directly, and `Database.neighbor_documents(unit_type, field, value,
+  direction, type_prefix)` does find, relations and documents in one call. The
+  mirror uses them (feature-detected) in `find_symbol`, `find_qname`,
+  `symbols_in_file` and `callers` / `callees`.
+
+| Repo | 1-file re-sync, SQLite re-index / Kerno mirror (ms) | callers 1 hop, SQLite / Kerno (us) | by name (us) | by qualified name (us) | symbols in file (us) | open + first query (ms) |
+|---|---|---|---|---|---|---|
+| requests | 59.8 / 28.0 | 3.0 / 3.0 | 4.3 / 4.9 | 4.6 / 4.9 | 24.9 / 30.5 | 0.209 / 0.166 |
+| fastapi | 999.6 / 190.4 | 3.4 / 4.4 | 6.7 / 7.5 | 4.4 / 4.6 | 7.5 / 8.2 | 0.268 / 0.536 |
+| django | 1826.8 / 968.6 | 7.5 / 7.1 | 7.1 / 6.6 | 5.1 / 5.2 | 64.5 / 92.4 | 2.49 / 5.88 |
+
+The Django 1-file mirror re-sync went from 3.46 s to 0.97 s (SQLite's own
+re-index is 1.8 s); fastapi from 0.68 s to 0.19 s. What remains on Django is the
+mirror's id-to-unit map and the chunk map, both read in full, and the SQL id
+scans. Callers on requests equal SQLite and on Django are 1.1x faster; on
+fastapi they are 1.3x slower. Symbols in file and open + first query moved
+little. The no-op re-sync, ingest, disk, graph load, keyword and substring
+search are unchanged in substance. All parity checks pass.
+
 ## If this continues
 
 - Report finding 1 upstream; it is the only correctness problem found.

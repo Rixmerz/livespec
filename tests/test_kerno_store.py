@@ -184,3 +184,42 @@ def test_noop_resync_writes_nothing_and_chunk_edit_is_still_seen(tmp_path):
         assert "skipped" not in changed
         assert changed["chunks"]["updated"] == 1
         assert m.sync(conn, pid, run_id=1).get("skipped") == "unchanged"
+
+
+def _chunk_payloads(m):
+    return sorted(bytes(u.payload) for u in m.db.query("chunk"))
+
+
+def _same_as_fresh(m, conn, pid, tmp_path, name, run_id):
+    with KernoMirror(tmp_path / name) as fresh:
+        fresh.sync(conn, pid, run_id=run_id)
+        assert m.graph()[0] == fresh.graph()[0]
+        assert sorted(m.graph()[1]) == sorted(fresh.graph()[1])
+        assert _chunk_payloads(m) == _chunk_payloads(fresh)
+
+
+def test_incremental_fast_path_equals_full_rebuild(tmp_path):
+    settings, conn, pid = _index(tmp_path)
+    with KernoMirror(tmp_path / "k") as m:
+        assert "fast_path" not in m.sync(conn, pid, run_id=1)
+        (settings.workspace / "app.py").write_text(SRC + "\n\ndef extra():\n    return helper(1)\n")
+        index_project(settings, conn)
+        rebuild_chunks(conn, pid)
+        conn.commit()
+        stats = m.sync(conn, pid, run_id=2)
+        assert stats.get("fast_path") is True
+        assert stats["symbols"]["created"] > 0 and stats["edges"]["added"] > 0
+        _same_as_fresh(m, conn, pid, tmp_path, "fresh1", 2)
+        assert m.sync(conn, pid, run_id=2).get("skipped") == "unchanged"
+
+
+def test_in_place_weight_update_forces_the_full_diff(tmp_path):
+    settings, conn, pid = _index(tmp_path)
+    with KernoMirror(tmp_path / "k") as m:
+        m.sync(conn, pid, run_id=1)
+        conn.execute("UPDATE symbol_edge SET weight = 0.5 WHERE id = (SELECT MIN(id) FROM symbol_edge)")
+        conn.commit()
+        stats = m.sync(conn, pid, run_id=1)
+        assert "fast_path" not in stats and "skipped" not in stats
+        assert stats["edges"]["added"] == stats["edges"]["removed"] == 1
+        _same_as_fresh(m, conn, pid, tmp_path, "fresh2", 1)
