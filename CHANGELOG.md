@@ -6,6 +6,11 @@ follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Added — spec verification and staleness
+
+- `livespec verify` records, per requirement and implementing symbol, the commit, what checked it (`test`, `reviewer`, `verifier`), its evidence and the symbol's body and signature hashes, in `openspec/verifications.json` (committed with the code).
+- `livespec stale` lists the requirements whose implementing code changed since they were checked, and exits 1 while any is: a CI job holds a merge to it (`docs/verification.md`). `--strict` counts the never verified, `--require-test PRIORITY` demands a test for a priority.
+
 ## [0.36.0] - 2026-11-01
 
 ### Fixed — a range that edits a spec's definition touches that spec; the PR comment sees the specs
