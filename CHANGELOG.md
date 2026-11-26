@@ -6,6 +6,16 @@ follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Experimental (branch only, not for release)
+
+- **SQLite vs Kerno (kernodb) versus.** `storage/kerno_store.py` mirrors
+  symbols, edges and chunks into a Kerno database; `bench/versus.py` runs the
+  same questions against both with a parity check before each timing. With
+  `LIVESPEC_EXPERIMENTAL_KERNO=1` (and `kernodb` installed) `index_project`
+  shadows each run and `load_graph` reads the graph from Kerno, falling back to
+  SQL. Off by default; SQLite stays the store. Verdict and numbers:
+  `docs/experiments/kernodb-versus.md`.
+
 ## [0.36.0] - 2026-11-01
 
 ### Fixed — a range that edits a spec's definition touches that spec; the PR comment sees the specs

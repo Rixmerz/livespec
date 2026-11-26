@@ -461,6 +461,13 @@ def index_project(
         )
         if needs_reextract:
             clear_reextract_flag(conn)
+    if os.environ.get("LIVESPEC_EXPERIMENTAL_KERNO"):
+        # EXPERIMENTAL (branch-only): shadow the committed index into Kerno.
+        # After the transaction, and never fatal: SQLite is the source of truth.
+        from livespec_mcp.domain.graph import _db_path
+        from livespec_mcp.storage.kerno_store import sync_after_index
+
+        sync_after_index(conn, _db_path(conn), project_id)
     return stats
 
 
