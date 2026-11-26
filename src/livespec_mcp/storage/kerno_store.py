@@ -190,7 +190,7 @@ class KernoMirror:
         self.path = Path(path)
         if not read_only:
             self.path.mkdir(parents=True, exist_ok=True)
-        self.db = kerno.open(str(self.path), read_only=read_only, max_batch_ops=_BATCH * 2)
+        self.db = kerno.open(str(self.path), read_only=read_only, max_batch_ops=min(_BATCH * 2, 1 << 20))
         if not read_only:
             self.db.define_schema("symbol", _SYMBOL_SCHEMA)
             self.db.define_schema("meta", _META_SCHEMA)
