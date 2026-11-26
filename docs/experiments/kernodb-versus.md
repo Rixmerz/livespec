@@ -660,6 +660,38 @@ ingest (1.4-1.5x on this machine, see round 12b), open + first query on fastapi
 and Django (1.4-2.0x), and ingest and disk on requests. Django graph load is
 level (1146 / 1230 and 1151 / 1185 ms). All parity checks pass.
 
+### Round 13b: buffered durability, and where the ingest profile ends (kernodb `main` at 99a6e25)
+
+`kerno.open(durability="buffered")` exposes the engine's second durability mode
+(a commit does not wait for stable storage; `close()` still does), and the
+mirror uses it: it is what the SQLite side's `synchronous=NORMAL` does. On this
+machine's disk an fsync costs under a millisecond, so no row moved.
+
+The commit thread's profile is now flat. The last candidate, sorting a
+transaction's entries at commit, was 116M of 2,169M instructions (the 288M first
+read off the profile counted recursive calls twice); a prefix-keyed unstable
+sort made it worse, because the standard stable sort already exploits the long
+sorted runs the units layer produces, and a stable prefix sort saved 34% of
+that 5%. Nothing was merged for it.
+
+| Final table of this branch | requests | fastapi | django |
+|---|---|---|---|
+| Ingest, SQLite / Kerno (ms) | 32 / 64 | 687 / 615 | 3043 / 3911 |
+| Disk (MB) | 1.45 / 2.50 | 27.1 / 20.2 | 132.0 / 106.1 |
+| Open + first query (ms) | 0.22 / 0.18 | 0.35 / 0.61 | 3.69 / 4.76 |
+| Graph load (ms) | 6.8 / 5.4 | 396 / 331 | 1279 / 1452 |
+| By name (us) | 4.8 / 3.8 | 7.0 / 4.9 | 8.5 / 5.1 |
+| By qualified name (us) | 4.7 / 3.6 | 4.3 / 3.8 | 5.4 / 3.9 |
+| Symbols in file (us) | 25.5 / 19.0 | 7.9 / 6.2 | 68.6 / 44.2 |
+| Callers (us) | 3.1 / 1.8 | 3.2 / 2.4 | 9.0 / 6.6 |
+| Keyword top 10 (ms) | 0.33 / 0.06 | 0.55 / 0.08 | 2.76 / 0.19 |
+| Substring (ms) | 1.04 / 0.57 | 5.17 / 1.53 | 75.3 / 25.9 |
+| Re-sync after a 1-file edit (ms) | 62 / 20 | 971 / 167 | 1755 / 795 |
+
+SQLite keeps: Django ingest (1.3x here), open + first query on fastapi and
+Django, ingest and disk on requests. Django graph load is level across runs
+(1.1x either way). Everything else is Kerno's. All parity checks pass.
+
 ## If this continues
 
 - Report finding 1 upstream; it is the only correctness problem found.
