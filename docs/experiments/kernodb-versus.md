@@ -790,6 +790,30 @@ Django ingest rose from 2.7-2.9 s). SQLite keeps Django ingest by 1.1-1.2x and
 requests ingest by 1.6x or more; fastapi is level. Disk and open + first query
 stay with Kerno in all three repos. All parity checks pass.
 
+### Round 16b: frozen-memtable flush without the merge iterator (kernodb `main` at 0597a11)
+
+A flush of a large commit's memtable went through a one-child merge iterator
+and a tombstone cover check per entry. It now walks the commit's sorted points
+directly, and each data block starts with the previous block's capacity:
+`write_memtable` over all threads on the fastapi load 309-353 M -> 168 M
+instructions. Document keys of a batch of upserts are converted once.
+
+| Ingest (ms), three runs | SQLite | Kerno |
+|---|---|---|
+| requests | 26.8, 28.5, 25.7 | 125.7, 60.8, 77.1 |
+| fastapi | 671, 785, 786 | 506, 518, 622 |
+| Django | 2785, 2905, 3030 | 3046, 3133, 3402 |
+
+fastapi ingest is now 1.3-1.5x faster on Kerno. Django is 1.1x slower (0.23 to
+0.37 s). Requests stays 2x or more: its 3,000 operations cost about 176 M
+instructions in commit and close, 35 M of them skip-list inserts of commits too
+small for the frozen path, plus about 20 sync calls (11 ms) against SQLite's
+handful.
+
+What is measured and left for Django: the WAL path of the three large commits,
+0.35 s (0.24 s of it the sync at rotation, which recovery rule REC-10a
+requires).
+
 ## If this continues
 
 - Report finding 1 upstream; it is the only correctness problem found.
