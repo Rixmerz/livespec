@@ -950,6 +950,43 @@ vs 108.3/27.8/27.8 (the first is one of the slow runs). Disk: 1.52 MB vs
 Gates: kernodb 1985 Rust tests, clippy clean, 233 binding tests; livespec
 suite 1332.
 
+### Round 19b: fewer threads for a small load (kernodb `main` at 669b71a)
+
+The slow `requests` runs are system time: 9-18 ms of the load on a normal
+run, over 100 ms on a slow one, with the same page-fault count. The load
+started 23 threads. `669b71a` keeps `blake3_many` on the calling thread below
+a mebibyte of payload and `SstBuilder::drain` below 512 queued blocks: 7
+threads now (3 at open, 4 tokenizer workers).
+
+`requests`, interleaved fresh-process runs on `669b71a` (ms, median):
+
+| Sample | SQLite | Kerno | Kerno ahead |
+|---|---|---|---|
+| 40 runs | 25.6 | 23.0 | 30 / 40 |
+| 4 x 40 runs, later | 25.1-26.7 | 22.8-24.6 | 23, 33, 32, 26 / 40 |
+
+So about 8-10 % ahead by median. The slow runs are fewer but not gone (about
+3 in 40, 50-80 ms), and they come in bursts: over some minutes most Kerno
+runs are slow while SQLite, on one thread, is unaffected. Ruled out by
+measurement: fsync latency (29 syncs per load, steady), the tokenizer worker
+count, mimalloc purging.
+
+Method warning: two identical configurations run alternately differed by
+42.9 vs 26.3 ms mean, so position in the cycle can fake an effect of that
+size. The apparent mimalloc-purge win was such an artifact and nothing was
+changed for it. Pinned to one CPU Kerno loses (37.6 vs 26.8 ms): it does
+about 40 % more total work than SQLite on this load and wins by using a
+second core.
+
+The last full versus fell in a slow window (fastapi 693/775/728 vs
+417/529/637, Django 2921/2887/2966 vs 2317/2518/2518, `requests`
+26.8/33.0/35.2 vs 71.3/34.2/29.3). An A/B of fastapi against the previous
+build in the same window gave 535-545 vs 546-558 ms, so the window, not
+`669b71a`, moved those numbers; Kerno was ahead in every fastapi and Django
+run.
+
+Gates: 1985 Rust tests, clippy clean, 233 binding tests, livespec suite 1332.
+
 ## If this continues
 
 - Report finding 1 upstream; it is the only correctness problem found.
