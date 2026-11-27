@@ -814,6 +814,36 @@ What is measured and left for Django: the WAL path of the three large commits,
 0.35 s (0.24 s of it the sync at rotation, which recovery rule REC-10a
 requires).
 
+## Round 17: bulk commits without the log (kernodb `main` at fd47817)
+
+REC-10a was left alone: cutting a torn middle log instead of failing the open
+would let a `Sync` database lose confirmed commits silently. Instead kernodb
+gained an opt-in, `Config::bulk_without_wal` (Python
+`kerno.open(durability="buffered", bulk_without_wal=True)`): a commit of 512
+writes or more writes no WAL frame, is kept as a frozen memtable (no skip-list
+insert) and is durable once its table is installed. No later commit reaches a
+log before that, and `sync()` and `close()` wait for it, so a crash still
+leaves an exact prefix. The cost, and the reason it is off by default: until
+the table is installed a process kill, not only a power cut, loses the commit.
+The mirror turns it on; it is derived data and is rebuilt when its stamp does
+not match. Recovery accepts a log that starts below the expected sequence only
+when the MANIFEST already covers the gap; nothing else in recovery changed and
+there is no format change. A crash-at-every-step test over the simulated disk
+checks the prefix property.
+
+| Ingest (ms), five runs | SQLite | Kerno |
+|---|---|---|
+| requests | 27.3, 24.7, 27.0, 28.9, 27.1 | 62.2, 28.4, 30.8, 36.6, 54.6 |
+| fastapi | 701, 669, 671, 705, 663 | 363, 402, 379, 378, 395 |
+| Django | 3175, 3250, 2846, 2876, 3067 | 2576, 2581, 2625, 2771, 2653 |
+
+Django ingest changes sides (1.0-1.3x faster) and fastapi is 1.7-1.9x faster.
+Requests is the one row SQLite keeps: 1.1x in the quiet runs, 2x when the
+flusher thread and the committing thread compete for this container's ~1.5
+cores (the small close went from 20 ms to 2 ms; what is left is per-operation
+cost, about 37k instructions per unit created). Disk and every read row stay
+with Kerno; all parity checks pass.
+
 ## If this continues
 
 - Report finding 1 upstream; it is the only correctness problem found.
