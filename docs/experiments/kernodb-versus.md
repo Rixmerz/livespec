@@ -844,6 +844,30 @@ cores (the small close went from 20 ms to 2 ms; what is left is per-operation
 cost, about 37k instructions per unit created). Disk and every read row stay
 with Kerno; all parity checks pass.
 
+### Round 17b: per-unit cost on the commit path (kernodb `main` at f5198cc)
+
+An upsert parsed its document two or three times, a created unit's head was
+decoded back three times, keyword staging hashed each term again on the
+committing thread, and several encoders grew their buffers by reallocation.
+With those removed, `Database.commit` on the requests load went from 115.8 M to
+98.8 M instructions (-14.7%).
+
+| Ingest (ms), five runs | SQLite | Kerno |
+|---|---|---|
+| requests | 25.3, 25.5, 34.9, 28.5, 32.3 | 59.5, 37.9, 27.1, 28.4, 35.5 |
+| fastapi | 629, 622, 641, 658, 780 | 331, 313, 320, 343, 336 |
+| Django | 3028, 2791, 2979, 2862, 2869 | 2224, 2272, 2221, 2355, 2314 |
+
+Django ingest is 1.2-1.4x faster and fastapi about 2x. Requests is level in the
+quiet runs (27-28 ms on both sides) and behind when the three background
+flushes of a 30 ms load compete with the committing thread for this
+container's ~1.5 cores; it is not a row Kerno wins reliably here.
+
+Close-time compaction stays off in the mirror
+(`LIVESPEC_KERNO_CLOSE_COMPACTION=1` turns it back on): with it Django ingest
+goes back behind SQLite (3.02-3.08 s against 2.93-3.00 s in the same window),
+and the read rows were faster than SQLite either way.
+
 ## If this continues
 
 - Report finding 1 upstream; it is the only correctness problem found.

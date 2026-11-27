@@ -274,7 +274,11 @@ class KernoMirror:
             # and are durable once their tables are written; a crash before
             # that loses them, and the stamp check rebuilds the mirror.
             for extra in (
-                {"durability": "buffered", "close_compaction": False, "bulk_without_wal": True},
+                {
+                    "durability": "buffered",
+                    "close_compaction": os.environ.get("LIVESPEC_KERNO_CLOSE_COMPACTION") == "1",
+                    "bulk_without_wal": True,
+                },
                 {"durability": "buffered", "close_compaction": False},
                 {"durability": "buffered"},
                 {},  # a kernodb without the keywords
