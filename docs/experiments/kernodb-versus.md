@@ -888,6 +888,27 @@ Requests does not: about 23 ms of commits plus a 6-8 ms tail of flushes and
 close against SQLite's 26-33 ms, and the "level" reading of round 17b was the
 artifact.
 
+### Round 18: commit-thread CPU (kernodb `a5fb672`)
+
+Six engine changes, no format or recovery change: cheaper hashing in the change
+set, records encoded straight from the dict, writes sorted by a 16-byte key
+prefix, keyword `DOC` records encoded in the prepare stage, posting-list keys in
+one buffer. `Database.commit` on the requests ingest: 101.9 M -> about 92.5 M
+instructions (-9%). The sync-call cuts found nothing to cut (a flush costs about
+1.5 ms of syncs here, on a background thread).
+
+| Ingest (ms), wait included | SQLite | Kerno |
+|---|---|---|
+| requests, 12 runs, median | 25.8 | 26.6 |
+| fastapi, 3 runs | 683, 630, 637 | 300, 298, 302 |
+| Django, 3 runs | 2888, 2914, 2704 | 2321, 2263, 2255 |
+
+Requests is a tie inside the noise (per-run spread is 22-33 ms for SQLite and
+23-32 ms for Kerno, with a cold first run at 58-61 ms). Kerno spends about the
+same instructions as SQLite on the committing thread and as many again on helper
+threads, which this container's ~1.5 cores cannot hide. Putting chunks and
+symbols in one change set for small loads was tried and did not help.
+
 ## If this continues
 
 - Report finding 1 upstream; it is the only correctness problem found.
