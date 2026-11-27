@@ -987,6 +987,53 @@ run.
 
 Gates: 1985 Rust tests, clippy clean, 233 binding tests, livespec suite 1332.
 
+## Round 20: transparent huge pages on a host with THP `always`
+
+First round on a machine with real cores (14 threads, 15 GiB RAM, NVMe, btrfs,
+`/sys/kernel/mm/transparent_hugepage/enabled` = `always`). kernodb `870e7c2`.
+
+**Finding.** On this host `no_thp` alone (`068a86b`) changes nothing for `requests`: SQLite won
+80 of 80 interleaved fresh-process runs, both orders (SQLite 15.1 ms, Kerno 34.8-36.0 ms median,
+tmpfs workdir). The `no_thp` feature of mimalloc only stops it from calling
+`madvise(MADV_HUGEPAGE)`; in `always` mode the kernel backs the 1 GiB arena with 2 MiB pages
+without being asked, and zeroing them is the cost.
+
+Evidence, `requests`, 8 fresh-process runs each, median ms:
+
+| Condition | SQLite | Kerno commit()+close |
+|---|---|---|
+| tmpfs, THP on | 15.1 | 35.0 |
+| tmpfs, `prctl(PR_SET_THP_DISABLE)` before exec | 15.4 | 18.8 |
+| tmpfs, LD_PRELOAD shim: `MADV_NOHUGEPAGE` on anonymous maps >= 64 MiB | 15.7 | 20.4 |
+| btrfs, THP on | 34.0 | 45.2 |
+| btrfs, `prctl(PR_SET_THP_DISABLE)` before exec | 32.8 | 25.2 |
+
+**Fix (`870e7c2`, on kernodb main).** The Python binding wraps mimalloc in its own
+`GlobalAlloc`; on the first allocation it reserves a 1 GiB arena with
+`mi_reserve_os_memory_ex` and marks it `MADV_NOHUGEPAGE`. It touches only the extension's own
+memory, not the host Python process. Arenas mimalloc adds after that first 1 GiB are not covered.
+
+Result on `870e7c2`, fresh processes, load average below 1.2 (ms):
+
+| Sample | SQLite | Kerno before (`068a86b`) | Kerno after (`870e7c2`) |
+|---|---|---|---|
+| `requests`, tmpfs, 12 alternating pairs, median | 15.0-15.2 | 35.0 | 20.6 |
+| `requests`, btrfs, 16 runs, median / p90 / max | 34.7 / 36.2 / 37.6 | not measured | 27.1 / 28.7 / 29.6 (wins 16/16) |
+| `fastapi`, tmpfs, 4 pairs, median | 521-525 | 250.2 | 239.7 |
+| `django`, tmpfs, 4 pairs, median | 2160-2163 | 1614.0 | 1639.2 |
+
+Binding tests 233 passed, `tests/test_kerno_store.py` 9 passed.
+
+**Still open.** On tmpfs, where a sync costs nothing, SQLite still wins `requests` (15.2 vs
+19.6-20.6 ms). It is not start-up cost: a second and third ingest in the same process measure
+17.7 and 21.6 ms. This matches the earlier single-core result (Kerno does about 40 % more total
+work on this corpus); on a real disk the row is Kerno's.
+
+**Method notes.** The scratch directory of this machine is tmpfs, so a `--workdir` there removes
+all sync cost from both engines; use a directory on the real filesystem for the headline. One
+series taken while an unrelated build held the load average at 17 doubled both engines' times
+and was discarded.
+
 ## If this continues
 
 - Report finding 1 upstream; it is the only correctness problem found.
