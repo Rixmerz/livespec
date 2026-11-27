@@ -909,6 +909,47 @@ same instructions as SQLite on the committing thread and as many again on helper
 threads, which this container's ~1.5 cores cannot hide. Putting chunks and
 symbols in one change set for small loads was tried and did not help.
 
+## Round 19: stores staged while texts are cut (kernodb `main` at a4514a0)
+
+Correction to round 18: its 12-run "tie" on `requests` was optimistic. Thirty
+interleaved runs on the same build had Kerno behind (28.2 ms SQLite vs 31.0 ms,
+Kerno ahead in 12 of 30).
+
+What landed:
+
+- `ed4a74e`..`0f4fc8d` (subagent): tokenizer scan eight bytes at a time and a
+  reused counter (helper threads about -9 M Ir), `sort_writes` on prefixes
+  first, key hash kept in the overlay, upsert map sized up front
+  (`Database.commit` 88.6 M -> 85.2 M Ir). Alone: no measurable wall change.
+- `a4514a0`: `commit_with` no longer waits for every text to be tokenized
+  before staging the first create. Texts are cut in parts of 32 on scoped
+  threads and taken in order by the creates. Stored bytes unchanged.
+- livespec `8887e4b`: symbol docs carry `qname` / `file_path` only when the
+  indexed key was cut.
+
+`requests` ingest, 30 interleaved fresh-process runs each (ms, median):
+
+| Sample | SQLite | Kerno | Kerno ahead |
+|---|---|---|---|
+| noisy machine, before `a4514a0` | 30.6 | 60.2 | 2 / 30 |
+| noisy machine, `a4514a0` | 30.5 | 28.3 | 19 / 30 |
+| `a4514a0`, later sample | 26.6 | 26.5 | 16 / 30 |
+| calm machine, `a4514a0` (3 samples) | 25.1-25.9 | 23.0-24.4 | 20, 21, 24 / 30 |
+
+Capping the tokenizer workers at 1, 2 or 4 made no difference. One to four
+runs in 30 still take 50-75 ms on Kerno and none do on SQLite; the cause is
+not found (no timer in the engine matches; fsync latency on the dozen syncs
+of the load is the suspect). On this container (4 vCPUs, about 1.5 effective)
+the `requests` row is a narrow win by median, not a robust one.
+
+Full versus, three runs (ingest ms, SQLite vs Kerno): fastapi 682/677/654 vs
+440/302/270; Django 3463/2914/3177 vs 1936/1899/1866; `requests` 27.5/29.4/32.4
+vs 108.3/27.8/27.8 (the first is one of the slow runs). Disk: 1.52 MB vs
+1.37 MB, 28.4 MB vs 21.5 MB, 138 MB vs 115 MB.
+
+Gates: kernodb 1985 Rust tests, clippy clean, 233 binding tests; livespec
+suite 1332.
+
 ## If this continues
 
 - Report finding 1 upstream; it is the only correctness problem found.
