@@ -270,7 +270,11 @@ class KernoMirror:
             # close() only flushes: the compaction it would do on the newest
             # tables is a third of a full sync's close and the next writer
             # session does it in the background.
+            # bulk_without_wal: a full sync's three large commits skip the log
+            # and are durable once their tables are written; a crash before
+            # that loses them, and the stamp check rebuilds the mirror.
             for extra in (
+                {"durability": "buffered", "close_compaction": False, "bulk_without_wal": True},
                 {"durability": "buffered", "close_compaction": False},
                 {"durability": "buffered"},
                 {},  # a kernodb without the keywords
