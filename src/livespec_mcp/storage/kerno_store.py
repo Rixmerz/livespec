@@ -83,11 +83,14 @@ _META_SCHEMA = [
 _META_MAP = {
     "sid": "id",
     "name": "name",
-    "qname": "qualified_name",
+    "qkey": "qualified_name",
     "kind": "kind",
-    "file_path": "file_path",
+    "fkey": "file_path",
     "start_line": "start_line",
     "end_line": "end_line",
+    # Present only when the key was cut (see `_symbol_doc`): then they win.
+    "qname": "qualified_name",
+    "file_path": "file_path",
 }
 _DOC_FIELDS: bool | None = None  # does `find_documents` take `fields` as a mapping?
 _NEIGHBORS_PREFIX: bool | None = None  # does `Database.neighbors` take `type_prefix`?
@@ -149,17 +152,23 @@ def _parse_edge_type(rel_type: str) -> tuple[str, float, str]:
 
 def _symbol_doc(r: tuple) -> dict[str, Any]:
     """`r` is `(id, name, qualified_name, kind, start_line, end_line, body_hash, path)`."""
+    qname, path = r[2], r[7]
+    qkey, fkey = _key(qname), _key(path)
     doc: dict[str, Any] = {
         "sid": int(r[0]),
         "name": _key(r[1]),
-        "qkey": _key(r[2]),
-        "fkey": _key(r[7]),
-        "qname": r[2],
-        "file_path": r[7],
+        "qkey": qkey,
+        "fkey": fkey,
         "kind": r[3],
         "start_line": int(r[4]),
         "end_line": int(r[5]),
     }
+    # The indexed key is the value itself unless it was cut at `_KEY_MAX`:
+    # only then is the full value stored beside it.
+    if qkey != qname:
+        doc["qname"] = qname
+    if fkey != path:
+        doc["file_path"] = path
     if r[6]:
         doc["body_hash"] = r[6]
     return doc
@@ -726,9 +735,9 @@ class KernoMirror:
         return {
             "id": doc["sid"],
             "name": doc["name"],
-            "qualified_name": doc["qname"],
+            "qualified_name": doc["qname"] if "qname" in doc else doc["qkey"],
             "kind": doc["kind"],
-            "file_path": doc["file_path"],
+            "file_path": doc["file_path"] if "file_path" in doc else doc["fkey"],
             "start_line": doc["start_line"],
             "end_line": doc["end_line"],
         }
