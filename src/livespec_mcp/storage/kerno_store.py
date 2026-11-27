@@ -497,8 +497,13 @@ class KernoMirror:
             ops = [("unrelate", rel.id) for key, rel in zip(keys, rels, strict=True) if key in stale]
         removed = len(ops)
         ops += [("relate", *key) for key in want - have]
-        for i in range(0, len(ops), _BATCH):
-            self.db.commit(ops[i : i + _BATCH], reason=reason, actor="livespec-indexer")
+        # The stamps ride in the last edge commit: one atomic write, and no small
+        # commit of their own for close() to flush as a separate table.
+        stamps = self._stamp_ops(cur, project_id, run_id, edge_fp, csig, er, crow, cross=cross)
+        batches = [ops[i : i + _BATCH] for i in range(0, len(ops), _BATCH)] or [[]]
+        batches[-1] = batches[-1] + stamps
+        for batch in batches:
+            self.db.commit(batch, reason=reason, actor="livespec-indexer")
         stats["edges"] = {
             "added": len(ops) - removed,
             "removed": removed,
@@ -511,7 +516,6 @@ class KernoMirror:
 
         # A mirror that had to skip cross-project edges is not the graph SQL
         # would build, so it never claims the state: readers fall back to SQL.
-        self._finish(cur, project_id, run_id, edge_fp, csig, er, crow, cross=cross)
         stats["seconds"] = round(time.perf_counter() - t0, 3)
         return stats
 
@@ -523,8 +527,17 @@ class KernoMirror:
             self.db.set_substring("chunk", True)
 
     def _finish(self, cur, project_id, run_id, edge_fp, csig, er, crow, *, cross: int) -> None:
-        """Stamp the mirror: the state for the next incremental sync, then the chunk
-        signature, then the index meta LAST (a torn sync leaves the older stamps)."""
+        """Stamp the mirror in one commit (see `_stamp_ops`)."""
+        self.db.commit(
+            self._stamp_ops(cur, project_id, run_id, edge_fp, csig, er, crow, cross=cross),
+            reason="stamp",
+            actor="livespec-indexer",
+        )
+
+    def _stamp_ops(self, cur, project_id, run_id, edge_fp, csig, er, crow, *, cross: int) -> list[tuple]:
+        """The stamps as commit ops: the state for the next incremental sync, the chunk
+        signature and the index meta. They go in ONE commit, so a torn sync leaves the
+        older stamps."""
         state: dict[str, Any] = {}
         if not cross:
             ns, smax = cur.execute(
@@ -535,11 +548,12 @@ class KernoMirror:
             state = {"s": smax, "ns": ns, "e": er[1], "ne": er[0], "w": round(float(er[2]), 6)}
             if crow:
                 state.update(c=crow[1], nc=crow[0], cl=crow[2])
-        self.db.upsert("meta", "key", {"key": "state", "run_id": int(run_id), "fp": json.dumps(state)})
+        ops = [("upsert", "meta", "key", {"key": "state", "run_id": int(run_id), "fp": json.dumps(state)})]
         if crow:
-            self.db.upsert("meta", "key", {"key": "chunks", "run_id": int(run_id), "fp": csig})
+            ops.append(("upsert", "meta", "key", {"key": "chunks", "run_id": int(run_id), "fp": csig}))
         fp = "incomplete" if cross else edge_fp
-        self.db.upsert("meta", "key", {"key": "index", "run_id": int(run_id), "fp": fp})
+        ops.append(("upsert", "meta", "key", {"key": "index", "run_id": int(run_id), "fp": fp}))
+        return ops
 
     def _state(self) -> dict[str, Any] | None:
         try:

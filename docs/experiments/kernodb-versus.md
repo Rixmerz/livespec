@@ -868,6 +868,26 @@ Close-time compaction stays off in the mirror
 goes back behind SQLite (3.02-3.08 s against 2.93-3.00 s in the same window),
 and the read rows were faster than SQLite either way.
 
+### Round 17c: a measurement error in rounds 17 and 17b, corrected
+
+The harness times `commit()` and `close()`. With `bulk_without_wal`, the first
+small commit after the bulk ones waits for their tables to be installed, and
+that small commit was the mirror's stamp `upsert()`, which the harness does not
+time. The ingest figures of rounds 17 and 17b therefore left that wait out.
+The stamps now ride in the last edge commit (one atomic write, one table less),
+so the wait falls in `close()` and is timed.
+
+| Ingest (ms), four runs, wait included | SQLite | Kerno |
+|---|---|---|
+| requests | 26.3, 32.8, 35.2, 26.7 | 86.3, 35.5, 43.9, 28.4 |
+| fastapi | 939, 662, 683, 696 | 400, 348, 350, 347 |
+| Django | 3361, 3170, 3120, 3239 | 2849, 2508, 2333, 2218 |
+
+Django (1.2-1.5x) and fastapi (about 2x) stay ahead with the wait counted.
+Requests does not: about 23 ms of commits plus a 6-8 ms tail of flushes and
+close against SQLite's 26-33 ms, and the "level" reading of round 17b was the
+artifact.
+
 ## If this continues
 
 - Report finding 1 upstream; it is the only correctness problem found.
