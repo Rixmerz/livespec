@@ -24,6 +24,7 @@ from fastmcp import FastMCP
 from livespec_mcp.config import load_repo_config
 from livespec_mcp.domain.extractors import (
     HTTP_ROUTE_DECORATOR_LASTSEGS,
+    JAVA_GENERATED_MARK,
     _ts_collect_imports,
     get_parser,
     infer_python_http_framework,
@@ -5239,6 +5240,11 @@ def register(mcp: FastMCP) -> None:
                 _drop("non_python")
                 continue
             if not include_infrastructure and _is_implicit_entry_point(meta):
+                _drop("infrastructure")
+                continue
+            # A record accessor / Lombok getter the source never declares: used
+            # by name, reflection or a framework, so no caller proves nothing.
+            if not include_infrastructure and JAVA_GENERATED_MARK in (meta.get("decorators") or ""):
                 _drop("infrastructure")
                 continue
             if not include_infrastructure and _has_entry_point_decorator(
