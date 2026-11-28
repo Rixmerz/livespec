@@ -51,6 +51,8 @@ follows [SemVer](https://semver.org/).
   runtime origin.
 - `index_project`'s `external_edges_stale.hint` names `ingest_traces` when the
   run dropped runtime edges.
+- `bench/ecosystem.py`, `bench/results-ecosystem.json`: reproducible benchmark of index + FlowTrace
+  runtime evidence + payload proxy on pinned click and flask (see `bench/README.md`).
 
 ### Changed
 

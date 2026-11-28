@@ -1,0 +1,1780 @@
+{
+  "meta": {
+    "delta_cube_available": true,
+    "delta_cube_commit": "dd108afd2ea6c2694825e2c94cfc41ec10c923aa",
+    "flowtrace_commit": "8b1bbf1f90e61b866fd170ad2c4f6ef05a6a3238",
+    "flowtrace_dir": "/home/user/flowtrace-debugger",
+    "livespec_commit": "28655df340a6389a87c4d560909f034dba95741e",
+    "platform": "Linux-6.18.44-fc-v880-x86_64-with-glibc2.39",
+    "python": "3.13.18",
+    "quick": false,
+    "scrubbed_env": [
+      "HTTP_PROXY",
+      "HTTPS_PROXY",
+      "ALL_PROXY",
+      "NO_PROXY",
+      "http_proxy",
+      "https_proxy",
+      "all_proxy",
+      "no_proxy",
+      "SSL_CERT_FILE",
+      "REQUESTS_CA_BUNDLE",
+      "CURL_CA_BUNDLE"
+    ],
+    "timings_are_single_runs": true
+  },
+  "results": {
+    "click": {
+      "after": {
+        "find_dead_code": {
+          "default": {
+            "by_kind": {
+              "function": 4
+            },
+            "candidates": 4,
+            "chars": 2008,
+            "dropped_from_candidates": 1,
+            "filtered_out": {
+              "infrastructure": 144,
+              "tests": 661
+            },
+            "ms": 401.1,
+            "no_evidence": 1,
+            "not_seen": 3,
+            "rescued_by_runtime": 0,
+            "sample": [
+              "src.click._compat._get_windows_console_stream"
+            ],
+            "static_candidates": 5
+          },
+          "include_infrastructure": {
+            "by_kind": {
+              "class": 8,
+              "function": 73,
+              "method": 32,
+              "type_alias": 1
+            },
+            "candidates": 114,
+            "chars": 20854,
+            "dropped_from_candidates": 148,
+            "filtered_out": {
+              "tests": 661
+            },
+            "ms": 450.6,
+            "no_evidence": 87,
+            "not_seen": 27,
+            "rescued_by_runtime": 34,
+            "sample": [
+              "src.click._compat._AtomicFile.__getattr__",
+              "src.click._compat._AtomicFile.__init__",
+              "src.click._compat._AtomicFile.__repr__",
+              "src.click._compat._FixupStream.__getattr__",
+              "src.click._compat._FixupStream.__init__",
+              "src.click._compat._FixupStream.readable",
+              "src.click._compat._FixupStream.seekable",
+              "src.click._compat._FixupStream.writable"
+            ],
+            "static_candidates": 262
+          },
+          "include_public": {
+            "by_kind": {
+              "function": 4
+            },
+            "candidates": 4,
+            "chars": 2008,
+            "dropped_from_candidates": 1,
+            "filtered_out": {
+              "infrastructure": 144,
+              "tests": 661
+            },
+            "ms": 389.4,
+            "no_evidence": 1,
+            "not_seen": 3,
+            "rescued_by_runtime": 0,
+            "sample": [
+              "src.click._compat._get_windows_console_stream"
+            ],
+            "static_candidates": 5
+          }
+        },
+        "remove_then_reingest_roundtrip": {
+          "reingest_restored_same_edge_count": true,
+          "removed_edges": 530
+        },
+        "top_new_runtime_callers": [
+          {
+            "file": "src/click/core.py",
+            "line": 2203,
+            "new_runtime_callers": 44,
+            "qname": "src.click.core.Parameter.__repr__",
+            "sample_callers": [
+              "src.click.core.Command.__init__",
+              "src.click.core.Command.get_help_option",
+              "src.click.core.Command.get_params",
+              "src.click.core.Group.__init__"
+            ],
+            "source_review": {
+              "evidence": "trace: Parameter.__repr__ enter (line 637) precedes the enter of augment_usage_errors (639) whose args hold '<Argument dst>'; nothing in click calls repr(param) there",
+              "mechanism": "serializer artifact (enter-time)",
+              "reviewed_by": "hand, against the pinned sources",
+              "verdict": "wrong edge"
+            },
+            "who_calls_after": 44,
+            "who_calls_after_runtime_only": 44,
+            "who_calls_before": 0
+          },
+          {
+            "file": "src/click/exceptions.py",
+            "line": 41,
+            "new_runtime_callers": 33,
+            "qname": "src.click.exceptions.ClickException.__str__",
+            "sample_callers": [
+              "src.click.core.BaseCommand.main",
+              "src.click.core.BaseCommand.make_context",
+              "src.click.core.Command.invoke",
+              "src.click.core.Command.parse_args"
+            ],
+            "source_review": {
+              "evidence": "1116 of 1124 enters are within 6 events before the exit of a span that raised; FlowTrace calls str(exc) to fill error.msg. 8 are roots called from untraced code",
+              "mechanism": "serializer artifact (exit-time)",
+              "reviewed_by": "hand, against the pinned sources",
+              "verdict": "wrong edge"
+            },
+            "who_calls_after": 33,
+            "who_calls_after_runtime_only": 32,
+            "who_calls_before": 0
+          },
+          {
+            "file": "src/click/testing.py",
+            "line": 78,
+            "new_runtime_callers": 32,
+            "qname": "src.click.testing._NamedTextIOWrapper.mode",
+            "sample_callers": [
+              "src.click._compat._find_binary_reader",
+              "src.click._compat._find_binary_writer",
+              "src.click._compat._force_correct_text_reader",
+              "src.click._compat._force_correct_text_stream"
+            ],
+            "source_review": {
+              "evidence": "callers are functions that RETURN the wrapper; their exit `result` is \"<_NamedTextIOWrapper name='<stdout>' mode='w' ...>\", i.e. TextIOWrapper.__repr__ read .name/.mode. No source line reads .mode (grep)",
+              "mechanism": "serializer artifact (exit-time, C-level repr)",
+              "reviewed_by": "hand, against the pinned sources",
+              "verdict": "wrong edge"
+            },
+            "who_calls_after": 32,
+            "who_calls_after_runtime_only": 32,
+            "who_calls_before": 0
+          },
+          {
+            "file": "src/click/testing.py",
+            "line": 74,
+            "new_runtime_callers": 32,
+            "qname": "src.click.testing._NamedTextIOWrapper.name",
+            "sample_callers": [
+              "src.click._compat._find_binary_reader",
+              "src.click._compat._find_binary_writer",
+              "src.click._compat._force_correct_text_reader",
+              "src.click._compat._force_correct_text_stream"
+            ],
+            "source_review": {
+              "evidence": "same as .mode",
+              "mechanism": "serializer artifact (exit-time, C-level repr)",
+              "reviewed_by": "hand, against the pinned sources",
+              "verdict": "wrong edge"
+            },
+            "who_calls_after": 32,
+            "who_calls_after_runtime_only": 32,
+            "who_calls_before": 0
+          },
+          {
+            "file": "src/click/core.py",
+            "line": 901,
+            "new_runtime_callers": 22,
+            "qname": "src.click.core.BaseCommand.__repr__",
+            "sample_callers": [
+              "src.click.core.Context.__init__",
+              "src.click.core.Context._make_sub_context",
+              "src.click.core.Context.forward",
+              "src.click.core.Context.invoke"
+            ],
+            "source_review": {
+              "evidence": "callers take a command as argument; same orphan-parent pattern as Parameter.__repr__",
+              "mechanism": "serializer artifact (enter-time)",
+              "reviewed_by": "hand, against the pinned sources",
+              "verdict": "wrong edge"
+            },
+            "who_calls_after": 22,
+            "who_calls_after_runtime_only": 22,
+            "who_calls_before": 0
+          }
+        ],
+        "top_new_runtime_callers_artifact_free": [
+          {
+            "file": "src/click/testing.py",
+            "line": 78,
+            "new_runtime_callers": 15,
+            "qname": "src.click.testing._NamedTextIOWrapper.mode",
+            "sample_callers": [
+              "src.click._compat._force_correct_text_reader",
+              "src.click._compat._force_correct_text_stream",
+              "src.click._compat._force_correct_text_writer",
+              "src.click._compat._make_cached_stream_func.func"
+            ],
+            "source_review": {
+              "evidence": "callers are functions that RETURN the wrapper; their exit `result` is \"<_NamedTextIOWrapper name='<stdout>' mode='w' ...>\", i.e. TextIOWrapper.__repr__ read .name/.mode. No source line reads .mode (grep)",
+              "mechanism": "serializer artifact (exit-time, C-level repr)",
+              "reviewed_by": "hand, against the pinned sources",
+              "verdict": "wrong edge"
+            },
+            "who_calls_after": 15,
+            "who_calls_before": 0
+          },
+          {
+            "file": "src/click/testing.py",
+            "line": 74,
+            "new_runtime_callers": 15,
+            "qname": "src.click.testing._NamedTextIOWrapper.name",
+            "sample_callers": [
+              "src.click._compat._force_correct_text_reader",
+              "src.click._compat._force_correct_text_stream",
+              "src.click._compat._force_correct_text_writer",
+              "src.click._compat._make_cached_stream_func.func"
+            ],
+            "source_review": {
+              "evidence": "same as .mode",
+              "mechanism": "serializer artifact (exit-time, C-level repr)",
+              "reviewed_by": "hand, against the pinned sources",
+              "verdict": "wrong edge"
+            },
+            "who_calls_after": 15,
+            "who_calls_before": 0
+          },
+          {
+            "file": "src/click/_compat.py",
+            "line": 98,
+            "new_runtime_callers": 8,
+            "qname": "src.click._compat._FixupStream.__getattr__",
+            "sample_callers": [
+              "src.click._compat._NonClosingTextIOWrapper.__del__",
+              "src.click._compat._NonClosingTextIOWrapper.__init__",
+              "src.click._compat._force_correct_text_reader",
+              "src.click._compat._force_correct_text_stream"
+            ],
+            "source_review": {
+              "evidence": "_compat.py:98 `return getattr(self._stream, name)`; reached when C-level io.TextIOWrapper probes attributes the wrapper lacks. Recorded caller is the nearest traced frame, not a call site in click",
+              "mechanism": "__getattr__ delegation",
+              "reviewed_by": "hand, against the pinned sources",
+              "verdict": "real, indirect"
+            },
+            "who_calls_after": 8,
+            "who_calls_before": 0
+          },
+          {
+            "file": "src/click/types.py",
+            "line": 56,
+            "new_runtime_callers": 8,
+            "qname": "src.click.types.ParamType.to_info_dict",
+            "sample_callers": [
+              "src.click.core.Parameter.to_info_dict",
+              "src.click.types.Choice.to_info_dict",
+              "src.click.types.DateTime.to_info_dict",
+              "src.click.types.File.to_info_dict"
+            ],
+            "source_review": {
+              "evidence": "types.py:171,251,365,439: `info_dict = super().to_info_dict()` in each subclass; the static resolver does not link super() calls",
+              "mechanism": "inheritance (super())",
+              "reviewed_by": "hand, against the pinned sources",
+              "verdict": "real"
+            },
+            "who_calls_after": 8,
+            "who_calls_before": 0
+          },
+          {
+            "file": "src/click/testing.py",
+            "line": 27,
+            "new_runtime_callers": 7,
+            "qname": "src.click.testing.EchoingStdin.__getattr__",
+            "sample_callers": [
+              "src.click._compat._is_binary_reader",
+              "src.click.core.augment_usage_errors",
+              "src.click.testing.CliRunner.invoke",
+              "src.click.testing.CliRunner.isolation._getchar"
+            ],
+            "source_review": {
+              "evidence": "testing.py:27 `return getattr(self._input, x)`; attributes not defined on EchoingStdin fall through",
+              "mechanism": "__getattr__ delegation",
+              "reviewed_by": "hand, against the pinned sources",
+              "verdict": "real, indirect"
+            },
+            "who_calls_after": 7,
+            "who_calls_before": 0
+          }
+        ],
+        "wrong_edges_confirmed_in_source": [
+          {
+            "edge": "core.augment_usage_errors -> core.Parameter.process_value",
+            "why": "augment_usage_errors is an @contextmanager generator; its span stays current while the with-body runs, so the body's calls are attributed to it. Source: core.py:2403 `value = self.process_value(ctx, value)` sits in handle_parse_result inside `with augment_usage_errors(...)`"
+          }
+        ]
+      },
+      "characterise": {
+        "baseline_failures": [],
+        "checkout_paths_dirtied_by_runs": [],
+        "first_error_under_tracing": null,
+        "max_arg_length": 64,
+        "outcome_diffs": [],
+        "outcome_set_changed": false,
+        "overhead_factor": 5.05,
+        "overhead_factor_vs_first_plain_run": 3.91,
+        "plain": {
+          "errors": 0,
+          "failed": 0,
+          "passed": 628,
+          "returncode": 0,
+          "seconds": 1.07,
+          "skipped": 22,
+          "tests": 650
+        },
+        "plain_all_runs_s": [
+          1.38,
+          1.07
+        ],
+        "trace": {
+          "distinct_caller_callee_pairs": 854,
+          "enter_events": 112888,
+          "events": 225776,
+          "pairs_only_from_exited_parent_events": 0,
+          "pairs_only_from_serializer_artifacts": 220,
+          "parent_already_exited_enters": 0,
+          "serializer_artifact_descendants": 92,
+          "serializer_artifact_enter_time": 20732,
+          "serializer_artifact_enter_time_by_method_top": {
+            "mode": 3630,
+            "name": 3630
+          },
+          "serializer_artifact_enters": 31349,
+          "serializer_artifact_exit_time_heuristic": 10525,
+          "serializer_artifact_share_pct": 27.8,
+          "size_mb": 83.8
+        },
+        "traced": {
+          "errors": 0,
+          "failed": 0,
+          "passed": 628,
+          "returncode": 0,
+          "seconds": 5.4,
+          "skipped": 22,
+          "tests": 650
+        }
+      },
+      "delta_cube": {
+        "hotspots_s": 0.5,
+        "index_s": 1.28,
+        "indexed": 70,
+        "payload_chars": 1852,
+        "top10": [
+          {
+            "debt": 35.9,
+            "grade": "B",
+            "in_degree": 4,
+            "pagerank": 0.0542,
+            "path": "src/click/shell_completion.py",
+            "score": 50.8,
+            "smells": 0,
+            "why": "central"
+          },
+          {
+            "debt": 38.6,
+            "grade": "B",
+            "in_degree": 4,
+            "pagerank": 0.0395,
+            "path": "src/click/_compat.py",
+            "score": 40.7,
+            "smells": 0,
+            "why": "central"
+          },
+          {
+            "debt": 48.7,
+            "grade": "C",
+            "in_degree": 0,
+            "pagerank": 0.0116,
+            "path": "src/click/termui.py",
+            "score": 35.2,
+            "smells": 2,
+            "why": "debt+smells",
+            "worst_smell": "orphan(medium)"
+          },
+          {
+            "debt": 8.4,
+            "grade": "A",
+            "in_degree": 2,
+            "pagerank": 0.0424,
+            "path": "src/click/__init__.py",
+            "score": 33.8,
+            "smells": 0,
+            "why": "central"
+          },
+          {
+            "debt": 39.1,
+            "grade": "B",
+            "in_degree": 0,
+            "pagerank": 0.0116,
+            "path": "src/click/formatting.py",
+            "score": 32.3,
+            "smells": 2,
+            "why": "smells",
+            "worst_smell": "orphan(medium)"
+          },
+          {
+            "debt": 36.3,
+            "grade": "B",
+            "in_degree": 0,
+            "pagerank": 0.0116,
+            "path": "examples/imagepipe/imagepipe.py",
+            "score": 31.5,
+            "smells": 2,
+            "why": "smells",
+            "worst_smell": "orphan(medium)"
+          },
+          {
+            "debt": 43.2,
+            "grade": "C",
+            "in_degree": 2,
+            "pagerank": 0.0247,
+            "path": "src/click/types.py",
+            "score": 31.2,
+            "smells": 0,
+            "why": "debt"
+          },
+          {
+            "debt": 35.1,
+            "grade": "B",
+            "in_degree": 0,
+            "pagerank": 0.0116,
+            "path": "src/click/_winconsole.py",
+            "score": 31.1,
+            "smells": 2,
+            "why": "smells",
+            "worst_smell": "orphan(medium)"
+          },
+          {
+            "debt": 34.6,
+            "grade": "B",
+            "in_degree": 0,
+            "pagerank": 0.0116,
+            "path": "examples/imagepipe/setup.py",
+            "score": 30.9,
+            "smells": 2,
+            "why": "smells",
+            "worst_smell": "orphan(medium)"
+          },
+          {
+            "debt": 34.6,
+            "grade": "B",
+            "in_degree": 0,
+            "pagerank": 0.0116,
+            "path": "examples/inout/setup.py",
+            "score": 30.9,
+            "smells": 2,
+            "why": "smells",
+            "worst_smell": "orphan(medium)"
+          }
+        ]
+      },
+      "ingest": {
+        "already_known": 324,
+        "applied": {
+          "edges_added": 530,
+          "edges_removed": 0,
+          "ms": 1019.9,
+          "peak_rss_mb": 104.5,
+          "rss_start_mb": 93.0
+        },
+        "dry_run": {
+          "ms": 907.8,
+          "peak_rss_mb": 104.4,
+          "rss_start_mb": 93.0
+        },
+        "edges_observed": 854,
+        "edges_to_add": 530,
+        "enter_events": 112888,
+        "resolved_by": {
+          "location": 112888
+        },
+        "resolved_events": 112888,
+        "resolved_pct": 100.0,
+        "serializer_artifacts_removed_dry_run": {
+          "already_known": 322,
+          "edges_to_add": 312,
+          "enter_events": 81539,
+          "symbols_hit": 392
+        },
+        "skipped": {
+          "self_call": 21
+        },
+        "symbols_hit": 406,
+        "unresolved": {},
+        "unresolved_samples": {},
+        "wrong_edge_audit": {
+          "edges_from_generator_functions": 77,
+          "edges_into_serializer_artifact_methods": 271,
+          "runtime_edges": 530
+        }
+      },
+      "payload_proxy": {
+        "note": "PROXY: characters an agent would have to read, not an agent session. approx_tokens = chars/4 (approximate). by_file = whole files that a grep-then-read approach opens; by_tool = text returned by the minimal livespec call sequence. Leaves out: reasoning, wrong turns, partial reads (offset/limit), the prompt, tool-call overhead, caching, and whether the agent would ask for the right call in the first place.",
+        "tasks": [
+          {
+            "by_file": {
+              "approx_tokens": 56580,
+              "chars": 226323,
+              "file_list": [
+                "src/click/core.py",
+                "src/click/decorators.py",
+                "src/click/termui.py",
+                "src/click/types.py",
+                "src/click/utils.py",
+                "tests/test_types.py"
+              ],
+              "files": 6,
+              "grep_output_chars": 3140,
+              "src_only_chars": 218733
+            },
+            "by_tool": {
+              "answer": [
+                "*src.click.types.ParamType.__call__"
+              ],
+              "answer_static_only": [],
+              "approx_tokens": 183,
+              "calls": 1,
+              "chars": 732,
+              "chars_static_only": 145,
+              "correct": true,
+              "correct_static_only": false,
+              "known_wrong_edges_in_answer": [],
+              "tools": [
+                "who_calls"
+              ]
+            },
+            "id": "click-1",
+            "kind": "who_calls",
+            "needs_runtime_edge": true,
+            "question": "Who calls StringParamType.convert?",
+            "truth": "types.py ParamType.__call__ does `self.convert(value, param, ctx)`: polymorphic dispatch to every subclass"
+          },
+          {
+            "by_file": {
+              "approx_tokens": 33159,
+              "chars": 132637,
+              "file_list": [
+                "src/click/core.py",
+                "tests/test_commands.py",
+                "tests/typing/typing_aliased_group.py"
+              ],
+              "files": 3,
+              "grep_output_chars": 1145,
+              "src_only_chars": 114748
+            },
+            "by_tool": {
+              "answer": [
+                "examples.aliases.aliases.AliasedGroup.get_command",
+                "src.click.core._complete_visible_commands",
+                "*src.click.core.MultiCommand.to_info_dict",
+                "*src.click.core.MultiCommand.format_commands",
+                "*src.click.core.MultiCommand.resolve_command",
+                "tests.typing.typing_aliased_group.AliasedGroup.get_command"
+              ],
+              "answer_static_only": [
+                "examples.aliases.aliases.AliasedGroup.get_command",
+                "src.click.core._complete_visible_commands",
+                "tests.typing.typing_aliased_group.AliasedGroup.get_command"
+              ],
+              "approx_tokens": 466,
+              "calls": 1,
+              "chars": 1865,
+              "chars_static_only": 782,
+              "correct": true,
+              "correct_static_only": false,
+              "known_wrong_edges_in_answer": [],
+              "tools": [
+                "who_calls"
+              ]
+            },
+            "id": "click-2",
+            "kind": "who_calls",
+            "needs_runtime_edge": true,
+            "question": "Who calls Group.get_command?",
+            "truth": "core.py: MultiCommand.resolve_command/format_commands/to_info_dict call `self.get_command(...)`, which only Group overrides"
+          },
+          {
+            "by_file": {
+              "approx_tokens": 38679,
+              "chars": 154716,
+              "file_list": [
+                "src/click/core.py",
+                "tests/test_arguments.py",
+                "tests/test_options.py"
+              ],
+              "files": 3,
+              "grep_output_chars": 535,
+              "src_only_chars": 114748
+            },
+            "by_tool": {
+              "answer": [
+                "*src.click.core.augment_usage_errors",
+                "src.click.core.Context.invoke",
+                "src.click.core.Command.parse_args",
+                "src.click.core.Parameter.handle_parse_result",
+                "src.click.core.Option.prompt_for_value",
+                "src.click.core.Option.consume_value",
+                "*src.click.termui.prompt",
+                "tests.test_arguments.test_missing_argument_string_cast",
+                "tests.test_options.test_missing_option_string_cast",
+                "tests.test_utils.test_prompts_abort",
+                "tests.test_utils.test_prompt_cast_default",
+                "tests.test_utils.test_echo_writing_to_standard_error"
+              ],
+              "answer_static_only": [
+                "src.click.core.Command.parse_args",
+                "src.click.core.Parameter.handle_parse_result",
+                "src.click.core.Option.prompt_for_value",
+                "src.click.core.Option.consume_value",
+                "tests.test_arguments.test_missing_argument_string_cast",
+                "tests.test_options.test_missing_option_string_cast"
+              ],
+              "approx_tokens": 726,
+              "calls": 1,
+              "chars": 2904,
+              "chars_static_only": 1348,
+              "correct": true,
+              "correct_static_only": true,
+              "known_wrong_edges_in_answer": [],
+              "tools": [
+                "who_calls"
+              ]
+            },
+            "id": "click-3",
+            "kind": "impact",
+            "needs_runtime_edge": false,
+            "question": "What breaks if I change Parameter.process_value?",
+            "truth": "core.py handle_parse_result calls `self.process_value(ctx, value)` (and Option.prompt_for_value via lambda)"
+          },
+          {
+            "by_file": {
+              "approx_tokens": 6647,
+              "chars": 26589,
+              "file_list": [
+                "src/click/_compat.py",
+                "src/click/_winconsole.py"
+              ],
+              "files": 2,
+              "grep_output_chars": 481,
+              "src_only_chars": 26589
+            },
+            "by_tool": {
+              "answer": [
+                "*src.click._compat.get_text_stdin",
+                "*src.click._compat.get_text_stdout",
+                "*src.click._compat.get_text_stderr"
+              ],
+              "answer_static_only": [],
+              "approx_tokens": 303,
+              "calls": 1,
+              "chars": 1213,
+              "chars_static_only": 151,
+              "correct": true,
+              "correct_static_only": false,
+              "known_wrong_edges_in_answer": [],
+              "tools": [
+                "who_calls"
+              ]
+            },
+            "id": "click-4",
+            "kind": "dead_code",
+            "needs_runtime_edge": true,
+            "question": "Is _compat._get_windows_console_stream unused?",
+            "truth": "NOT unused: _compat.py get_text_stdin/stdout/stderr call it; defined under `if WIN:`/else so the static resolver misses the call"
+          },
+          {
+            "by_file": {
+              "approx_tokens": 28687,
+              "chars": 114748,
+              "file_list": [
+                "src/click/core.py"
+              ],
+              "files": 1,
+              "grep_output_chars": 265,
+              "src_only_chars": 114748
+            },
+            "by_tool": {
+              "answer": [],
+              "answer_static_only": [],
+              "approx_tokens": 540,
+              "calls": 1,
+              "chars": 2160,
+              "chars_static_only": 2160,
+              "correct": true,
+              "correct_static_only": true,
+              "known_wrong_edges_in_answer": [],
+              "tools": [
+                "get_symbol_source"
+              ]
+            },
+            "id": "click-5",
+            "kind": "what_does",
+            "needs_runtime_edge": false,
+            "question": "What does Parameter.type_cast_value do?",
+            "truth": "source returned is the method itself (core.py:2298); it converts a raw value via self.type.convert/__call__"
+          },
+          {
+            "by_file": {
+              "approx_tokens": 37792,
+              "chars": 151170,
+              "file_list": [
+                "src/click/core.py",
+                "src/click/types.py"
+              ],
+              "files": 2,
+              "grep_output_chars": 127,
+              "src_only_chars": 151170
+            },
+            "by_tool": {
+              "answer": [
+                "src.click.core.BaseCommand.main",
+                "src.click.core.BaseCommand.main",
+                "src.click.core.BaseCommand.main"
+              ],
+              "answer_static_only": [
+                "src.click.core.BaseCommand.main",
+                "src.click.core.BaseCommand.main",
+                "src.click.core.BaseCommand.main"
+              ],
+              "approx_tokens": 259,
+              "calls": 1,
+              "chars": 1039,
+              "chars_static_only": 673,
+              "correct": true,
+              "correct_static_only": true,
+              "known_wrong_edges_in_answer": [],
+              "tools": [
+                "who_does_this_call"
+              ]
+            },
+            "id": "click-6",
+            "kind": "entry_point",
+            "needs_runtime_edge": false,
+            "question": "What does calling a Command object (cli()) dispatch to?",
+            "truth": "core.py:1159 BaseCommand.__call__ is `return self.main(*args, **kwargs)`"
+          },
+          {
+            "by_file": {
+              "approx_tokens": 33418,
+              "chars": 133673,
+              "file_list": [
+                "src/click/core.py",
+                "src/click/decorators.py"
+              ],
+              "files": 2,
+              "grep_output_chars": 182,
+              "src_only_chars": 133673
+            },
+            "by_tool": {
+              "answer": [
+                "*src.click.core.Parameter.process_value"
+              ],
+              "answer_static_only": [],
+              "approx_tokens": 186,
+              "calls": 1,
+              "chars": 746,
+              "chars_static_only": 147,
+              "correct": true,
+              "correct_static_only": false,
+              "known_wrong_edges_in_answer": [],
+              "tools": [
+                "who_calls"
+              ]
+            },
+            "id": "click-7",
+            "kind": "who_calls",
+            "needs_runtime_edge": true,
+            "question": "Who invokes HelpOption.show_help?",
+            "truth": "decorators.py:542 registers show_help as the option's callback; core.py:2365 process_value calls `self.callback(ctx, self, value)`"
+          }
+        ],
+        "total": {
+          "by_file_approx_tokens": 234964,
+          "by_file_chars": 939856,
+          "by_file_src_only_chars": 874409,
+          "by_tool_approx_tokens": 2664,
+          "by_tool_calls": 7,
+          "by_tool_chars": 10659,
+          "grep_output_chars": 5875,
+          "tasks": 7,
+          "tool_correct": 7,
+          "tool_correct_static_only": 3
+        }
+      },
+      "repo": {
+        "commit": "934813e4d421071a1b3db3973c02fe2721359a6e",
+        "packages": {
+          "iniconfig": "2.0.0",
+          "packaging": "24.2",
+          "pluggy": "1.5.0",
+          "pytest": "8.3.4"
+        },
+        "ref": "8.1.8"
+      },
+      "static": {
+        "call_edges": 5618,
+        "files": 70,
+        "find_dead_code": {
+          "default": {
+            "by_kind": {
+              "function": 5
+            },
+            "candidates": 5,
+            "chars": 1259,
+            "filtered_out": {
+              "infrastructure": 257,
+              "tests": 661
+            },
+            "ms": 418.1,
+            "no_evidence": null,
+            "not_seen": null,
+            "rescued_by_runtime": null
+          },
+          "include_infrastructure": {
+            "by_kind": {
+              "class": 23,
+              "function": 90,
+              "method": 148,
+              "type_alias": 1
+            },
+            "candidates": 262,
+            "chars": 38712,
+            "filtered_out": {
+              "tests": 661
+            },
+            "ms": 370.4,
+            "no_evidence": null,
+            "not_seen": null,
+            "rescued_by_runtime": null
+          },
+          "include_public": {
+            "by_kind": {
+              "function": 5
+            },
+            "candidates": 5,
+            "chars": 1259,
+            "filtered_out": {
+              "infrastructure": 257,
+              "tests": 661
+            },
+            "ms": 353.5,
+            "no_evidence": null,
+            "not_seen": null,
+            "rescued_by_runtime": null
+          }
+        },
+        "index_ms": 738.0,
+        "index_peak_rss_mb": 102.3,
+        "symbols": 1389
+      }
+    },
+    "flask": {
+      "after": {
+        "find_dead_code": {
+          "default": {
+            "by_kind": {
+              "class": 1,
+              "function": 6
+            },
+            "candidates": 7,
+            "chars": 2471,
+            "dropped_from_candidates": 10,
+            "filtered_out": {
+              "infrastructure": 76,
+              "tests": 774
+            },
+            "ms": 375.4,
+            "no_evidence": 4,
+            "not_seen": 3,
+            "rescued_by_runtime": 8,
+            "sample": [
+              "src.flask.json.tag.PassDict",
+              "src.flask.json.tag.PassList",
+              "src.flask.json.tag.TagBytes",
+              "src.flask.json.tag.TagDateTime",
+              "src.flask.json.tag.TagMarkup",
+              "src.flask.json.tag.TagTuple",
+              "src.flask.json.tag.TagUUID",
+              "src.flask.sansio.app._make_timedelta"
+            ],
+            "static_candidates": 17
+          },
+          "include_infrastructure": {
+            "by_kind": {
+              "class": 2,
+              "function": 24,
+              "method": 9,
+              "type_alias": 19
+            },
+            "candidates": 54,
+            "chars": 10583,
+            "dropped_from_candidates": 142,
+            "filtered_out": {
+              "tests": 774
+            },
+            "ms": 365.9,
+            "no_evidence": 36,
+            "not_seen": 18,
+            "rescued_by_runtime": 37,
+            "sample": [
+              "src.flask.__init__.__getattr__",
+              "src.flask.app.Flask.__call__",
+              "src.flask.app.Flask.__init__",
+              "src.flask.app.Flask.create_jinja_environment",
+              "src.flask.blueprints.Blueprint.__init__",
+              "src.flask.cli.CertParamType.__init__",
+              "src.flask.cli.CertParamType.convert",
+              "src.flask.cli.FlaskGroup.__init__"
+            ],
+            "static_candidates": 204
+          },
+          "include_public": {
+            "by_kind": {
+              "class": 1,
+              "function": 6
+            },
+            "candidates": 7,
+            "chars": 2471,
+            "dropped_from_candidates": 10,
+            "filtered_out": {
+              "infrastructure": 76,
+              "tests": 774
+            },
+            "ms": 352.8,
+            "no_evidence": 4,
+            "not_seen": 3,
+            "rescued_by_runtime": 8,
+            "sample": [
+              "src.flask.json.tag.PassDict",
+              "src.flask.json.tag.PassList",
+              "src.flask.json.tag.TagBytes",
+              "src.flask.json.tag.TagDateTime",
+              "src.flask.json.tag.TagMarkup",
+              "src.flask.json.tag.TagTuple",
+              "src.flask.json.tag.TagUUID",
+              "src.flask.sansio.app._make_timedelta"
+            ],
+            "static_candidates": 17
+          }
+        },
+        "remove_then_reingest_roundtrip": {
+          "reingest_restored_same_edge_count": true,
+          "removed_edges": 420
+        },
+        "top_new_runtime_callers": [
+          {
+            "file": "src/flask/sansio/scaffold.py",
+            "line": 217,
+            "new_runtime_callers": 47,
+            "qname": "src.flask.sansio.scaffold.Scaffold.__repr__",
+            "sample_callers": [
+              "src.flask.app.Flask.ensure_sync",
+              "src.flask.app.Flask.test_client",
+              "src.flask.cli.ScriptInfo.load_app",
+              "src.flask.cli.find_app_by_string"
+            ],
+            "source_review": {
+              "evidence": "callers take the app/blueprint as an argument; enter precedes the parent's enter in the trace",
+              "mechanism": "serializer artifact (enter-time)",
+              "reviewed_by": "hand, against the pinned sources",
+              "verdict": "wrong edge"
+            },
+            "who_calls_after": 47,
+            "who_calls_after_runtime_only": 47,
+            "who_calls_before": 0
+          },
+          {
+            "file": "src/flask/sansio/scaffold.py",
+            "line": 45,
+            "new_runtime_callers": 26,
+            "qname": "src.flask.sansio.scaffold.setupmethod.wrapper_func",
+            "sample_callers": [
+              "src.flask.app.Flask.__init__",
+              "src.flask.cli.locate_app",
+              "src.flask.helpers.stream_with_context",
+              "src.flask.sansio.app.App.template_filter.decorator"
+            ],
+            "source_review": {
+              "evidence": "scaffold.py:45: @setupmethod replaces the method (add_url_rule, route, errorhandler, ...) by wrapper_func via update_wrapper, so `self.add_url_rule(...)` runs wrapper_func; the static graph links the call to the undecorated name",
+              "mechanism": "decorator wrapper",
+              "reviewed_by": "hand, against the pinned sources",
+              "verdict": "real"
+            },
+            "who_calls_after": 26,
+            "who_calls_after_runtime_only": 26,
+            "who_calls_before": 0
+          },
+          {
+            "file": "src/flask/sansio/app.py",
+            "line": 550,
+            "new_runtime_callers": 12,
+            "qname": "src.flask.sansio.app.App.debug",
+            "sample_callers": [
+              "src.flask.app.Flask.create_jinja_environment",
+              "src.flask.app.Flask.handle_exception",
+              "src.flask.app.Flask.handle_user_exception",
+              "src.flask.app.Flask.raise_routing_exception"
+            ],
+            "source_review": {
+              "evidence": "app.py:406,495,653 read `self.debug`; sansio/app.py:550 is a @property, an attribute read is not a call to the static resolver",
+              "mechanism": "property",
+              "reviewed_by": "hand, against the pinned sources",
+              "verdict": "real"
+            },
+            "who_calls_after": 12,
+            "who_calls_after_runtime_only": 12,
+            "who_calls_before": 0
+          },
+          {
+            "file": "src/flask/sansio/app.py",
+            "line": 470,
+            "new_runtime_callers": 11,
+            "qname": "src.flask.sansio.app.App.jinja_env",
+            "sample_callers": [
+              "src.flask.helpers.get_template_attribute",
+              "src.flask.helpers.stream_with_context",
+              "src.flask.sansio.app.App.add_template_filter",
+              "src.flask.sansio.app.App.add_template_global"
+            ],
+            "source_review": {
+              "evidence": "templating.py:149,161,203,218 `app.jinja_env.get_or_select_template(...)`; sansio/app.py:469 is a @cached_property",
+              "mechanism": "cached_property",
+              "reviewed_by": "hand, against the pinned sources",
+              "verdict": "real"
+            },
+            "who_calls_after": 11,
+            "who_calls_after_runtime_only": 11,
+            "who_calls_before": 0
+          },
+          {
+            "file": "src/flask/debughelpers.py",
+            "line": 46,
+            "new_runtime_callers": 8,
+            "qname": "src.flask.debughelpers.DebugFilesKeyError.__str__",
+            "sample_callers": [
+              "src.flask.app.Flask.__call__",
+              "src.flask.app.Flask.dispatch_request",
+              "src.flask.app.Flask.full_dispatch_request",
+              "src.flask.app.Flask.handle_exception"
+            ],
+            "source_review": {
+              "evidence": "str(exc) called to fill error.msg of the raising span",
+              "mechanism": "serializer artifact (exit-time)",
+              "reviewed_by": "hand, against the pinned sources",
+              "verdict": "wrong edge"
+            },
+            "who_calls_after": 8,
+            "who_calls_after_runtime_only": 8,
+            "who_calls_before": 0
+          }
+        ],
+        "top_new_runtime_callers_artifact_free": [
+          {
+            "file": "src/flask/sansio/scaffold.py",
+            "line": 45,
+            "new_runtime_callers": 26,
+            "qname": "src.flask.sansio.scaffold.setupmethod.wrapper_func",
+            "sample_callers": [
+              "src.flask.app.Flask.__init__",
+              "src.flask.cli.locate_app",
+              "src.flask.helpers.stream_with_context",
+              "src.flask.sansio.app.App.template_filter.decorator"
+            ],
+            "source_review": {
+              "evidence": "scaffold.py:45: @setupmethod replaces the method (add_url_rule, route, errorhandler, ...) by wrapper_func via update_wrapper, so `self.add_url_rule(...)` runs wrapper_func; the static graph links the call to the undecorated name",
+              "mechanism": "decorator wrapper",
+              "reviewed_by": "hand, against the pinned sources",
+              "verdict": "real"
+            },
+            "who_calls_after": 26,
+            "who_calls_before": 0
+          },
+          {
+            "file": "src/flask/sansio/app.py",
+            "line": 550,
+            "new_runtime_callers": 12,
+            "qname": "src.flask.sansio.app.App.debug",
+            "sample_callers": [
+              "src.flask.app.Flask.create_jinja_environment",
+              "src.flask.app.Flask.handle_exception",
+              "src.flask.app.Flask.handle_user_exception",
+              "src.flask.app.Flask.raise_routing_exception"
+            ],
+            "source_review": {
+              "evidence": "app.py:406,495,653 read `self.debug`; sansio/app.py:550 is a @property, an attribute read is not a call to the static resolver",
+              "mechanism": "property",
+              "reviewed_by": "hand, against the pinned sources",
+              "verdict": "real"
+            },
+            "who_calls_after": 12,
+            "who_calls_before": 0
+          },
+          {
+            "file": "src/flask/sansio/app.py",
+            "line": 470,
+            "new_runtime_callers": 11,
+            "qname": "src.flask.sansio.app.App.jinja_env",
+            "sample_callers": [
+              "src.flask.helpers.get_template_attribute",
+              "src.flask.helpers.stream_with_context",
+              "src.flask.sansio.app.App.add_template_filter",
+              "src.flask.sansio.app.App.add_template_global"
+            ],
+            "source_review": {
+              "evidence": "templating.py:149,161,203,218 `app.jinja_env.get_or_select_template(...)`; sansio/app.py:469 is a @cached_property",
+              "mechanism": "cached_property",
+              "reviewed_by": "hand, against the pinned sources",
+              "verdict": "real"
+            },
+            "who_calls_after": 11,
+            "who_calls_before": 0
+          },
+          {
+            "file": "src/flask/wrappers.py",
+            "line": 181,
+            "new_runtime_callers": 7,
+            "qname": "src.flask.wrappers.Request.blueprints",
+            "sample_callers": [
+              "src.flask.app.Flask.do_teardown_request",
+              "src.flask.app.Flask.handle_exception",
+              "src.flask.app.Flask.handle_http_exception",
+              "src.flask.app.Flask.handle_user_exception"
+            ],
+            "source_review": {
+              "evidence": "app.py:521,774,804 `request.blueprints`; wrappers.py:181 is a @property; `request` is a werkzeug LocalProxy",
+              "mechanism": "property through the `request` LocalProxy",
+              "reviewed_by": "hand, against the pinned sources",
+              "verdict": "real"
+            },
+            "who_calls_after": 7,
+            "who_calls_before": 0
+          },
+          {
+            "file": "src/flask/sansio/app.py",
+            "line": 536,
+            "new_runtime_callers": 6,
+            "qname": "src.flask.sansio.app.App.select_jinja_autoescape",
+            "sample_callers": [
+              "src.flask.helpers.get_template_attribute",
+              "src.flask.templating._render",
+              "src.flask.templating._stream.generate",
+              "src.flask.templating.render_template"
+            ],
+            "source_review": {
+              "evidence": "passed as autoescape= when the Environment is created; Jinja calls it, the recorded caller is the traced function that first touched jinja_env",
+              "mechanism": "callback handed to Jinja",
+              "reviewed_by": "hand, against the pinned sources",
+              "verdict": "real, indirect"
+            },
+            "who_calls_after": 6,
+            "who_calls_before": 0
+          }
+        ],
+        "wrong_edges_confirmed_in_source": [
+          {
+            "edge": "app.Flask.dispatch_request -> sessions.SecureCookieSession.__init__.on_update",
+            "why": "on_update is invoked by werkzeug's CallbackDict (untraced); the edge goes to the nearest TRACED ancestor, not a call site in flask"
+          },
+          {
+            "edge": "helpers.stream_with_context -> wrappers.Request._load_form_data (and 1115 other enters)",
+            "why": "all 1115 enters whose parent span had already exited have the exited span of stream_with_context as parent; flask code after it returned is still attributed to it"
+          }
+        ]
+      },
+      "characterise": {
+        "baseline_failures": [
+          "tests.test_reqctx::test_bad_environ_raises_bad_request"
+        ],
+        "checkout_paths_dirtied_by_runs": [],
+        "first_error_under_tracing": null,
+        "max_arg_length": 64,
+        "outcome_diffs": [],
+        "outcome_set_changed": false,
+        "overhead_factor": 2.75,
+        "overhead_factor_vs_first_plain_run": 1.71,
+        "plain": {
+          "errors": 0,
+          "failed": 1,
+          "passed": 489,
+          "returncode": 1,
+          "seconds": 1.52,
+          "skipped": 2,
+          "tests": 492
+        },
+        "plain_all_runs_s": [
+          2.45,
+          1.52
+        ],
+        "trace": {
+          "distinct_caller_callee_pairs": 594,
+          "enter_events": 63071,
+          "events": 126142,
+          "pairs_only_from_exited_parent_events": 73,
+          "pairs_only_from_serializer_artifacts": 61,
+          "parent_already_exited_enters": 1116,
+          "serializer_artifact_descendants": 456,
+          "serializer_artifact_enter_time": 9037,
+          "serializer_artifact_enter_time_by_method_top": {},
+          "serializer_artifact_enters": 10616,
+          "serializer_artifact_exit_time_heuristic": 1123,
+          "serializer_artifact_share_pct": 16.8,
+          "size_mb": 46.35
+        },
+        "traced": {
+          "errors": 0,
+          "failed": 1,
+          "passed": 489,
+          "returncode": 1,
+          "seconds": 4.18,
+          "skipped": 2,
+          "tests": 492
+        }
+      },
+      "delta_cube": {
+        "hotspots_s": 0.53,
+        "index_s": 1.14,
+        "indexed": 83,
+        "payload_chars": 1965,
+        "top10": [
+          {
+            "debt": 19.0,
+            "grade": "A",
+            "in_degree": 8,
+            "pagerank": 0.0917,
+            "path": "src/flask/__init__.py",
+            "score": 45.7,
+            "smells": 0,
+            "why": "central"
+          },
+          {
+            "debt": 40.3,
+            "grade": "C",
+            "in_degree": 0,
+            "pagerank": 0.009,
+            "path": "src/flask/config.py",
+            "score": 28.0,
+            "smells": 2,
+            "why": "debt+smells",
+            "worst_smell": "orphan(medium)"
+          },
+          {
+            "debt": 32.1,
+            "grade": "B",
+            "in_degree": 0,
+            "pagerank": 0.009,
+            "path": "src/flask/blueprints.py",
+            "score": 25.6,
+            "smells": 2,
+            "why": "smells",
+            "worst_smell": "orphan(medium)"
+          },
+          {
+            "debt": 31.7,
+            "grade": "B",
+            "in_degree": 0,
+            "pagerank": 0.009,
+            "path": "examples/tutorial/flaskr/auth.py",
+            "score": 25.4,
+            "smells": 2,
+            "why": "smells",
+            "worst_smell": "orphan(medium)"
+          },
+          {
+            "debt": 31.1,
+            "grade": "B",
+            "in_degree": 0,
+            "pagerank": 0.009,
+            "path": "examples/tutorial/flaskr/blog.py",
+            "score": 25.3,
+            "smells": 2,
+            "why": "smells",
+            "worst_smell": "orphan(medium)"
+          },
+          {
+            "debt": 29.5,
+            "grade": "B",
+            "in_degree": 0,
+            "pagerank": 0.009,
+            "path": "tests/type_check/typing_route.py",
+            "score": 24.8,
+            "smells": 2,
+            "why": "smells",
+            "worst_smell": "feature_envy(medium)"
+          },
+          {
+            "debt": 39.0,
+            "grade": "B",
+            "in_degree": 0,
+            "pagerank": 0.009,
+            "path": "tests/test_blueprints.py",
+            "score": 24.6,
+            "smells": 1,
+            "why": "smells",
+            "worst_smell": "orphan(medium)"
+          },
+          {
+            "debt": 27.5,
+            "grade": "B",
+            "in_degree": 0,
+            "pagerank": 0.009,
+            "path": "src/flask/typing.py",
+            "score": 24.2,
+            "smells": 2,
+            "why": "smells",
+            "worst_smell": "orphan(medium)"
+          },
+          {
+            "debt": 26.9,
+            "grade": "B",
+            "in_degree": 0,
+            "pagerank": 0.009,
+            "path": "examples/celery/src/task_app/tasks.py",
+            "score": 24.0,
+            "smells": 2,
+            "why": "smells",
+            "worst_smell": "orphan(medium)"
+          },
+          {
+            "debt": 26.5,
+            "grade": "B",
+            "in_degree": 0,
+            "pagerank": 0.009,
+            "path": "docs/conf.py",
+            "score": 23.9,
+            "smells": 2,
+            "why": "smells",
+            "worst_smell": "orphan(medium)"
+          }
+        ]
+      },
+      "ingest": {
+        "already_known": 174,
+        "applied": {
+          "edges_added": 420,
+          "edges_removed": 0,
+          "ms": 487.4,
+          "peak_rss_mb": 100.8,
+          "rss_start_mb": 93.0
+        },
+        "dry_run": {
+          "ms": 560.0,
+          "peak_rss_mb": 100.5,
+          "rss_start_mb": 93.0
+        },
+        "edges_observed": 594,
+        "edges_to_add": 420,
+        "enter_events": 63071,
+        "resolved_by": {
+          "location": 63071
+        },
+        "resolved_events": 63071,
+        "resolved_pct": 100.0,
+        "serializer_artifacts_removed_dry_run": {
+          "already_known": 174,
+          "edges_to_add": 359,
+          "enter_events": 52455,
+          "symbols_hit": 336
+        },
+        "skipped": {
+          "self_call": 154
+        },
+        "symbols_hit": 338,
+        "unresolved": {},
+        "unresolved_samples": {},
+        "wrong_edge_audit": {
+          "edges_from_generator_functions": 10,
+          "edges_into_serializer_artifact_methods": 60,
+          "runtime_edges": 420
+        }
+      },
+      "payload_proxy": {
+        "note": "PROXY: characters an agent would have to read, not an agent session. approx_tokens = chars/4 (approximate). by_file = whole files that a grep-then-read approach opens; by_tool = text returned by the minimal livespec call sequence. Leaves out: reasoning, wrong turns, partial reads (offset/limit), the prompt, tool-call overhead, caching, and whether the agent would ask for the right call in the first place.",
+        "tasks": [
+          {
+            "by_file": {
+              "approx_tokens": 28716,
+              "chars": 114865,
+              "file_list": [
+                "src/flask/app.py",
+                "src/flask/ctx.py",
+                "src/flask/helpers.py",
+                "src/flask/templating.py",
+                "src/flask/views.py"
+              ],
+              "files": 5,
+              "grep_output_chars": 2664,
+              "src_only_chars": 114865
+            },
+            "by_tool": {
+              "answer": [
+                "src.flask.app.Flask.update_template_context",
+                "src.flask.app.Flask.handle_http_exception",
+                "src.flask.app.Flask.handle_user_exception",
+                "src.flask.app.Flask.handle_exception",
+                "src.flask.app.Flask.dispatch_request",
+                "src.flask.app.Flask.preprocess_request",
+                "src.flask.app.Flask.process_response",
+                "src.flask.app.Flask.do_teardown_request",
+                "src.flask.app.Flask.do_teardown_appcontext",
+                "src.flask.ctx.copy_current_request_context.wrapper",
+                "*src.flask.views.View.as_view.view",
+                "*src.flask.views.View.as_view.view",
+                "*src.flask.views.MethodView.dispatch_request"
+              ],
+              "answer_static_only": [
+                "src.flask.app.Flask.update_template_context",
+                "src.flask.app.Flask.handle_http_exception",
+                "src.flask.app.Flask.handle_user_exception",
+                "src.flask.app.Flask.handle_exception",
+                "src.flask.app.Flask.dispatch_request",
+                "src.flask.app.Flask.preprocess_request",
+                "src.flask.app.Flask.process_response",
+                "src.flask.app.Flask.do_teardown_request",
+                "src.flask.app.Flask.do_teardown_appcontext",
+                "src.flask.ctx.copy_current_request_context.wrapper"
+              ],
+              "approx_tokens": 794,
+              "calls": 1,
+              "chars": 3177,
+              "chars_static_only": 2128,
+              "correct": true,
+              "correct_static_only": false,
+              "known_wrong_edges_in_answer": [],
+              "tools": [
+                "who_calls"
+              ]
+            },
+            "id": "flask-1",
+            "kind": "who_calls",
+            "needs_runtime_edge": true,
+            "question": "Who calls Flask.ensure_sync via current_app?",
+            "truth": "views.py:110,116,191 call `current_app.ensure_sync(...)` through the LocalProxy"
+          },
+          {
+            "by_file": {
+              "approx_tokens": 24960,
+              "chars": 99841,
+              "file_list": [
+                "src/flask/app.py",
+                "src/flask/sansio/app.py"
+              ],
+              "files": 2,
+              "grep_output_chars": 284,
+              "src_only_chars": 99841
+            },
+            "by_tool": {
+              "answer": [
+                "*src.flask.config.ConfigAttribute.__get__"
+              ],
+              "answer_static_only": [],
+              "approx_tokens": 183,
+              "calls": 1,
+              "chars": 735,
+              "chars_static_only": 142,
+              "correct": true,
+              "correct_static_only": false,
+              "known_wrong_edges_in_answer": [],
+              "tools": [
+                "who_calls"
+              ]
+            },
+            "id": "flask-2",
+            "kind": "dead_code",
+            "needs_runtime_edge": true,
+            "question": "Is sansio/app.py _make_timedelta unused?",
+            "truth": "NOT unused: sansio/app.py:227 passes it as get_converter=; ConfigAttribute.__get__ calls it"
+          },
+          {
+            "by_file": {
+              "approx_tokens": 24960,
+              "chars": 99841,
+              "file_list": [
+                "src/flask/app.py",
+                "src/flask/sansio/app.py"
+              ],
+              "files": 2,
+              "grep_output_chars": 284,
+              "src_only_chars": 99841
+            },
+            "by_tool": {
+              "answer": [],
+              "answer_static_only": [],
+              "approx_tokens": 125,
+              "calls": 1,
+              "chars": 501,
+              "chars_static_only": 135,
+              "correct": true,
+              "correct_static_only": true,
+              "known_wrong_edges_in_answer": [],
+              "tools": [
+                "who_calls"
+              ]
+            },
+            "id": "flask-3",
+            "kind": "dead_code",
+            "needs_runtime_edge": false,
+            "question": "Is app.py _make_timedelta (line 74) unused?",
+            "truth": "unused: only the def at app.py:74 (the used one is the duplicate in sansio/app.py); no importer in src/tests/docs"
+          },
+          {
+            "by_file": {
+              "approx_tokens": 41999,
+              "chars": 167999,
+              "file_list": [
+                "src/flask/__init__.py",
+                "src/flask/app.py",
+                "src/flask/helpers.py",
+                "src/flask/wrappers.py",
+                "tests/test_basic.py",
+                "tests/test_helpers.py",
+                "tests/test_views.py"
+              ],
+              "files": 7,
+              "grep_output_chars": 1809,
+              "src_only_chars": 97277
+            },
+            "by_tool": {
+              "answer": [
+                "src.flask.app.Flask.finalize_request",
+                "*src.flask.helpers.make_response",
+                "tests.test_basic.test_make_response",
+                "tests.test_basic.test_make_response_with_response_instance",
+                "tests.test_basic.test_jsonify_mimetype",
+                "tests.test_views.test_view_decorators.add_x_parachute.new_function"
+              ],
+              "answer_static_only": [
+                "src.flask.app.Flask.finalize_request",
+                "tests.test_basic.test_make_response",
+                "tests.test_basic.test_make_response_with_response_instance",
+                "tests.test_basic.test_jsonify_mimetype",
+                "tests.test_views.test_view_decorators.add_x_parachute.new_function"
+              ],
+              "approx_tokens": 450,
+              "calls": 1,
+              "chars": 1800,
+              "chars_static_only": 1204,
+              "correct": true,
+              "correct_static_only": false,
+              "known_wrong_edges_in_answer": [],
+              "tools": [
+                "who_calls"
+              ]
+            },
+            "id": "flask-4",
+            "kind": "who_calls",
+            "needs_runtime_edge": true,
+            "question": "Who calls Flask.make_response?",
+            "truth": "app.py:939 finalize_request; helpers.py:185 `current_app.make_response(args)` through the proxy"
+          },
+          {
+            "by_file": {
+              "approx_tokens": 28781,
+              "chars": 115127,
+              "file_list": [
+                "src/flask/app.py",
+                "tests/test_basic.py"
+              ],
+              "files": 2,
+              "grep_output_chars": 459,
+              "src_only_chars": 61725
+            },
+            "by_tool": {
+              "answer": [],
+              "answer_static_only": [],
+              "approx_tokens": 537,
+              "calls": 1,
+              "chars": 2150,
+              "chars_static_only": 2150,
+              "correct": true,
+              "correct_static_only": true,
+              "known_wrong_edges_in_answer": [],
+              "tools": [
+                "get_symbol_source"
+              ]
+            },
+            "id": "flask-5",
+            "kind": "what_does",
+            "needs_runtime_edge": false,
+            "question": "What does Flask.wsgi_app do?",
+            "truth": "source returned is the method itself (app.py:1479): pushes the request context, full_dispatch_request, finalizes"
+          },
+          {
+            "by_file": {
+              "approx_tokens": 15431,
+              "chars": 61725,
+              "file_list": [
+                "src/flask/app.py"
+              ],
+              "files": 1,
+              "grep_output_chars": 130,
+              "src_only_chars": 61725
+            },
+            "by_tool": {
+              "answer": [
+                "src.flask.app.Flask.wsgi_app",
+                "*src.flask.debughelpers.DebugFilesKeyError.__str__"
+              ],
+              "answer_static_only": [
+                "src.flask.app.Flask.wsgi_app"
+              ],
+              "approx_tokens": 230,
+              "calls": 1,
+              "chars": 920,
+              "chars_static_only": 311,
+              "correct": true,
+              "correct_static_only": true,
+              "known_wrong_edges_in_answer": [],
+              "tools": [
+                "who_does_this_call"
+              ]
+            },
+            "id": "flask-6",
+            "kind": "entry_point",
+            "needs_runtime_edge": false,
+            "question": "What does calling the app object (WSGI entry) dispatch to?",
+            "truth": "app.py:1536 Flask.__call__ is `return self.wsgi_app(environ, start_response)`"
+          },
+          {
+            "by_file": {
+              "approx_tokens": 22968,
+              "chars": 91874,
+              "file_list": [
+                "src/flask/app.py",
+                "src/flask/views.py",
+                "tests/test_async.py",
+                "tests/test_helpers.py",
+                "tests/test_views.py",
+                "tests/type_check/typing_route.py"
+              ],
+              "files": 6,
+              "grep_output_chars": 2032,
+              "src_only_chars": 68687
+            },
+            "by_tool": {
+              "answer": [
+                "*src.flask.app.Flask.dispatch_request"
+              ],
+              "answer_static_only": [],
+              "approx_tokens": 184,
+              "calls": 1,
+              "chars": 736,
+              "chars_static_only": 139,
+              "correct": true,
+              "correct_static_only": false,
+              "known_wrong_edges_in_answer": [],
+              "tools": [
+                "who_calls"
+              ]
+            },
+            "id": "flask-7",
+            "kind": "who_calls",
+            "needs_runtime_edge": true,
+            "question": "Who calls a view built by View.as_view?",
+            "truth": "app.py:902 dispatch_request calls `self.view_functions[rule.endpoint](**view_args)`: the registry filled by add_url_rule(view_func=...)"
+          }
+        ],
+        "total": {
+          "by_file_approx_tokens": 187818,
+          "by_file_chars": 751272,
+          "by_file_src_only_chars": 603961,
+          "by_tool_approx_tokens": 2504,
+          "by_tool_calls": 7,
+          "by_tool_chars": 10019,
+          "grep_output_chars": 7662,
+          "tasks": 7,
+          "tool_correct": 7,
+          "tool_correct_static_only": 3
+        }
+      },
+      "repo": {
+        "commit": "ab8149664182b662453a563161aa89013c806dc9",
+        "packages": {
+          "asgiref": "3.8.1",
+          "blinker": "1.9.0",
+          "click": "8.5.1",
+          "iniconfig": "2.0.0",
+          "itsdangerous": "2.2.0",
+          "jinja2": "3.1.6",
+          "markupsafe": "3.0.4",
+          "packaging": "24.2",
+          "pluggy": "1.5.0",
+          "pytest": "8.3.3",
+          "python-dotenv": "1.0.1",
+          "werkzeug": "3.1.9"
+        },
+        "ref": "3.1.0"
+      },
+      "static": {
+        "call_edges": 20714,
+        "files": 85,
+        "find_dead_code": {
+          "default": {
+            "by_kind": {
+              "class": 9,
+              "function": 8
+            },
+            "candidates": 17,
+            "chars": 2843,
+            "filtered_out": {
+              "infrastructure": 187,
+              "tests": 774
+            },
+            "ms": 373.8,
+            "no_evidence": null,
+            "not_seen": null,
+            "rescued_by_runtime": null
+          },
+          "include_infrastructure": {
+            "by_kind": {
+              "class": 28,
+              "function": 43,
+              "method": 114,
+              "type_alias": 19
+            },
+            "candidates": 204,
+            "chars": 30658,
+            "filtered_out": {
+              "tests": 774
+            },
+            "ms": 388.5,
+            "no_evidence": null,
+            "not_seen": null,
+            "rescued_by_runtime": null
+          },
+          "include_public": {
+            "by_kind": {
+              "class": 9,
+              "function": 8
+            },
+            "candidates": 17,
+            "chars": 2843,
+            "filtered_out": {
+              "infrastructure": 187,
+              "tests": 774
+            },
+            "ms": 370.9,
+            "no_evidence": null,
+            "not_seen": null,
+            "rescued_by_runtime": null
+          }
+        },
+        "index_ms": 849.3,
+        "index_peak_rss_mb": 102.9,
+        "symbols": 1598
+      }
+    }
+  }
+}
