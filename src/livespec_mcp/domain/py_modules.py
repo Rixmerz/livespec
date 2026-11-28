@@ -85,6 +85,8 @@ class PyModules:
             for root, name in self._roots_and_names(path):
                 self._by_name.setdefault(name, []).append((fid, root))
         self._exports_cache: dict[int, dict[str, tuple[str, str]]] = {}
+        # file id -> (modules it star-imports, its literal `__all__` or None)
+        self._stars_cache: dict[int, tuple[list[str], frozenset[str] | None]] = {}
 
     def _roots_and_names(self, path: str) -> list[tuple[str, str]]:
         """Every (import root, module name under it) the file can be imported
@@ -159,12 +161,14 @@ class PyModules:
         scope: str,
         name: str,
         importer: int,
-        candidates: list[tuple[int, str, int]],
+        candidates: list[tuple[int, str, int]] | Callable[[str], list[tuple[int, str, int]]],
     ) -> tuple[tuple[int, str, int], bool] | None:
         """The ONE candidate named *name* that the import ``scope`` brings to
         *importer*, and whether it came through a re-export. None when the
         import is not a project module, the module does not bind the name, or
-        the answer is not a single symbol."""
+        the answer is not a single symbol. *candidates* may be a function from a
+        name to its candidates, for a re-export that renames (`import a as b`
+        along the way)."""
         return self._lookup(scope, name, importer, candidates, set(), 0)
 
     def _lookup(
@@ -172,7 +176,7 @@ class PyModules:
         scope: str,
         name: str,
         importer: int,
-        candidates: list[tuple[int, str, int]],
+        candidates: list[tuple[int, str, int]] | Callable[[str], list[tuple[int, str, int]]],
         seen: set[tuple[int, str]],
         depth: int,
     ) -> tuple[tuple[int, str, int], bool] | None:
@@ -181,7 +185,8 @@ class PyModules:
             return None
         owner = qname_prefix(self._paths[ref.file_id])
         wanted = ".".join([owner, *ref.remainder, name])
-        hits = [c for c in candidates if c[2] == ref.file_id and c[1] == wanted]
+        named = candidates(name) if callable(candidates) else candidates
+        hits = [c for c in named if c[2] == ref.file_id and c[1] == wanted]
         if len(hits) == 1:
             return hits[0], depth > 0
         if hits or ref.remainder or depth >= _MAX_REEXPORT_DEPTH:
@@ -191,16 +196,87 @@ class PyModules:
             return None
         seen.add(key)
         bound = self._exports(ref.file_id).get(name)
-        if bound is None:
-            return None
-        next_scope, real = bound
-        return self._lookup(next_scope, real, ref.file_id, candidates, seen, depth + 1)
+        if bound is not None:
+            next_scope, real = bound
+            return self._lookup(next_scope, real, ref.file_id, candidates, seen, depth + 1)
+        return self._lookup_star(name, ref.file_id, candidates, seen, depth)
+
+    def _lookup_star(
+        self,
+        name: str,
+        file_id: int,
+        candidates: list[tuple[int, str, int]] | Callable[[str], list[tuple[int, str, int]]],
+        seen: set[tuple[int, str]],
+        depth: int,
+    ) -> tuple[tuple[int, str, int], bool] | None:
+        """`from m import *` in *file_id*: the one symbol *name* reaches through
+        the modules it star-imports. A star import brings what the module's
+        literal ``__all__`` lists, or without one every name not starting with
+        an underscore; a name two star imports bring as different symbols
+        resolves to nothing."""
+        stars, _ = self._stars(file_id)
+        found: dict[int, tuple[tuple[int, str, int], bool]] = {}
+        for scope in stars:
+            mod = self.resolve_module(scope, file_id)
+            if mod is None or mod.remainder:
+                continue
+            _, exported = self._stars(mod.file_id)
+            if exported is not None:
+                if name not in exported:
+                    continue
+            elif name.startswith("_"):
+                continue
+            hit = self._lookup(scope, name, file_id, candidates, seen, depth + 1)
+            if hit is not None:
+                found[hit[0][0]] = (hit[0], True)
+        return next(iter(found.values())) if len(found) == 1 else None
+
+    def _stars(self, file_id: int) -> tuple[list[str], frozenset[str] | None]:
+        """Modules a file star-imports (as written, in order) and its
+        ``__all__`` when that is a literal list/tuple of strings (None when
+        absent or built any other way)."""
+        cached = self._stars_cache.get(file_id)
+        if cached is not None:
+            return cached
+        stars: list[str] = []
+        names: set[str] | None = None
+        literal = True
+        self._stars_cache[file_id] = (stars, None)
+        source = self._read(file_id) if self._read else None
+        tree: ast.Module | None = None
+        if source:
+            try:
+                tree = ast.parse(source)
+            except (SyntaxError, ValueError):
+                tree = None
+        for node in tree.body if tree else ():
+            if isinstance(node, ast.ImportFrom) and any(a.name == "*" for a in node.names):
+                stars.append("." * node.level + (node.module or ""))
+            elif isinstance(node, (ast.Assign, ast.AugAssign, ast.AnnAssign)):
+                targets = (
+                    node.targets
+                    if isinstance(node, ast.Assign)
+                    else [node.target]
+                )
+                if not any(isinstance(t, ast.Name) and t.id == "__all__" for t in targets):
+                    continue
+                value = node.value
+                if isinstance(value, (ast.List, ast.Tuple)) and all(
+                    isinstance(e, ast.Constant) and isinstance(e.value, str) for e in value.elts
+                ):
+                    items = {str(e.value) for e in value.elts}  # type: ignore[attr-defined]
+                    # `__all__ += [...]` extends what is already listed.
+                    names = (names or set()) | items if isinstance(node, ast.AugAssign) else items
+                else:
+                    literal = False
+        out = (stars, frozenset(names) if names is not None and literal else None)
+        self._stars_cache[file_id] = out
+        return out
 
     def _exports(self, file_id: int) -> dict[str, tuple[str, str]]:
         """Module-level ``from X import a as b`` of one file: local name ->
         (X as written, a). Only names bound by exactly one import and never
-        rebound by an assignment, def or class qualify; a wildcard binds
-        nothing we can name."""
+        rebound by an assignment, def or class qualify; a wildcard is followed by `_lookup_star`."""
         cached = self._exports_cache.get(file_id)
         if cached is not None:
             return cached

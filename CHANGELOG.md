@@ -6,6 +6,19 @@ follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed — Django trial (scale)
+
+- **Python calls through a re-export reach the defining symbol.** `from pkg.forms
+  import f`, `forms.f()`, `formsets.f()` and `from m import f as g` now resolve
+  through the re-export chain (`from .x import f`, `from .x import f as g`,
+  `from .x import *` honouring a literal `__all__`; bounded hops, cycle-safe) to
+  the ONE symbol that defines `f`, so `who_calls` on a moved function lists the
+  callers that still import it from the old module. A call to an aliased import
+  is stored under the original name. A star import of a module without
+  `__all__` brings its public names (also for `inherits` / `references`, which
+  used to ignore star imports). Fewer 0.9-weight fan-out edges for names a
+  package re-exports from several submodules. **Existing indexed projects:** the
+  next `index_project` re-extracts Python.
 ### Fixed — Java trial on Spring PetClinic
 
 - **Java calls on a typed receiver bind to the receiver's class.** `x.m()` where

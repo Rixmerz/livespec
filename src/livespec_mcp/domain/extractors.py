@@ -340,6 +340,17 @@ def _py_emit_type_refs(
 # ---------- Python via ast ----------
 
 
+def _py_unalias(name: str, out: ExtractResult) -> str:
+    """`from m import Foo as F`: a bare call `F()` names the symbol `Foo`. Any
+    other name (not imported, or a module bound with `import a.b as m`) stays."""
+    scope = out.imports.get(name)
+    bound = out.bindings.get(name, "")
+    if scope is None or bound == scope:
+        return name
+    real = bound.rsplit(".", 1)[-1]
+    return real if real and real != name and bound.endswith(f".{real}") else name
+
+
 def _py_annotation(node: ast.AST | None) -> str:
     """Render an annotation back to source, or "" when there is none.
 
@@ -1079,7 +1090,12 @@ def _py_local_classes(func_node: ast.AST, out: ExtractResult) -> dict[str, str]:
     return {k: v for k, v in evidence.items() if k not in dropped}
 
 
-def _collect_calls(func_node: ast.AST, src_qname: str, out: ExtractResult) -> None:
+def _collect_calls(
+    func_node: ast.AST,
+    src_qname: str,
+    out: ExtractResult,
+    seen_types: set[tuple[str, str, str | None]] | None = None,
+) -> None:
     # Walk this symbol's body but STOP at nested def/class boundaries — their
     # call sites belong to the nested symbol (extracted separately), not to
     # every enclosing def. ast.walk() would descend into them and attribute an
@@ -1090,7 +1106,8 @@ def _collect_calls(func_node: ast.AST, src_qname: str, out: ExtractResult) -> No
     # Type-position names of this symbol (parameter, return and variable
     # annotations, isinstance/issubclass targets, except types), one ref per
     # distinct name.
-    seen_types: set[tuple[str, str, str | None]] = set()
+    if seen_types is None:
+        seen_types = set()
     _py_emit_type_refs(getattr(func_node, "returns", None), src_qname, out, seen_types)
     local_classes: dict[str, str] | None = None
     while stack:
@@ -1161,6 +1178,7 @@ def _collect_calls(func_node: ast.AST, src_qname: str, out: ExtractResult) -> No
                     # the ref with the originating module so the resolver can
                     # scope.
                     scope = out.imports.get(target)
+                    target = _py_unalias(target, out)
                 out.refs.append(
                     ExtractedRef(
                         src_qname=src_qname,
@@ -1229,7 +1247,7 @@ def _emit_py_callback_refs(node: ast.Call, src_qname: str, out: ExtractResult) -
             out.refs.append(
                 ExtractedRef(
                     src_qname=src_qname,
-                    target_name=name_node.id,
+                    target_name=_py_unalias(name_node.id, out),
                     line=getattr(name_node, "lineno", getattr(node, "lineno", 0)),
                     ref_type="callback_arg",
                     scope_module=out.imports.get(name_node.id),

@@ -44,6 +44,15 @@ Todo el stack es local-first: 0 servicios externos, 0 API keys obligatorias, 0 D
 
 ## 3. Estado actual
 
+### Unreleased — trial Django a escala (rama `ls-scale`)
+
+Defectos de la prueba de orient + migrate de una regla en Django 5.1.4 (2832
+archivos, 39,7k símbolos). Items: (1) re-exports de Python en `who_calls`
+(`py_modules._lookup_star`, `indexer._resolve_refs`, alias de import en el
+extractor), (2) clases usadas desde el cuerpo de otra clase o pasadas como
+argumento, (3) `find_data_access` summary + `path`, (4) cobertura runtime con
+alcance, (5) tamaño de payload, (6) aristas runtime desde marcos sin trazar.
+
 ### Unreleased — trial Java (Spring PetClinic)
 
 **Rama `ls-java` (local, sobre `c8510ce`): hallazgos del trial Java, 1570 tests + 5 nuevos
