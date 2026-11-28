@@ -112,6 +112,7 @@ it is not a background watcher you should lean on while editing.
 | Everything needed to change one symbol | `read_unit(qname, depth=1, token_budget=2000)` — body + callee signatures + the types in them + what it raises + covering tests, in one payload |
 | Stack trace / file:line → symbol | `resolve_location(path, line)` — the inverse of `read_unit` |
 | "Did I just write this twice?" | `search_similar(code or qname)` — before a write; normalised-AST hash + k-gram winnowing, no embeddings |
+| First contact with a legacy repo: which bodies are pasted N times? | `find_clone_clusters(min_size=2, path=None, summary_only=False)` — one `representative` to read per cluster (`read_unit`), every other copy as `identical` or a bounded diff; skim the diffs, do not open the copies. Ordered by `lines_saved`; `totals` exact across pages |
 | Frozen duplication debt | `debt_baseline_capture()` / `debt_baseline_status()` — accepted duplication stays quiet, new copies do not |
 | A human wants to *see* the index | Not a tool: tell them to run `/livespec-ui` (Claude Code) or `livespec ui` — one read-only page over every indexed project. Never generate HTML into the repo |
 

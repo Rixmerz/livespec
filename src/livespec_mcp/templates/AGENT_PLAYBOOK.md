@@ -77,6 +77,7 @@ client cached the short tool list.
 | Everything needed to change one symbol | `read_unit(qname, depth=1, token_budget=2000)` | Body + callee signatures + their types + raises + covering tests, in one payload |
 | Stack trace / `file:line` → symbol | `resolve_location(path, line)` | The inverse of `read_unit` |
 | "Have I written this already?" | `search_similar(code \| qname)` | Run it BEFORE adding a helper; AST hash + k-gram winnowing, no embeddings |
+| "Which functions are pasted N times?" | `find_clone_clusters(min_size=2, path=None)` | First contact with a legacy repo: read each cluster's `representative`, skim the diffs of `others`, never open the copies; ordered by `lines_saved` |
 | Freeze accepted duplication | `debt_baseline_capture()` / `debt_baseline_status()` | Old copies stay quiet; a NEW copy still reports |
 | Annotations the extractor cannot see | `scan_annotation_verbs()` | `@spec:` above a bare route registration that owns no symbol |
 | Borrow a second extractor's edges | `ingest_external_graph(graph_path?, dry_run=True)` | See §7.1; `remove=True` undoes it exactly |
