@@ -153,12 +153,22 @@ PARAM_DESCRIPTIONS: dict[str, str] = {
     ),
     "table": (
         "Database table name, any case, with or without schema (``public.users`` = "
-        "``users``). Omit, with no ``qname``, for the table inventory."
+        "``users``); a name that is no table but an ORM model is answered with that "
+        "model's accesses. Omit, with no ``qname``, for the table inventory."
     ),
     "access": "Only this kind of access: ``read``, ``write`` or ``ddl``. Omit for all three.",
-    "include_callers": (
+    "include_callees": (
         "Also list the tables reached through this symbol's callees (up to 3 hops, "
         "call edges of weight 0.6 or more); each such row names the callee in ``via``."
+    ),
+    "include_callers": (
+        "Deprecated alias of ``include_callees`` (it follows the symbol's callees, "
+        "not its callers); the payload then carries a ``deprecated`` note."
+    ),
+    "include_system": (
+        "Inventory: also list catalogue tables (``sqlite_master``, "
+        "``information_schema.*``, ``pg_catalog.*``), marked ``system: true``; "
+        "by default they are only counted in ``system_tables_hidden``."
     ),
 }
 

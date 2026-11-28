@@ -985,6 +985,77 @@ def _m031_data_access(conn: sqlite3.Connection) -> None:
         _flag_reextract(conn)
 
 
+def _m032_data_access_shapes(conn: sqlite3.Connection) -> None:
+    """Unreleased: wider shapes for the data-access map.
+
+    Recreates `data_access` and `data_model` (both derived from source, so
+    nothing is lost) with relaxed CHECKs and three new `data_model` columns:
+
+    - `data_access.ref_kind` also takes `relationship` (a write-only or dynamic
+      SQLAlchemy collection: `owner.attr:op`, resolved to its target model or
+      association table) and `const` (an SQL constant imported from another
+      module). Both kinds of row are DERIVED after every index run from
+      `data_model` placeholders (`relref` / `constref`), never extracted.
+    - `data_model.role` also takes `table` (a CREATE TABLE written in code: a
+      declaration), `sqlconst` (the tables of a module-level SQL constant),
+      `constref` (a use of an imported constant), `relationship`, `relref` (a
+      call on a collection attribute), `flask_db` (a Flask-SQLAlchemy instance)
+      and `skip` (a statement whose table is interpolated). `table_source` also takes `flask_candidate`: the
+      CamelCase -> snake_case name, valid only if the base `db` is a
+      Flask-SQLAlchemy instance, which the resolver checks.
+    - `owner`, `secondary`, `detail`: the class owning a relationship, its
+      association table, and the role-specific extra (collection mode, the
+      access kind of an `sqlconst` row).
+
+    Re-extract is queued only on a DB that already holds symbols, as in v31:
+    existing files must be read again to fill the new rows."""
+    conn.execute("DROP TABLE IF EXISTS data_access")
+    conn.execute("DROP TABLE IF EXISTS data_model")
+    conn.execute(
+        """CREATE TABLE data_access (
+            id INTEGER PRIMARY KEY,
+            symbol_id INTEGER NOT NULL REFERENCES symbol(id) ON DELETE CASCADE,
+            table_name TEXT,
+            table_schema TEXT,
+            model TEXT,
+            ref_name TEXT,
+            ref_kind TEXT CHECK (ref_kind IN
+                ('model', 'repository', 'relationship', 'const')),
+            access TEXT NOT NULL CHECK (access IN ('read', 'write', 'ddl')),
+            mechanism TEXT NOT NULL,
+            line INTEGER NOT NULL,
+            confidence TEXT NOT NULL
+                CHECK (confidence IN ('literal', 'model', 'convention', 'unresolved'))
+        )"""
+    )
+    conn.execute("CREATE INDEX idx_data_access_symbol ON data_access(symbol_id)")
+    conn.execute("CREATE INDEX idx_data_access_table ON data_access(table_name)")
+    conn.execute(
+        """CREATE TABLE data_model (
+            id INTEGER PRIMARY KEY,
+            file_id INTEGER NOT NULL REFERENCES file(id) ON DELETE CASCADE,
+            symbol_id INTEGER REFERENCES symbol(id) ON DELETE SET NULL,
+            name TEXT NOT NULL,
+            role TEXT NOT NULL CHECK (role IN ('model', 'repository', 'table', 'sqlconst',
+                'constref', 'relationship', 'relref', 'flask_db', 'skip')),
+            mechanism TEXT NOT NULL,
+            table_name TEXT,
+            table_schema TEXT,
+            entity TEXT,
+            table_source TEXT CHECK (table_source IN
+                ('declared', 'convention', 'flask_candidate')),
+            line INTEGER NOT NULL,
+            owner TEXT,
+            secondary TEXT,
+            detail TEXT
+        )"""
+    )
+    conn.execute("CREATE INDEX idx_data_model_file ON data_model(file_id)")
+    conn.execute("CREATE INDEX idx_data_model_name ON data_model(name)")
+    if conn.execute("SELECT 1 FROM symbol LIMIT 1").fetchone() is not None:
+        _flag_reextract(conn)
+
+
 MIGRATIONS: list[Migration] = [
     (1, "drop_dead_tables", _m001_drop_dead_tables),
     (2, "drop_dead_columns", _m002_drop_dead_columns),
@@ -1017,6 +1088,7 @@ MIGRATIONS: list[Migration] = [
     (29, "runtime_evidence", _m029_runtime_evidence),
     (30, "inherit_reference_refs", _m030_inherit_reference_refs),
     (31, "data_access", _m031_data_access),
+    (32, "data_access_shapes", _m032_data_access_shapes),
 ]
 
 

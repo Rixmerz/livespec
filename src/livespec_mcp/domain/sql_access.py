@@ -71,6 +71,7 @@ class SqlTable:
     schema: str | None
     name: str
     offset: int
+    verb: str = ""  # CREATE | ALTER | DROP for ddl rows: only CREATE declares a table
 
 
 def looks_like_sql(text: str) -> bool:
@@ -79,21 +80,37 @@ def looks_like_sql(text: str) -> bool:
 
 
 def sql_tables(text: str, *, jpql: bool = False) -> list[SqlTable]:
-    """Tables of every statement in `text`, in source order, deduplicated per
-    (access, schema, name). `jpql=True` reads the names as entity names: a
-    leading ``FROM Entity e`` is a query and ``JOIN e.items`` is a path."""
+    """Tables of every statement in `text`, in source order. `jpql=True` reads
+    the names as entity names: a leading ``FROM Entity e`` is a query and
+    ``JOIN e.items`` is a path. See :func:`sql_analyse`."""
+    return sql_analyse(text, jpql=jpql)[0]
+
+
+def sql_analyse(text: str, *, jpql: bool = False) -> tuple[list[SqlTable], int]:
+    """(tables, dynamic) of every statement in `text`, in source order.
+
+    A script of several statements gives one entry per statement and
+    (access, schema, name, verb): ``DROP TABLE a; CREATE TABLE a (...)`` keeps
+    both, the same table joined twice inside ONE statement counts once.
+    ``dynamic`` is the number of table positions that hold an interpolation
+    (``DELETE FROM {table}``): real statements whose table the source does not
+    state, counted so the caller can say what it could not see."""
     if not looks_like_sql(text):
-        return []
+        return [], 0
     toks = [t for t in _tokenize(text) if t.kind not in ("lcomment", "bcomment")]
     out: list[SqlTable] = []
-    seen: set[tuple[str, str | None, str]] = set()
-    for stmt in _split(toks):
+    dynamic = 0
+    seen: set[tuple[int, str, str | None, str, str]] = set()
+    for idx, stmt in enumerate(_split(toks)):
         for t in _statement(stmt, jpql):
-            key = (t.access, (t.schema or "").lower() or None, t.name.lower())
+            if not t.name:
+                dynamic += 1
+                continue
+            key = (idx, t.access, (t.schema or "").lower() or None, t.name.lower(), t.verb)
             if key not in seen:
                 seen.add(key)
                 out.append(t)
-    return out
+    return out, dynamic
 
 
 def _split(toks: list[_Tok]) -> list[list[_Tok]]:
@@ -265,7 +282,10 @@ class _Scan:
         self.out: list[SqlTable] = []
 
     def add(self, access: str, n: _Name) -> None:
-        if n.name is None or not n.name.strip():
+        if n.name is None:
+            self.out.append(SqlTable(access, n.schema, "", n.offset))  # interpolated table
+            return
+        if not n.name.strip():
             return
         if access == READ and n.schema is None and n.name.lower() in self.ctes:
             return
@@ -474,7 +494,7 @@ def _statement(toks: list[_Tok], jpql: bool) -> list[SqlTable]:
             n.end >= len(toks) or toks[n.end].upper in ("CASCADE", "RESTART", "RESTRICT")
         ):
             return []
-        return [SqlTable(WRITE, n.schema, n.name, n.offset)] if n.name else []
+        return [SqlTable(WRITE, n.schema, n.name or "", n.offset)]
     elif verb in ("CREATE", "ALTER", "DROP"):
         p = after(i + 1, _CREATE_PREFIXES) if verb == "CREATE" else i + 1
         if p >= len(toks) or toks[p].upper != "TABLE" or _prose_case(verb_tok, toks[p]):
@@ -486,8 +506,7 @@ def _statement(toks: list[_Tok], jpql: bool) -> list[SqlTable]:
             n = _name(toks, p, jpql)
             if n is None or _stop(n, toks):
                 return []
-            if n.name:
-                head.append(SqlTable(DDL, n.schema, n.name, n.offset))
+            head.append(SqlTable(DDL, n.schema, n.name or "", n.offset, verb))
             if verb == "DROP" and n.end < len(toks) and toks[n.end].text == ",":
                 p = n.end + 1
                 continue
@@ -498,4 +517,4 @@ def _statement(toks: list[_Tok], jpql: bool) -> list[SqlTable]:
         return []
 
     scan.run(with_at if with_at is not None else i, verb)
-    return [t for t in head if t.name] + scan.out
+    return head + scan.out

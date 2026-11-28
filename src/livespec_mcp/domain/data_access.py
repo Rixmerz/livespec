@@ -12,8 +12,14 @@ Java. Two kinds of evidence:
   (``data_access_store.resolve_data_access``). A table name is never guessed.
 
 Every hit is attributed to the innermost symbol spanning its line. A module-
-or class-level ``NAME = "<sql>"`` constant produces nothing where it is
-defined and one access at each use of ``NAME`` inside the same file.
+or class-level ``NAME = "<sql>"`` constant produces no access where it is
+defined and one access at each use of ``NAME`` (an execute-like call, an
+f-string, a concatenation) inside the same file, at the line of the use; its
+``CREATE TABLE`` statements are DECLARATIONS at the line of the constant. A
+constant imported with ``from .schema import NAME`` is a placeholder resolved
+after indexing (``data_access_store.resolve_data_access``), so editing the
+defining file never leaves stale rows. A string variable assigned once in a
+function and used later in it is read through (``base + where``).
 """
 
 from __future__ import annotations
@@ -22,6 +28,7 @@ import ast
 import re
 from collections.abc import Iterator
 from dataclasses import dataclass, field
+from functools import lru_cache
 from typing import Any
 
 from livespec_mcp.domain.extractors import (
@@ -31,7 +38,15 @@ from livespec_mcp.domain.extractors import (
     ExtractResult,
 )
 from livespec_mcp.domain.languages import GrammarUnavailableError, get_parser
-from livespec_mcp.domain.sql_access import DDL, HOLE, READ, WRITE, looks_like_sql, sql_tables
+from livespec_mcp.domain.sql_access import (
+    DDL,
+    HOLE,
+    READ,
+    WRITE,
+    SqlTable,
+    looks_like_sql,
+    sql_analyse,
+)
 
 DATA_ACCESS_LANGUAGES = frozenset({"python", "typescript", "tsx", "javascript", "java"})
 
@@ -41,7 +56,8 @@ _HINT_RE = re.compile(
       | (?:create|alter|drop)\s+table
       | \.objects\b | __tablename__ | db_table | \bTable\( | \.query\b | session
       | prisma | knex | supabase | getRepository | Repository | @Entity | EntityManager
-      | sequelize | \.find(?:All|ByPk|OrCreate|AndCountAll)\b | \.bulkCreate\b""",
+      | sequelize | \.find(?:All|ByPk|OrCreate|AndCountAll)\b | \.bulkCreate\b
+      | \bexecute(?:script|many)?\b | SQLAlchemy | WriteOnlyMapped | DynamicMapped | \bdb\.Model\b | _or_404""",
     re.I | re.X,
 )
 
@@ -67,21 +83,93 @@ class _Model:
     schema: str | None = None
     entity: str | None = None
     table_source: str | None = None
+    owner: str | None = None
+    secondary: str | None = None
+    detail: str | None = None
+
+
+_analyse = lru_cache(maxsize=512)(sql_analyse)
+
+#: Operations a write-only / dynamic SQLAlchemy collection answers, by mode.
+REL_OPS: dict[str, dict[str, str]] = {
+    "write_only": {"select": READ, "add": WRITE, "remove": WRITE, "delete": WRITE},
+    "dynamic": {
+        "filter": READ,
+        "filter_by": READ,
+        "count": READ,
+        "all": READ,
+        "first": READ,
+        "order_by": READ,
+        "add": WRITE,
+        "remove": WRITE,
+        "delete": WRITE,
+    },
+}
+_REL_OP_NAMES = frozenset(op for ops in REL_OPS.values() for op in ops)
+#: add / remove touch the association table of a many-to-many collection.
+REL_EDGE_OPS = frozenset({"add", "remove"})
+
+
+def flask_table_name(class_name: str) -> str:
+    """Flask-SQLAlchemy's default table name (``camel_to_snake_case``)."""
+    spaced = re.sub(r"((?<=[a-z0-9])[A-Z]|(?!^)[A-Z](?=[a-z]))", r"_\1", class_name)
+    return spaced.lower().lstrip("_")
 
 
 @dataclass
 class _Found:
     hits: list[_Hit] = field(default_factory=list)
     models: list[_Model] = field(default_factory=list)
+    skips: dict[int, int] = field(default_factory=dict)  # line -> interpolated table positions
 
-    def sql(self, text: str, line: int, *, jpql: bool = False) -> None:
-        """Rows for one string. JPQL names are entities, resolved later."""
-        for t in sql_tables(text, jpql=jpql):
-            at = line + text.count("\n", 0, t.offset)
+    def sql(
+        self,
+        text: str,
+        line: int,
+        *,
+        jpql: bool = False,
+        exact: bool = False,
+        declare: bool = False,
+    ) -> None:
+        """Rows for one string. JPQL names are entities, resolved later.
+
+        `exact`: every row sits on `line` (the use of a constant or a variable,
+        whose text lives elsewhere); otherwise a row sits on the line of its
+        table name inside a multi-line literal. `declare`: a ``CREATE TABLE``
+        in this text is also a declaration of the table."""
+        tables, dynamic = _analyse(text, jpql=jpql)
+        for t in tables:
+            at = line if exact else line + text.count("\n", 0, t.offset)
             if jpql:
                 self.hits.append(_Hit(at, t.access, "jpa", ref_name=t.name, ref_kind="model"))
             else:
                 self.hits.append(_Hit(at, t.access, "sql", table=t.name, schema=t.schema))
+                if declare:
+                    self._declared(at, t)
+        if dynamic:
+            self.skips[line] = max(self.skips.get(line, 0), dynamic)
+
+    def declare_sql(self, text: str, line: int) -> None:
+        """Declarations only: the ``CREATE TABLE`` statements of a constant."""
+        for t in _analyse(text)[0]:
+            self._declared(line + text.count("\n", 0, t.offset), t)
+
+    def _declared(self, line: int, t: SqlTable, mechanism: str = "sql") -> None:
+        if t.access == DDL and t.verb == "CREATE":
+            self.models.append(
+                _Model(line, t.name.lower(), "table", mechanism, t.name, t.schema,
+                       table_source="declared")
+            )  # fmt: skip
+
+    def constref(self, line: int, module: str, name: str) -> None:
+        """A use of a constant imported from `module`, resolved after indexing."""
+        key = f"{module}:{name}"
+        if not any(m.role == "constref" and m.line == line and m.name == key for m in self.models):
+            self.models.append(_Model(line, key, "constref", "sql"))
+
+    def relref(self, line: int, owner: str, attr: str, op: str) -> None:
+        """`owner.attr.op(...)` on what may be a write-only / dynamic collection."""
+        self.models.append(_Model(line, attr, "relref", "sqlalchemy", owner=owner, detail=op))
 
     def model(self, line: int, access: str, mechanism: str, name: str) -> None:
         self.hits.append(_Hit(line, access, mechanism, ref_name=name, ref_kind="model"))
@@ -94,7 +182,7 @@ class _Found:
 
 def collect_data_access(source: str, language: str, module_name: str, out: ExtractResult) -> None:
     """Fill ``out.accesses`` / ``out.models`` for one already-extracted file."""
-    if language not in DATA_ACCESS_LANGUAGES or not out.symbols or not _HINT_RE.search(source):
+    if language not in DATA_ACCESS_LANGUAGES or not _HINT_RE.search(source):
         return
     found = _Found()
     try:
@@ -108,7 +196,7 @@ def collect_data_access(source: str, language: str, module_name: str, out: Extra
         # The symbol extractor already reported an unparsable file or a missing
         # grammar; a pathologically deep expression only costs this file's rows.
         return
-    if not found.hits and not found.models:
+    if not found.hits and not found.models and not found.skips:
         return
     owner = _SpanIndex(out.symbols)
     seen: set[tuple[Any, ...]] = set()
@@ -142,8 +230,22 @@ def collect_data_access(source: str, language: str, module_name: str, out: Extra
                 schema=m.schema.lower() if m.schema else None,
                 entity=m.entity,
                 table_source=m.table_source if m.table else None,
+                owner=m.owner,
+                secondary=m.secondary,
+                detail=m.detail,
             )
         )
+    for line, n in found.skips.items():
+        for _ in range(n):
+            out.models.append(
+                ExtractedModel(
+                    src_qname=owner.at(line) or "",
+                    name="dynamic_table",
+                    role="skip",
+                    mechanism="sql",
+                    line=line,
+                )
+            )
 
 
 class _SpanIndex:
@@ -176,33 +278,7 @@ _DJ_WRITE = frozenset(
 )
 _SA_WRITE_FUNCS = frozenset({"insert", "update", "delete"})
 _SA_SESSION_WRITE = frozenset({"add", "merge", "delete", "add_all", "bulk_save_objects"})
-
-
-def _py_text(node: ast.AST) -> str | None:
-    """SQL-ish text of a string expression with holes, or None."""
-    if isinstance(node, ast.Constant):
-        return node.value if isinstance(node.value, str) else None
-    if isinstance(node, ast.JoinedStr):
-        return "".join(
-            v.value if isinstance(v, ast.Constant) and isinstance(v.value, str) else HOLE
-            for v in node.values
-        )
-    if isinstance(node, ast.BinOp):
-        if isinstance(node.op, ast.Add):
-            left, right = _py_text(node.left), _py_text(node.right)
-            if left is None and right is None:
-                return None
-            return (HOLE if left is None else left) + (HOLE if right is None else right)
-        if isinstance(node.op, ast.Mod):
-            return _py_text(node.left)
-        return None
-    if (
-        isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Attribute)
-        and node.func.attr == "format"
-    ):
-        return _py_text(node.func.value)
-    return None
+_SA_GET = frozenset({"get", "get_or_404", "get_one"})
 
 
 def _cap(name: str) -> bool:
@@ -226,11 +302,28 @@ class _Py:
         self.found = found
         self.module_name = module_name
         mods: set[str] = set()
+        self.flask_classes: set[str] = set()  # `from flask_sqlalchemy import SQLAlchemy [as X]`
+        self.flask_modules: set[str] = set()  # `import flask_sqlalchemy [as X]`
+        self.imported: dict[str, tuple[str, str]] = {}  # local name -> (module, name)
         for n in ast.walk(tree):
             if isinstance(n, ast.Import):
                 mods.update(a.name.split(".")[0] for a in n.names)
+                for a in n.names:
+                    if a.name == "flask_sqlalchemy":
+                        self.flask_modules.add(a.asname or a.name)
             elif isinstance(n, ast.ImportFrom) and n.module:
                 mods.add(n.module.split(".")[0])
+                if n.module.split(".")[0] == "flask_sqlalchemy":
+                    self.flask_classes.update(
+                        a.asname or a.name for a in n.names if a.name == "SQLAlchemy"
+                    )
+        for n in ast.walk(tree):
+            if isinstance(n, ast.ImportFrom) and n.module:
+                target = self._import_target(n)
+                if target is not None:
+                    for a in n.names:
+                        if a.name != "*":
+                            self.imported[a.asname or a.name] = (target, a.name)
         self.sa = bool(mods & _SA_MODULES)
         # Django-style file: imports django or a `models` module, or uses a manager.
         self.django = (
@@ -247,29 +340,96 @@ class _Py:
                 for n in ast.walk(tree)
             )
         )
-        self.consts: dict[str, str] = {}
+        self.strs: dict[str, str] = {}  # module-level string constants (any text)
+        self.cls_strs: dict[str, dict[str, str]] = {}  # class -> its string constants
         self.tables: set[str] = set()
         self.dj_models: set[str] = set()
+        self.sa_models: set[str] = set()  # same-file classes that map to a table
+        self.env: dict[str, str] = {}  # string variables of the current function
+        self.shadow: set[str] = set()  # every name bound in the current function
+        self.skip_assign: set[str] = set()  # variables counted where they are used
+        self.cur_cls: str | None = None
+        self.in_func = False
+        self._subst = False
+        self._defining = True  # collecting constants: uses of imports are not recorded
         self._models(tree)
-        self._consts(tree.body)
-        for n in ast.walk(tree):
-            if isinstance(n, ast.ClassDef):
-                self._consts(n.body)
+        self._consts(tree)
+        self._defining = False
         self.ctx: dict[str, tuple[str, str]] = {}
         self.block(tree.body, top=True)
 
+    def _import_target(self, n: ast.ImportFrom) -> str | None:
+        """Absolute dotted module of a `from X import ...` (relative levels
+        resolved against this file's own module name)."""
+        if n.level == 0:
+            return n.module
+        parts = self.module_name.split(".")[:-1]  # the package holding this file
+        if n.level - 1 > len(parts):
+            return None
+        pkg = parts[: len(parts) - (n.level - 1)]
+        return ".".join([*pkg, n.module] if n.module else pkg) or None
+
     # -- declarations -----------------------------------------------------
 
-    def _consts(self, body: list[ast.stmt]) -> None:
-        for st in body:
-            if (
-                isinstance(st, ast.Assign)
-                and len(st.targets) == 1
-                and isinstance(st.targets[0], ast.Name)
-            ):
-                text = _py_text(st.value)
-                if text is not None and looks_like_sql(text):
-                    self.consts[st.targets[0].id] = text
+    def _consts(self, tree: ast.Module) -> None:
+        """String constants of the module body and of every class body, in
+        source order (a constant may be built from earlier ones). A name bound
+        twice at one level is ambiguous and dropped. SQL-like module constants
+        also produce, at their definition, declarations (`CREATE TABLE`) and
+        the `sqlconst` rows other modules resolve imports against."""
+        for scope, body, strs in self._const_scopes(tree):
+            bound: dict[str, int] = {}
+            for st in body:
+                for name in _bound_names(st):
+                    bound[name] = bound.get(name, 0) + 1
+            for st in body:
+                target = value = None
+                if (
+                    isinstance(st, ast.Assign)
+                    and len(st.targets) == 1
+                    and isinstance(st.targets[0], ast.Name)
+                ):
+                    target, value = st.targets[0].id, st.value
+                elif (
+                    isinstance(st, ast.AnnAssign)
+                    and isinstance(st.target, ast.Name)
+                    and st.value is not None
+                ):
+                    target, value = st.target.id, st.value
+                if target is None or value is None or bound.get(target) != 1:
+                    continue
+                self.cur_cls = scope
+                text = self._text(value)
+                self.cur_cls = None
+                if text is None:
+                    continue
+                strs[target] = text
+                if looks_like_sql(text):
+                    self.found.declare_sql(text, getattr(value, "lineno", st.lineno))
+                    if scope is None:
+                        self._sqlconst(target, text, getattr(value, "lineno", st.lineno))
+
+    def _const_scopes(self, tree: ast.Module) -> Iterator[tuple[str | None, list[ast.stmt], dict]]:
+        yield None, tree.body, self.strs
+        for n in ast.walk(tree):
+            if isinstance(n, ast.ClassDef):
+                yield n.name, n.body, self.cls_strs.setdefault(n.name, {})
+
+    def _sqlconst(self, name: str, text: str, line: int) -> None:
+        """One row per (access, table) of an importable SQL constant."""
+        tables, _ = _analyse(text)
+        for t in tables:
+            self.found.models.append(
+                _Model(
+                    line + text.count("\n", 0, t.offset),
+                    f"{self.module_name}:{name}",
+                    "sqlconst",
+                    "sql",
+                    t.name,
+                    t.schema,
+                    detail=t.access,
+                )
+            )
 
     def _app_label(self) -> str | None:
         parts = self.module_name.split(".")
@@ -279,8 +439,21 @@ class _Py:
             return parts[-3]
         return None
 
+    def _is_flask_db(self, value: ast.AST) -> bool:
+        if not isinstance(value, ast.Call):
+            return False
+        f = value.func
+        return (isinstance(f, ast.Name) and f.id in self.flask_classes) or (
+            isinstance(f, ast.Attribute)
+            and f.attr == "SQLAlchemy"
+            and isinstance(f.value, ast.Name)
+            and f.value.id in self.flask_modules
+        )
+
     def _models(self, tree: ast.Module) -> None:
         classes = [n for n in ast.walk(tree) if isinstance(n, ast.ClassDef)]
+        classes.sort(key=lambda c: c.lineno)
+        by_name = {c.name: c for c in classes}
         dj: dict[str, ast.ClassDef] = {}
         changed = True
         while changed:  # same-file inheritance from an (abstract) model base
@@ -301,19 +474,26 @@ class _Py:
                         dj[c.name] = c
                         changed = True
                         break
+        flask_rows: dict[str, _Model] = {}
         for c in classes:
             tablename = schema = db_table = app_label = None
-            abstract = False
+            abstract = custom_name = False
             for st in c.body:
                 if isinstance(st, ast.Assign) and len(st.targets) == 1:
                     tgt = st.targets[0]
                     if isinstance(tgt, ast.Name) and tgt.id == "__tablename__":
                         tablename = _py_str(st.value)
+                        custom_name = custom_name or tablename is None
                     elif isinstance(tgt, ast.Name) and tgt.id == "__table_args__":
                         schema = _table_args_schema(st.value)
+                    elif isinstance(tgt, ast.Name) and tgt.id in ("__abstract__", "__table__"):
+                        abstract = abstract or tgt.id == "__table__" or _truthy(st.value)
                 elif isinstance(st, ast.AnnAssign) and isinstance(st.target, ast.Name):
                     if st.target.id == "__tablename__":
                         tablename = _py_str(st.value)
+                        custom_name = custom_name or tablename is None
+                elif isinstance(st, ast.FunctionDef) and st.name == "__tablename__":
+                    custom_name = True  # @declared_attr: the name is computed
                 elif isinstance(st, ast.ClassDef) and st.name == "Meta":
                     for m in st.body:
                         if isinstance(m, ast.Assign) and len(m.targets) == 1:
@@ -324,13 +504,22 @@ class _Py:
                                 app_label = _py_str(m.value)
                             elif key == "abstract":
                                 abstract = isinstance(m.value, ast.Constant) and bool(m.value.value)
+            self._relationships(c)
             if tablename:
+                self.sa_models.add(c.name)
                 self.found.models.append(
                     _Model(c.lineno, c.name, "model", "sqlalchemy", tablename, schema,
                            table_source="declared")
                 )  # fmt: skip
                 continue
             if c.name not in dj and db_table is None:
+                row = (
+                    None if (abstract or custom_name) else self._flask_model(c, by_name, flask_rows)
+                )
+                if row is not None:
+                    flask_rows[c.name] = row
+                    self.sa_models.add(c.name)
+                    self.found.models.append(row)
                 continue
             self.dj_models.add(c.name)
             if abstract:
@@ -372,6 +561,186 @@ class _Py:
                     _Model(n.lineno, name, "model", "sqlalchemy", _py_str(n.value.args[0]),
                            schema, table_source="declared")
                 )  # fmt: skip
+            elif (  # db = SQLAlchemy(...) from flask_sqlalchemy
+                isinstance(n, ast.Assign)
+                and len(n.targets) == 1
+                and isinstance(n.targets[0], ast.Name)
+                and self._is_flask_db(n.value)
+            ):
+                self.found.models.append(
+                    _Model(n.lineno, n.targets[0].id, "flask_db", "flask_sqlalchemy")
+                )
+
+    def _flask_model(
+        self, c: ast.ClassDef, by_name: dict[str, ast.ClassDef], rows: dict[str, _Model]
+    ) -> _Model | None:
+        """A Flask-SQLAlchemy model without `__tablename__`.
+
+        The default name is the CamelCase -> snake_case of the class name, but
+        only when the base is a Flask-SQLAlchemy ``db.Model``: plain declarative
+        SQLAlchemy has no default. The base `db` is verified after indexing
+        (``flask_candidate``). A subclass of a same-file model without a primary
+        key of its own is single-table inheritance and shares its parent's
+        table; one with its own key is joined inheritance and gets its own
+        name; a subclass whose parent is not a known model stays unresolved."""
+        for b in c.bases:
+            if (
+                isinstance(b, ast.Attribute)
+                and b.attr == "Model"
+                and isinstance(b.value, ast.Name)
+                and b.value.id != "models"
+            ):
+                if self._mixin_names_table(c, by_name):
+                    return None
+                return _Model(c.lineno, c.name, "model", "sqlalchemy", flask_table_name(c.name),
+                              entity=b.value.id, table_source="flask_candidate")  # fmt: skip
+        parents = [rows[b.id] for b in c.bases if isinstance(b, ast.Name) and b.id in rows]
+        if len(parents) != 1 or self._mixin_names_table(c, by_name):
+            return None
+        parent = parents[0]
+        if _has_primary_key(c):
+            return _Model(c.lineno, c.name, "model", "sqlalchemy", flask_table_name(c.name),
+                          entity=parent.entity, table_source="flask_candidate")  # fmt: skip
+        return _Model(c.lineno, c.name, "model", "sqlalchemy", parent.table, parent.schema,
+                      entity=parent.entity, table_source=parent.table_source)  # fmt: skip
+
+    @staticmethod
+    def _mixin_names_table(c: ast.ClassDef, by_name: dict[str, ast.ClassDef]) -> bool:
+        """Does a same-file base class pick the table name itself?"""
+        for b in c.bases:
+            base = by_name.get(b.id) if isinstance(b, ast.Name) else None
+            if base is None:
+                continue
+            for st in base.body:
+                if (isinstance(st, ast.FunctionDef) and st.name == "__tablename__") or (
+                    isinstance(st, ast.Assign)
+                    and any(isinstance(t, ast.Name) and t.id == "__tablename__" for t in st.targets)
+                ):
+                    return True
+        return False
+
+    def _relationships(self, c: ast.ClassDef) -> None:
+        """`posts: so.WriteOnlyMapped['Post'] = so.relationship(...)` and
+        `tasks = relationship('Task', lazy='dynamic')`: collections whose target
+        model the class states. Anything else is not recorded."""
+        for st in c.body:
+            if isinstance(st, ast.AnnAssign) and isinstance(st.target, ast.Name):
+                attr, ann, value = st.target.id, st.annotation, st.value
+            elif (
+                isinstance(st, ast.Assign)
+                and len(st.targets) == 1
+                and isinstance(st.targets[0], ast.Name)
+            ):
+                attr, ann, value = st.targets[0].id, None, st.value
+            else:
+                continue
+            mode = target = None
+            if isinstance(ann, ast.Subscript):
+                kind = _py_last(ann.value)
+                if kind in ("WriteOnlyMapped", "DynamicMapped"):
+                    mode = "write_only" if kind == "WriteOnlyMapped" else "dynamic"
+                    target = _rel_target(ann.slice)
+            secondary = None
+            if isinstance(value, ast.Call) and _py_last(value.func) == "relationship":
+                kws = {k.arg: k.value for k in value.keywords if k.arg}
+                if mode is None and _py_str(kws.get("lazy")) == "dynamic":
+                    mode = "dynamic"
+                if target is None and value.args:
+                    target = _rel_target(value.args[0])
+                if target is None and "argument" in kws:
+                    target = _rel_target(kws["argument"])
+                sec = kws.get("secondary")
+                if isinstance(sec, ast.Name):
+                    secondary = sec.id
+                elif _py_str(sec):
+                    secondary = "=" + str(_py_str(sec))
+            if mode and target:
+                self.found.models.append(
+                    _Model(st.lineno, attr, "relationship", "sqlalchemy", entity=target,
+                           owner=c.name, secondary=secondary, detail=mode)
+                )  # fmt: skip
+
+    # -- string values ------------------------------------------------------
+
+    def _lookup(self, name: str, line: int) -> str | None:
+        """Text of the string a bare name holds in the current scope.
+
+        A local variable resolved once wins; a name bound anywhere else in the
+        function (a parameter, a rebinding) is unknown; then the class body's
+        constants (only while in the class body, as Python scopes them), the
+        module's, and last a constant imported from another module, which is
+        recorded for the resolver and stands as an opaque hole here."""
+        if name in self.env:
+            self._subst = True
+            return self.env[name]
+        if name in self.shadow:
+            return None
+        if not self.in_func and self.cur_cls and name in self.cls_strs.get(self.cur_cls, {}):
+            self._subst = True
+            return self.cls_strs[self.cur_cls][name]
+        if name in self.strs:
+            self._subst = True
+            return self.strs[name]
+        if name in self.imported:
+            module, orig = self.imported[name]
+            if not self._defining:
+                self.found.constref(line, module, orig)
+            return HOLE
+        return None
+
+    def _attr_text(self, node: ast.Attribute) -> str | None:
+        """`self.SQL` / `cls.SQL` / `ClassName.SQL`: a constant of a same-file class."""
+        base = node.value
+        if not isinstance(base, ast.Name):
+            return None
+        cls = self.cur_cls if base.id in ("self", "cls") else base.id
+        text = self.cls_strs.get(cls or "", {}).get(node.attr)
+        if text is not None:
+            self._subst = True
+        return text
+
+    def _text(self, node: ast.AST) -> str | None:
+        """SQL-ish text of a string expression with holes, or None. Names that
+        hold a string in scope are substituted (and set ``_subst``)."""
+        if isinstance(node, ast.Constant):
+            return node.value if isinstance(node.value, str) else None
+        if isinstance(node, ast.Name):
+            return self._lookup(node.id, node.lineno) if isinstance(node.ctx, ast.Load) else None
+        if isinstance(node, ast.Attribute):
+            return self._attr_text(node)
+        if isinstance(node, ast.JoinedStr):
+            parts: list[str] = []
+            for v in node.values:
+                if isinstance(v, ast.Constant) and isinstance(v.value, str):
+                    parts.append(v.value)
+                elif isinstance(v, ast.FormattedValue):
+                    inner = self._text(v.value)
+                    parts.append(HOLE if inner is None else inner)
+                else:
+                    parts.append(HOLE)
+            return "".join(parts)
+        if isinstance(node, ast.BinOp):
+            if isinstance(node.op, ast.Add):
+                left, right = self._text(node.left), self._text(node.right)
+                if left is None and right is None:
+                    return None
+                return (HOLE if left is None else left) + (HOLE if right is None else right)
+            if isinstance(node.op, ast.Mod):
+                return self._text(node.left)
+            return None
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "format"
+        ):
+            return self._text(node.func.value)
+        return None
+
+    def _sql_text(self, node: ast.AST) -> tuple[str, bool] | None:
+        """(text, substituted) of a string expression, or None."""
+        self._subst = False
+        text = self._text(node)
+        return None if text is None else (text, self._subst)
 
     # -- walking ----------------------------------------------------------
 
@@ -383,39 +752,122 @@ class _Py:
                 and isinstance(st.value.value, str)
             ):
                 continue  # docstring / bare string
-            if (
-                top
-                and isinstance(st, ast.Assign)
-                and len(st.targets) == 1
-                and isinstance(st.targets[0], ast.Name)
-                and st.targets[0].id in self.consts
-            ):
+            if top and _skipped_const(st, self):
                 continue  # a SQL constant counts where it is used
             self.visit(st)
 
+    def _scope(self, fn: ast.FunctionDef | ast.AsyncFunctionDef) -> None:
+        """Local string variables of `fn` (call after saving the outer scope).
+
+        A name read through is bound exactly once by a plain assignment (and
+        only appended to with `+=`) and is not a parameter. Anything else (two
+        assignments, a loop target, an unpack, a parameter) is unknown, so a
+        variable that may hold another table's SQL yields nothing."""
+        binds: dict[str, list[ast.AST]] = {}
+        stores: dict[str, int] = {}
+        args = fn.args
+        params = {a.arg for a in [*args.posonlyargs, *args.args, *args.kwonlyargs]}
+        params.update(a.arg for a in (args.vararg, args.kwarg) if a is not None)
+        uses: dict[str, int] = {}
+        for n in ast.walk(fn):  # uses count nested functions too
+            if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Load):
+                uses[n.id] = uses.get(n.id, 0) + 1
+        for n in _scope_walk(fn):
+            if isinstance(n, ast.Name) and not isinstance(n.ctx, ast.Load):
+                stores[n.id] = stores.get(n.id, 0) + 1
+            elif isinstance(n, ast.Import | ast.ImportFrom):
+                for al in n.names:
+                    nm = (al.asname or al.name).split(".")[0]
+                    stores[nm] = stores.get(nm, 0) + 1
+                    binds.setdefault(nm, [])
+            elif isinstance(n, ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef):
+                stores[n.name] = stores.get(n.name, 0) + 1
+                binds.setdefault(n.name, [])
+            elif isinstance(n, ast.ExceptHandler) and n.name:
+                stores[n.name] = stores.get(n.name, 0) + 1
+                binds.setdefault(n.name, [])
+            if isinstance(n, ast.Name) and not isinstance(n.ctx, ast.Load):
+                binds.setdefault(n.id, [])
+            if isinstance(n, ast.Assign):
+                for t in n.targets:
+                    if isinstance(t, ast.Name):
+                        binds.setdefault(t.id, []).append(n if len(n.targets) == 1 else t)
+            elif isinstance(n, ast.AnnAssign) and isinstance(n.target, ast.Name):
+                binds.setdefault(n.target.id, []).append(n if n.value is not None else n.target)
+            elif isinstance(n, ast.AugAssign) and isinstance(n.target, ast.Name):
+                binds.setdefault(n.target.id, []).append(n)
+            elif isinstance(n, ast.Global | ast.Nonlocal):
+                for name in n.names:
+                    stores[name] = stores.get(name, 0) + 2
+                    binds.setdefault(name, [])
+        local = set(binds) | params
+        env = {k: v for k, v in self.env.items() if k not in local}
+        shadow = (self.shadow | local) - set(env)
+        self.env, self.shadow, self.skip_assign = env, shadow, set()
+        self.in_func = True
+        order = sorted(
+            (
+                (min(getattr(x, "lineno", 0) for x in stmts), name)
+                for name, stmts in binds.items()
+                if name not in params
+                and stmts
+                and hasattr(stmts[0], "lineno")
+                and stores.get(name, 0) == len(stmts)
+            ),
+        )
+        for _, name in order:
+            stmts = sorted(binds[name], key=lambda x: getattr(x, "lineno", 0))
+            first = stmts[0]
+            if not isinstance(first, ast.Assign | ast.AnnAssign) or first.value is None:
+                continue
+            rest = stmts[1:]
+            if not all(isinstance(s, ast.AugAssign) and isinstance(s.op, ast.Add) for s in rest):
+                continue
+            text = self._text(first.value)
+            if text is None:
+                continue
+            for aug in rest:
+                extra = self._text(aug.value)  # type: ignore[attr-defined]
+                text += HOLE if extra is None else extra
+            self.env[name] = text
+            self.shadow.discard(name)
+            if uses.get(name) and looks_like_sql(text):
+                self.skip_assign.add(name)
+
     def visit(self, node: ast.AST) -> None:
         if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
-            outer = self.ctx
+            saved = (self.ctx, self.env, self.shadow, self.skip_assign, self.in_func)
             self.ctx = self._bindings(node)
+            self._scope(node)
             for d in node.decorator_list:
                 self.visit(d)
             self.block(node.body)
-            self.ctx = outer
+            self.ctx, self.env, self.shadow, self.skip_assign, self.in_func = saved
             return
         if isinstance(node, ast.ClassDef):
+            saved_cls, saved_func = self.cur_cls, self.in_func
+            self.cur_cls, self.in_func = node.name, False
             self.block(node.body, top=True)
+            self.cur_cls, self.in_func = saved_cls, saved_func
             return
         if isinstance(node, ast.Module):
             self.block(node.body, top=True)
             return
+        if isinstance(node, ast.Assign | ast.AnnAssign | ast.AugAssign):
+            target = node.targets[0] if isinstance(node, ast.Assign) else node.target
+            if isinstance(target, ast.Name) and target.id in self.skip_assign:
+                return  # read through where the variable is used
         if isinstance(node, ast.Constant | ast.JoinedStr | ast.BinOp):
-            text = _py_text(node)
-            if text is not None:
-                self.found.sql(text, getattr(node, "lineno", 1))
+            got = self._sql_text(node)
+            if got is not None:
+                text, subst = got
+                self.found.sql(text, getattr(node, "lineno", 1), exact=subst, declare=not subst)
                 return
         if isinstance(node, ast.Name):
-            if node.id in self.consts and isinstance(node.ctx, ast.Load):
-                self.found.sql(self.consts[node.id], node.lineno)
+            if isinstance(node.ctx, ast.Load):
+                got = self._sql_text(node)
+                if got is not None and looks_like_sql(got[0]):
+                    self.found.sql(got[0], node.lineno, exact=True)
             return
         if isinstance(node, ast.Call | ast.Attribute):
             self.chain(node)
@@ -478,6 +930,8 @@ class _Py:
 
     def _instance_model(self, arg: ast.AST) -> tuple[str, str] | None:
         if isinstance(arg, ast.Name):
+            if arg.id == "self" and self.cur_cls in self.sa_models:
+                return ("self", self.cur_cls or "")
             return self.ctx.get(arg.id)
         if isinstance(arg, ast.Call) and isinstance(arg.func, ast.Name) and _cap(arg.func.id):
             return ("ctor", arg.func.id)
@@ -488,10 +942,16 @@ class _Py:
         line = node.lineno
         f = self.found
         root_name = _py_last(root)
-        # `self.SQL` / `cls.SQL`: a class-level SQL constant.
-        if isinstance(root, ast.Name) and root.id in ("self", "cls") and names:
-            if names[0] in self.consts:
-                f.sql(self.consts[names[0]], line)
+        # `self.SQL` / `cls.SQL` / `ClassName.SQL`: a class-level SQL constant.
+        if (
+            isinstance(root, ast.Name)
+            and names
+            and (root.id in ("self", "cls") or root.id not in self.shadow)
+        ):
+            cls = self.cur_cls if root.id in ("self", "cls") else root.id
+            text = self.cls_strs.get(cls or "", {}).get(names[0])
+            if text is not None and looks_like_sql(text):
+                f.sql(text, line, exact=True)
         # Django: Model.objects.<...>
         if names and names[0] == "objects" and root_name and _cap(root_name):
             write = any(n in _DJ_WRITE for n in names[1:])
@@ -540,6 +1000,10 @@ class _Py:
                     model = self._model_arg(a)
                     if model:
                         f.model(call.lineno, access, "sqlalchemy", model)
+            elif name == "select_from" and is_attr and self.sa and call.args:
+                model = self._model_arg(call.args[0])
+                if model:
+                    f.model(call.lineno, READ, "sqlalchemy", model)
             elif name in _SA_SESSION_WRITE and is_attr and session and call.args:
                 arg = call.args[0]
                 items = arg.elts if isinstance(arg, ast.List | ast.Tuple) else [arg]
@@ -547,10 +1011,25 @@ class _Py:
                     bound = self._instance_model(item)
                     if bound is not None:
                         f.model(call.lineno, WRITE, "sqlalchemy", bound[1])
-            elif name == "get" and is_attr and session and len(call.args) >= 2:
+            elif (
+                name in _SA_GET
+                and is_attr
+                and session
+                and len(call.args) >= (2 if name == "get" else 1)
+            ):
                 first = call.args[0]
                 if isinstance(first, ast.Name) and _cap(first.id):
                     f.model(call.lineno, READ, "sqlalchemy", first.id)
+            elif name in _REL_OP_NAMES and is_attr and (self.sa or name == "select"):
+                holder = call.func.value  # type: ignore[attr-defined]
+                if isinstance(holder, ast.Attribute):
+                    base = holder.value
+                    owner = (
+                        self.cur_cls
+                        if isinstance(base, ast.Name) and base.id == "self" and self.cur_cls
+                        else "*"
+                    )
+                    f.relref(call.lineno, owner or "*", holder.attr, name)
             for a in call.args:
                 self.visit(a.value if isinstance(a, ast.Starred) else a)
             for k in call.keywords:
@@ -578,6 +1057,71 @@ class _Py:
             self.visit(a.value if isinstance(a, ast.Starred) else a)
         for k in call.keywords:
             self.visit(k.value)
+
+
+def _bound_names(st: ast.stmt) -> list[str]:
+    """Names a top-level statement binds (assignments, defs, imports, loops)."""
+    out: list[str] = []
+    if isinstance(st, ast.Assign):
+        for t in st.targets:
+            out.extend(n.id for n in ast.walk(t) if isinstance(n, ast.Name))
+    elif isinstance(st, ast.AnnAssign | ast.AugAssign):
+        if isinstance(st.target, ast.Name):
+            out.append(st.target.id)
+    elif isinstance(st, ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef):
+        out.append(st.name)
+    elif isinstance(st, ast.Import | ast.ImportFrom):
+        out.extend((a.asname or a.name).split(".")[0] for a in st.names)
+    elif isinstance(st, ast.For | ast.AsyncFor):
+        out.extend(n.id for n in ast.walk(st.target) if isinstance(n, ast.Name))
+    return out
+
+
+def _skipped_const(st: ast.stmt, py: _Py) -> bool:
+    """`NAME = "<sql>"` at module / class level: its uses count, not the definition."""
+    if not (isinstance(st, ast.Assign) and len(st.targets) == 1):
+        return False
+    t = st.targets[0]
+    if not isinstance(t, ast.Name):
+        return False
+    scope = py.strs if py.cur_cls is None else py.cls_strs.get(py.cur_cls, {})
+    text = scope.get(t.id)
+    return text is not None and looks_like_sql(text)
+
+
+def _scope_walk(fn: ast.AST) -> Iterator[ast.AST]:
+    """Nodes of a function body, not descending into nested defs / classes /
+    lambdas (their bindings are their own)."""
+    stack: list[ast.AST] = list(ast.iter_child_nodes(fn))
+    while stack:
+        n = stack.pop()
+        yield n
+        if isinstance(n, ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef | ast.Lambda):
+            continue
+        stack.extend(ast.iter_child_nodes(n))
+
+
+def _truthy(node: ast.AST) -> bool:
+    return isinstance(node, ast.Constant) and bool(node.value)
+
+
+def _has_primary_key(c: ast.ClassDef) -> bool:
+    return any(
+        isinstance(n, ast.keyword) and n.arg == "primary_key" and _truthy(n.value)
+        for n in ast.walk(c)
+    )
+
+
+def _rel_target(node: ast.AST) -> str | None:
+    """Model named by a relationship argument or annotation: `'Post'`, `Post`."""
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        name = node.value.strip()
+        return name if name.isidentifier() else None
+    if isinstance(node, ast.Name):
+        return node.id
+    if isinstance(node, ast.Attribute):
+        return node.attr
+    return None
 
 
 def _py_spine(
@@ -867,7 +1411,7 @@ class _Js:
                 if text is not None:
                     skip_until = n.end_byte
                     if not self._is_const_decl(n):
-                        found.sql(text, _line(n))
+                        found.sql(text, _line(n), declare=True)
                     continue
             if n.type == "call_expression":
                 self.call(n)
@@ -889,7 +1433,7 @@ class _Js:
             and _same(p.child_by_field_name("name"), node)
         ):
             return
-        self.found.sql(entry[0], _line(node))
+        self.found.sql(entry[0], _line(node), exact=True)
 
     # -- declarations -----------------------------------------------------
 
@@ -911,6 +1455,7 @@ class _Js:
                 text = _ts_text(value, src)
                 if text is not None and looks_like_sql(text):
                     self.consts[_txt(name, src)] = (text, value.start_byte, value.end_byte)
+                    self.found.declare_sql(text, _line(value))
                 return
             entity = self._repo_entity(value)
             if entity:
@@ -1104,6 +1649,11 @@ class _Js:
             wrote = bool(_KNEX_WRITE & (set(up) | set(down)))
             if method in _KNEX_DDL:
                 f.table(line, DDL, "knex", table, schema)
+                if method in ("createTable", "createTableIfNotExists"):
+                    f.models.append(
+                        _Model(line, table.lower(), "table", "knex", table, schema,
+                               table_source="declared")
+                    )  # fmt: skip
             elif method == "into":
                 f.table(line, WRITE, "knex", table, schema)
             elif method in ("from", "table", "withSchema") and method != "withSchema":
@@ -1250,7 +1800,7 @@ class _Java:
                 if text is not None:
                     skip_until = n.end_byte
                     if n.start_byte not in const_starts:
-                        found.sql(text, _line(n), jpql=self._jpql(n))
+                        found.sql(text, _line(n), jpql=self._jpql(n), declare=True)
                     continue
             if n.type == "method_invocation":
                 self.call(n)
@@ -1262,7 +1812,9 @@ class _Java:
                     and _same(p.child_by_field_name("name"), n)
                 ):
                     continue
-                found.sql(self.consts[_txt(n, self.src)][0], _line(n), jpql=self._jpql(n))
+                found.sql(
+                    self.consts[_txt(n, self.src)][0], _line(n), jpql=self._jpql(n), exact=True
+                )
 
     def _jpql(self, node) -> bool:
         """Is this string a JPQL query (entity names) rather than native SQL?"""
@@ -1310,6 +1862,7 @@ class _Java:
                     text = _ts_text(value, src)
                     if text is not None and looks_like_sql(text):
                         self.consts[_txt(name, src)] = (text, value.start_byte)
+                        self.found.declare_sql(text, _line(value))
         elif t == "formal_parameter":
             tname = _java_type_name(n.child_by_field_name("type"), src)
             name = n.child_by_field_name("name")

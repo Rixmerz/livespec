@@ -524,7 +524,7 @@ def test_m031_data_access_forward_and_cascade(tmp_path: Path):
     def rollback() -> None:
         conn.execute("DROP TABLE data_access")
         conn.execute("DROP TABLE data_model")
-        conn.execute("DELETE FROM schema_migrations WHERE version=31")
+        conn.execute("DELETE FROM schema_migrations WHERE version IN (31, 32)")
         conn.commit()
 
     rollback()

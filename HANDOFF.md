@@ -70,7 +70,10 @@ commit y su entrada en CHANGELOG `[Unreleased]`:
 - `find_data_access` (mig. 31, `tools/data_access.py`): qué símbolo lee o
   escribe qué tabla, desde SQL en strings y ORM (SQLAlchemy, Django, Prisma,
   Knex, JPA). Los modelos Prisma y las entidades JPA sin `@Table` quedan como
-  no resueltos. Sin probar en un repo real grande.
+  no resueltos. Rama `fix/data-access-recall` (mig. 32): SQL en constantes y
+  variables locales, constantes importadas (un salto), `CREATE TABLE` en código
+  como declaración, convención Flask-SQLAlchemy, SQLAlchemy 2.0 y colecciones
+  write-only; validado en delta-cube, livespec y microblog (ver CHANGELOG).
 - `find_clone_clusters` (`tools/clones.py`, sin migración) y modo esquema en
   `quick_orient` (acepta una ruta de archivo; en clases agrega sus miembros).
 

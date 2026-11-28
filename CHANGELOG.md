@@ -42,16 +42,22 @@ follows [SemVer](https://semver.org/).
   `outline`; classes carry an `outline` of their members.
 ### Added — data-access map: which code touches which table
 
-- `find_data_access(table=None, qname=None, access=None, include_callers=False,
-  limit=200, cursor=0, summary_only=False)` — new core tool (42 → 43 core,
+- `find_data_access(table=None, qname=None, access=None, include_callees=False,
+  include_callers=False, limit=200, cursor=0, summary_only=False,
+  include_system=False, unresolved_cursor=0)` — new core tool (42 → 43 core,
   57 → 58 total), in its own module `tools/data_access.py`. Three modes:
   `table=` (any case, schema optional) lists who reads, writes or defines it,
   grouped by kind with `file:line` and mechanism; `qname=` lists the tables a
-  symbol touches, and `include_callers=True` also those reached through its
-  callees (3 hops, call edges of weight >= 0.6), each row naming the callee in
-  `via`; with neither, the table inventory with exact read / write / ddl
-  counts, joined with tables declared in indexed `.sql` files (`ok` /
-  `undeclared` / `unaccessed`). Unknown table or access kind: `did_you_mean`.
+  symbol touches (every row with `file:line`), and `include_callees=True` also
+  those reached through its callees (3 hops, call edges of weight >= 0.6), each
+  row naming the callee in `via` (`include_callers` is the deprecated old
+  spelling of the same thing, which never followed callers; it still works and
+  the payload says `deprecated`); with neither, the table inventory with exact
+  read / write / ddl counts, joined with tables declared in indexed `.sql`
+  files **and in code** (`ok` / `undeclared` / `unaccessed`; `declared_in` +
+  `declared_source`: `sql_file` | `code`). Unknown table or access kind:
+  `did_you_mean`; a `table=` that is no table but an ORM model name is answered
+  with that model's accesses (`mode: model`, `matched: model`).
 - Read at index time, no annotation, for Python, TypeScript/JavaScript and
   Java. SQL and JPQL in string literals (multi-line, f-string / template holes,
   `+` concatenation, module / class SQL constants counted where used) through a
@@ -66,11 +72,45 @@ follows [SemVer](https://semver.org/).
   TypeORM, Sequelize, JPA / Spring Data (`@Entity` / `@Table`,
   `EntityManager`, `@Query`, repository method prefixes). A table is never
   invented: an access whose model has no statable table is `confidence:
-  unresolved` and listed under `unresolved_models`.
+  unresolved` and listed under `unresolved_models`, each with the `file:line`
+  of its accesses (up to 20 per model, `accesses_more` counts the rest; paged
+  by `limit` / `unresolved_cursor`).
+- Recall (validated on real repositories; precision kept): SQL held in a
+  module / class constant is attributed to each function of the file that uses
+  it (an execute-like call, an f-string, a `+`), at the line of the use, and
+  a multi-statement script gives one access per statement; a constant imported
+  with `from .schema import NAME` / `from pkg.schema import NAME` is followed
+  one hop (Python; resolved after indexing from the defining file, so editing
+  only that file updates the rows); a string variable assigned once in a
+  function (`+=` appends) is read through in a later `execute(base + where)` or
+  as a subquery in another variable — one assigned twice, in a loop, or from a
+  parameter yields nothing. A `CREATE TABLE` in code (Python, TS/JS, Java, a
+  Knex `createTable`) declares the table, at the line of the statement or
+  constant, even when no code runs it. Flask-SQLAlchemy `db.Model` classes
+  without `__tablename__` get the CamelCase → snake_case name
+  (`confidence: convention`), only where `db = SQLAlchemy()` from
+  `flask_sqlalchemy` is seen in the project; plain declarative models stay
+  unresolved; a subclass without a key of its own shares its parent's table.
+  SQLAlchemy 2.0: `select(...).select_from(Model)`, `db.get_or_404(Model, id)`,
+  `session.get_one`, `session.add(self)` in a model, and write-only / dynamic
+  collections (`self.tasks.select()`, `user.posts.select()`,
+  `self.following.add(x)` → the association table) when the relationship
+  declares its target class (`so.WriteOnlyMapped['Task']`,
+  `relationship('Task', lazy='dynamic')`), on `self` inside the declaring
+  class or on any receiver when exactly one class declares that attribute.
+  Catalogue tables (`sqlite_master`, `information_schema.*`, `pg_catalog.*`)
+  carry `system: true` and are left out of the inventory unless
+  `include_system=True` (`counts.system_tables_hidden`). Not seen, counted where
+  cheap: table names built at run time (`counts.skipped.dynamic_table`); never
+  seen: SQL passed through a parameter, ORM calls on an untyped receiver,
+  `select(cls)`, a constant re-exported through a package `__init__`.
 - Storage: migration 31 (30 is intentionally unused) adds `data_access`
-  (symbol-bound, cascades on re-extract) and `data_model`; existing indexes
-  re-extract on their next `index_project`. ORM rows are re-resolved against
-  model declarations on every run that changed a file.
+  (symbol-bound, cascades on re-extract) and `data_model`; migration 32
+  recreates both (derived data) with the wider shapes above (new `data_model`
+  roles and columns; `data_access` rows derived after indexing for imported
+  constants and collections); existing indexes re-extract on their next
+  `index_project`. ORM rows are re-resolved against model declarations, and the
+  derived rows rebuilt, on every run that changed a file.
 ### Added — native `inherits` / `references` edges (Python, TypeScript/TSX, Java)
 
 - livespec's own extractors now emit `inherits` edges (class -> each base
