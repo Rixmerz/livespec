@@ -1094,6 +1094,17 @@ def _m033_data_access_shapes(conn: sqlite3.Connection) -> None:
         _flag_reextract(conn)
 
 
+def _m036_reextract_scale_extraction(conn: sqlite3.Connection) -> None:
+    """Unreleased: no schema change, only the re-extract flag. The extractors
+    changed what they store (Java typed-receiver / Spring route refs, Python
+    class-body calls, class names passed as arguments, aliased-import call
+    names); an unchanged file is skipped by content hash, so an index built
+    before would keep the old refs and edges until a forced re-index. Queued
+    only on a DB that already holds symbols."""
+    if conn.execute("SELECT 1 FROM symbol LIMIT 1").fetchone() is not None:
+        _flag_reextract(conn)
+
+
 def _m034_symbol_ref_receiver_class(conn: sqlite3.Connection) -> None:
     """Unreleased: ``symbol_ref.receiver_class`` — the class a call's receiver
     evidently is (``super(Cls, self).f()``, ``c = Child(); c.f()``), so the
@@ -1143,6 +1154,7 @@ MIGRATIONS: list[Migration] = [
     (33, "data_access_shapes", _m033_data_access_shapes),
     (34, "symbol_ref_receiver_class", _m034_symbol_ref_receiver_class),
     (35, "runtime_source_index_run", _m035_runtime_source_index_run),
+    (36, "reextract_scale_extraction", _m036_reextract_scale_extraction),
 ]
 
 

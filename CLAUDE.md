@@ -220,7 +220,7 @@ domain/         Pure business logic, no MCP coupling
 storage/        SQLite persistence
   schema.sql      single-file schema; CREATE TABLE IF NOT EXISTS for everything
   db.py           connection bootstrap + ordered migration framework
-                  (schema_migrations table; MIGRATIONS list append-only, at v35)
+                  (schema_migrations table; MIGRATIONS list append-only, at v36)
 ```
 
 ### Critical contracts (don't break)
