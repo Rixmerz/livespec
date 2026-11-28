@@ -104,11 +104,55 @@ class ExtractedSchema:
 
 
 @dataclass
+class ExtractedAccess:
+    """One place a symbol reads, writes or defines a table (domain/data_access.py).
+
+    Either `table` is set (the name is written at the site: SQL text, a query
+    builder's string argument) or `ref_name` is (a model / entity class, or a
+    Spring Data repository type) and the table is resolved after indexing from
+    the project's model declarations. `src_qname` is the innermost symbol
+    spanning `line`.
+    """
+
+    src_qname: str
+    access: str  # read | write | ddl
+    mechanism: str  # sql | sqlalchemy | django | prisma | knex | typeorm | jpa | ...
+    line: int
+    table: str | None = None
+    schema: str | None = None
+    ref_name: str | None = None
+    ref_kind: str | None = None  # model | repository
+
+
+@dataclass
+class ExtractedModel:
+    """A class that maps to a table (`role='model'`) or a repository interface
+    that maps to an entity (`role='repository'`). `table` stays None when the
+    source does not state it; `table_source` says whether it was declared or
+    follows the framework's naming convention. `src_qname` is empty for a
+    declaration outside every symbol (a module-level SQLAlchemy `Table`)."""
+
+    src_qname: str
+    name: str
+    role: str  # model | repository
+    mechanism: str
+    line: int
+    table: str | None = None
+    schema: str | None = None
+    entity: str | None = None
+    table_source: str | None = None  # declared | convention
+
+
+@dataclass
 class ExtractResult:
     symbols: list[ExtractedSymbol] = field(default_factory=list)
     refs: list[ExtractedRef] = field(default_factory=list)
     routes: list[ExtractedRoute] = field(default_factory=list)
     schemas: list[ExtractedSchema] = field(default_factory=list)
+    # Data access map: where symbols touch tables, and the model -> table
+    # declarations that resolve the ORM ones.
+    accesses: list[ExtractedAccess] = field(default_factory=list)
+    models: list[ExtractedModel] = field(default_factory=list)
     # P0.4: per-file imports map. local_name -> source_module (qualified name of
     # the module providing it). Used by the resolver to scope short-name lookups.
     imports: dict[str, str] = field(default_factory=dict)
@@ -3743,7 +3787,7 @@ def extract(path: Path, source: str, project_root: Path) -> tuple[str, ExtractRe
     )
     module_name = ".".join(rel.with_suffix("").parts)
     if lang == "python":
-        return lang, _py_extract(source, module_name)
+        return lang, _with_data_access(source, lang, module_name, _py_extract(source, module_name))
     if lang in SCHEMA_ONLY_LANGUAGES:
         # Imported here: sql_schema builds this module's dataclasses, so a
         # top-level import would be circular.
@@ -3751,4 +3795,16 @@ def extract(path: Path, source: str, project_root: Path) -> tuple[str, ExtractRe
 
         return lang, extract_sql_schemas(source, module_name)
     current_dir = rel.parent.parts
-    return lang, _ts_extract(source, lang, module_name, current_dir)
+    result = _ts_extract(source, lang, module_name, current_dir)
+    return lang, _with_data_access(source, lang, module_name, result)
+
+
+def _with_data_access(
+    source: str, lang: str, module_name: str, result: ExtractResult
+) -> ExtractResult:
+    # Imported here: data_access builds this module's dataclasses, so a
+    # top-level import would be circular.
+    from livespec_mcp.domain.data_access import collect_data_access
+
+    collect_data_access(source, lang, module_name, result)
+    return result

@@ -151,6 +151,15 @@ PARAM_DESCRIPTIONS: dict[str, str] = {
         "Optional entity name from a ``@schema: <entity>`` annotation; any spelling "
         "matches (``user-profile`` = ``UserProfile``). Omit for every bound entity."
     ),
+    "table": (
+        "Database table name, any case, with or without schema (``public.users`` = "
+        "``users``). Omit, with no ``qname``, for the table inventory."
+    ),
+    "access": "Only this kind of access: ``read``, ``write`` or ``ddl``. Omit for all three.",
+    "include_callers": (
+        "Also list the tables reached through this symbol's callees (up to 3 hops, "
+        "call edges of weight 0.6 or more); each such row names the callee in ``via``."
+    ),
 }
 
 # Disambiguate params whose meaning depends on the tool.

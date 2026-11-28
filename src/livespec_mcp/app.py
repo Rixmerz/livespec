@@ -15,7 +15,7 @@ from livespec_mcp.error_middleware import WorkspaceErrorMiddleware
 from livespec_mcp.instrumentation import AgentLogMiddleware
 from livespec_mcp.plugin_visibility import PluginVisibilityMiddleware
 from livespec_mcp.schema_compat import SchemaCompatMiddleware
-from livespec_mcp.tools import analysis, indexing, schemas, search, specs, tracks
+from livespec_mcp.tools import analysis, data_access, indexing, schemas, search, specs, tracks
 from livespec_mcp.tools.plugins import register_all_plugins
 
 mcp = FastMCP(
@@ -53,6 +53,7 @@ specs.register(mcp)
 search.register(mcp)
 tracks.register(mcp)
 schemas.register(mcp)
+data_access.register(mcp)
 resources.register(mcp)
 prompts.register(mcp)
 
