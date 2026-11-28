@@ -117,16 +117,17 @@ async def test_find_endpoints_spring_carries_method_and_path(workspace):
 
 
 @pytest.mark.asyncio
-async def test_find_endpoints_spring_bare_mapping_has_no_invented_route(workspace):
-    """`@GetMapping` with no path inherits the class prefix, which the
-    extractor does not capture yet. Report no route rather than a wrong one."""
+async def test_find_endpoints_spring_applies_the_class_request_mapping_prefix(workspace):
+    """A bare `@GetMapping` is the class prefix itself; `@PostMapping("/create")`
+    sits under it."""
     (workspace / "UserController.java").write_text(SPRING_SRC)
     async with Client(mcp) as c:
         await c.call_tool("index_project", {})
         out = (await c.call_tool("find_endpoints", {"framework": "spring"})).data
     by_name = {e["qualified_name"].rsplit(".", 1)[-1]: e for e in out["endpoints"]}
-    assert by_name["create"]["http_path"] == "/create"
-    assert by_name["list"].get("http_path") is None, by_name["list"]
+    assert by_name["create"]["http_path"] == "/api/users/create"
+    assert by_name["list"]["http_path"] == "/api/users"
+    assert by_name["list"]["http_method"] == "GET"
 
 
 @pytest.mark.asyncio

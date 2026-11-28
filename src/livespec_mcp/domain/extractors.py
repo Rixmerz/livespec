@@ -2118,17 +2118,12 @@ def _ts_object_method_label(method_node, src_bytes: bytes) -> str | None:
     return None
 
 
-_JAVA_MAPPING_PATH = _re_rs.compile(
-    r"@(Get|Post|Put|Patch|Delete)Mapping\s*\(\s*"
-    r"(?:value\s*=\s*|path\s*=\s*)?"
-    r"[\"'](/[^\"']{0,200})[\"']"
-)
 _JAVA_MAPPING_VERB = {
-    "Get": "GET",
-    "Post": "POST",
-    "Put": "PUT",
-    "Patch": "PATCH",
-    "Delete": "DELETE",
+    "GetMapping": "GET",
+    "PostMapping": "POST",
+    "PutMapping": "PUT",
+    "PatchMapping": "PATCH",
+    "DeleteMapping": "DELETE",
 }
 
 
@@ -2303,23 +2298,111 @@ def _java_implicit_members(node, src_bytes: bytes, class_qname: str) -> list[Ext
     return out
 
 
-def _java_mapping_routes(node, src_bytes: bytes) -> list[tuple[str, str, int]]:
-    """``@GetMapping("/x")`` on a Java method → server route triples."""
-    out: list[tuple[str, str, int]] = []
-    for child in node.children:
-        if child.type != "modifiers":
+def _java_string_values(node, text) -> list[str] | None:
+    """The literal strings a Java annotation value holds: ``"/x"`` or
+    ``{"/x", "/y"}``. None when any part is not a plain literal (a constant,
+    a concatenation): a path built from it would be a guess."""
+    if node.type == "string_literal":
+        raw = text(node)
+        return (
+            [raw[1:-1]] if len(raw) >= 2 and raw[0] == '"' and not raw.startswith('"""') else None
+        )
+    if node.type == "element_value_array_initializer":
+        out: list[str] = []
+        for c in node.children:
+            if c.is_named:
+                got = _java_string_values(c, text)
+                if got is None:
+                    return None
+                out.extend(got)
+        return out
+    return None
+
+
+def _java_request_methods(node, text) -> list[str]:
+    """`RequestMethod.GET` / `{RequestMethod.GET, POST}` -> ["GET", ...]."""
+    if node.type == "element_value_array_initializer":
+        return [m for c in node.children if c.is_named for m in _java_request_methods(c, text)]
+    name = text(node).rsplit(".", 1)[-1].strip().upper()
+    return [name] if name.isalpha() else []
+
+
+def _java_mapping_annotation(ann, text) -> tuple[list[str], list[str]] | None:
+    """``(paths, request methods)`` of one Spring mapping annotation; paths is
+    ``[""]`` when it names none. None when a path is not a plain literal."""
+    args = ann.child_by_field_name("arguments")
+    paths: list[str] = []
+    methods: list[str] = []
+    named_path = False
+    for c in args.children if args is not None else ():
+        if not c.is_named:
             continue
-        for mod in child.children:
-            if mod.type not in ("annotation", "marker_annotation"):
+        key, value = "value", c
+        if c.type == "element_value_pair":
+            k, v = c.child_by_field_name("key"), c.child_by_field_name("value")
+            if k is None or v is None:
                 continue
-            raw = src_bytes[mod.start_byte : mod.end_byte].decode("utf-8", errors="replace")
-            m = _JAVA_MAPPING_PATH.search(raw[:400])
-            if m is None:
+            key, value = text(k).strip(), v
+        if key in ("value", "path"):
+            named_path = True
+            got = _java_string_values(value, text)
+            if got is None:
+                return None
+            paths.extend(got)
+        elif key == "method":
+            methods.extend(_java_request_methods(value, text))
+    return (paths if named_path else [""]), methods
+
+
+def _java_join_route(prefix: str, path: str) -> str:
+    joined = "/" + "/".join(p for p in (prefix + "/" + path).split("/") if p)
+    return joined
+
+
+def _java_mapping_routes(node, src_bytes: bytes) -> list[tuple[str | None, str, int]]:
+    """Spring mapping annotations on a Java method -> server route triples,
+    one per path (``@GetMapping({"/a", "/b"})``) with the enclosing class's
+    ``@RequestMapping`` prefix applied. ``@RequestMapping`` on a method names
+    its verbs in ``method=`` (none: any, ``None``)."""
+
+    def text(n) -> str:
+        return src_bytes[n.start_byte : n.end_byte].decode("utf-8", errors="replace")
+
+    def mappings(decl):
+        for child in decl.children:
+            if child.type != "modifiers":
                 continue
-            verb = _JAVA_MAPPING_VERB.get(m.group(1))
-            if verb is None:
-                continue
-            out.append((verb, m.group(2), mod.start_point[0] + 1))
+            for mod in child.children:
+                if mod.type not in ("annotation", "marker_annotation"):
+                    continue
+                name = mod.child_by_field_name("name")
+                if name is not None:
+                    yield text(name).rsplit(".", 1)[-1], mod
+
+    prefixes = [""]
+    cls = node.parent
+    while cls is not None and cls.type not in _JAVA_CLASS_LIKE:
+        cls = cls.parent
+    if cls is not None:
+        for name, ann in mappings(cls):
+            parsed = _java_mapping_annotation(ann, text) if name == "RequestMapping" else None
+            if parsed is not None and parsed[0]:
+                prefixes = parsed[0]
+    out: list[tuple[str | None, str, int]] = []
+    for name, ann in mappings(node):
+        if name != "RequestMapping" and name not in _JAVA_MAPPING_VERB:
+            continue
+        parsed = _java_mapping_annotation(ann, text)
+        if parsed is None:
+            continue
+        paths, methods = parsed
+        verbs: list[str | None] = (
+            [_JAVA_MAPPING_VERB[name]] if name in _JAVA_MAPPING_VERB else (methods or [None])
+        )
+        for verb in verbs:
+            for prefix in prefixes:
+                for path in paths:
+                    out.append((verb, _java_join_route(prefix, path), ann.start_point[0] + 1))
     return out
 
 
@@ -3728,6 +3811,92 @@ def _java_collect_imports(root_node, src_bytes: bytes) -> dict[str, str]:
     return imports
 
 
+_JAVA_CLASS_LIKE = frozenset(
+    {"class_declaration", "enum_declaration", "record_declaration", "interface_declaration"}
+)
+
+
+def _java_type_name(node, text) -> str | None:
+    """The class a Java type node names, generics dropped: `List<Pet>` -> `List`,
+    `a.b.Owner` -> `a.b.Owner`. Arrays, primitives and `var` name no class."""
+    if node is None:
+        return None
+    if node.type in ("type_identifier", "scoped_type_identifier"):
+        name = text(node).strip()
+        return name if name and name != "var" else None
+    if node.type == "generic_type":
+        first = next((c for c in node.children if c.is_named), None)
+        return _java_type_name(first, text)
+    return None
+
+
+def _java_declared_types(def_node, text) -> tuple[dict, dict]:
+    """Declared types visible to a Java member body: ``(locals, fields)``, each
+    ``{name: class name | None}``. ``None`` marks a name that is declared but
+    whose class cannot be told (`var`, or two declarations that disagree), so
+    it shadows an outer name instead of falling through to it."""
+    fields: dict[str, str | None] = {}
+    locs: dict[str, str | None] = {}
+
+    def put(target: dict, name_node, type_node) -> None:
+        if name_node is None:
+            return
+        name = text(name_node).strip()
+        typ = _java_type_name(type_node, text)
+        if name in target and target[name] != typ:
+            typ = None
+        target[name] = typ
+
+    def declarators(target: dict, decl) -> None:
+        type_node = decl.child_by_field_name("type")
+        for d in decl.children:
+            if d.type == "variable_declarator":
+                put(target, d.child_by_field_name("name"), type_node)
+
+    # Enclosing classes, outermost first so an inner field shadows an outer one.
+    chain = []
+    cur = def_node
+    while cur is not None:
+        if cur.type in _JAVA_CLASS_LIKE:
+            chain.append(cur)
+        cur = cur.parent
+    for cls in reversed(chain):
+        body = cls.child_by_field_name("body")
+        for c in body.children if body is not None else ():
+            if c.type == "field_declaration":
+                declarators(fields, c)
+        params = cls.child_by_field_name("parameters")  # record components
+        for c in params.children if params is not None else ():
+            if c.type == "formal_parameter":
+                put(fields, c.child_by_field_name("name"), c.child_by_field_name("type"))
+
+    def walk(n) -> None:
+        if n.type == "local_variable_declaration":
+            declarators(locs, n)
+        elif n.type in ("formal_parameter", "enhanced_for_statement", "resource"):
+            put(locs, n.child_by_field_name("name"), n.child_by_field_name("type"))
+        elif n.type in ("inferred_parameters", "catch_formal_parameter", "pattern"):
+            for c in n.children:
+                if c.type == "identifier":
+                    put(locs, c, None)
+        elif n.type == "lambda_expression":
+            lam = n.child_by_field_name("parameters")
+            if lam is not None and lam.type == "identifier":
+                put(locs, lam, None)
+        elif n.type == "spread_parameter":
+            for c in n.children:
+                if c.type == "variable_declarator":
+                    put(locs, c.child_by_field_name("name"), None)
+        for c in n.children:
+            if c is not def_node and c.type in _JAVA_CLASS_LIKE:
+                continue
+            walk(c)
+
+    if def_node.type not in _JAVA_CLASS_LIKE:
+        walk(def_node)
+    return locs, fields
+
+
 def _ts_collect_calls(
     def_node,
     src_qname: str,
@@ -4102,6 +4271,39 @@ def _ts_collect_calls(
             return None
         return method, path
 
+    java_types: list = []
+
+    def _java_receiver_class(call_node) -> str | None:
+        """`x.m()` / `this.x.m()` where `x` is a local, parameter or field with
+        a declared class: that class (`scope::Name` when its import is known).
+        Java declares its types, so the receiver's class needs no inference;
+        anything else (`a.b.m()`, `f().m()`, `var x`) stays unclassified."""
+        obj = call_node.child_by_field_name("object")
+        if obj is None:
+            return None
+        this_field = False
+        if obj.type == "field_access":
+            inner = obj.child_by_field_name("object")
+            fld = obj.child_by_field_name("field")
+            if inner is None or inner.type != "this" or fld is None:
+                return None
+            name, this_field = text(fld).strip(), True
+        elif obj.type == "identifier":
+            name = text(obj).strip()
+        else:
+            return None
+        if not java_types:
+            java_types.append(_java_declared_types(def_node, text))
+        locs, fields = java_types[0]
+        if this_field or name not in locs:
+            raw = fields.get(name)
+        else:
+            raw = locs[name]
+        if not raw:
+            return None
+        scope = type_refs.scope_of(raw) if type_refs is not None else None
+        return f"{scope}::{raw.rsplit('.', 1)[-1]}" if scope else raw
+
     def walk(node):
         if type_refs is not None:
             type_refs.visit(node)
@@ -4154,6 +4356,11 @@ def _ts_collect_calls(
             # it still counts.
             if tgt and not _ts_receiver_is_literal(node):
                 receiver, base = _js_receiver(node, text, out.imports)
+                receiver_class: str | None = None
+                if receiver is None and node.type == "method_invocation":
+                    receiver_class = _java_receiver_class(node)
+                    if receiver_class is not None:
+                        receiver = RECEIVER_OBJECT
                 if receiver is not None:
                     # JS/TS member call: scoped by its receiver only. A named
                     # import of `join` says nothing about `parts.join(",")`.
@@ -4173,6 +4380,7 @@ def _ts_collect_calls(
                         line=node.start_point[0] + 1,
                         scope_module=scope,
                         receiver=receiver,
+                        receiver_class=receiver_class,
                     )
                 )
             if tgt:

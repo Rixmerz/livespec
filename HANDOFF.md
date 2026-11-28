@@ -44,6 +44,24 @@ Todo el stack es local-first: 0 servicios externos, 0 API keys obligatorias, 0 D
 
 ## 3. Estado actual
 
+### Unreleased — trial Java (Spring PetClinic)
+
+**Rama `ls-java` (local, sobre `c8510ce`): hallazgos del trial Java, 1570 tests + 5 nuevos
+(`tests/test_java_petclinic_trial.py`; un test de `test_spring_angular.py` cambió de expectativa).**
+(1) Receptor tipado en Java: `x.m()` con `x` local/parámetro/campo/`this.campo` de tipo declarado
+-> `symbol_ref.receiver='object'` + `receiver_class`, el resolver (`indexer._resolve_refs`, rama
+`RECEIVER_OBJECT`) ata al método de esa clase o su ancestro indexado a peso 1.0 y no hace
+fan-out; tipo que no es clase del proyecto, `var`, lambda, nombre declarado dos veces con tipos
+distintos o cadena -> resolución previa. PetClinic: `Owner.addVisit` 0 -> 3 callers.
+(2) Spring: prefijo de `@RequestMapping` de clase, formas array/`value=`/`path=` y
+`@RequestMapping(method=)` de método, una ruta por path (`_java_mapping_routes`); PetController era
+el único con prefijo de clase y la feature nunca existió. (3) `find_dead_code`: `main`, métodos de
+interfaces Spring Data y `@Override` de bases externas, siempre fuera (`framework_implemented`).
+(4) JPA: `_Java._relationships` + `_derive_jpa_relationship_rows`; pets/visits/specialties/
+vet_specialties dejan de ser `unaccessed`. (5) `propose_specs_from_codebase`: sin cambio, ya tiene
+`max_proposals`. Pendiente: su agrupación por prefijo de qname da un solo spec "Java"
+(`src.main.java`) con `module_depth=3`.
+
 ### Unreleased — evidencia de ejecución, aristas de herencia/tipo, acceso a datos, clones
 
 **Rama `fix/trial3-js` (local): tercer trial (CLI JavaScript), 1570 tests + 14 nuevos

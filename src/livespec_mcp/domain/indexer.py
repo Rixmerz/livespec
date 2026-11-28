@@ -1551,7 +1551,8 @@ def _resolve_refs(
                 if hier.is_class(hits[0][0]):
                     found = hier.find_in_mro(hits[0][0], str(u["target_name"]))
                     if found is not None:
-                        emit_call(src_id_, found, 0.9)
+                        # Java declares the receiver's type: not an inference.
+                        emit_call(src_id_, found, 1.0 if src_family == "java" else 0.9)
                         continue
                     # Not found: nobody defines it only when the WHOLE ancestry
                     # is indexed; with a library or unresolved base the method
@@ -1562,6 +1563,14 @@ def _resolve_refs(
                 len(hits) == 1 and get_hierarchy().is_class(hits[0][0])
             ):
                 continue  # a class name that is not ONE project class: no edge
+            if (
+                receiver == RECEIVER_OBJECT
+                and src_family == "java"
+                and not (len(hits) == 1 and get_hierarchy().is_class(hits[0][0]))
+            ):
+                # A declared type that is no project class (a library type, a
+                # type parameter): same evidence as no declaration at all.
+                receiver = None
         if receiver in (RECEIVER_SELF, RECEIVER_OBJECT):
             candidates = [c for c in candidates if c[0] in methods]
             if receiver == RECEIVER_SELF:
