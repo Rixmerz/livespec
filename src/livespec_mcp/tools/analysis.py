@@ -26,8 +26,7 @@ from livespec_mcp.domain.extractors import (
     HTTP_ROUTE_DECORATOR_LASTSEGS,
     _ts_collect_imports,
     get_parser,
-    infer_python_http_framework,
-    parse_python_http_route,
+    parse_python_http_route_details,
     scan_go_routes,
     scan_hono_routes,
     ts_registered_callback_names,
@@ -44,6 +43,7 @@ from livespec_mcp.domain.graph import (
 from livespec_mcp.domain.indexer import DEFAULT_IGNORES, _hash_bytes, _iter_files
 from livespec_mcp.domain.languages import detect_language
 from livespec_mcp.domain.legacy_flows import compute_legacy_flows
+from livespec_mcp.domain.py_routes import PythonRouteContext
 from livespec_mcp.domain.schema_impact import diff_schema_impact
 from livespec_mcp.domain.test_coverage_reports import discover_report_coverage
 from livespec_mcp.domain.tracks import changed_qnames_by_path, spec_definition_edits
@@ -1655,6 +1655,23 @@ def compute_endpoints(
                 py_source_cache[rel_path] = ""
         return py_source_cache[rel_path]
 
+    py_ctx: PythonRouteContext | None = None
+
+    def _py_route_context() -> PythonRouteContext:
+        nonlocal py_ctx
+        if py_ctx is None:
+            py_files = [
+                str(fr["path"])
+                for fr in st.conn.execute(
+                    "SELECT path FROM file WHERE project_id=? AND path LIKE '%.py'", (pid,)
+                )
+            ]
+            py_ctx = PythonRouteContext(py_files, _py_source_strict)
+        return py_ctx
+
+    def _py_source_strict(rel_path: str) -> str:
+        return (workspace_path / rel_path).read_text(encoding="utf-8", errors="replace")
+
     def _attach_python_http_route(entry: dict[str, Any], matching_decs: list[str]) -> None:
         if not any(_decorator_lastseg(d) in HTTP_ROUTE_DECORATOR_LASTSEGS for d in matching_decs):
             return
@@ -1664,12 +1681,21 @@ def compute_endpoints(
         source = _py_source(fp)
         if not source:
             return
-        route = parse_python_http_route(source, int(entry["start_line"]))
-        if route["http_method"] is not None:
-            entry["http_method"] = route["http_method"]
-        if route["http_path"] is not None:
-            entry["http_path"] = route["http_path"]
-            entry["http_framework"] = infer_python_http_framework(source)
+        route = parse_python_http_route_details(source, int(entry["start_line"]))
+        if route is None:
+            return
+        methods = route["methods"]
+        if methods:
+            entry["http_method"] = methods[0]
+            entry["http_methods"] = methods
+        ctx = _py_route_context()
+        path, prefix = ctx.prefixed_path(fp, route["receiver"], route["path"])
+        entry["http_path"] = path
+        if prefix is not None:
+            entry["http_path_prefix"] = prefix
+        framework_name = ctx.framework_of(fp, route["receiver"])
+        if framework_name is not None:
+            entry["http_framework"] = framework_name
 
     # Java annotations reach `decorators` as bare names (`GetMapping`) — the
     # argument holding the path is dropped there but the extractor already

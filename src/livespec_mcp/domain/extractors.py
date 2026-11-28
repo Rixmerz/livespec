@@ -13,6 +13,7 @@ from collections import deque
 from collections.abc import Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 from livespec_mcp.domain.languages import (
     SCHEMA_ONLY_LANGUAGES,
@@ -1705,33 +1706,69 @@ def _ast_http_methods(node: ast.AST) -> list[str]:
     return [s.upper()] if s else []
 
 
-def _http_route_from_decorator_call(dec: ast.AST) -> tuple[str | None, str | None]:
-    """Parse one ``@app.get('/x')`` / ``@app.route('/x', methods=[...])`` call."""
+def _http_route_parts(dec: ast.AST) -> tuple[list[str], str | None, str | None]:
+    """Parse one route decorator call into ``(methods, path, receiver)``.
+
+    ``methods`` keeps every verb of ``methods=[...]`` in source order (Flask
+    defaults to ``["GET"]``); ``receiver`` is the object the decorator hangs off
+    (``bp`` in ``@bp.route``) when it is a plain name, else ``None``.
+    """
     if not isinstance(dec, ast.Call):
-        return None, None
+        return [], None, None
     name = _decorator_dotted(dec.func)
     if not name:
-        return None, None
+        return [], None, None
     last = name.rsplit(".", 1)[-1].lower()
     if last not in HTTP_ROUTE_DECORATOR_LASTSEGS:
-        return None, None
+        return [], None, None
     path = _ast_str_constant(dec.args[0]) if dec.args else None
-    method: str | None
+    methods: list[str]
     if last in _HTTP_VERB_DECORATOR_LASTSEGS:
-        method = last.upper()
+        methods = [last.upper()]
     elif last == "websocket":
-        method = "WEBSOCKET"
+        methods = ["WEBSOCKET"]
     else:
-        method = None
+        methods = []
         for kw in dec.keywords:
             if kw.arg == "methods" and kw.value is not None:
-                methods = _ast_http_methods(kw.value)
+                methods = list(dict.fromkeys(_ast_http_methods(kw.value)))
                 if methods:
-                    method = methods[0]
                     break
-        if method is None:
-            method = "GET"
-    return method, path
+        if not methods:
+            methods = ["GET"]
+    parts = name.split(".")
+    receiver = parts[0] if len(parts) == 2 else None
+    return methods, path, receiver
+
+
+def _http_route_from_decorator_call(dec: ast.AST) -> tuple[str | None, str | None]:
+    """Parse one ``@app.get('/x')`` / ``@app.route('/x', methods=[...])`` call."""
+    methods, path, _receiver = _http_route_parts(dec)
+    return (methods[0] if methods else None), path
+
+
+def parse_python_http_route_details(source: str, start_line: int) -> dict[str, Any] | None:
+    """Like :func:`parse_python_http_route` but keeps every method and the receiver.
+
+    Returns ``{"methods": [...], "path": str, "receiver": str | None}`` for the
+    handler at ``start_line`` (first stacked decorator with a string path), or
+    ``None`` when there is none.
+    """
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return None
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        if node.lineno != start_line:
+            continue
+        for dec in node.decorator_list:
+            methods, path, receiver = _http_route_parts(dec)
+            if path is not None:
+                return {"methods": methods, "path": path, "receiver": receiver}
+        return None
+    return None
 
 
 def parse_python_http_route(source: str, start_line: int) -> dict[str, str | None]:
@@ -1741,22 +1778,11 @@ def parse_python_http_route(source: str, start_line: int) -> dict[str, str | Non
     async function whose ``lineno`` equals ``start_line``. When several HTTP
     decorators are stacked, the first with a string path wins.
     """
-    empty: dict[str, str | None] = {"http_method": None, "http_path": None}
-    try:
-        tree = ast.parse(source)
-    except SyntaxError:
-        return empty
-    for node in ast.walk(tree):
-        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            continue
-        if node.lineno != start_line:
-            continue
-        for dec in node.decorator_list:
-            method, path = _http_route_from_decorator_call(dec)
-            if path is not None:
-                return {"http_method": method, "http_path": path}
-        return empty
-    return empty
+    details = parse_python_http_route_details(source, start_line)
+    if details is None:
+        return {"http_method": None, "http_path": None}
+    methods = details["methods"]
+    return {"http_method": methods[0] if methods else None, "http_path": details["path"]}
 
 
 def infer_python_http_framework(source: str) -> str:
