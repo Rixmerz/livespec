@@ -1750,7 +1750,7 @@ def compute_endpoints(
     # persists it as a `route_ref` server row. Join it so Spring handlers carry
     # the same http_method/http_path contract as express/hono/python instead of
     # listing a handler with no route.
-    server_routes: dict[int, tuple[str | None, str]] = {}
+    server_routes: dict[int, list[tuple[str | None, str]]] = {}
     for rr in st.conn.execute(
         """SELECT rr.symbol_id, rr.method, rr.path
            FROM route_ref rr
@@ -1760,20 +1760,24 @@ def compute_endpoints(
            ORDER BY rr.line, rr.id""",
         (pid,),
     ):
-        server_routes.setdefault(int(rr["symbol_id"]), (rr["method"], rr["path"]))
+        server_routes.setdefault(int(rr["symbol_id"]), []).append((rr["method"], rr["path"]))
 
-    def _attach_indexed_http_route(entry: dict[str, Any], symbol_id: int) -> None:
-        if entry.get("http_path") is not None:
-            return
-        route = server_routes.get(symbol_id)
-        if route is None:
-            return
-        method, path = route
-        if method:
-            entry["http_method"] = method
-        entry["http_path"] = path
-        if entry["file_path"].endswith(".java"):
-            entry["http_framework"] = "spring"
+    def _attach_indexed_http_routes(entry: dict[str, Any], symbol_id: int) -> list[dict[str, Any]]:
+        """The entry once per indexed route: `@GetMapping({"/a", "/b"})` is two
+        endpoints of one handler."""
+        routes = [] if entry.get("http_path") is not None else server_routes.get(symbol_id, [])
+        if not routes:
+            return [entry]
+        out = []
+        for method, path in routes:
+            e = dict(entry)
+            if method:
+                e["http_method"] = method
+            e["http_path"] = path
+            if e["file_path"].endswith(".java"):
+                e["http_framework"] = "spring"
+            out.append(e)
+        return out
 
     for r in rows:
         try:
@@ -1792,8 +1796,7 @@ def compute_endpoints(
             "decorators": matching,
         }
         _attach_python_http_route(entry, matching)
-        _attach_indexed_http_route(entry, int(r["symbol_id"]))
-        endpoints.append(entry)
+        endpoints.extend(_attach_indexed_http_routes(entry, int(r["symbol_id"])))
         seen_qnames.add(r["qualified_name"])
 
     # v0.11 P1: TS framework filesystem-routing detection (bug #19).

@@ -140,3 +140,56 @@ def _qn(workspace: Path, short: str) -> str:
     return str(row[0])
 
 
+# --------------------------------------------------------------------------
+# 2. Spring routes
+# --------------------------------------------------------------------------
+
+CONTROLLERS = {
+    "p/PetController.java": (
+        "package p;\nimport org.springframework.web.bind.annotation.*;\n"
+        '@Controller\n@RequestMapping("/owners/{ownerId}")\npublic class PetController {\n'
+        '  @GetMapping("/pets/new") String a() { return ""; }\n'
+        '  @PostMapping(value = "/pets/new") String b() { return ""; }\n'
+        '  @GetMapping(path = "pets/{id}") String c() { return ""; }\n'
+        '  @GetMapping String d() { return ""; }\n'
+        '  @RequestMapping(value = "/any", method = RequestMethod.PUT) String e() { return ""; }\n'
+        "}\n"
+    ),
+    "p/VetController.java": (
+        "package p;\nimport org.springframework.web.bind.annotation.*;\n"
+        "@Controller\npublic class VetController {\n"
+        '  @GetMapping({ "/vets" }) String f() { return ""; }\n'
+        '  @GetMapping(value = {"/x", "/y"}) String g() { return ""; }\n'
+        '  @GetMapping(BASE + "/z") String h() { return ""; }\n'
+        "}\n"
+    ),
+}
+
+
+@pytest.mark.asyncio
+async def test_spring_class_prefix_and_array_paths(workspace: Path):
+    requires_grammar("java")
+    _write(workspace, CONTROLLERS)
+    async with Client(mcp) as c:
+        await _index(c)
+        out = (await c.call_tool("find_endpoints", {"framework": "spring"})).data
+    routes = {
+        (e["qualified_name"].rsplit(".", 1)[-1], e.get("http_method"), e.get("http_path"))
+        for e in out["endpoints"]
+        if e.get("http_path")
+    }
+    assert routes == {
+        ("a", "GET", "/owners/{ownerId}/pets/new"),
+        ("b", "POST", "/owners/{ownerId}/pets/new"),
+        ("c", "GET", "/owners/{ownerId}/pets/{id}"),
+        ("d", "GET", "/owners/{ownerId}"),
+        ("e", "PUT", "/owners/{ownerId}/any"),
+        ("f", "GET", "/vets"),
+        ("g", "GET", "/x"),
+        ("g", "GET", "/y"),
+    }, routes
+    # a path built from a constant is not guessed
+    h = [e for e in out["endpoints"] if e["qualified_name"].endswith(".h")]
+    assert h and all(e.get("http_path") is None for e in h)
+
+

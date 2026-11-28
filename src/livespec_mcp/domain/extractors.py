@@ -2118,17 +2118,12 @@ def _ts_object_method_label(method_node, src_bytes: bytes) -> str | None:
     return None
 
 
-_JAVA_MAPPING_PATH = _re_rs.compile(
-    r"@(Get|Post|Put|Patch|Delete)Mapping\s*\(\s*"
-    r"(?:value\s*=\s*|path\s*=\s*)?"
-    r"[\"'](/[^\"']{0,200})[\"']"
-)
 _JAVA_MAPPING_VERB = {
-    "Get": "GET",
-    "Post": "POST",
-    "Put": "PUT",
-    "Patch": "PATCH",
-    "Delete": "DELETE",
+    "GetMapping": "GET",
+    "PostMapping": "POST",
+    "PutMapping": "PUT",
+    "PatchMapping": "PATCH",
+    "DeleteMapping": "DELETE",
 }
 
 
@@ -2303,23 +2298,111 @@ def _java_implicit_members(node, src_bytes: bytes, class_qname: str) -> list[Ext
     return out
 
 
-def _java_mapping_routes(node, src_bytes: bytes) -> list[tuple[str, str, int]]:
-    """``@GetMapping("/x")`` on a Java method → server route triples."""
-    out: list[tuple[str, str, int]] = []
-    for child in node.children:
-        if child.type != "modifiers":
+def _java_string_values(node, text) -> list[str] | None:
+    """The literal strings a Java annotation value holds: ``"/x"`` or
+    ``{"/x", "/y"}``. None when any part is not a plain literal (a constant,
+    a concatenation): a path built from it would be a guess."""
+    if node.type == "string_literal":
+        raw = text(node)
+        return (
+            [raw[1:-1]] if len(raw) >= 2 and raw[0] == '"' and not raw.startswith('"""') else None
+        )
+    if node.type == "element_value_array_initializer":
+        out: list[str] = []
+        for c in node.children:
+            if c.is_named:
+                got = _java_string_values(c, text)
+                if got is None:
+                    return None
+                out.extend(got)
+        return out
+    return None
+
+
+def _java_request_methods(node, text) -> list[str]:
+    """`RequestMethod.GET` / `{RequestMethod.GET, POST}` -> ["GET", ...]."""
+    if node.type == "element_value_array_initializer":
+        return [m for c in node.children if c.is_named for m in _java_request_methods(c, text)]
+    name = text(node).rsplit(".", 1)[-1].strip().upper()
+    return [name] if name.isalpha() else []
+
+
+def _java_mapping_annotation(ann, text) -> tuple[list[str], list[str]] | None:
+    """``(paths, request methods)`` of one Spring mapping annotation; paths is
+    ``[""]`` when it names none. None when a path is not a plain literal."""
+    args = ann.child_by_field_name("arguments")
+    paths: list[str] = []
+    methods: list[str] = []
+    named_path = False
+    for c in args.children if args is not None else ():
+        if not c.is_named:
             continue
-        for mod in child.children:
-            if mod.type not in ("annotation", "marker_annotation"):
+        key, value = "value", c
+        if c.type == "element_value_pair":
+            k, v = c.child_by_field_name("key"), c.child_by_field_name("value")
+            if k is None or v is None:
                 continue
-            raw = src_bytes[mod.start_byte : mod.end_byte].decode("utf-8", errors="replace")
-            m = _JAVA_MAPPING_PATH.search(raw[:400])
-            if m is None:
+            key, value = text(k).strip(), v
+        if key in ("value", "path"):
+            named_path = True
+            got = _java_string_values(value, text)
+            if got is None:
+                return None
+            paths.extend(got)
+        elif key == "method":
+            methods.extend(_java_request_methods(value, text))
+    return (paths if named_path else [""]), methods
+
+
+def _java_join_route(prefix: str, path: str) -> str:
+    joined = "/" + "/".join(p for p in (prefix + "/" + path).split("/") if p)
+    return joined
+
+
+def _java_mapping_routes(node, src_bytes: bytes) -> list[tuple[str | None, str, int]]:
+    """Spring mapping annotations on a Java method -> server route triples,
+    one per path (``@GetMapping({"/a", "/b"})``) with the enclosing class's
+    ``@RequestMapping`` prefix applied. ``@RequestMapping`` on a method names
+    its verbs in ``method=`` (none: any, ``None``)."""
+
+    def text(n) -> str:
+        return src_bytes[n.start_byte : n.end_byte].decode("utf-8", errors="replace")
+
+    def mappings(decl):
+        for child in decl.children:
+            if child.type != "modifiers":
                 continue
-            verb = _JAVA_MAPPING_VERB.get(m.group(1))
-            if verb is None:
-                continue
-            out.append((verb, m.group(2), mod.start_point[0] + 1))
+            for mod in child.children:
+                if mod.type not in ("annotation", "marker_annotation"):
+                    continue
+                name = mod.child_by_field_name("name")
+                if name is not None:
+                    yield text(name).rsplit(".", 1)[-1], mod
+
+    prefixes = [""]
+    cls = node.parent
+    while cls is not None and cls.type not in _JAVA_CLASS_LIKE:
+        cls = cls.parent
+    if cls is not None:
+        for name, ann in mappings(cls):
+            parsed = _java_mapping_annotation(ann, text) if name == "RequestMapping" else None
+            if parsed is not None and parsed[0]:
+                prefixes = parsed[0]
+    out: list[tuple[str | None, str, int]] = []
+    for name, ann in mappings(node):
+        if name != "RequestMapping" and name not in _JAVA_MAPPING_VERB:
+            continue
+        parsed = _java_mapping_annotation(ann, text)
+        if parsed is None:
+            continue
+        paths, methods = parsed
+        verbs: list[str | None] = (
+            [_JAVA_MAPPING_VERB[name]] if name in _JAVA_MAPPING_VERB else (methods or [None])
+        )
+        for verb in verbs:
+            for prefix in prefixes:
+                for path in paths:
+                    out.append((verb, _java_join_route(prefix, path), ann.start_point[0] + 1))
     return out
 
 
