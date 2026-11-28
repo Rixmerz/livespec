@@ -92,8 +92,9 @@ _analyse = lru_cache(maxsize=512)(sql_analyse)
 
 #: Operations a write-only / dynamic SQLAlchemy collection answers, by mode.
 REL_OPS: dict[str, dict[str, str]] = {
-    "write_only": {"select": READ, "add": WRITE, "remove": WRITE, "delete": WRITE},
+    "write_only": {"select": READ, "add": WRITE, "remove": WRITE, "delete": WRITE, "join": READ},
     "dynamic": {
+        "join": READ,
         "filter": READ,
         "filter_by": READ,
         "count": READ,
@@ -105,7 +106,10 @@ REL_OPS: dict[str, dict[str, str]] = {
         "delete": WRITE,
     },
 }
-_REL_OP_NAMES = frozenset(op for ops in REL_OPS.values() for op in ops)
+#: `join` is an operation ON a query that takes the collection as an argument,
+#: not one the collection answers: it is matched separately.
+_REL_JOIN = "join"
+_REL_OP_NAMES = frozenset(op for ops in REL_OPS.values() for op in ops if op != _REL_JOIN)
 #: add / remove touch the association table of a many-to-many collection.
 REL_EDGE_OPS = frozenset({"add", "remove"})
 
@@ -928,6 +932,26 @@ class _Py:
             return root.id if _cap(root.id) or root.id in self.tables else None
         return None
 
+    def _join_target(self, call: ast.Call) -> None:
+        """`.join(Owner.attr[.of_type(...)])` through a declared collection, or
+        `.join(table_or_model, ...)`: the first argument is what gets read."""
+        first = call.args[0]
+        node = first
+        while isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+            node = node.func.value  # strip `.of_type(...)` / `.and_(...)`
+        if (
+            isinstance(node, ast.Attribute)
+            and isinstance(node.value, ast.Name)
+            and node.value.id not in self.tables
+        ):
+            base = node.value.id
+            owner = self.cur_cls if base == "self" and self.cur_cls else "*"
+            self.found.relref(call.lineno, owner, node.attr, _REL_JOIN)
+            return
+        model = self._model_arg(first)
+        if model:
+            self.found.model(call.lineno, READ, "sqlalchemy", model)
+
     def _instance_model(self, arg: ast.AST) -> tuple[str, str] | None:
         if isinstance(arg, ast.Name):
             if arg.id == "self" and self.cur_cls in self.sa_models:
@@ -1020,6 +1044,8 @@ class _Py:
                 first = call.args[0]
                 if isinstance(first, ast.Name) and _cap(first.id):
                     f.model(call.lineno, READ, "sqlalchemy", first.id)
+            elif name in ("join", "outerjoin") and is_attr and self.sa and call.args:
+                self._join_target(call)
             elif name in _REL_OP_NAMES and is_attr and (self.sa or name == "select"):
                 holder = call.func.value  # type: ignore[attr-defined]
                 if isinstance(holder, ast.Attribute):

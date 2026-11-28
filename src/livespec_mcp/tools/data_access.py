@@ -278,7 +278,9 @@ def register(mcp: FastMCP) -> None:
         Python) or in a local string variable assigned once in the function
         (``base + where``); and ORM calls in unambiguous shapes: SQLAlchemy
         (1.x ``query`` and 2.0 ``select`` / ``session.get`` / ``db.get_or_404``,
-        write-only / dynamic collections whose target class is declared),
+        write-only / dynamic collections whose target class is declared: a
+        ``select()`` / ``.join(Owner.coll)`` through a many-to-many one reads
+        its association table too, ``add`` / ``remove`` write it),
         Django, Prisma, Knex, Supabase, TypeORM, Sequelize, JPA / Spring Data.
         A table is reported only when the source states it (``__tablename__``,
         ``Meta.db_table``, ``@Table``, a string argument) or follows a naming
@@ -287,7 +289,9 @@ def register(mcp: FastMCP) -> None:
         the model is known and its table is not. Not seen, and counted where
         cheap (``counts.skipped.dynamic_table``): table names built at run time
         (``f"DELETE FROM {t}"``); never seen: SQL passed in through a parameter,
-        ORM calls on an untyped receiver, ``select(cls)``.
+        ORM calls on an untyped receiver, ``select(cls)``, plain (lazy-loaded)
+        relationship attributes read as ``user.followers`` and a collection
+        name declared by two classes reached from a receiver of unknown type.
 
         Modes. ``table`` (any case, schema optional): who touches it, grouped
         by kind (write, ddl, read) with ``file:line`` and mechanism; a name
