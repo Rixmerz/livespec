@@ -508,14 +508,13 @@ def test_m027_schema_symbols_forward_and_rollback(tmp_path: Path):
 
 
 def test_m031_data_access_forward_and_cascade(tmp_path: Path):
-    """v31 (the data-access map; 30 is deliberately unused) creates its two
+    """v31 (the data-access map) creates its two
     tables; a v29 DB that already holds symbols gains them and queues a
     re-extract so existing files fill the map, a v29 DB without symbols gains
     them with no re-extract, and an access dies with its symbol."""
     from livespec_mcp.storage.db import clear_reextract_flag, peek_reextract_flag
 
     assert dict((v, n) for v, n, _ in MIGRATIONS)[31] == "data_access"
-    assert 30 not in [v for v, _, _ in MIGRATIONS]
     db = tmp_path / "existing.db"
     conn = connect(db)
     assert {"data_access", "data_model"} <= _table_names(conn)

@@ -25,6 +25,8 @@ from livespec_mcp.domain.extractors import (
     RECEIVER_MODULE,
     RECEIVER_OBJECT,
     RECEIVER_SELF,
+    REF_INHERIT,
+    REF_TYPE,
     ExtractResult,
     extract,
     normalize_route_path,
@@ -815,6 +817,97 @@ def _enclosing_class(src_qname: str, class_bases: dict[str, bool]) -> str | None
     return None
 
 
+#: `symbol_ref.ref_type` -> `symbol_edge.edge_type`. Every other ref type
+#: (`call`, `callback_arg`, `jsx`) is an invocation and resolves to `calls`.
+_REF_EDGE_TYPE: dict[str, str] = {REF_INHERIT: "inherits", REF_TYPE: "references"}
+
+#: Symbol kinds a base class or a type-position name can resolve to. A function
+#: that happens to share the name is never the target of an annotation.
+_TYPE_LIKE_KINDS: frozenset[str] = frozenset(
+    {"class", "interface", "type_alias", "enum", "struct", "trait"}
+)
+
+
+def _resolve_type_ref(
+    *,
+    candidates: list[tuple[int, str, int]],
+    scope: str | None,
+    src_qname: str,
+    src_file_id: int,
+    family: str,
+    project_scopes: set[str],
+    file_paths: dict[int, str],
+) -> tuple[list[tuple[int, str, int]], float]:
+    """Targets and weight for one `inherit` / `type` ref. `candidates` are
+    already the same-language, type-like symbols carrying the name.
+
+    Stricter than a call on purpose. A call by a bare name nobody imported
+    still fans out to every same-named function (weight 0.5), because a missed
+    import is the likelier explanation. A TYPE name the file neither imports
+    nor declares is far more often a builtin or a library type (`Path`,
+    `Request`, `List`) that merely shares its name with a project class, and
+    an edge to that class would keep it alive in `find_dead_code` for no
+    reason. So:
+
+    1. an import that names a project module scopes the match (1.0 / 0.9);
+       one that names anything else means "not ours" and yields nothing;
+    2. else a declaration in the same file, nearest enclosing scope first;
+    3. else whatever the language makes visible without an import: nothing in
+       Python, ambient `.d.ts` declarations in TypeScript, the same package
+       (directory) in Java and, failing that, a name unique in the project
+       (a wildcard import), capped at 0.6 like any unconfirmed match.
+
+    The declaration enclosing the ref is never a target: a method returning
+    its own class does not make that class used.
+    """
+    candidates = [
+        c
+        for c in candidates
+        if not (
+            src_qname == c[1]
+            or src_qname.startswith(f"{c[1]}.")
+            or src_qname.startswith(f"{c[1]}::")
+        )
+    ]
+    if not candidates:
+        return [], 0.0
+    if scope:
+        scoped = _under_scope(candidates, scope)
+        if scoped:
+            return scoped, 1.0 if len(scoped) == 1 else 0.9
+        if scope not in project_scopes:
+            return [], 0.0
+    local = [c for c in candidates if c[2] == src_file_id]
+    if local:
+        if len(local) == 1:
+            return local, 1.0
+        by_scope: dict[str, list[tuple[int, str, int]]] = {}
+        for cand in local:
+            owner = cand[1].rsplit(".", 1)[0] if "." in cand[1] else ""
+            by_scope.setdefault(owner, []).append(cand)
+        parts = src_qname.split(".")
+        for depth in range(len(parts), 0, -1):
+            enclosing = ".".join(parts[:depth])
+            if enclosing in by_scope:
+                return by_scope[enclosing], 0.8
+        return local, 0.7
+    if scope:
+        # The import names a project module and the symbol was not found under
+        # it (a re-export): ambiguous, exactly as for a call.
+        return candidates, 1.0 if len(candidates) == 1 else 0.5
+    if family == "js":
+        ambient = [c for c in candidates if file_paths.get(c[2], "").endswith(".d.ts")]
+        return ambient, 1.0 if len(ambient) == 1 else 0.5
+    if family == "java":
+        src_dir = file_paths.get(src_file_id, "").rpartition("/")[0]
+        package = [c for c in candidates if file_paths.get(c[2], "").rpartition("/")[0] == src_dir]
+        if package:
+            return package, 1.0 if len(package) == 1 else 0.7
+        if len(candidates) == 1:
+            return candidates, 0.6
+    return [], 0.0
+
+
 def _resolve_refs(
     conn: sqlite3.Connection,
     *,
@@ -860,6 +953,11 @@ def _resolve_refs(
     a module-level function only when ``X`` is an imported name (receiver
     ``module``); ``self.f()`` and a call on any other object reach methods
     only, and ``self.f()`` in a class with no declared base only its own.
+
+    Refs of type ``inherit`` / ``type`` (Python, TypeScript/TSX, Java) take
+    their own, stricter path (``_resolve_type_ref``) and are written as
+    ``inherits`` / ``references`` edges through the same upsert, so the
+    never-DELETE and reclaim-to-``livespec`` rules hold for them unchanged.
     """
     if changed_file_ids:
         placeholders = ",".join("?" * len(changed_file_ids))
@@ -872,7 +970,7 @@ def _resolve_refs(
         }
         params: list[Any] = [project_id, *changed_file_ids]
         sql = (
-            f"SELECT u.src_symbol_id, u.target_name, u.scope_module, u.receiver, "
+            f"SELECT u.src_symbol_id, u.target_name, u.scope_module, u.receiver, u.ref_type, "
             f"       s.file_id AS src_file_id, f.language AS src_language, "
             f"       s.qualified_name AS src_qname, s.signature AS src_signature "
             f"FROM symbol_ref u "
@@ -889,7 +987,7 @@ def _resolve_refs(
         rows = conn.execute(sql, params).fetchall()
     else:
         rows = conn.execute(
-            """SELECT u.src_symbol_id, u.target_name, u.scope_module, u.receiver,
+            """SELECT u.src_symbol_id, u.target_name, u.scope_module, u.receiver, u.ref_type,
                       s.file_id AS src_file_id, f.language AS src_language,
                       s.qualified_name AS src_qname, s.signature AS src_signature
                FROM symbol_ref u
@@ -908,14 +1006,22 @@ def _resolve_refs(
     methods: set[int] = set()
     # Python class qname -> whether it declares a base (`class A(B)`).
     class_bases: dict[str, bool] = {}
+    # What an `inherit` / `type` ref may resolve to, and where each file lives
+    # (same-package and ambient-declaration visibility are path questions).
+    type_like: set[int] = set()
+    file_paths: dict[int, str] = {}
     for r in conn.execute(
-        """SELECT s.id, s.name, s.qualified_name, s.file_id, s.kind, s.signature, f.language
+        """SELECT s.id, s.name, s.qualified_name, s.file_id, s.kind, s.signature, f.language,
+                  f.path
            FROM symbol s JOIN file f ON f.id=s.file_id WHERE f.project_id=?""",
         (project_id,),
     ):
         sid = int(r["id"])
         name_index.setdefault(r["name"], []).append((sid, r["qualified_name"], int(r["file_id"])))
         family_of[sid] = _language_family(r["language"])
+        file_paths[int(r["file_id"])] = r["path"]
+        if r["kind"] in _TYPE_LIKE_KINDS:
+            type_like.add(sid)
         if r["kind"] == "method":
             methods.add(sid)
         elif r["kind"] == "class" and r["language"] == "python":
@@ -936,7 +1042,7 @@ def _resolve_refs(
     # (src, dst) -> best weight written this walk. Two refs of one caller can
     # reach the same callee with different evidence (`helper()` and
     # `obj.helper()`): the stronger one must win whatever the row order.
-    seen_pairs: dict[tuple[int, int], float] = {}
+    seen_pairs: dict[tuple[int, int, str], float] = {}
     pending_edges: list[tuple[int, int, str, float]] = []
     for u in rows:
         candidates = name_index.get(u["target_name"], [])
@@ -949,6 +1055,29 @@ def _resolve_refs(
         src_family = _language_family(u["src_language"])
         candidates = [c for c in candidates if family_of.get(c[0]) == src_family]
         if not candidates:
+            continue
+
+        edge_type = _REF_EDGE_TYPE.get(u["ref_type"], "calls")
+        if edge_type != "calls":
+            src_id = int(u["src_symbol_id"])
+            targets, weight = _resolve_type_ref(
+                candidates=[c for c in candidates if c[0] in type_like],
+                scope=u["scope_module"],
+                src_qname=str(u["src_qname"]),
+                src_file_id=int(u["src_file_id"]),
+                family=src_family,
+                project_scopes=project_scopes,
+                file_paths=file_paths,
+            )
+            for tid, _qname, _fid in targets:
+                type_key = (src_id, tid, edge_type)
+                previous = seen_pairs.get(type_key)
+                if previous is not None and previous >= weight:
+                    continue
+                seen_pairs[type_key] = weight
+                pending_edges.append((src_id, tid, edge_type, weight))
+                if previous is None:
+                    edge_count += 1
             continue
 
         # The receiver of an attribute call (`X.f()`). Only an imported
@@ -1076,7 +1205,7 @@ def _resolve_refs(
             src_id = int(u["src_symbol_id"])
             if tid == src_id:
                 continue
-            key = (src_id, tid)
+            key = (src_id, tid, "calls")
             previous = seen_pairs.get(key)
             if previous is not None and previous >= weight:
                 continue

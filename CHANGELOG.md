@@ -56,6 +56,51 @@ follows [SemVer](https://semver.org/).
   (symbol-bound, cascades on re-extract) and `data_model`; existing indexes
   re-extract on their next `index_project`. ORM rows are re-resolved against
   model declarations on every run that changed a file.
+### Added — native `inherits` / `references` edges (Python, TypeScript/TSX, Java)
+
+- livespec's own extractors now emit `inherits` edges (class -> each base
+  class / implemented or extended interface: Python bases incl. dotted names
+  and `Generic[T]`-style subscripts, skipping `object` and keyword arguments;
+  TS `extends` / `implements` / interface `extends`; Java `extends` /
+  `implements`) and `references` edges (enclosing function, method or class ->
+  a class / interface / object-type alias named in a parameter, return,
+  variable or field annotation, a generic argument, an `isinstance` /
+  `instanceof` target, an `except` / `catch` type, Java `throws`, TS `as` /
+  `satisfies`). They ride the existing pipeline: refs go into `symbol_ref`
+  (`ref_type` `inherit` / `type`), `_resolve_refs` resolves them and writes
+  edges with the same upsert, so an `external:graphify` or `runtime:flowtrace`
+  row for the same (src, dst, type) is reclaimed by `livespec`. Resolution is
+  stricter than for calls: a type name the file neither imports nor declares
+  produces no edge (a builtin or a library type that shares a project class's
+  name must not keep that class alive). Only names that resolve to an indexed
+  type-like symbol produce an edge; enums and non-object type aliases are not
+  indexed symbols in TS, so they get none.
+- Migration 30 (`inherit_reference_refs`, no schema change) queues the one-time
+  re-extract so existing indexes pick the edges up on their next
+  `index_project`. Downgrading: re-index with `force=True`.
+- `find_dead_code`: a symbol with an inbound `inherits` or `references` edge is
+  no longer a candidate (as `corroborate_with` already did for ingested ones).
+  The payload gains `kept_alive_by_edge_type` (+ `_hint`) counting what they
+  kept alive; absent when none. Measured on livespec itself: 448 `references`
+  edges, 0 `inherits` (every base class in the repo is external), and 219 -> 206
+  candidates with every filter off.
+- `analyze_impact` (symbol): depth-1 rows carry `edge_type`
+  (`inherits` / `references` / `calls`), and `direct_dependents_by_edge_type`
+  appears when any direct dependent is not a plain call. Subclasses,
+  implementors and users-as-a-type are in `impacted_callers` as before. The
+  existing keys are unchanged.
+- `who_calls` / `who_does_this_call` keep counting invocation edges only; the
+  new edges are reported under `excluded_by_edge_type`, and `edge_types=` widens
+  them. `quick_orient`'s top callers/callees likewise count invocations only and
+  report the rest under `excluded_by_edge_type`.
+- Graph: when `symbol_edge` holds several rows for one (src, dst) pair (a
+  function that calls a class and also names it in an annotation), the graph
+  keeps the invocation edge instead of whichever row loaded last.
+- PageRank and every other whole-graph metric now see these edges, so rankings
+  shift on indexes that have them (no test pinned a ranking; `bench/` baselines
+  are untouched and predate the edges).
+- Graphify corroboration is no longer needed for these two gaps in Python,
+  TS/TSX and Java; SKILL.md and both AGENT_PLAYBOOK copies say so.
 
 ### Added — runtime evidence from FlowTrace traces
 

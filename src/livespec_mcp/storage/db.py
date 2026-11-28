@@ -911,6 +911,22 @@ def _m029_runtime_evidence(conn: sqlite3.Connection) -> None:
     conn.execute("CREATE INDEX IF NOT EXISTS idx_runtime_edge_dst ON runtime_edge(dst_symbol_id)")
 
 
+def _m030_inherit_reference_refs(conn: sqlite3.Connection) -> None:
+    """Unreleased: native `inherits` / `references` edges (Python, TS/TSX, Java).
+
+    No column: `symbol_ref.ref_type` has existed since the table did and now
+    carries two more values (`inherit`, `type`), which the resolver writes as
+    `inherits` / `references` rows in `symbol_edge`. This migration exists
+    only to queue the one-time re-extract, the way the decorator migration
+    (v8) did: refs are stored per file at extraction, so the files of an
+    existing index hold none of the new ones until they are read again, and an
+    unchanged file is otherwise never re-read. Skipped on an empty DB.
+
+    Downgrade caveat: code older than this version never reads `ref_type` and
+    would resolve the new refs as calls, so re-index with `force=True` after
+    going back to it."""
+
+
 def _m031_data_access(conn: sqlite3.Connection) -> None:
     """Unreleased: the data-access map (`find_data_access`).
 
@@ -999,6 +1015,7 @@ MIGRATIONS: list[Migration] = [
     (27, "schema_symbols", _m027_schema_symbols),
     (28, "symbol_ref_receiver", _m028_symbol_ref_receiver),
     (29, "runtime_evidence", _m029_runtime_evidence),
+    (30, "inherit_reference_refs", _m030_inherit_reference_refs),
     (31, "data_access", _m031_data_access),
 ]
 

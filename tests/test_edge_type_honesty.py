@@ -104,7 +104,7 @@ def _repo(workspace: Path) -> None:
     (pkg / "__init__.py").write_text("")
     (pkg / "models.py").write_text("class Base:\n    pass\n")
     (pkg / "service.py").write_text(
-        "from pkg.models import Base\n\ndef describe(item: Base) -> str:\n    return 'x'\n"
+        "from pkg.models import Base\n\ndef describe(item):  # type: (Base) -> str\n    return 'x'\n"
     )
 
 

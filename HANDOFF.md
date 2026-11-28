@@ -44,17 +44,37 @@ Todo el stack es local-first: 0 servicios externos, 0 API keys obligatorias, 0 D
 
 ## 3. Estado actual
 
-### Unreleased — runtime evidence desde trazas FlowTrace (`ingest_traces`)
+### Unreleased — evidencia de ejecución, aristas de herencia/tipo, acceso a datos, clones
 
-**HEAD: `c9b7afd` (v0.37.0) + working tree SIN commitear** (a pedido del
-owner: sin commit, sin push, sin cambio de rama; queda para review).
-`pyproject.toml` sigue en 0.37.0. Suite medida en este árbol: **1352 passed**
-(`uv sync --all-extras && uv run pytest -q`; antes del cambio, 1326).
+**Rama `ccr-e8c6f0df-fdpwls` (PR #31, borrador), sobre `c9b7afd` (v0.37.0).**
+`pyproject.toml` sigue en 0.37.0. Suite medida en este árbol: **1449 passed**
+(`uv sync --all-extras && uv run pytest -q`; antes del lote, 1326).
+**44 core / 59 tools**, migraciones 29–31. Cuatro piezas, cada una con su
+commit y su entrada en CHANGELOG `[Unreleased]`:
+
+- `ingest_traces` (mig. 29): detalle abajo.
+- Aristas nativas `inherits` / `references` para Python, TS/TSX y Java
+  (mig. 30, solo marca re-extract). Una clase base usada solo por herencia o
+  un tipo usado solo en anotaciones ya no figura como código muerto;
+  `analyze_impact` muestra subclases y usuarios del tipo. `who_calls` sigue
+  mostrando solo invocaciones por defecto. Enum y alias de tipo no-objeto de
+  TS no son símbolos, así que no reciben aristas.
+- `find_data_access` (mig. 31, `tools/data_access.py`): qué símbolo lee o
+  escribe qué tabla, desde SQL en strings y ORM (SQLAlchemy, Django, Prisma,
+  Knex, JPA). Los modelos Prisma y las entidades JPA sin `@Table` quedan como
+  no resueltos. Sin probar en un repo real grande.
+- `find_clone_clusters` (`tools/clones.py`, sin migración) y modo esquema en
+  `quick_orient` (acepta una ruta de archivo; en clases agrega sus miembros).
+
+Pendiente del owner: abrir el cambio OpenSpec de estos requisitos, y decidir
+versión y tag.
+
+#### Detalle de `ingest_traces`
 
 Qué aterrizó (CHANGELOG `[Unreleased]`):
 
 - **Tool core nueva `ingest_traces(trace_path=None, dry_run=True, remove=False)`**
-  → **42 core / 57 tools**. Lee JSONL FlowTrace schema v2 (un archivo, una
+  → 42 core / 57 tools en ese commit. Lee JSONL FlowTrace schema v2 (un archivo, una
   lista, o un directorio de `*.jsonl`), en streaming, y resuelve cada `enter` a
   un símbolo ya indexado: por `file`+`line` (path exacto, si no sufijo único; el
   nombre del método tiene que coincidir con el símbolo de esa línea) o por
