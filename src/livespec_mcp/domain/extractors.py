@@ -411,11 +411,17 @@ def _py_extract(source: str, module_name: str) -> ExtractResult:
                     (alias.asname or top, alias.name, alias.name if alias.asname else top)
                 )
         else:
-            mod = node.module or ""
+            # A relative import keeps its leading dots (`.blueprints`, `..`):
+            # the resolver counts them from the importing file's package. The
+            # bare module name it used to store matched every module of that
+            # name in the tree.
+            mod = "." * node.level + (node.module or "")
             for alias in node.names:
                 if alias.name == "*":
                     continue
-                bound = f"{mod}.{alias.name}" if mod else alias.name
+                bound = (
+                    f"{mod}{alias.name}" if not mod or mod.endswith(".") else f"{mod}.{alias.name}"
+                )
                 triples.append((alias.asname or alias.name, mod, bound))
         for local, mod, bound in triples:
             if nested:
