@@ -56,7 +56,7 @@ client cached the short tool list.
 | Read body only | `get_symbol_source(qname)` | Lighter than full orient |
 | Who calls this? | `who_calls(qname, max_depth=1)` | Use `summary_only=True` on huge repos; `route_callers` for HTTP |
 | What does this call? | `who_does_this_call(qname, max_depth=1)` | Forward cone + `invokes_endpoints` (cross-repo with `group_db`) |
-| Blast radius + Spec rollup | `analyze_impact(target_type, target, max_depth)` | `symbol` \| `file` \| `spec` |
+| Blast radius + Spec rollup | `analyze_impact(target_type, target, max_depth, include_transitive?)` | `symbol` \| `file` \| `spec`; a symbol lists its depth-1 callers / callees and counts the rest per depth (`counts.*_by_depth`); `include_transitive=True` lists the whole cone |
 | Who overrides this method? | `analyze_impact(target_type="symbol", target=<method>)` → `overriding_methods` (+ `calls_super`), `overrides`; `quick_orient` → `overridden_by` count | Before changing a signature |
 | PR / diff scope | `git_diff_impact(base_ref, head_ref)` | Inside a git repo only; symbol-precise changed set; `schema_impact` key when a `@schema:` declaration changed |
 | Draft a track (range → per-Spec changes) | `propose_track(base_ref, head_ref)` | Writes nothing; `changed_specs` (OpenSpec delta, or the first `@spec:` of changed code) vs `touched_specs` (only through shared code), symbols added/modified/removed, OpenSpec deltas, `unlinked` code |
@@ -88,7 +88,7 @@ client cached the short tool list.
 | Do the schemas of one entity agree? | `schema_drift(entity?)` | Field by field across every `@schema: <entity>` declaration (group-wide with `group_db`); see §5.9 |
 | What breaks if I change this field? | `schema_impact(entity, change, field)` | Call BEFORE adding / removing / renaming / retyping a shared field: each declaration's action + readers across repos; see §5.9 |
 | Make that field change in every repo | `plan_schema_change(entity, change, field)` | AFTER `schema_impact`: exact line edits per declaration across repos; plan first, `apply=True` only once the person agreed; see §5.9 |
-| Which code touches a database table? | `find_data_access(table? \| qname?, include_callees?)` | BEFORE changing a table or a function that persists data; first call on an unknown repo to see its tables (no args = inventory: read / write / ddl per table, joined with CREATE TABLE statements in `.sql` files and in code, plus `unresolved_models` with `file:line`; `table=` also takes an ORM model name; `include_callees` adds tables reached through callees, `include_callers` is its deprecated alias). SQL in strings, constants and local variables plus SQLAlchemy (incl. Flask-SQLAlchemy 2.0 style) / Django / Prisma / Knex / TypeORM / JPA shapes; a table is never guessed (`confidence: unresolved`); catalogue tables (`sqlite_master`, ...) are hidden unless `include_system` |
+| Which code touches a database table? | `find_data_access(table? \| qname?, include_callees?, path?, include_tests?)` | BEFORE changing a table or a function that persists data; first call on an unknown repo to see its tables (no args = inventory: read / write / ddl per table, joined with CREATE TABLE statements in `.sql` files and in code, plus `unresolved_models` with `file:line`; `table=` also takes an ORM model name; `include_callees` adds tables reached through callees, `include_callers` is its deprecated alias). SQL in strings, constants and local variables plus SQLAlchemy (incl. Flask-SQLAlchemy 2.0 style) / Django / Prisma / Knex / TypeORM / JPA shapes; a table is never guessed (`confidence: unresolved`); catalogue tables (`sqlite_master`, ...) are hidden unless `include_system`; `path="dir/"` lists only what code under it touches, test files are left out unless `include_tests=True`; `summary_only` returns counts only (`unresolved_models` is a count) |
 
 > **livespec speaks OpenSpec (Fission-AI).** If the repo has an `openspec/`
 > directory, livespec is the code-graph/traceability layer *beneath* it — it
@@ -512,7 +512,12 @@ Reading the results:
   The rule is coarse (any changed file, not only a former caller's).
 - Coverage as one number over another: `get_project_overview`'s
   `runtime_evidence.symbols_with_hits_non_test` over `symbols_non_test`
-  (functions and methods outside test paths).
+  (functions and methods outside test paths). For ONE capability use
+  `find_dead_code(path=..., summary_only=True)`: its `runtime_coverage` has the
+  same two numbers counted under that path.
+- A caller marked `via_external_edge: runtime:flowtrace` and nothing else is the
+  nearest TRACED ancestor, not necessarily the direct caller (`external_edges.
+  runtime_only_hint`): untraced frames (test runner, framework) may sit between.
 - Idempotent per trace file (re-ingesting replaces, never double-counts);
   `ingest_traces(remove=True)` with no `trace_path` deletes all of its edges
   and hits; with `trace_path=[...]` only those sources (an edge another file

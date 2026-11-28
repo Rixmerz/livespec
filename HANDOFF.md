@@ -44,6 +44,38 @@ Todo el stack es local-first: 0 servicios externos, 0 API keys obligatorias, 0 D
 
 ## 3. Estado actual
 
+### Unreleased — trial Django a escala (rama `ls-scale`, local sobre `95a5334`)
+
+**1586 tests (1575 + 11 nuevos; uno de `test_type_ref_precision.py` cambió de expectativa:
+un `from .core import *` ahora se sigue).** Sin migración (la última sigue en v35).
+Defectos de la prueba orient + migrate de una regla en Django 5.1.4 (2832 archivos,
+39,8k símbolos):
+
+1. Re-exports de Python: `py_modules.PyModules._lookup_star` (star import, `__all__`
+   literal, ciclos y saltos acotados) + `indexer._resolve_refs` (la llamada resuelve por
+   la cadena cuando el módulo no define el nombre; también con renombre
+   `from m import f as g`, el extractor guarda el nombre original). Tests:
+   `test_python_reexport_calls.py`.
+2. Clases usadas: el extractor Python escaneaba solo cuerpos de función; ahora
+   `_collect_calls` también corre sobre el cuerpo de clase (las llamadas son de la clase) y
+   un nombre pasado como argumento de llamada es un ref `type` (solo se conserva si nombra
+   una clase del proyecto). Tests: `test_class_body_and_argument_refs.py`. El código a
+   nivel de módulo sigue sin símbolo emisor (lo cubre el escáner por nombre de dead code).
+3. `find_data_access`: `summary_only` ya no trae `unresolved_models` (solo el conteo),
+   `path` y `include_tests` (FileScope en `data_access_store.py`). Tests:
+   `test_data_access_scope.py`.
+4. `find_dead_code(path=)` -> `runtime_coverage` (`public_runtime_state(path=)`).
+5. `analyze_impact(symbol)` lista profundidad 1 y cuenta el resto por profundidad
+   (`include_transitive=True` lista todo); overview con 30 nombres estructurales.
+   Tests: `test_payload_trim.py`.
+6. Aristas runtime: ya estaban etiquetadas (`via_external_edge`); se añadió
+   `external_edges.runtime_only_hint`.
+
+Cifras Django (copia en `/tmp/claude-0/ls-scale-fixture`): overview 20,8 -> 5,6 KB;
+`analyze_impact(formset_factory)` 63 -> 19 KB; `find_data_access(summary_only)` 175 -> 0,8 KB;
+aristas totales 374k -> 347k (menos fan-out por re-exports resueltos).
+**Proyectos ya indexados:** el próximo `index_project` re-extrae Python.
+
 ### Unreleased — trial Java (Spring PetClinic)
 
 **Rama `ls-java` (local, sobre `c8510ce`): hallazgos del trial Java, 1570 tests + 5 nuevos

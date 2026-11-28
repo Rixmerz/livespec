@@ -54,6 +54,7 @@ from typing import Any
 
 import xxhash
 
+from livespec_mcp.domain.clones import under_path
 from livespec_mcp.domain.location import CALLABLE_KINDS, symbols_spanning
 
 #: Value written to `symbol_edge.origin` and to the evidence tables.
@@ -1105,13 +1106,17 @@ def public_runtime_state(
     conn: sqlite3.Connection,
     project_id: int,
     is_test_path: Callable[[str], bool] | None = None,
+    path: str | None = None,
 ) -> dict[str, Any] | None:
     """`runtime_state` without the bookkeeping, for a tool payload.
 
     With `is_test_path` (the project's test-path rule, injected so this module
     stays free of `tools/`) it adds the denominator for coverage:
     `symbols_non_test` — functions and methods outside test paths — and
-    `symbols_with_hits_non_test` — how many of those were seen running.
+    `symbols_with_hits_non_test` — how many of those were seen running. With
+    `path` (a directory prefix or one file) both count only symbols defined
+    under it: the coverage of one capability, which a repo-wide number says
+    nothing about.
     """
     state = runtime_state(conn, project_id)
     if state is None:
@@ -1125,7 +1130,7 @@ def public_runtime_state(
                    WHERE f.project_id = ? AND s.kind IN ('function', 'method')""",
                 (project_id,),
             )
-            if not is_test_path(r["path"])
+            if not is_test_path(r["path"]) and (not path or under_path(r["path"], path))
         }
         total = len(non_test)
         hit = len(non_test & runtime_hits(conn, project_id).keys())

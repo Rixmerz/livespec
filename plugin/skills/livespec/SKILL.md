@@ -56,7 +56,7 @@ Call tools from **any** member workspace (usually the hub/composer). Then:
 | Do the repos' schemas of one entity agree? | `schema_drift(entity?)` — every `@schema: <entity>` declaration of the group, field by field; `project://schemas` |
 | What breaks in the other repos if I change this field? | `schema_impact(entity, change, field)` — BEFORE the edit: each declaration's action + readers per repo (route callers included) |
 | Make that field change in every repo | `plan_schema_change(entity, change, field)` — AFTER `schema_impact`: exact line edits per declaration; plan first, `apply=True` only once the person agreed |
-| Which code touches a database table? Before changing a table or a function that persists; first call on an unknown repo to see its tables | `find_data_access()` (inventory: read/write/ddl per table, declared in `.sql` or in code vs accessed; `unresolved_models` with `file:line`) · `find_data_access(table="users")` (who reads/writes/defines it, `file:line`, mechanism; an ORM model name works too) · `find_data_access(qname=..., include_callees=True)` (tables a symbol reaches through its callees; `include_callers` is the deprecated alias) — SQL in strings, constants and local variables + SQLAlchemy (incl. Flask-SQLAlchemy 2.0 style)/Django/Prisma/Knex/TypeORM/JPA; a table is never guessed (`confidence: unresolved`); catalogue tables only with `include_system=True` |
+| Which code touches a database table? Before changing a table or a function that persists; first call on an unknown repo to see its tables | `find_data_access()` (inventory: read/write/ddl per table, declared in `.sql` or in code vs accessed; `unresolved_models` with `file:line`) · `find_data_access(table="users")` (who reads/writes/defines it, `file:line`, mechanism; an ORM model name works too) · `find_data_access(qname=..., include_callees=True)` (tables a symbol reaches through its callees; `include_callers` is the deprecated alias) — SQL in strings, constants and local variables + SQLAlchemy (incl. Flask-SQLAlchemy 2.0 style)/Django/Prisma/Knex/TypeORM/JPA; a table is never guessed (`confidence: unresolved`); catalogue tables only with `include_system=True` · `find_data_access(path="app/billing")` (only the tables code under that directory touches; test files left out unless `include_tests=True`; `summary_only=True` keeps counts, no `unresolved_models` list) |
 | Human view of the group | `/livespec-ui` (or `livespec ui`) — group page lists repos, cross-repo Specs, route hops; read-only, writes nothing into any repo |
 
 **Cross-repo Specs (`xrepo-*`):** livespec does not invent one global Spec row.
@@ -102,7 +102,7 @@ Vendored/generated code (vendor, third_party, dist, build, out, coverage, `*.min
 | Read a body only | `get_symbol_source(qname)` |
 | Who calls this? | `who_calls(qname, max_depth=1)` — `summary_only=True` on huge repos |
 | What does this call? | `who_does_this_call(qname, max_depth=1)` |
-| Blast radius + Spec rollup | `analyze_impact(target_type, target, max_depth)` — `symbol`\|`file`\|`spec`. On a method, `overriding_methods` lists the subclass methods that override it (`calls_super` says whether they call the parent via `super()`), `overrides` the base method — check them BEFORE changing a signature |
+| Blast radius + Spec rollup | `analyze_impact(target_type, target, max_depth, include_transitive?)` — `symbol`\|`file`\|`spec`. A symbol lists its depth-1 callers and callees; the rest is counted per depth (`counts.impacted_callers_by_depth`, `calls_into_by_depth`), `include_transitive=True` lists the whole cone. On a method, `overriding_methods` lists the subclass methods that override it (`calls_super` says whether they call the parent via `super()`), `overrides` the base method — check them BEFORE changing a signature |
 | PR / diff scope | `git_diff_impact(base_ref, head_ref)` — git repos only; symbol-precise (an untouched function in a changed file is not listed); a `schema_impact` key appears when a `@schema:` declaration changed |
 | Keyword search over chunks | `search(query, scope)` — FTS5 over AST-aware symbol + Spec chunks |
 | Literal string search over indexed files | `grep_in_indexed_files(pattern)` — check `scope_fresh`, see the staleness trap below |
@@ -294,7 +294,13 @@ or reflection: the callee reads as called by nobody. A
   sources, re-index, ingest the new run. The rule is coarse: any changed file.
 - **Coverage.** `get_project_overview` → `runtime_evidence`:
   `symbols_with_hits_non_test` over `symbols_non_test` (functions and methods
-  outside test paths).
+  outside test paths). That is repo-wide; for one capability read
+  `find_dead_code(path=..., summary_only=True)` → `runtime_coverage` (same two
+  numbers, counted under `path`).
+- **A runtime-only caller is the nearest traced ancestor.** A caller carrying
+  only `via_external_edge: runtime:flowtrace` was seen above the callee in a
+  trace; untraced frames (test runner, framework) may sit between, so it is not
+  necessarily the direct caller (`external_edges.runtime_only_hint`).
 - **A trace is the runs that were traced, not production.** `not_seen` on a
   thin test run is weak; say which run it came from.
 - Pass every process's file of a distributed trace together (a list, or the

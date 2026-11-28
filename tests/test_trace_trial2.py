@@ -79,6 +79,32 @@ async def test_dead_code_path_applies_to_the_runtime_tiers(repo: Path):
 
 
 @pytest.mark.asyncio
+async def test_dead_code_path_reports_the_scoped_runtime_coverage(repo: Path):
+    trace = _dispatch_trace().write(repo / "traces" / "run.jsonl")
+    async with Client(mcp) as c:
+        await _call(c, "index_project")
+        without = await _call(c, "find_dead_code", path="pkg/handlers.py", summary_only=True)
+        await _call(c, "ingest_traces", trace_path=trace, dry_run=False)
+        whole = await _call(c, "find_dead_code", summary_only=True)
+        handlers = await _call(c, "find_dead_code", path="pkg/handlers.py", summary_only=True)
+        listed = await _call(c, "find_dead_code", path="./pkg/")
+        overview = (await _call(c, "get_project_overview"))["runtime_evidence"]
+
+    assert "runtime_coverage" not in without and "runtime_coverage" not in whole
+    # handlers.py holds 3 functions; only handle_pay ran.
+    assert handlers["runtime_coverage"] == {
+        "path": "pkg/handlers.py",
+        "symbols_non_test": 3,
+        "symbols_with_hits_non_test": 1,
+    }
+    # The whole package is the repo-wide figure minus nothing outside pkg/.
+    assert listed["runtime_coverage"]["symbols_non_test"] == overview["symbols_non_test"]
+    assert listed["runtime_coverage"]["symbols_with_hits_non_test"] == (
+        overview["symbols_with_hits_non_test"]
+    )
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("bad", ["nope", "pkg/handl", "pkg/handlers.py/x"])
 async def test_dead_code_unknown_path_is_a_shaped_error(repo: Path, bad: str):
     async with Client(mcp) as c:

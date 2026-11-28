@@ -6,6 +6,60 @@ follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed — Django trial (scale)
+
+- **Python calls through a re-export reach the defining symbol.** `from pkg.forms
+  import f`, `forms.f()`, `formsets.f()` and `from m import f as g` now resolve
+  through the re-export chain (`from .x import f`, `from .x import f as g`,
+  `from .x import *` honouring a literal `__all__`; bounded hops, cycle-safe) to
+  the ONE symbol that defines `f`, so `who_calls` on a moved function lists the
+  callers that still import it from the old module. A call to an aliased import
+  is stored under the original name. A star import of a module without
+  `__all__` brings its public names (also for `inherits` / `references`, which
+  used to ignore star imports). Fewer 0.9-weight fan-out edges for names a
+  package re-exports from several submodules. **Existing indexed projects:** the
+  next `index_project` re-extracts Python.
+- **A class used from a class body, or passed to a call, is used.** The Python
+  extractor never scanned class-body statements (`input_formats = Formats()`,
+  `@register(Cls)`), so a class instantiated there had no incoming edge, and a
+  class handed to a call as a value (`warnings.warn(msg, MyWarning)`) left no
+  ref at all. Class bodies are now scanned like a function body (the calls are
+  the class's, nested defs keep their own) and a bare or dotted name given as a
+  call argument becomes a `references` ref when it names a project class.
+  `find_dead_code(path=django/forms)` no longer lists `DateTimeFormatsIterator`
+  and `MediaOrderConflictWarning`. Module-level code still has no caller symbol.
+- **`find_data_access`: `summary_only` is a summary, and a capability can be
+  listed alone.** `summary_only=True` on the inventory no longer carries
+  `unresolved_models` (175 KB on Django); `counts.unresolved_models` stays.
+  New `path` (directory prefix or one file): only the accesses made by symbols
+  under it, so the tables one capability touches are listed without the rest.
+  New `include_tests` (default False, as in `find_dead_code` and
+  `find_clone_clusters`): accesses from test files are left out of the
+  inventory, `table=` and model modes and counted in `tests_excluded` /
+  `counts.filtered_out` (a table only tests touch is not listed, or flagged
+  `test_only` when declared). `qname` mode is never filtered.
+- **`find_dead_code(path=...)` reports the runtime coverage of that path.** With
+  runtime evidence ingested, `runtime_coverage` (also in `summary_only`) has
+  `symbols_non_test` and `symbols_with_hits_non_test`, defined as in
+  `get_project_overview.runtime_evidence` but counted under `path`, so one
+  capability's coverage (54.8% for `django/forms`) is no longer hidden by the
+  repo-wide figure (20%).
+- **Smaller `analyze_impact` and `get_project_overview` payloads.**
+  `analyze_impact` on a symbol now lists its depth-1 callers and callees; what
+  lies beyond is counted per depth (`counts.impacted_callers_by_depth`,
+  `calls_into_by_depth`; the totals and `affected_specs` still cover the whole
+  cone) and `include_transitive=True` lists it all, as before. A Django function
+  with 226 transitive callers: 63 KB -> 19 KB. `get_project_overview` names the
+  30 most widespread structural-pattern names (non-test) and counts the rest
+  (`structural_patterns_filtered_total`, `_test_only`): 20.8 KB -> 5.6 KB on
+  Django. Test symbols were already out of `top_symbols`.
+- **A runtime-only caller says what it is.** `ingest_traces` attributes a call to
+  the nearest TRACED ancestor, so a test runner frame showed up as a direct
+  caller of `all_valid`. Rows were already labelled `via_external_edge:
+  runtime:flowtrace`; `who_calls` / `analyze_impact` (and `who_does_this_call`)
+  now add `external_edges.runtime_only_rows` and `runtime_only_hint` (a
+  runtime-only caller is the nearest traced ancestor, not necessarily the direct
+  caller). Nothing was guessed away: the edges stay, labelled.
 ### Fixed — Java trial on Spring PetClinic
 
 - **Java calls on a typed receiver bind to the receiver's class.** `x.m()` where

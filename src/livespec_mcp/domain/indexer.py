@@ -1441,15 +1441,19 @@ def _resolve_refs(
         # An imported TS/JS name may be re-exported under ANOTHER name
         # (`export { A as B }`): the name-index lookup is not the last word.
         js_scoped = src_family == "js" and u["scope_module"] is not None
+        # A Python name imported through a re-export that RENAMES it
+        # (`from .rules import hidden as renamed`) is found under the original
+        # name, which the ref does not carry.
+        py_scoped = src_family == "python" and bool(u["scope_module"])
         candidates = name_index.get(u["target_name"], [])
-        if not candidates and not js_scoped:
+        if not candidates and not js_scoped and not py_scoped:
             continue
 
         # Calls stay inside their language family: a JS/TS call site cannot
         # call a Python function. 2.7k of 29k call edges on a mixed
         # Python + TypeScript repo crossed languages by bare name.
         candidates = [c for c in candidates if family_of.get(c[0]) == src_family]
-        if not candidates and not js_scoped:
+        if not candidates and not js_scoped and not py_scoped:
             continue
 
         edge_type = _REF_EDGE_TYPE.get(u["ref_type"], "calls")
@@ -1611,6 +1615,19 @@ def _resolve_refs(
             own = [c for c in scoped if c[2] == module_file]
             if own and not past_module:
                 scoped = own
+            elif not past_module:
+                # The module does not define the name itself: follow its
+                # re-exports (`from .rules import f`, `from .rules import *`)
+                # to the ONE symbol it binds, so a call through `forms.f()` /
+                # `from pkg.forms import f` reaches `pkg.forms.rules.f`.
+                via = py_modules.lookup_type(
+                    scope,
+                    str(u["target_name"]),
+                    int(u["src_file_id"]),
+                    lambda n: [c for c in name_index.get(n, []) if family_of.get(c[0]) == src_family],
+                )
+                if via is not None:
+                    scoped = [via[0]]
             if scoped:
                 candidates = scoped
             elif past_module:
@@ -1620,6 +1637,8 @@ def _resolve_refs(
                 # fan out to the whole top package. A module that merely
                 # failed to match the symbol (a re-export) stays ambiguous.
                 continue
+            if not candidates:
+                continue  # only a renaming re-export could name it, and none did
         elif (
             scope is not None
             and src_family == "js"

@@ -181,7 +181,7 @@ async def test_reexport_resolves_to_the_single_symbol_the_module_binds(workspace
 
 
 @pytest.mark.asyncio
-async def test_wildcard_and_ambiguous_reexports_emit_nothing(workspace: Path):
+async def test_wildcard_reexport_resolves_and_ambiguous_import_emits_nothing(workspace: Path):
     _write(
         workspace,
         {
@@ -194,7 +194,10 @@ async def test_wildcard_and_ambiguous_reexports_emit_nothing(workspace: Path):
         },
     )
     await _index(workspace)
-    assert _edges(workspace) == set()
+    # `from .core import *` (no `__all__`: every public name) binds Thing in
+    # the package, so `pkg.Thing` is core.Thing; `from util import Helper`
+    # names two files and stays unresolved.
+    assert _edges(workspace) == {("pkg.user.A", "pkg.core.Thing", "inherits")}
 
 
 @pytest.mark.asyncio

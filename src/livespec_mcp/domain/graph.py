@@ -199,6 +199,19 @@ def descendants_within(
 ) -> set[int]:
     """BFS up to max_depth, collect descendants (forward slicing).
 
+    See `descendant_depths` for the walk; this is its keys."""
+    return set(descendant_depths(g, source, max_depth, min_weight, edge_types))
+
+
+def descendant_depths(
+    g: nx.DiGraph,
+    source: int,
+    max_depth: int,
+    min_weight: float = 0.0,
+    edge_types: frozenset[str] | set[str] | None = None,
+) -> dict[int, int]:
+    """BFS up to max_depth: descendant -> hops on its SHORTEST path.
+
     v0.9 P3: ``min_weight`` skips edges below the threshold. Resolver
     fan-out (multiple short-name candidates that the static analyzer
     can't disambiguate) lands at weight 0.5; pass ``min_weight=0.6`` to
@@ -219,7 +232,7 @@ def descendants_within(
     # blast radius of who_calls / analyze_impact / coverage.
     from collections import deque
 
-    seen: set[int] = set()
+    seen: dict[int, int] = {}
     frontier: deque[tuple[int, int]] = deque([(source, 0)])
     while frontier:
         node, d = frontier.popleft()
@@ -234,9 +247,19 @@ def descendants_within(
                     continue
                 if edge_types is not None and ed.get("edge_type") not in edge_types:
                     continue
-            seen.add(succ)
+            seen[succ] = d + 1
             frontier.append((succ, d + 1))
     return seen
+
+
+def ancestor_depths(
+    g: nx.DiGraph,
+    source: int,
+    max_depth: int,
+    min_weight: float = 0.0,
+    edge_types: frozenset[str] | set[str] | None = None,
+) -> dict[int, int]:
+    return descendant_depths(g.reverse(copy=False), source, max_depth, min_weight, edge_types)
 
 
 def ancestors_within(

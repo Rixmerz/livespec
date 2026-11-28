@@ -293,6 +293,13 @@ async def test_a_dynamic_dispatch_call_reaches_who_calls_only_after_ingest(repo:
     # ...and the read tools say part of the answer was observed, not derived.
     assert payload["external_edges"]["by_origin"] == {RUNTIME_ORIGIN: 1}
     assert "ingest_traces" in payload["external_edges"]["hint"]
+    # A runtime-only caller is the nearest TRACED ancestor, and the payload says
+    # so (the hint is only there when such a row is).
+    block = payload["external_edges"]
+    assert block["runtime_only_rows"] == 1
+    assert "nearest traced ancestor" in block["runtime_only_hint"]
+    assert "not necessarily the direct caller" in block["runtime_only_hint"]
+    assert impact["external_edges"]["runtime_only_rows"] >= 1
     assert _hits(repo) == {
         "pkg.main.run": 1,
         "pkg.registry.dispatch": 3,

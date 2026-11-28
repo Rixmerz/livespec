@@ -169,6 +169,10 @@ PARAM_DESCRIPTIONS: dict[str, str] = {
         "Deprecated alias of ``include_callees`` (it follows the symbol's callees, "
         "not its callers); the payload then carries a ``deprecated`` note."
     ),
+    "include_transitive": (
+        "analyze_impact (symbol): also list callers/callees beyond depth 1 "
+        "(default: depth-1 lists, counts per depth for the rest)."
+    ),
     "include_system": (
         "Inventory: also list catalogue tables (``sqlite_master``, "
         "``information_schema.*``, ``pg_catalog.*``), marked ``system: true``; "
