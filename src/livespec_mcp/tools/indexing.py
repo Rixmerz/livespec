@@ -639,8 +639,18 @@ def _run_trace_ingest(st: AppState, *, paths: list[Any], dry_run: bool) -> dict[
         "edges_to_add": len(plan.new_edges),
         "already_known": plan.confirmed_edges,
         "skipped": dict(sorted(plan.edges_skipped.items())),
+        "discarded_spans": plan.discarded_spans,
         "sample": sample_new_edges(plan, sym_meta),
     }
+    if plan.discarded_spans:
+        payload["discarded_note"] = (
+            f"{plan.discarded_spans} span(s) were not credited as evidence: they "
+            "entered before their parent, or after it had exited on the same "
+            "thread, which no program does (an older FlowTrace wrote them for a "
+            "__repr__ it ran itself and for generator frames). They add no edge "
+            "and no hit, so they cannot rescue a symbol from find_dead_code. "
+            "Re-record the trace with a current FlowTrace to be sure of the rest."
+        )
     if len(plan.sources) > len(sources):
         payload["sources_truncated"] = len(plan.sources) - len(sources)
 

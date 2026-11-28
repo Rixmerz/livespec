@@ -124,39 +124,71 @@ verified); flask's unpinned runtime dependencies are pinned in the script.
 |---|---|---|
 | files / symbols / call edges | 70 / 1,389 / 5,618 | 85 / 1,598 / 20,714 |
 | index (cold) | 0.74 s | 0.85 s |
-| `find_dead_code` default, static -> after traces | 5 -> 4 (3 `not_seen`, 1 `no_evidence`) | 17 -> 7 (3 `not_seen`, 4 `no_evidence`; 8 rescued) |
+| `find_dead_code` default, static -> after traces | 5 -> 4 (3 `not_seen`, 1 `no_evidence`) | 16 -> 7 (3 `not_seen`, 4 `no_evidence`; 7 rescued) |
 | `include_public=True` | same as default (no effect on Python) | same as default |
-| `include_infrastructure=True` (extra) | 262 -> 114 (34 rescued, 27 `not_seen`) | 204 -> 54 (37 rescued, 18 `not_seen`) |
-| tests plain / traced / factor | 1.07 s / 5.40 s / 5.0x (3.9x vs the first, cold, plain run) | 1.52 s / 4.18 s / 2.8x (1.7x) |
+| `include_infrastructure=True` (extra) | 250 -> 125 (30 rescued, 39 `not_seen`) | 170 -> 38 (33 rescued, 19 `not_seen`) |
+| tests plain / traced / factor | 0.90 s / 4.29 s / 4.8x (2.8x vs the first, cold, plain run) | 1.48 s / 3.74 s / 2.5x (1.8x) |
 | pass/fail set under tracing | identical (628 passed) | identical (489 passed, 1 fails with and without tracing) |
-| trace | 83.8 MB, 112,888 spans | 46.4 MB, 63,071 spans |
+| trace | 62.2 MB, 79,197 spans | 39.3 MB, 52,455 spans |
 | events resolved | 100 % (all by `file`+`line`) | 100 % (all by `file`+`line`) |
-| runtime edges observed / new / already static | 854 / 530 / 324 | 594 / 420 / 174 |
-| ingest dry-run / apply, peak RSS | 0.9 s / 1.0 s, 105 MB | 0.6 s / 0.5 s, 101 MB |
+| runtime edges observed / new / already static | 590 / 254 / 336 | 458 / 284 / 174 |
+| spans that are tracer artifacts (enter-time) / parent already exited | 0 / 0 | 0 / 0 |
+| ingest dry-run / apply, peak RSS | 0.8 s / 0.8 s, 105 MB | 0.6 s / 0.5 s, 102 MB |
+
+The static candidate counts (`include_infrastructure` 250 / 170) differ from the
+earlier committed run (262 / 204) because livespec itself moved between the two
+runs, not because of tracing; compare the three columns below only within one
+row of one table.
+
+#### Before -> after the tracer fix (same livespec build, same pinned repos)
+
+"before" = FlowTrace without the serializer guard / generator pause
+(`8b1bbf1`) ingested by the current livespec; "after" = this branch. Single runs.
+
+| | click before -> after | flask before -> after |
+|---|---|---|
+| spans that are serializer artifacts, enter-time (share of all spans) | 20,732 (27.8 % incl. exit-time heuristic) -> 0 (0.9 %, all `Parameter.__repr__` called by C-level `list.index` inside click's `sort_key`: a real call) | 9,037 (16.8 %) -> 0 |
+| spans whose parent had already exited | 0 -> 0 | 1,116 -> 0 |
+| spans in the trace | 112,888 -> 79,197 | 63,071 -> 52,455 |
+| runtime edges observed / new | 722 / 398 -> 590 / 254 | 482 / 308 -> 458 / 284 |
+| `include_infrastructure` after traces (rescued / `not_seen`) | 111 (25 / 25) -> 125 (30 / 39) | 40 (27 / 21) -> 38 (33 / 19) |
+| known-wrong `augment_usage_errors -> Parameter.process_value` | present -> gone | |
+| known-wrong `dispatch_request -> SecureCookieSession.__init__.on_update` | | present -> present (werkzeug `CallbackDict` callback; not the tracer) |
+| overhead factor | 6.1x -> 4.8x | 3.0x -> 2.5x |
+| tests pass/fail identical under tracing | yes -> yes | yes -> yes |
+
+The consumer guard alone (current livespec, old FlowTrace traces): 20,732
+(click) and 9,037 + 1,116 (flask) spans are reported as `skipped.
+parent_not_yet_entered` / `parent_already_exited` and add no edge or hit, which
+matches the script's own count of those orders exactly. What it cannot see
+stays: exit-time artifacts (`repr(result)`, `str(exc)`; by order they are
+indistinguishable from a call made as the function's last statement) and spans
+nested under a discarded one, so with the old tracer click still has 139 runtime
+edges into `__repr__`/`__str__`-style methods and 75 from generator functions.
+Only the tracer fix removes those at the source.
 
 Flask's one baseline failure (`test_bad_environ_raises_bad_request`: expects 400,
 gets 404) is werkzeug 3.1.9 against flask 3.1.0, not tracing.
 
 ### What the numbers do not say (read before quoting them)
 
-- **A fifth to a quarter of the runtime edges are produced by the tracer
-  itself.** FlowTrace's argument/result/exception serialisation calls
-  `repr()` / `str()` / properties of traced classes while the parent span is
-  current, so the program appears to call `Parameter.__repr__` from every
-  function that has a `Parameter` argument. The script detects the enter-time
-  case exactly (a child whose parent has not been emitted yet) and the exit-time
-  case by heuristic. click: 27.8 % of spans, 220 of 854 caller/callee pairs exist
-  only because of it; flask: 16.8 % of spans, 61 pairs, and 73 more only from
-  1,115 spans parented to an already-exited `stream_with_context` span. Ingesting
-  the trace without those spans (dry run) drops click's `edges_to_add` from 530
-  to 312 and `symbols_hit` from 406 to 392: 14 symbols would be "rescued" from
-  dead code on tracer noise alone. livespec does not filter this; the raw top-5
-  targets by new runtime callers are 5/5 artifacts in click and 2/5 in flask.
+- **Tracer artifacts, fixed.** An earlier run of this benchmark found 27.8 %
+  (click) and 16.8 % (flask) of spans were produced by FlowTrace's own
+  serialisation (`repr()` / `str()` of traced classes while rendering args,
+  results and errors) and 1,116 flask spans were parented to an already-exited
+  generator span. FlowTrace now suppresses spans created by its own
+  serialisation and no longer leaves a generator's span current after a `yield`;
+  livespec additionally refuses order-impossible spans from older traces
+  (`skipped`, `discarded_spans`). The script still measures all of this
+  (`analyse_trace`) so a regression shows up as a non-zero count; its exit-time
+  heuristic flags 751 click spans that are real (`list.index` calling `__repr__`).
 - Even clean, an edge links the nearest **traced** ancestor, so a callback run
   by an untraced library (werkzeug's `CallbackDict`, Jinja) is attributed to
-  whatever traced function was on the stack. Generator-based context managers
-  (`augment_usage_errors`) become callers of their `with` body. Both are reviewed
-  in the JSON (`source_review`, `wrong_edges_confirmed_in_source`).
+  whatever traced function was on the stack. Both are reviewed in the JSON (`source_review`,
+  `wrong_edges_confirmed_in_source` = `known_wrong_edges`, each checked against
+  the index: the generator one is gone, the `CallbackDict` one remains).
+  `yield from sub()` still attributes `sub`'s body to whoever drives the outer
+  generator.
 - Rescue is real where the static graph is blind: click `_get_windows_console_stream`
   and flask `sansio.app._make_timedelta` (passed as `get_converter=`) are static
   dead-code candidates that are used; the trace removes them.
@@ -180,14 +212,15 @@ callers/callees, plus a list of known-wrong edges that appear in the answer.
 | by file (whole files) | 939,856 chars (~235k tok) | 751,272 chars (~188k tok) |
 | by file, `src/` hits only | 874,409 | 603,961 |
 | grep output only (cannot answer alone) | 5,875 | 7,662 |
-| by tool, 7 calls | 10,659 chars (~2.7k tok) | 10,019 chars (~2.5k tok) |
+| by tool, 7 calls | 10,266 chars (~2.6k tok) | 9,776 chars (~2.4k tok) |
 | tool answer correct, with traces / static only | 7 / 7, 3 / 7 | 7 / 7, 3 / 7 |
 
 This is a proxy, not an agent run. It leaves out: reasoning and wrong turns,
 partial reads (offset/limit), whether an agent picks the right call, the cost of
 the index and of producing a trace, tool-call overhead, and precision (two of
-the 14 correct answers contain one known-wrong runtime edge: click-3
-`augment_usage_errors`, flask-6 `DebugFilesKeyError.__str__`). Whole-file reads
+the 14 correct answers contained one known-wrong runtime edge before the fix
+(click-3 `augment_usage_errors`, flask-6 `DebugFilesKeyError.__str__`); none does
+now, and the two answers are 2,904 -> 2,511 and 920 -> 677 characters). Whole-file reads
 are a pessimistic baseline; the grep-only row is the optimistic one.
 
 delta-cube `hotspots` top 10 is recorded per repo (index ~1.1-1.3 s, hotspots

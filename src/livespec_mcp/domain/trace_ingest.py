@@ -44,6 +44,7 @@ Pure domain: no import from `tools/`; every failure is returned as data.
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 import time
 from collections.abc import Iterable, Sequence
@@ -82,6 +83,26 @@ _SAMPLES_PER_REASON = 3
 #: after it.
 _EXIT_MARKERS = (b'"event":"exit"', b'"event": "exit"')
 _HEAD = 240
+
+#: `trace_id` and `span_id` are the 2nd and 3rd keys of every FlowTrace event,
+#: so an exit line yields both without parsing the JSON.
+_EXIT_IDS = re.compile(rb'"trace_id": ?"([^"]*)", ?"span_id": ?"([^"]*)"')
+
+#: Per-span state is ONE int: `symbol id << 33 | thread index << 1 | exited`.
+#: Unresolved spans keep symbol 0. Thread index 0 = unknown.
+_SYM_SHIFT = 33
+_THREAD_MASK = (1 << 32) - 1
+#: Distinct (file, thread name) pairs remembered. A Go program can name millions
+#: of goroutines; past the cap a span's thread is "unknown" and the exited-parent
+#: check is simply not applied to it (the safe direction: no edge is dropped).
+_MAX_THREADS = 100_000
+
+#: FlowTrace `lang` values whose callbacks legitimately outlive their parent
+#: span on the SAME thread label: every Node continuation (a `setTimeout`, a
+#: promise reaction) runs on `main` after the function that scheduled it has
+#: returned, carrying its span as parent. "Parent already exited" is no
+#: evidence of an artifact there.
+_ASYNC_CONTINUATION_LANGS = frozenset({"node", "ts"})
 
 
 @dataclass(frozen=True)
@@ -132,6 +153,10 @@ class TracePlan:
     unresolved_samples: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
     #: Parent/child pairs that produced no edge, by reason.
     edges_skipped: dict[str, int] = field(default_factory=dict)
+    #: Spans dropped as order-impossible (`parent_not_yet_entered`,
+    #: `parent_already_exited`): no edge AND no hit — the callee did run, but
+    #: only because the tracer ran it, so it is not evidence.
+    discarded_spans: int = 0
     #: Filled by `classify_edges`.
     new_edges: list[tuple[int, int]] = field(default_factory=list)
     confirmed_edges: int = 0
@@ -463,14 +488,55 @@ def read_traces(paths: Sequence[Path], resolver: SymbolResolver) -> TracePlan:
     """Stream the trace files once and build the plan. Writes nothing.
 
     Memory is bounded by the number of spans, never by the file: each line is
-    parsed and dropped, and the only per-span state kept is `span_id -> symbol
-    id` (0 when unresolved) so a later child can find its caller. Children
-    that arrive before their parent — another process's file read first — wait
-    in `pending` and are settled when the parent shows up.
+    parsed and dropped, and the only per-span state kept is one int per span
+    (symbol id, thread, exited bit) so a later child can find its caller.
+    Children that arrive before their parent — another process's file read
+    first — wait in `pending` and are settled when the parent shows up.
+
+    Two orders no real program produces are not evidence (`discard`):
+
+    - a span whose `enter` is read before the `enter` of its parent *in the
+      same file* (`parent_not_yet_entered`) — a caller cannot start after its
+      callee. An older FlowTrace wrote exactly this for a user `__repr__` it
+      ran itself while rendering a call's arguments. The same order across two
+      files is a multi-process trace read in the other order, and settles
+      normally;
+    - a span entering on a thread after its parent had *exited* on that thread
+      (`parent_already_exited`) — an older FlowTrace left a generator's span
+      current after it yielded. Not applied to Node (continuations legitimately
+      outlive the function that scheduled them) and never across threads or
+      files (a hand-off to a worker is real). A parent whose `exit` is missing
+      because the trace was cut is never "exited".
+
+    A discarded span is no evidence at all: its callee gets no edge and no hit,
+    so it cannot rescue a symbol from `find_dead_code`. What it called in turn
+    is not followed — spans nested under one keep their evidence.
     """
     plan = TracePlan()
     spans: dict[str, dict[str, int]] = {}
     pending: dict[tuple[str, str], list[tuple[int, int]]] = {}
+    threads: dict[tuple[int, str], int] = {}
+
+    def thread_index(src_index: int, name: Any) -> int:
+        if not isinstance(name, str):
+            return 0
+        key = (src_index, name)
+        idx = threads.get(key)
+        if idx is None:
+            if len(threads) >= _MAX_THREADS:
+                return 0
+            idx = threads[key] = len(threads) + 1
+        return idx
+
+    def discard(src: TraceSource, callee: int, reason: str) -> None:
+        """An order-impossible span: not an edge, and not a hit either."""
+        plan._skip_edge(reason)
+        plan.discarded_spans += 1
+        left = src.hits.get(callee, 0) - 1
+        if left > 0:
+            src.hits[callee] = left
+        else:
+            src.hits.pop(callee, None)
 
     def edge(src: TraceSource, caller: int, callee: int) -> None:
         if caller == 0:
@@ -500,6 +566,14 @@ def read_traces(paths: Sequence[Path], resolver: SymbolResolver) -> TracePlan:
                 head = raw[:_HEAD]
                 if _EXIT_MARKERS[0] in head or _EXIT_MARKERS[1] in head:
                     src.events += 1
+                    m = _EXIT_IDS.search(head)
+                    if m is not None:
+                        mark = spans.get(m.group(1).decode("utf-8", "replace"))
+                        if mark is not None:
+                            key = m.group(2).decode("utf-8", "replace")
+                            val = mark.get(key)
+                            if val is not None:
+                                mark[key] = val | 1
                     continue
                 try:
                     ev = json.loads(raw)
@@ -512,6 +586,15 @@ def read_traces(paths: Sequence[Path], resolver: SymbolResolver) -> TracePlan:
                 kind = ev.get("event")
                 if kind == "exit":
                     src.events += 1
+                    mark = (
+                        spans.get(ev.get("trace_id"))
+                        if isinstance(ev.get("trace_id"), str)
+                        else None
+                    )
+                    if mark is not None and isinstance(ev.get("span_id"), str):
+                        val = mark.get(ev["span_id"])
+                        if val is not None:
+                            mark[ev["span_id"]] = val | 1
                     continue
                 trace_id, span_id = ev.get("trace_id"), ev.get("span_id")
                 if kind != "enter" or not isinstance(trace_id, str) or not isinstance(span_id, str):
@@ -556,18 +639,30 @@ def read_traces(paths: Sequence[Path], resolver: SymbolResolver) -> TracePlan:
                 trace_spans = spans.get(trace_id)
                 if trace_spans is None:
                     trace_spans = spans[trace_id] = {}
-                trace_spans[span_id] = sid
+                thread = thread_index(src_index, ev.get("thread"))
+                trace_spans[span_id] = (sid << _SYM_SHIFT) | (thread << 1)
                 waiting = pending.pop((trace_id, span_id), None)
                 if waiting:
                     for child, child_src in waiting:
-                        edge(plan.sources[child_src], sid, child)
+                        if child_src == src_index:
+                            # Same file, child first: impossible order.
+                            discard(src, child, "parent_not_yet_entered")
+                        else:
+                            edge(plan.sources[child_src], sid, child)
                 parent = ev.get("parent_id")
                 if sid and isinstance(parent, str) and parent:
-                    caller = trace_spans.get(parent)
-                    if caller is None:
+                    state = trace_spans.get(parent)
+                    if state is None:
                         pending.setdefault((trace_id, parent), []).append((sid, src_index))
+                    elif (
+                        state & 1
+                        and thread
+                        and (state >> 1) & _THREAD_MASK == thread
+                        and lang not in _ASYNC_CONTINUATION_LANGS
+                    ):
+                        discard(src, sid, "parent_already_exited")
                     else:
-                        edge(src, caller, sid)
+                        edge(src, state >> _SYM_SHIFT, sid)
         src.content_hash = digest.hexdigest()
 
     # A parent that never appeared: a remote caller (incoming traceparent), or

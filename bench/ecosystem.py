@@ -191,6 +191,7 @@ TASKS: dict[str, list[dict[str, Any]]] = {
             _has(C + "core.Parameter.handle_parse_result"),
             "core.py handle_parse_result calls `self.process_value(ctx, value)` (and Option.prompt_for_value via lambda)",
             False,
+            wrong=[C + "core.augment_usage_errors"],
         ),
         _task(
             "click-4",
@@ -312,6 +313,7 @@ TASKS: dict[str, list[dict[str, Any]]] = {
             "app.py:1536 Flask.__call__ is `return self.wsgi_app(environ, start_response)`",
             False,
             scope=("src",),
+            wrong=[F + "debughelpers.DebugFilesKeyError.__str__"],
         ),
         _task(
             "flask-7",
@@ -339,24 +341,55 @@ TASKS: dict[str, list[dict[str, Any]]] = {
 # ---------------------------------------------------------------------------
 
 
-WRONG_EXAMPLES: dict[str, list[dict[str, str]]] = {
+# Edges confirmed WRONG by reading the pinned source (the program never makes
+# that call). `dst=None` = any callee. Checked against the runtime edges in the
+# index after the ingest (see `known_wrong_edge_check`), so the list shows what
+# a FlowTrace/livespec change fixed instead of describing it once in prose.
+# Before the serializer / generator fixes of FlowTrace all of these were present.
+WRONG_EXAMPLES: dict[str, list[dict[str, Any]]] = {
     "click": [
         {
-            "edge": "core.augment_usage_errors -> core.Parameter.process_value",
-            "why": "augment_usage_errors is an @contextmanager generator; its span stays current while the with-body runs, so the body's calls are attributed to it. Source: core.py:2403 `value = self.process_value(ctx, value)` sits in handle_parse_result inside `with augment_usage_errors(...)`",
+            "src": "core.augment_usage_errors",
+            "dst": "core.Parameter.process_value",
+            "why": "augment_usage_errors is an @contextmanager generator; while its span stayed current after the first yield, the with-body's calls were attributed to it. Source: core.py:2403 `value = self.process_value(ctx, value)` sits in handle_parse_result inside `with augment_usage_errors(...)`",
         },
     ],
     "flask": [
         {
-            "edge": "app.Flask.dispatch_request -> sessions.SecureCookieSession.__init__.on_update",
-            "why": "on_update is invoked by werkzeug's CallbackDict (untraced); the edge goes to the nearest TRACED ancestor, not a call site in flask",
+            "src": "app.Flask.dispatch_request",
+            "dst": "sessions.SecureCookieSession.__init__.on_update",
+            "why": "on_update is invoked by werkzeug's CallbackDict (untraced); the edge goes to the nearest TRACED ancestor, not a call site in flask. NOT caused by the tracer: expected to remain",
         },
         {
-            "edge": "helpers.stream_with_context -> wrappers.Request._load_form_data (and 1115 other enters)",
-            "why": "all 1115 enters whose parent span had already exited have the exited span of stream_with_context as parent; flask code after it returned is still attributed to it",
+            "src": "helpers.stream_with_context",
+            "dst": None,
+            "why": "stream_with_context is a generator-wrapping helper; with its span left current after it returned, 1115 enters were parented to an already-exited span",
         },
     ],
 }
+
+
+def known_wrong_edge_check(ls: Livespec, name: str) -> list[dict[str, Any]]:
+    """Which hand-confirmed wrong edges are still runtime edges in the index."""
+    con = ls.db()
+    out = []
+    try:
+        for w in WRONG_EXAMPLES.get(name, []):
+            sql = (
+                "SELECT COUNT(*) AS n FROM symbol_edge e "
+                "JOIN symbol a ON a.id = e.src_symbol_id JOIN symbol b ON b.id = e.dst_symbol_id "
+                "WHERE e.origin = ? AND (a.qualified_name = ? OR a.qualified_name LIKE ?)"
+            )
+            args: list[Any] = [RUNTIME_ORIGIN, w["src"], "%." + w["src"]]
+            if w["dst"]:
+                sql += " AND (b.qualified_name = ? OR b.qualified_name LIKE ?)"
+                args += [w["dst"], "%." + w["dst"]]
+            n = con.execute(sql, args).fetchone()["n"]
+            out.append({"edge": f"{w['src']} -> {w['dst'] or '*'}", "present": n > 0,
+                        "runtime_edges": n, "why": w["why"]})  # fmt: skip
+    finally:
+        con.close()
+    return out
 
 
 def _rv(verdict: str, mechanism: str, evidence: str) -> dict[str, str]:
@@ -1157,6 +1190,8 @@ def bench_repo(
         ),
     }  # fmt: skip
     res["ingest"]["wrong_edge_audit"] = runtime_edge_audit(ls, checkout, tinfo["_artifact_methods"])
+    res["ingest"]["known_wrong_edges"] = known_wrong_edge_check(ls, name)
+    res["ingest"]["discarded_spans"] = p.get("discarded_spans", 0)
 
     # 4. after ----------------------------------------------------------------
     log(f"[{name}] find_dead_code after")
@@ -1220,7 +1255,7 @@ def bench_repo(
             for t, a, b in zip(top, who_after, who_before, strict=True)
         ],
         "top_new_runtime_callers_artifact_free": top_clean,
-        "wrong_edges_confirmed_in_source": WRONG_EXAMPLES.get(name, []),
+        "wrong_edges_confirmed_in_source": res["ingest"]["known_wrong_edges"],
         "remove_then_reingest_roundtrip": {
             "removed_edges": (rem["data"] or {}).get("removed"),
             "reingest_restored_same_edge_count": restored_ok,

@@ -85,12 +85,19 @@ def _repo(workspace: Path) -> None:
 
 
 class _Trace:
-    """Hand-written FlowTrace v2 JSONL, with matching `exit` events."""
+    """Hand-written FlowTrace v2 JSONL, with matching `exit` events.
+
+    Spans stay open until `close` (or `write`, which closes whatever is still
+    open, innermost first), so a callee's `enter` lands while its caller is
+    still running — the only order a real program produces, and the one the
+    ingest's order checks rely on.
+    """
 
     def __init__(self, trace_id: str = TRACE_A) -> None:
         self.trace_id = trace_id
         self.lines: list[str] = []
         self._n = 0
+        self._open: list[dict] = []
 
     def enter(
         self,
@@ -103,6 +110,7 @@ class _Trace:
         file: str | None = None,
         line: int | None = None,
         span: str | None = None,
+        thread: str = "main",
     ) -> str:
         self._n += 1
         span = span or f"{self._n:016x}"
@@ -112,7 +120,7 @@ class _Trace:
             "span_id": span,
             "parent_id": parent,
             "event": "enter",
-            "thread": "main",
+            "thread": thread,
             "lang": lang,
             "module": module,
             "class": cls,
@@ -128,13 +136,23 @@ class _Trace:
         self.lines.append(json.dumps(ev, separators=(",", ":")))
         exit_ev = {k: v for k, v in ev.items() if k not in ("file", "line")}
         exit_ev.update(event="exit", result={}, duration_ns=10)
-        self.lines.append(json.dumps(exit_ev, separators=(",", ":")))
+        self._open.append(exit_ev)
         return span
+
+    def close(self, span: str) -> None:
+        """Write the `exit` of one span now (it must still be open)."""
+        for i, ev in enumerate(self._open):
+            if ev["span_id"] == span:
+                self.lines.append(json.dumps(self._open.pop(i), separators=(",", ":")))
+                return
+        raise AssertionError(f"span {span} is not open")
 
     def raw(self, text: str) -> None:
         self.lines.append(text)
 
     def write(self, path: Path) -> str:
+        while self._open:
+            self.lines.append(json.dumps(self._open.pop(), separators=(",", ":")))
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text("\n".join(self.lines) + "\n")
         return str(path)
@@ -512,6 +530,184 @@ async def test_a_caller_in_another_process_file_resolves_in_either_order(repo: P
     # Without the parent's file the edge cannot be known, and the payload says so.
     assert alone["edges_to_add"] == 0
     assert alone["skipped"] == {"caller_not_in_traces": 2}
+
+
+# --------------------------------------------------------------------------
+# Order-impossible spans are not evidence
+#
+# An older FlowTrace wrote spans nobody called: a user `__repr__` it ran itself
+# while rendering a call's arguments came BEFORE the call's own `enter`, with
+# that call's span as parent; a generator's span stayed "current" after it
+# yielded, so a later call hung off a span that had already exited. Neither
+# order can happen in a real program, so neither is allowed to become a
+# caller -> callee edge or a hit that keeps a symbol out of find_dead_code.
+# --------------------------------------------------------------------------
+
+
+def _dispatch_with_artifact_repr() -> _Trace:
+    """`handle_refund` plays the `__repr__`: entered before `dispatch`, parent = dispatch."""
+    t = _Trace()
+    run = t.enter("run", module="pkg.main", file="pkg/main.py", line=4)
+    t.enter("handle_refund", parent="d" * 16, module="pkg.handlers", file="pkg/handlers.py", line=5)
+    d = t.enter(
+        "dispatch", parent=run, module="pkg.registry", file="pkg/registry.py", line=4, span="d" * 16
+    )
+    t.enter("handle_pay", parent=d, module="pkg.handlers", file="pkg/handlers.py", line=1)
+    return t
+
+
+@pytest.mark.asyncio
+async def test_callee_entered_before_its_parent_is_no_edge_and_no_hit(repo: Path):
+    trace = _dispatch_with_artifact_repr().write(repo / "traces" / "t.jsonl")
+    async with Client(mcp) as c:
+        await _call(c, "index_project")
+        out = await _call(c, "ingest_traces", trace_path=trace, dry_run=False)
+        dead = await _call(c, "find_dead_code")
+        refund_callers = await _callers(c, "pkg.handlers.handle_refund")
+
+    assert out["skipped"] == {"parent_not_yet_entered": 1}
+    assert out["discarded_spans"] == 1
+    # The real chain survives: run -> dispatch -> handle_pay, no edge into the artifact.
+    assert out["edges_observed"] == 2
+    assert refund_callers == []
+    assert _hits(repo) == {
+        "pkg.main.run": 1,
+        "pkg.registry.dispatch": 1,
+        "pkg.handlers.handle_pay": 1,
+    }
+    # It ran, but only because the tracer ran it: it must stay a dead-code
+    # candidate (same file as a symbol the trace did reach: `not_seen`, not rescued).
+    tiers = {r["qualified_name"]: r["runtime"] for r in dead["dead_symbols"]}
+    assert tiers["pkg.handlers.handle_refund"] == "not_seen"
+
+
+@pytest.mark.asyncio
+async def test_hit_counts_only_lose_the_discarded_occurrence(repo: Path):
+    t = _Trace()
+    run = t.enter("run", module="pkg.main", file="pkg/main.py", line=4)
+    # One real call of handle_refund, one artifact of the same function.
+    t.enter("handle_refund", parent=run, module="pkg.handlers", file="pkg/handlers.py", line=5)
+    t.enter("handle_refund", parent="e" * 16, module="pkg.handlers", file="pkg/handlers.py", line=5)
+    t.enter(
+        "dispatch", parent=run, module="pkg.registry", file="pkg/registry.py", line=4, span="e" * 16
+    )
+    trace = t.write(repo / "traces" / "t.jsonl")
+    async with Client(mcp) as c:
+        await _call(c, "index_project")
+        out = await _call(c, "ingest_traces", trace_path=trace, dry_run=False)
+
+    assert out["skipped"] == {"parent_not_yet_entered": 1}
+    assert _hits(repo)["pkg.handlers.handle_refund"] == 1
+    assert out["edges_observed"] == 2  # run -> handle_refund, run -> dispatch
+
+
+@pytest.mark.asyncio
+async def test_callee_entering_after_its_parent_exited_is_no_edge_and_no_hit(repo: Path):
+    t = _Trace()
+    run = t.enter("run", module="pkg.main", file="pkg/main.py", line=4)
+    gen = t.enter("dispatch", parent=run, module="pkg.registry", file="pkg/registry.py", line=4)
+    t.close(gen)
+    # `dispatch` has returned (a generator helper that yielded long ago), and a
+    # later call is attributed to it on the same thread.
+    t.enter("handle_refund", parent=gen, module="pkg.handlers", file="pkg/handlers.py", line=5)
+    trace = t.write(repo / "traces" / "t.jsonl")
+    async with Client(mcp) as c:
+        await _call(c, "index_project")
+        out = await _call(c, "ingest_traces", trace_path=trace, dry_run=False)
+        dead = await _call(c, "find_dead_code")
+
+    assert out["skipped"] == {"parent_already_exited": 1}
+    assert out["discarded_spans"] == 1
+    assert out["edges_observed"] == 1  # run -> dispatch only
+    assert "pkg.handlers.handle_refund" not in _hits(repo)
+    assert any(r["qualified_name"] == "pkg.handlers.handle_refund" for r in dead["dead_symbols"])
+
+
+@pytest.mark.asyncio
+async def test_a_parent_exited_on_another_thread_is_a_real_handoff(repo: Path):
+    t = _Trace()
+    run = t.enter("run", module="pkg.main", file="pkg/main.py", line=4, thread="main")
+    t.close(run)
+    # Work handed to a pool that outlives the function that submitted it.
+    t.enter(
+        "dispatch",
+        parent=run,
+        module="pkg.registry",
+        file="pkg/registry.py",
+        line=4,
+        thread="worker-1",
+    )
+    trace = t.write(repo / "traces" / "t.jsonl")
+    async with Client(mcp) as c:
+        await _call(c, "index_project")
+        out = await _call(c, "ingest_traces", trace_path=trace, dry_run=False)
+
+    assert out["skipped"] == {} and out["discarded_spans"] == 0
+    assert out["edges_observed"] == 1
+
+
+@pytest.mark.asyncio
+async def test_node_continuations_outliving_their_parent_are_kept(repo: Path):
+    # A callback scheduled by a function that has already returned is how Node
+    # code runs; the thread label is `main` for all of it.
+    t = _Trace()
+    run = t.enter("run", lang="node", module="main", file="pkg/main.py", line=4)
+    t.close(run)
+    t.enter("dispatch", parent=run, lang="node", module="registry", file="pkg/registry.py", line=4)
+    trace = t.write(repo / "traces" / "t.jsonl")
+    async with Client(mcp) as c:
+        await _call(c, "index_project")
+        out = await _call(c, "ingest_traces", trace_path=trace)
+
+    assert out["skipped"] == {} and out["edges_observed"] == 1
+
+
+@pytest.mark.asyncio
+async def test_a_missing_exit_never_makes_a_parent_exited(repo: Path):
+    # The trace was cut: `run` has an enter and no exit. Its children are fine.
+    t = _Trace()
+    run = t.enter("run", module="pkg.main", file="pkg/main.py", line=4)
+    t.enter("dispatch", parent=run, module="pkg.registry", file="pkg/registry.py", line=4)
+    t._open.clear()  # cut: neither span ever got its exit line
+    trace = t.write(repo / "traces" / "t.jsonl")
+    async with Client(mcp) as c:
+        await _call(c, "index_project")
+        out = await _call(c, "ingest_traces", trace_path=trace)
+
+    assert out["skipped"] == {} and out["edges_observed"] == 1
+
+
+@pytest.mark.asyncio
+async def test_child_first_across_files_is_a_multi_process_trace_not_an_artifact(repo: Path):
+    # Same shape as the artifact — the child is read before its parent — but
+    # the parent is in ANOTHER file (another process, read second). It settles.
+    child_file = _Trace()
+    child_file.enter(
+        "dispatch", parent="c" * 16, module="pkg.registry", file="pkg/registry.py", line=4
+    )
+    parent_file = _Trace()
+    parent_file.enter("run", module="pkg.main", file="pkg/main.py", line=4, span="c" * 16)
+    a = child_file.write(repo / "traces" / "1-child.jsonl")
+    b = parent_file.write(repo / "traces" / "2-parent.jsonl")
+    async with Client(mcp) as c:
+        await _call(c, "index_project")
+        out = await _call(c, "ingest_traces", trace_path=[a, b])
+
+    assert out["skipped"] == {} and out["discarded_spans"] == 0
+    assert out["edges_observed"] == 1 and out["symbols_hit"] == 2
+
+
+@pytest.mark.asyncio
+async def test_a_parent_that_never_appears_is_still_caller_not_in_traces(repo: Path):
+    t = _Trace()
+    t.enter("dispatch", parent="f" * 16, module="pkg.registry", file="pkg/registry.py", line=4)
+    trace = t.write(repo / "traces" / "t.jsonl")
+    async with Client(mcp) as c:
+        await _call(c, "index_project")
+        out = await _call(c, "ingest_traces", trace_path=trace, dry_run=False)
+
+    assert out["skipped"] == {"caller_not_in_traces": 1} and out["discarded_spans"] == 0
+    assert _hits(repo) == {"pkg.registry.dispatch": 1}
 
 
 @pytest.mark.asyncio

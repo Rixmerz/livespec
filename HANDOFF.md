@@ -46,6 +46,14 @@ Todo el stack es local-first: 0 servicios externos, 0 API keys obligatorias, 0 D
 
 ### Unreleased — evidencia de ejecución, aristas de herencia/tipo, acceso a datos, clones
 
+**Rama `fix/trace-noise`: `ingest_traces` ignora spans de orden imposible.**
+`parent_not_yet_entered` / `parent_already_exited` (misma traza, mismo hilo; Node
+exento) no crean arista ni hit y se cuentan en `skipped` y `discarded_spans`.
+Suite: **1457 passed**. `bench/results-ecosystem.json` re-medido con el FlowTrace
+corregido (artefactos del serializador 27.8 % -> 0 en click). El helper `_Trace`
+de `tests/test_trace_ingest.py` ahora deja los spans abiertos hasta `close()`/`write()`
+(el orden real); los exits inmediatos que escribía antes eran órdenes imposibles.
+
 **Rama `ccr-e8c6f0df-fdpwls` (PR #31, borrador), sobre `c9b7afd` (v0.37.0).**
 `pyproject.toml` sigue en 0.37.0. Suite medida en este árbol: **1449 passed**
 (`uv sync --all-extras && uv run pytest -q`; antes del lote, 1326).

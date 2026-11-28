@@ -270,6 +270,7 @@ or reflection: the callee reads as called by nobody. A
 |--------|------|
 | Before trusting dead-code candidates, when a trace exists | `ingest_traces(trace_path=..., dry_run=True)` then `dry_run=False`, then `find_dead_code()` |
 | `who_calls` returns nothing for something obviously used dynamically | same — the observed caller appears, marked `via_external_edge: "runtime:flowtrace"` |
+| Payload shows `skipped.parent_not_yet_entered` / `parent_already_exited`, `discarded_spans` | spans from an older FlowTrace that no program produces (tracer-run `__repr__`, generator frames): they add no edge and no hit and cannot rescue a symbol; re-record the trace |
 | Take it back out | `ingest_traces(remove=True)` |
 
 - **Never a substitute for `index_project`.** Events resolve only to symbols

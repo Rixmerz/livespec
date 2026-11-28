@@ -2,9 +2,9 @@
   "meta": {
     "delta_cube_available": true,
     "delta_cube_commit": "dd108afd2ea6c2694825e2c94cfc41ec10c923aa",
-    "flowtrace_commit": "8b1bbf1f90e61b866fd170ad2c4f6ef05a6a3238",
-    "flowtrace_dir": "/home/user/flowtrace-debugger",
-    "livespec_commit": "28655df340a6389a87c4d560909f034dba95741e",
+    "flowtrace_commit": "7414cb927f15b772087e02bb5acfee29a9574e91",
+    "flowtrace_dir": "/home/user/wt/flowtrace-noise",
+    "livespec_commit": "0aa7411f384b37f1ece458f7e0658491f56d5694",
     "platform": "Linux-6.18.44-fc-v880-x86_64-with-glibc2.39",
     "python": "3.13.18",
     "quick": false,
@@ -35,10 +35,10 @@
             "chars": 2008,
             "dropped_from_candidates": 1,
             "filtered_out": {
-              "infrastructure": 144,
+              "infrastructure": 163,
               "tests": 661
             },
-            "ms": 401.1,
+            "ms": 402.4,
             "no_evidence": 1,
             "not_seen": 3,
             "rescued_by_runtime": 0,
@@ -49,32 +49,32 @@
           },
           "include_infrastructure": {
             "by_kind": {
-              "class": 8,
+              "class": 5,
               "function": 73,
-              "method": 32,
+              "method": 46,
               "type_alias": 1
             },
-            "candidates": 114,
-            "chars": 20854,
-            "dropped_from_candidates": 148,
+            "candidates": 125,
+            "chars": 23078,
+            "dropped_from_candidates": 125,
             "filtered_out": {
               "tests": 661
             },
-            "ms": 450.6,
-            "no_evidence": 87,
-            "not_seen": 27,
-            "rescued_by_runtime": 34,
+            "ms": 332.1,
+            "no_evidence": 86,
+            "not_seen": 39,
+            "rescued_by_runtime": 30,
             "sample": [
               "src.click._compat._AtomicFile.__getattr__",
               "src.click._compat._AtomicFile.__init__",
-              "src.click._compat._AtomicFile.__repr__",
               "src.click._compat._FixupStream.__getattr__",
               "src.click._compat._FixupStream.__init__",
               "src.click._compat._FixupStream.readable",
               "src.click._compat._FixupStream.seekable",
-              "src.click._compat._FixupStream.writable"
+              "src.click._compat._FixupStream.writable",
+              "src.click._compat._NonClosingTextIOWrapper.__del__"
             ],
-            "static_candidates": 262
+            "static_candidates": 250
           },
           "include_public": {
             "by_kind": {
@@ -84,10 +84,10 @@
             "chars": 2008,
             "dropped_from_candidates": 1,
             "filtered_out": {
-              "infrastructure": 144,
+              "infrastructure": 163,
               "tests": 661
             },
-            "ms": 389.4,
+            "ms": 329.8,
             "no_evidence": 1,
             "not_seen": 3,
             "rescued_by_runtime": 0,
@@ -99,176 +99,107 @@
         },
         "remove_then_reingest_roundtrip": {
           "reingest_restored_same_edge_count": true,
-          "removed_edges": 530
+          "removed_edges": 254
         },
         "top_new_runtime_callers": [
           {
-            "file": "src/click/core.py",
-            "line": 2203,
-            "new_runtime_callers": 44,
-            "qname": "src.click.core.Parameter.__repr__",
-            "sample_callers": [
-              "src.click.core.Command.__init__",
-              "src.click.core.Command.get_help_option",
-              "src.click.core.Command.get_params",
-              "src.click.core.Group.__init__"
-            ],
-            "source_review": {
-              "evidence": "trace: Parameter.__repr__ enter (line 637) precedes the enter of augment_usage_errors (639) whose args hold '<Argument dst>'; nothing in click calls repr(param) there",
-              "mechanism": "serializer artifact (enter-time)",
-              "reviewed_by": "hand, against the pinned sources",
-              "verdict": "wrong edge"
-            },
-            "who_calls_after": 44,
-            "who_calls_after_runtime_only": 44,
-            "who_calls_before": 0
-          },
-          {
-            "file": "src/click/exceptions.py",
-            "line": 41,
-            "new_runtime_callers": 33,
-            "qname": "src.click.exceptions.ClickException.__str__",
-            "sample_callers": [
-              "src.click.core.BaseCommand.main",
-              "src.click.core.BaseCommand.make_context",
-              "src.click.core.Command.invoke",
-              "src.click.core.Command.parse_args"
-            ],
-            "source_review": {
-              "evidence": "1116 of 1124 enters are within 6 events before the exit of a span that raised; FlowTrace calls str(exc) to fill error.msg. 8 are roots called from untraced code",
-              "mechanism": "serializer artifact (exit-time)",
-              "reviewed_by": "hand, against the pinned sources",
-              "verdict": "wrong edge"
-            },
-            "who_calls_after": 33,
-            "who_calls_after_runtime_only": 32,
-            "who_calls_before": 0
-          },
-          {
-            "file": "src/click/testing.py",
-            "line": 78,
-            "new_runtime_callers": 32,
-            "qname": "src.click.testing._NamedTextIOWrapper.mode",
-            "sample_callers": [
-              "src.click._compat._find_binary_reader",
-              "src.click._compat._find_binary_writer",
-              "src.click._compat._force_correct_text_reader",
-              "src.click._compat._force_correct_text_stream"
-            ],
-            "source_review": {
-              "evidence": "callers are functions that RETURN the wrapper; their exit `result` is \"<_NamedTextIOWrapper name='<stdout>' mode='w' ...>\", i.e. TextIOWrapper.__repr__ read .name/.mode. No source line reads .mode (grep)",
-              "mechanism": "serializer artifact (exit-time, C-level repr)",
-              "reviewed_by": "hand, against the pinned sources",
-              "verdict": "wrong edge"
-            },
-            "who_calls_after": 32,
-            "who_calls_after_runtime_only": 32,
-            "who_calls_before": 0
-          },
-          {
-            "file": "src/click/testing.py",
-            "line": 74,
-            "new_runtime_callers": 32,
-            "qname": "src.click.testing._NamedTextIOWrapper.name",
-            "sample_callers": [
-              "src.click._compat._find_binary_reader",
-              "src.click._compat._find_binary_writer",
-              "src.click._compat._force_correct_text_reader",
-              "src.click._compat._force_correct_text_stream"
-            ],
-            "source_review": {
-              "evidence": "same as .mode",
-              "mechanism": "serializer artifact (exit-time, C-level repr)",
-              "reviewed_by": "hand, against the pinned sources",
-              "verdict": "wrong edge"
-            },
-            "who_calls_after": 32,
-            "who_calls_after_runtime_only": 32,
-            "who_calls_before": 0
-          },
-          {
-            "file": "src/click/core.py",
-            "line": 901,
-            "new_runtime_callers": 22,
-            "qname": "src.click.core.BaseCommand.__repr__",
-            "sample_callers": [
-              "src.click.core.Context.__init__",
-              "src.click.core.Context._make_sub_context",
-              "src.click.core.Context.forward",
-              "src.click.core.Context.invoke"
-            ],
-            "source_review": {
-              "evidence": "callers take a command as argument; same orphan-parent pattern as Parameter.__repr__",
-              "mechanism": "serializer artifact (enter-time)",
-              "reviewed_by": "hand, against the pinned sources",
-              "verdict": "wrong edge"
-            },
-            "who_calls_after": 22,
-            "who_calls_after_runtime_only": 22,
-            "who_calls_before": 0
-          }
-        ],
-        "top_new_runtime_callers_artifact_free": [
-          {
-            "file": "src/click/testing.py",
-            "line": 78,
-            "new_runtime_callers": 15,
-            "qname": "src.click.testing._NamedTextIOWrapper.mode",
-            "sample_callers": [
-              "src.click._compat._force_correct_text_reader",
-              "src.click._compat._force_correct_text_stream",
-              "src.click._compat._force_correct_text_writer",
-              "src.click._compat._make_cached_stream_func.func"
-            ],
-            "source_review": {
-              "evidence": "callers are functions that RETURN the wrapper; their exit `result` is \"<_NamedTextIOWrapper name='<stdout>' mode='w' ...>\", i.e. TextIOWrapper.__repr__ read .name/.mode. No source line reads .mode (grep)",
-              "mechanism": "serializer artifact (exit-time, C-level repr)",
-              "reviewed_by": "hand, against the pinned sources",
-              "verdict": "wrong edge"
-            },
-            "who_calls_after": 15,
-            "who_calls_before": 0
-          },
-          {
-            "file": "src/click/testing.py",
-            "line": 74,
-            "new_runtime_callers": 15,
-            "qname": "src.click.testing._NamedTextIOWrapper.name",
-            "sample_callers": [
-              "src.click._compat._force_correct_text_reader",
-              "src.click._compat._force_correct_text_stream",
-              "src.click._compat._force_correct_text_writer",
-              "src.click._compat._make_cached_stream_func.func"
-            ],
-            "source_review": {
-              "evidence": "same as .mode",
-              "mechanism": "serializer artifact (exit-time, C-level repr)",
-              "reviewed_by": "hand, against the pinned sources",
-              "verdict": "wrong edge"
-            },
-            "who_calls_after": 15,
-            "who_calls_before": 0
-          },
-          {
-            "file": "src/click/_compat.py",
-            "line": 98,
+            "file": "src/click/types.py",
+            "line": 56,
             "new_runtime_callers": 8,
-            "qname": "src.click._compat._FixupStream.__getattr__",
+            "qname": "src.click.types.ParamType.to_info_dict",
             "sample_callers": [
-              "src.click._compat._NonClosingTextIOWrapper.__del__",
-              "src.click._compat._NonClosingTextIOWrapper.__init__",
-              "src.click._compat._force_correct_text_reader",
-              "src.click._compat._force_correct_text_stream"
+              "src.click.core.Parameter.to_info_dict",
+              "src.click.types.Choice.to_info_dict",
+              "src.click.types.DateTime.to_info_dict",
+              "src.click.types.File.to_info_dict"
             ],
             "source_review": {
-              "evidence": "_compat.py:98 `return getattr(self._stream, name)`; reached when C-level io.TextIOWrapper probes attributes the wrapper lacks. Recorded caller is the nearest traced frame, not a call site in click",
+              "evidence": "types.py:171,251,365,439: `info_dict = super().to_info_dict()` in each subclass; the static resolver does not link super() calls",
+              "mechanism": "inheritance (super())",
+              "reviewed_by": "hand, against the pinned sources",
+              "verdict": "real"
+            },
+            "who_calls_after": 8,
+            "who_calls_after_runtime_only": 8,
+            "who_calls_before": 0
+          },
+          {
+            "file": "src/click/shell_completion.py",
+            "line": 76,
+            "new_runtime_callers": 7,
+            "qname": "src.click.shell_completion.CompletionItem.__init__",
+            "sample_callers": [
+              "src.click.core.BaseCommand.shell_complete",
+              "src.click.core.Command.shell_complete",
+              "src.click.core.MultiCommand.shell_complete",
+              "src.click.core.Parameter.shell_complete"
+            ],
+            "source_review": {
+              "verdict": "unreviewed"
+            },
+            "who_calls_after": 7,
+            "who_calls_after_runtime_only": 7,
+            "who_calls_before": 0
+          },
+          {
+            "file": "src/click/testing.py",
+            "line": 27,
+            "new_runtime_callers": 7,
+            "qname": "src.click.testing.EchoingStdin.__getattr__",
+            "sample_callers": [
+              "src.click._compat._is_binary_reader",
+              "src.click.core.Context.invoke",
+              "src.click.testing.CliRunner.invoke",
+              "src.click.testing.CliRunner.isolation._getchar"
+            ],
+            "source_review": {
+              "evidence": "testing.py:27 `return getattr(self._input, x)`; attributes not defined on EchoingStdin fall through",
               "mechanism": "__getattr__ delegation",
               "reviewed_by": "hand, against the pinned sources",
               "verdict": "real, indirect"
             },
-            "who_calls_after": 8,
+            "who_calls_after": 7,
+            "who_calls_after_runtime_only": 7,
             "who_calls_before": 0
           },
+          {
+            "file": "src/click/core.py",
+            "line": 462,
+            "new_runtime_callers": 5,
+            "qname": "src.click.core.Context.__enter__",
+            "sample_callers": [
+              "src.click.core.BaseCommand.main",
+              "src.click.core.Context.invoke",
+              "src.click.core.Context.scope",
+              "src.click.core.MultiCommand.invoke"
+            ],
+            "source_review": {
+              "verdict": "unreviewed"
+            },
+            "who_calls_after": 5,
+            "who_calls_after_runtime_only": 5,
+            "who_calls_before": 0
+          },
+          {
+            "file": "src/click/core.py",
+            "line": 467,
+            "new_runtime_callers": 5,
+            "qname": "src.click.core.Context.__exit__",
+            "sample_callers": [
+              "src.click.core.BaseCommand.main",
+              "src.click.core.Context.invoke",
+              "src.click.core.Context.scope",
+              "src.click.core.MultiCommand.invoke"
+            ],
+            "source_review": {
+              "verdict": "unreviewed"
+            },
+            "who_calls_after": 5,
+            "who_calls_after_runtime_only": 5,
+            "who_calls_before": 0
+          }
+        ],
+        "top_new_runtime_callers_artifact_free": [
           {
             "file": "src/click/types.py",
             "line": 56,
@@ -290,13 +221,30 @@
             "who_calls_before": 0
           },
           {
+            "file": "src/click/shell_completion.py",
+            "line": 76,
+            "new_runtime_callers": 7,
+            "qname": "src.click.shell_completion.CompletionItem.__init__",
+            "sample_callers": [
+              "src.click.core.BaseCommand.shell_complete",
+              "src.click.core.Command.shell_complete",
+              "src.click.core.MultiCommand.shell_complete",
+              "src.click.core.Parameter.shell_complete"
+            ],
+            "source_review": {
+              "verdict": "unreviewed"
+            },
+            "who_calls_after": 7,
+            "who_calls_before": 0
+          },
+          {
             "file": "src/click/testing.py",
             "line": 27,
             "new_runtime_callers": 7,
             "qname": "src.click.testing.EchoingStdin.__getattr__",
             "sample_callers": [
               "src.click._compat._is_binary_reader",
-              "src.click.core.augment_usage_errors",
+              "src.click.core.Context.invoke",
               "src.click.testing.CliRunner.invoke",
               "src.click.testing.CliRunner.isolation._getchar"
             ],
@@ -308,12 +256,48 @@
             },
             "who_calls_after": 7,
             "who_calls_before": 0
+          },
+          {
+            "file": "src/click/core.py",
+            "line": 462,
+            "new_runtime_callers": 5,
+            "qname": "src.click.core.Context.__enter__",
+            "sample_callers": [
+              "src.click.core.BaseCommand.main",
+              "src.click.core.Context.invoke",
+              "src.click.core.Context.scope",
+              "src.click.core.MultiCommand.invoke"
+            ],
+            "source_review": {
+              "verdict": "unreviewed"
+            },
+            "who_calls_after": 5,
+            "who_calls_before": 0
+          },
+          {
+            "file": "src/click/core.py",
+            "line": 467,
+            "new_runtime_callers": 5,
+            "qname": "src.click.core.Context.__exit__",
+            "sample_callers": [
+              "src.click.core.BaseCommand.main",
+              "src.click.core.Context.invoke",
+              "src.click.core.Context.scope",
+              "src.click.core.MultiCommand.invoke"
+            ],
+            "source_review": {
+              "verdict": "unreviewed"
+            },
+            "who_calls_after": 5,
+            "who_calls_before": 0
           }
         ],
         "wrong_edges_confirmed_in_source": [
           {
             "edge": "core.augment_usage_errors -> core.Parameter.process_value",
-            "why": "augment_usage_errors is an @contextmanager generator; its span stays current while the with-body runs, so the body's calls are attributed to it. Source: core.py:2403 `value = self.process_value(ctx, value)` sits in handle_parse_result inside `with augment_usage_errors(...)`"
+            "present": false,
+            "runtime_edges": 0,
+            "why": "augment_usage_errors is an @contextmanager generator; while its span stayed current after the first yield, the with-body's calls were attributed to it. Source: core.py:2403 `value = self.process_value(ctx, value)` sits in handle_parse_result inside `with augment_usage_errors(...)`"
           }
         ]
       },
@@ -324,54 +308,51 @@
         "max_arg_length": 64,
         "outcome_diffs": [],
         "outcome_set_changed": false,
-        "overhead_factor": 5.05,
-        "overhead_factor_vs_first_plain_run": 3.91,
+        "overhead_factor": 4.77,
+        "overhead_factor_vs_first_plain_run": 2.79,
         "plain": {
           "errors": 0,
           "failed": 0,
           "passed": 628,
           "returncode": 0,
-          "seconds": 1.07,
+          "seconds": 0.9,
           "skipped": 22,
           "tests": 650
         },
         "plain_all_runs_s": [
-          1.38,
-          1.07
+          1.54,
+          0.9
         ],
         "trace": {
-          "distinct_caller_callee_pairs": 854,
-          "enter_events": 112888,
-          "events": 225776,
+          "distinct_caller_callee_pairs": 590,
+          "enter_events": 79197,
+          "events": 158394,
           "pairs_only_from_exited_parent_events": 0,
-          "pairs_only_from_serializer_artifacts": 220,
+          "pairs_only_from_serializer_artifacts": 1,
           "parent_already_exited_enters": 0,
-          "serializer_artifact_descendants": 92,
-          "serializer_artifact_enter_time": 20732,
-          "serializer_artifact_enter_time_by_method_top": {
-            "mode": 3630,
-            "name": 3630
-          },
-          "serializer_artifact_enters": 31349,
-          "serializer_artifact_exit_time_heuristic": 10525,
-          "serializer_artifact_share_pct": 27.8,
-          "size_mb": 83.8
+          "serializer_artifact_descendants": 0,
+          "serializer_artifact_enter_time": 0,
+          "serializer_artifact_enter_time_by_method_top": {},
+          "serializer_artifact_enters": 751,
+          "serializer_artifact_exit_time_heuristic": 751,
+          "serializer_artifact_share_pct": 0.9,
+          "size_mb": 62.24
         },
         "traced": {
           "errors": 0,
           "failed": 0,
           "passed": 628,
           "returncode": 0,
-          "seconds": 5.4,
+          "seconds": 4.29,
           "skipped": 22,
           "tests": 650
         }
       },
       "delta_cube": {
-        "hotspots_s": 0.5,
-        "index_s": 1.28,
+        "hotspots_s": 0.45,
+        "index_s": 1.12,
         "indexed": 70,
-        "payload_chars": 1852,
+        "payload_chars": 1847,
         "top10": [
           {
             "debt": 35.9,
@@ -482,43 +463,52 @@
         ]
       },
       "ingest": {
-        "already_known": 324,
+        "already_known": 336,
         "applied": {
-          "edges_added": 530,
+          "edges_added": 254,
           "edges_removed": 0,
-          "ms": 1019.9,
-          "peak_rss_mb": 104.5,
-          "rss_start_mb": 93.0
+          "ms": 802.4,
+          "peak_rss_mb": 104.6,
+          "rss_start_mb": 91.7
         },
+        "discarded_spans": 0,
         "dry_run": {
-          "ms": 907.8,
-          "peak_rss_mb": 104.4,
-          "rss_start_mb": 93.0
+          "ms": 818.1,
+          "peak_rss_mb": 104.3,
+          "rss_start_mb": 91.7
         },
-        "edges_observed": 854,
-        "edges_to_add": 530,
-        "enter_events": 112888,
+        "edges_observed": 590,
+        "edges_to_add": 254,
+        "enter_events": 79197,
+        "known_wrong_edges": [
+          {
+            "edge": "core.augment_usage_errors -> core.Parameter.process_value",
+            "present": false,
+            "runtime_edges": 0,
+            "why": "augment_usage_errors is an @contextmanager generator; while its span stayed current after the first yield, the with-body's calls were attributed to it. Source: core.py:2403 `value = self.process_value(ctx, value)` sits in handle_parse_result inside `with augment_usage_errors(...)`"
+          }
+        ],
         "resolved_by": {
-          "location": 112888
+          "location": 79197
         },
-        "resolved_events": 112888,
+        "resolved_events": 79197,
         "resolved_pct": 100.0,
         "serializer_artifacts_removed_dry_run": {
-          "already_known": 322,
-          "edges_to_add": 312,
-          "enter_events": 81539,
-          "symbols_hit": 392
+          "already_known": 336,
+          "edges_to_add": 253,
+          "enter_events": 78446,
+          "symbols_hit": 391
         },
         "skipped": {
-          "self_call": 21
+          "self_call": 22
         },
-        "symbols_hit": 406,
+        "symbols_hit": 392,
         "unresolved": {},
         "unresolved_samples": {},
         "wrong_edge_audit": {
-          "edges_from_generator_functions": 77,
-          "edges_into_serializer_artifact_methods": 271,
-          "runtime_edges": 530
+          "edges_from_generator_functions": 5,
+          "edges_into_serializer_artifact_methods": 1,
+          "runtime_edges": 254
         }
       },
       "payload_proxy": {
@@ -621,8 +611,6 @@
             },
             "by_tool": {
               "answer": [
-                "*src.click.core.augment_usage_errors",
-                "src.click.core.Context.invoke",
                 "src.click.core.Command.parse_args",
                 "src.click.core.Parameter.handle_parse_result",
                 "src.click.core.Option.prompt_for_value",
@@ -642,9 +630,9 @@
                 "tests.test_arguments.test_missing_argument_string_cast",
                 "tests.test_options.test_missing_option_string_cast"
               ],
-              "approx_tokens": 726,
+              "approx_tokens": 627,
               "calls": 1,
-              "chars": 2904,
+              "chars": 2511,
               "chars_static_only": 1348,
               "correct": true,
               "correct_static_only": true,
@@ -805,9 +793,9 @@
           "by_file_approx_tokens": 234964,
           "by_file_chars": 939856,
           "by_file_src_only_chars": 874409,
-          "by_tool_approx_tokens": 2664,
+          "by_tool_approx_tokens": 2566,
           "by_tool_calls": 7,
-          "by_tool_chars": 10659,
+          "by_tool_chars": 10266,
           "grep_output_chars": 5875,
           "tasks": 7,
           "tool_correct": 7,
@@ -825,7 +813,7 @@
         "ref": "8.1.8"
       },
       "static": {
-        "call_edges": 5618,
+        "call_edges": 5984,
         "files": 70,
         "find_dead_code": {
           "default": {
@@ -838,24 +826,24 @@
               "infrastructure": 257,
               "tests": 661
             },
-            "ms": 418.1,
+            "ms": 404.2,
             "no_evidence": null,
             "not_seen": null,
             "rescued_by_runtime": null
           },
           "include_infrastructure": {
             "by_kind": {
-              "class": 23,
+              "class": 11,
               "function": 90,
               "method": 148,
               "type_alias": 1
             },
-            "candidates": 262,
-            "chars": 38712,
+            "candidates": 250,
+            "chars": 37560,
             "filtered_out": {
               "tests": 661
             },
-            "ms": 370.4,
+            "ms": 332.0,
             "no_evidence": null,
             "not_seen": null,
             "rescued_by_runtime": null
@@ -870,14 +858,14 @@
               "infrastructure": 257,
               "tests": 661
             },
-            "ms": 353.5,
+            "ms": 364.6,
             "no_evidence": null,
             "not_seen": null,
             "rescued_by_runtime": null
           }
         },
-        "index_ms": 738.0,
-        "index_peak_rss_mb": 102.3,
+        "index_ms": 940.6,
+        "index_peak_rss_mb": 104.4,
         "symbols": 1389
       }
     },
@@ -890,16 +878,16 @@
               "function": 6
             },
             "candidates": 7,
-            "chars": 2471,
-            "dropped_from_candidates": 10,
+            "chars": 2901,
+            "dropped_from_candidates": 9,
             "filtered_out": {
-              "infrastructure": 76,
+              "infrastructure": 90,
               "tests": 774
             },
-            "ms": 375.4,
+            "ms": 321.6,
             "no_evidence": 4,
             "not_seen": 3,
-            "rescued_by_runtime": 8,
+            "rescued_by_runtime": 7,
             "sample": [
               "src.flask.json.tag.PassDict",
               "src.flask.json.tag.PassList",
@@ -910,25 +898,25 @@
               "src.flask.json.tag.TagUUID",
               "src.flask.sansio.app._make_timedelta"
             ],
-            "static_candidates": 17
+            "static_candidates": 16
           },
           "include_infrastructure": {
             "by_kind": {
               "class": 2,
               "function": 24,
-              "method": 9,
-              "type_alias": 19
+              "method": 11,
+              "type_alias": 1
             },
-            "candidates": 54,
-            "chars": 10583,
-            "dropped_from_candidates": 142,
+            "candidates": 38,
+            "chars": 8346,
+            "dropped_from_candidates": 124,
             "filtered_out": {
               "tests": 774
             },
-            "ms": 365.9,
-            "no_evidence": 36,
-            "not_seen": 18,
-            "rescued_by_runtime": 37,
+            "ms": 332.4,
+            "no_evidence": 19,
+            "not_seen": 19,
+            "rescued_by_runtime": 33,
             "sample": [
               "src.flask.__init__.__getattr__",
               "src.flask.app.Flask.__call__",
@@ -939,7 +927,7 @@
               "src.flask.cli.CertParamType.convert",
               "src.flask.cli.FlaskGroup.__init__"
             ],
-            "static_candidates": 204
+            "static_candidates": 170
           },
           "include_public": {
             "by_kind": {
@@ -947,16 +935,16 @@
               "function": 6
             },
             "candidates": 7,
-            "chars": 2471,
-            "dropped_from_candidates": 10,
+            "chars": 2901,
+            "dropped_from_candidates": 9,
             "filtered_out": {
-              "infrastructure": 76,
+              "infrastructure": 90,
               "tests": 774
             },
-            "ms": 352.8,
+            "ms": 299.9,
             "no_evidence": 4,
             "not_seen": 3,
-            "rescued_by_runtime": 8,
+            "rescued_by_runtime": 7,
             "sample": [
               "src.flask.json.tag.PassDict",
               "src.flask.json.tag.PassList",
@@ -967,45 +955,24 @@
               "src.flask.json.tag.TagUUID",
               "src.flask.sansio.app._make_timedelta"
             ],
-            "static_candidates": 17
+            "static_candidates": 16
           }
         },
         "remove_then_reingest_roundtrip": {
           "reingest_restored_same_edge_count": true,
-          "removed_edges": 420
+          "removed_edges": 284
         },
         "top_new_runtime_callers": [
           {
             "file": "src/flask/sansio/scaffold.py",
-            "line": 217,
-            "new_runtime_callers": 47,
-            "qname": "src.flask.sansio.scaffold.Scaffold.__repr__",
-            "sample_callers": [
-              "src.flask.app.Flask.ensure_sync",
-              "src.flask.app.Flask.test_client",
-              "src.flask.cli.ScriptInfo.load_app",
-              "src.flask.cli.find_app_by_string"
-            ],
-            "source_review": {
-              "evidence": "callers take the app/blueprint as an argument; enter precedes the parent's enter in the trace",
-              "mechanism": "serializer artifact (enter-time)",
-              "reviewed_by": "hand, against the pinned sources",
-              "verdict": "wrong edge"
-            },
-            "who_calls_after": 47,
-            "who_calls_after_runtime_only": 47,
-            "who_calls_before": 0
-          },
-          {
-            "file": "src/flask/sansio/scaffold.py",
             "line": 45,
-            "new_runtime_callers": 26,
+            "new_runtime_callers": 25,
             "qname": "src.flask.sansio.scaffold.setupmethod.wrapper_func",
             "sample_callers": [
               "src.flask.app.Flask.__init__",
               "src.flask.cli.locate_app",
-              "src.flask.helpers.stream_with_context",
-              "src.flask.sansio.app.App.template_filter.decorator"
+              "src.flask.sansio.app.App.template_filter.decorator",
+              "src.flask.sansio.app.App.template_global.decorator"
             ],
             "source_review": {
               "evidence": "scaffold.py:45: @setupmethod replaces the method (add_url_rule, route, errorhandler, ...) by wrapper_func via update_wrapper, so `self.add_url_rule(...)` runs wrapper_func; the static graph links the call to the undecorated name",
@@ -1013,14 +980,14 @@
               "reviewed_by": "hand, against the pinned sources",
               "verdict": "real"
             },
-            "who_calls_after": 26,
-            "who_calls_after_runtime_only": 26,
+            "who_calls_after": 25,
+            "who_calls_after_runtime_only": 25,
             "who_calls_before": 0
           },
           {
             "file": "src/flask/sansio/app.py",
             "line": 550,
-            "new_runtime_callers": 12,
+            "new_runtime_callers": 11,
             "qname": "src.flask.sansio.app.App.debug",
             "sample_callers": [
               "src.flask.app.Flask.create_jinja_environment",
@@ -1031,27 +998,6 @@
             "source_review": {
               "evidence": "app.py:406,495,653 read `self.debug`; sansio/app.py:550 is a @property, an attribute read is not a call to the static resolver",
               "mechanism": "property",
-              "reviewed_by": "hand, against the pinned sources",
-              "verdict": "real"
-            },
-            "who_calls_after": 12,
-            "who_calls_after_runtime_only": 12,
-            "who_calls_before": 0
-          },
-          {
-            "file": "src/flask/sansio/app.py",
-            "line": 470,
-            "new_runtime_callers": 11,
-            "qname": "src.flask.sansio.app.App.jinja_env",
-            "sample_callers": [
-              "src.flask.helpers.get_template_attribute",
-              "src.flask.helpers.stream_with_context",
-              "src.flask.sansio.app.App.add_template_filter",
-              "src.flask.sansio.app.App.add_template_global"
-            ],
-            "source_review": {
-              "evidence": "templating.py:149,161,203,218 `app.jinja_env.get_or_select_template(...)`; sansio/app.py:469 is a @cached_property",
-              "mechanism": "cached_property",
               "reviewed_by": "hand, against the pinned sources",
               "verdict": "real"
             },
@@ -1060,24 +1006,66 @@
             "who_calls_before": 0
           },
           {
-            "file": "src/flask/debughelpers.py",
-            "line": 46,
-            "new_runtime_callers": 8,
-            "qname": "src.flask.debughelpers.DebugFilesKeyError.__str__",
+            "file": "src/flask/sansio/app.py",
+            "line": 470,
+            "new_runtime_callers": 10,
+            "qname": "src.flask.sansio.app.App.jinja_env",
             "sample_callers": [
-              "src.flask.app.Flask.__call__",
-              "src.flask.app.Flask.dispatch_request",
-              "src.flask.app.Flask.full_dispatch_request",
-              "src.flask.app.Flask.handle_exception"
+              "src.flask.helpers.get_template_attribute",
+              "src.flask.sansio.app.App.add_template_filter",
+              "src.flask.sansio.app.App.add_template_global",
+              "src.flask.sansio.app.App.add_template_test"
             ],
             "source_review": {
-              "evidence": "str(exc) called to fill error.msg of the raising span",
-              "mechanism": "serializer artifact (exit-time)",
+              "evidence": "templating.py:149,161,203,218 `app.jinja_env.get_or_select_template(...)`; sansio/app.py:469 is a @cached_property",
+              "mechanism": "cached_property",
               "reviewed_by": "hand, against the pinned sources",
-              "verdict": "wrong edge"
+              "verdict": "real"
             },
-            "who_calls_after": 8,
-            "who_calls_after_runtime_only": 8,
+            "who_calls_after": 10,
+            "who_calls_after_runtime_only": 10,
+            "who_calls_before": 0
+          },
+          {
+            "file": "src/flask/wrappers.py",
+            "line": 181,
+            "new_runtime_callers": 7,
+            "qname": "src.flask.wrappers.Request.blueprints",
+            "sample_callers": [
+              "src.flask.app.Flask.do_teardown_request",
+              "src.flask.app.Flask.handle_exception",
+              "src.flask.app.Flask.handle_http_exception",
+              "src.flask.app.Flask.handle_user_exception"
+            ],
+            "source_review": {
+              "evidence": "app.py:521,774,804 `request.blueprints`; wrappers.py:181 is a @property; `request` is a werkzeug LocalProxy",
+              "mechanism": "property through the `request` LocalProxy",
+              "reviewed_by": "hand, against the pinned sources",
+              "verdict": "real"
+            },
+            "who_calls_after": 7,
+            "who_calls_after_runtime_only": 7,
+            "who_calls_before": 0
+          },
+          {
+            "file": "src/flask/sansio/app.py",
+            "line": 536,
+            "new_runtime_callers": 6,
+            "qname": "src.flask.sansio.app.App.select_jinja_autoescape",
+            "sample_callers": [
+              "src.flask.helpers.get_template_attribute",
+              "src.flask.templating._render",
+              "src.flask.templating.render_template",
+              "src.flask.templating.render_template_string"
+            ],
+            "source_review": {
+              "evidence": "passed as autoescape= when the Environment is created; Jinja calls it, the recorded caller is the traced function that first touched jinja_env",
+              "mechanism": "callback handed to Jinja",
+              "reviewed_by": "hand, against the pinned sources",
+              "verdict": "real, indirect"
+            },
+            "who_calls_after": 6,
+            "who_calls_after_runtime_only": 6,
             "who_calls_before": 0
           }
         ],
@@ -1085,13 +1073,13 @@
           {
             "file": "src/flask/sansio/scaffold.py",
             "line": 45,
-            "new_runtime_callers": 26,
+            "new_runtime_callers": 25,
             "qname": "src.flask.sansio.scaffold.setupmethod.wrapper_func",
             "sample_callers": [
               "src.flask.app.Flask.__init__",
               "src.flask.cli.locate_app",
-              "src.flask.helpers.stream_with_context",
-              "src.flask.sansio.app.App.template_filter.decorator"
+              "src.flask.sansio.app.App.template_filter.decorator",
+              "src.flask.sansio.app.App.template_global.decorator"
             ],
             "source_review": {
               "evidence": "scaffold.py:45: @setupmethod replaces the method (add_url_rule, route, errorhandler, ...) by wrapper_func via update_wrapper, so `self.add_url_rule(...)` runs wrapper_func; the static graph links the call to the undecorated name",
@@ -1099,13 +1087,13 @@
               "reviewed_by": "hand, against the pinned sources",
               "verdict": "real"
             },
-            "who_calls_after": 26,
+            "who_calls_after": 25,
             "who_calls_before": 0
           },
           {
             "file": "src/flask/sansio/app.py",
             "line": 550,
-            "new_runtime_callers": 12,
+            "new_runtime_callers": 11,
             "qname": "src.flask.sansio.app.App.debug",
             "sample_callers": [
               "src.flask.app.Flask.create_jinja_environment",
@@ -1119,19 +1107,19 @@
               "reviewed_by": "hand, against the pinned sources",
               "verdict": "real"
             },
-            "who_calls_after": 12,
+            "who_calls_after": 11,
             "who_calls_before": 0
           },
           {
             "file": "src/flask/sansio/app.py",
             "line": 470,
-            "new_runtime_callers": 11,
+            "new_runtime_callers": 10,
             "qname": "src.flask.sansio.app.App.jinja_env",
             "sample_callers": [
               "src.flask.helpers.get_template_attribute",
-              "src.flask.helpers.stream_with_context",
               "src.flask.sansio.app.App.add_template_filter",
-              "src.flask.sansio.app.App.add_template_global"
+              "src.flask.sansio.app.App.add_template_global",
+              "src.flask.sansio.app.App.add_template_test"
             ],
             "source_review": {
               "evidence": "templating.py:149,161,203,218 `app.jinja_env.get_or_select_template(...)`; sansio/app.py:469 is a @cached_property",
@@ -1139,7 +1127,7 @@
               "reviewed_by": "hand, against the pinned sources",
               "verdict": "real"
             },
-            "who_calls_after": 11,
+            "who_calls_after": 10,
             "who_calls_before": 0
           },
           {
@@ -1170,8 +1158,8 @@
             "sample_callers": [
               "src.flask.helpers.get_template_attribute",
               "src.flask.templating._render",
-              "src.flask.templating._stream.generate",
-              "src.flask.templating.render_template"
+              "src.flask.templating.render_template",
+              "src.flask.templating.render_template_string"
             ],
             "source_review": {
               "evidence": "passed as autoescape= when the Environment is created; Jinja calls it, the recorded caller is the traced function that first touched jinja_env",
@@ -1186,11 +1174,15 @@
         "wrong_edges_confirmed_in_source": [
           {
             "edge": "app.Flask.dispatch_request -> sessions.SecureCookieSession.__init__.on_update",
-            "why": "on_update is invoked by werkzeug's CallbackDict (untraced); the edge goes to the nearest TRACED ancestor, not a call site in flask"
+            "present": true,
+            "runtime_edges": 1,
+            "why": "on_update is invoked by werkzeug's CallbackDict (untraced); the edge goes to the nearest TRACED ancestor, not a call site in flask. NOT caused by the tracer: expected to remain"
           },
           {
-            "edge": "helpers.stream_with_context -> wrappers.Request._load_form_data (and 1115 other enters)",
-            "why": "all 1115 enters whose parent span had already exited have the exited span of stream_with_context as parent; flask code after it returned is still attributed to it"
+            "edge": "helpers.stream_with_context -> *",
+            "present": false,
+            "runtime_edges": 0,
+            "why": "stream_with_context is a generator-wrapping helper; with its span left current after it returned, 1115 enters were parented to an already-exited span"
           }
         ]
       },
@@ -1203,51 +1195,51 @@
         "max_arg_length": 64,
         "outcome_diffs": [],
         "outcome_set_changed": false,
-        "overhead_factor": 2.75,
-        "overhead_factor_vs_first_plain_run": 1.71,
+        "overhead_factor": 2.53,
+        "overhead_factor_vs_first_plain_run": 1.8,
         "plain": {
           "errors": 0,
           "failed": 1,
           "passed": 489,
           "returncode": 1,
-          "seconds": 1.52,
+          "seconds": 1.48,
           "skipped": 2,
           "tests": 492
         },
         "plain_all_runs_s": [
-          2.45,
-          1.52
+          2.08,
+          1.48
         ],
         "trace": {
-          "distinct_caller_callee_pairs": 594,
-          "enter_events": 63071,
-          "events": 126142,
-          "pairs_only_from_exited_parent_events": 73,
-          "pairs_only_from_serializer_artifacts": 61,
-          "parent_already_exited_enters": 1116,
-          "serializer_artifact_descendants": 456,
-          "serializer_artifact_enter_time": 9037,
+          "distinct_caller_callee_pairs": 458,
+          "enter_events": 52455,
+          "events": 104910,
+          "pairs_only_from_exited_parent_events": 0,
+          "pairs_only_from_serializer_artifacts": 0,
+          "parent_already_exited_enters": 0,
+          "serializer_artifact_descendants": 0,
+          "serializer_artifact_enter_time": 0,
           "serializer_artifact_enter_time_by_method_top": {},
-          "serializer_artifact_enters": 10616,
-          "serializer_artifact_exit_time_heuristic": 1123,
-          "serializer_artifact_share_pct": 16.8,
-          "size_mb": 46.35
+          "serializer_artifact_enters": 0,
+          "serializer_artifact_exit_time_heuristic": 0,
+          "serializer_artifact_share_pct": 0.0,
+          "size_mb": 39.29
         },
         "traced": {
           "errors": 0,
           "failed": 1,
           "passed": 489,
           "returncode": 1,
-          "seconds": 4.18,
+          "seconds": 3.74,
           "skipped": 2,
           "tests": 492
         }
       },
       "delta_cube": {
-        "hotspots_s": 0.53,
-        "index_s": 1.14,
+        "hotspots_s": 0.44,
+        "index_s": 1.02,
         "indexed": 83,
-        "payload_chars": 1965,
+        "payload_chars": 1960,
         "top10": [
           {
             "debt": 19.0,
@@ -1363,41 +1355,56 @@
       "ingest": {
         "already_known": 174,
         "applied": {
-          "edges_added": 420,
+          "edges_added": 284,
           "edges_removed": 0,
-          "ms": 487.4,
-          "peak_rss_mb": 100.8,
-          "rss_start_mb": 93.0
+          "ms": 462.2,
+          "peak_rss_mb": 101.5,
+          "rss_start_mb": 91.7
         },
+        "discarded_spans": 0,
         "dry_run": {
-          "ms": 560.0,
-          "peak_rss_mb": 100.5,
-          "rss_start_mb": 93.0
+          "ms": 566.4,
+          "peak_rss_mb": 101.0,
+          "rss_start_mb": 91.8
         },
-        "edges_observed": 594,
-        "edges_to_add": 420,
-        "enter_events": 63071,
+        "edges_observed": 458,
+        "edges_to_add": 284,
+        "enter_events": 52455,
+        "known_wrong_edges": [
+          {
+            "edge": "app.Flask.dispatch_request -> sessions.SecureCookieSession.__init__.on_update",
+            "present": true,
+            "runtime_edges": 1,
+            "why": "on_update is invoked by werkzeug's CallbackDict (untraced); the edge goes to the nearest TRACED ancestor, not a call site in flask. NOT caused by the tracer: expected to remain"
+          },
+          {
+            "edge": "helpers.stream_with_context -> *",
+            "present": false,
+            "runtime_edges": 0,
+            "why": "stream_with_context is a generator-wrapping helper; with its span left current after it returned, 1115 enters were parented to an already-exited span"
+          }
+        ],
         "resolved_by": {
-          "location": 63071
+          "location": 52455
         },
-        "resolved_events": 63071,
+        "resolved_events": 52455,
         "resolved_pct": 100.0,
         "serializer_artifacts_removed_dry_run": {
           "already_known": 174,
-          "edges_to_add": 359,
+          "edges_to_add": 284,
           "enter_events": 52455,
           "symbols_hit": 336
         },
         "skipped": {
           "self_call": 154
         },
-        "symbols_hit": 338,
+        "symbols_hit": 336,
         "unresolved": {},
         "unresolved_samples": {},
         "wrong_edge_audit": {
-          "edges_from_generator_functions": 10,
-          "edges_into_serializer_artifact_methods": 60,
-          "runtime_edges": 420
+          "edges_from_generator_functions": 5,
+          "edges_into_serializer_artifact_methods": 0,
+          "runtime_edges": 284
         }
       },
       "payload_proxy": {
@@ -1624,15 +1631,14 @@
             },
             "by_tool": {
               "answer": [
-                "src.flask.app.Flask.wsgi_app",
-                "*src.flask.debughelpers.DebugFilesKeyError.__str__"
+                "src.flask.app.Flask.wsgi_app"
               ],
               "answer_static_only": [
                 "src.flask.app.Flask.wsgi_app"
               ],
-              "approx_tokens": 230,
+              "approx_tokens": 169,
               "calls": 1,
-              "chars": 920,
+              "chars": 677,
               "chars_static_only": 311,
               "correct": true,
               "correct_static_only": true,
@@ -1690,9 +1696,9 @@
           "by_file_approx_tokens": 187818,
           "by_file_chars": 751272,
           "by_file_src_only_chars": 603961,
-          "by_tool_approx_tokens": 2504,
+          "by_tool_approx_tokens": 2444,
           "by_tool_calls": 7,
-          "by_tool_chars": 10019,
+          "by_tool_chars": 9776,
           "grep_output_chars": 7662,
           "tasks": 7,
           "tool_correct": 7,
@@ -1718,61 +1724,61 @@
         "ref": "3.1.0"
       },
       "static": {
-        "call_edges": 20714,
+        "call_edges": 20979,
         "files": 85,
         "find_dead_code": {
           "default": {
             "by_kind": {
-              "class": 9,
+              "class": 8,
               "function": 8
             },
-            "candidates": 17,
-            "chars": 2843,
+            "candidates": 16,
+            "chars": 3139,
             "filtered_out": {
               "infrastructure": 187,
               "tests": 774
             },
-            "ms": 373.8,
+            "ms": 328.0,
             "no_evidence": null,
             "not_seen": null,
             "rescued_by_runtime": null
           },
           "include_infrastructure": {
             "by_kind": {
-              "class": 28,
+              "class": 12,
               "function": 43,
               "method": 114,
-              "type_alias": 19
+              "type_alias": 1
             },
-            "candidates": 204,
-            "chars": 30658,
+            "candidates": 170,
+            "chars": 26332,
             "filtered_out": {
               "tests": 774
             },
-            "ms": 388.5,
+            "ms": 359.7,
             "no_evidence": null,
             "not_seen": null,
             "rescued_by_runtime": null
           },
           "include_public": {
             "by_kind": {
-              "class": 9,
+              "class": 8,
               "function": 8
             },
-            "candidates": 17,
-            "chars": 2843,
+            "candidates": 16,
+            "chars": 3139,
             "filtered_out": {
               "infrastructure": 187,
               "tests": 774
             },
-            "ms": 370.9,
+            "ms": 346.3,
             "no_evidence": null,
             "not_seen": null,
             "rescued_by_runtime": null
           }
         },
-        "index_ms": 849.3,
-        "index_peak_rss_mb": 102.9,
+        "index_ms": 1023.0,
+        "index_peak_rss_mb": 104.0,
         "symbols": 1598
       }
     }

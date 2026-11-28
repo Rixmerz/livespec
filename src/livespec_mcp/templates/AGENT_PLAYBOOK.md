@@ -487,6 +487,14 @@ Reading the results:
   has them, otherwise by a method + class + module that names exactly one
   symbol — never a guess between two.
 - Observed callers carry `via_external_edge: "runtime:flowtrace"`.
+- Spans no program can produce are not evidence: a span entered before its
+  parent *in the same file*, or after its parent had exited on the same thread
+  (Node excepted), adds no edge and no hit. They are counted exactly in
+  `skipped` (`parent_not_yet_entered`, `parent_already_exited`) and in
+  `discarded_spans`, with a `discarded_note`; they cannot rescue a symbol from
+  `find_dead_code`. An older FlowTrace wrote them for a `__repr__` it ran itself
+  and for generator frames; re-record with a current one. Spans nested under a
+  discarded span keep their evidence.
 - `find_dead_code` then reports `runtime.rescued_by_runtime` (candidates that
   ran — removed from the list) and tags every remaining row: `runtime:
   "not_seen"` (a traced run reached the file and never executed the symbol —

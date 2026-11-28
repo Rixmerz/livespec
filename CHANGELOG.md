@@ -6,6 +6,21 @@ follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed — `ingest_traces` ignores order-impossible spans
+
+- A span whose `enter` is read before its parent's `enter` in the same trace
+  file (`skipped.parent_not_yet_entered`), or that enters after its parent had
+  exited on the same thread (`skipped.parent_already_exited`; not applied to
+  Node, whose continuations outlive their parent), no longer creates a
+  caller → callee edge and no longer counts as a hit, so it cannot rescue a
+  symbol from `find_dead_code`. New payload keys `discarded_spans` (exact) and
+  `discarded_note` (only when non-zero). Older FlowTrace versions wrote such
+  spans for a `__repr__` they ran themselves and for generator frames. A parent
+  in another file (`caller_not_in_traces`, multi-process) is unchanged; a missing
+  `exit` never makes a parent "exited". Spans nested under a discarded span keep
+  their evidence. Exit-time artifacts (`repr(result)`, `str(exc)`) are
+  indistinguishable from a real call by order and are not filtered.
+
 ### Added — clone clusters (`find_clone_clusters`)
 
 - `find_clone_clusters(min_size=2, threshold=0.80, path=None,
