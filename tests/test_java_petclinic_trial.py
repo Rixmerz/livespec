@@ -193,3 +193,58 @@ async def test_spring_class_prefix_and_array_paths(workspace: Path):
     assert h and all(e.get("http_path") is None for e in h)
 
 
+# --------------------------------------------------------------------------
+# 3. dead code: entry points the framework or the JVM calls
+# --------------------------------------------------------------------------
+
+FRAMEWORK = {
+    "p/App.java": (
+        "package p;\npublic class App {\n"
+        "  public static void main(String[] args) {}\n"
+        "  public static void main2(String[] args) {}\n}\n"
+    ),
+    "p/Entity.java": "package p;\npublic class Entity {}\n",
+    "p/VetRepository.java": (
+        "package p;\nimport org.springframework.data.repository.Repository;\n"
+        "public interface VetRepository extends Repository<Entity, Integer> {\n"
+        "  java.util.List<Entity> findAll();\n}\n"
+    ),
+    "p/ChildRepository.java": (
+        "package p;\npublic interface ChildRepository extends VetRepository {\n"
+        "  Entity findByName(String n);\n}\n"
+    ),
+    "p/PlainService.java": "package p;\npublic interface PlainService {\n  void run();\n}\n",
+    "p/Hints.java": (
+        "package p;\nimport org.springframework.aot.hint.RuntimeHintsRegistrar;\n"
+        "public class Hints implements RuntimeHintsRegistrar {\n"
+        "  @Override public void registerHints(Object hints, ClassLoader cl) {}\n"
+        "  public void unused() {}\n}\n"
+    ),
+    "p/Own.java": (
+        "package p;\npublic class Own implements PlainService {\n"
+        "  @Override public void run() {}\n}\n"
+    ),
+}
+
+
+@pytest.mark.asyncio
+async def test_java_entry_points_and_framework_implemented_are_not_dead(workspace: Path):
+    requires_grammar("java")
+    _write(workspace, FRAMEWORK)
+    async with Client(mcp) as c:
+        await _index(c)
+        out = (
+            await c.call_tool(
+                "find_dead_code", {"include_public": True, "include_infrastructure": True}
+            )
+        ).data
+    dead = {_short(d["qualified_name"]) for d in out["dead_symbols"]}
+    assert "App.main" not in dead
+    assert "VetRepository.findAll" not in dead
+    assert "ChildRepository.findByName" not in dead  # through a project interface
+    assert "Hints.registerHints" not in dead  # overrides a base outside the project
+    # control: what is not any of those is still reported
+    assert {"App.main2", "Hints.unused", "PlainService.run", "Own.run"} <= dead
+    assert out["filtered_out"]["framework_implemented"] == 4
+
+

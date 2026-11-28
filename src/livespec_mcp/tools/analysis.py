@@ -1271,6 +1271,103 @@ _FRAMEWORK_INNER_CLASS_NAMES = frozenset(
 )
 
 
+# Spring Data base interfaces: a project interface that extends one is
+# implemented by a proxy the framework generates, so its methods have no
+# in-project implementation or caller by construction.
+_SPRING_DATA_REPOSITORY_BASES = frozenset(
+    {
+        "Repository",
+        "CrudRepository",
+        "ListCrudRepository",
+        "PagingAndSortingRepository",
+        "ListPagingAndSortingRepository",
+        "JpaRepository",
+        "ReactiveCrudRepository",
+        "ReactiveSortingRepository",
+        "RxJava3CrudRepository",
+        "CoroutineCrudRepository",
+        "MongoRepository",
+        "ReactiveMongoRepository",
+        "ElasticsearchRepository",
+        "R2dbcRepository",
+        "KeyValueRepository",
+    }
+)
+_JAVA_MAIN_SIGNATURE = re.compile(
+    r"\bstatic\b[^({]*\bmain\s*\(\s*(?:final\s+)?String\s*(?:\[\s*\]|\.\.\.)"
+)
+
+
+def _java_framework_implemented(st: Any, rows: list[Any]) -> set[int]:
+    """Ids of Java methods something other than project code calls or
+    implements, whatever the caller count says (never dead-code candidates,
+    not even with `include_infrastructure`):
+
+    * `public static void main(String[])`: the JVM launcher calls it;
+    * a method declared in an interface that extends a Spring Data repository
+      type (directly or through project interfaces): the framework builds the
+      implementation;
+    * an `@Override` method of a class with a base outside the project (an
+      `implements RuntimeHintsRegistrar`) that no indexed base declares: the
+      caller is the library's.
+    """
+    java = [r for r in rows if r["file_path"].endswith(".java") and r["kind"] == "method"]
+    if not java:
+        return set()
+    out = {
+        int(r["id"])
+        for r in java
+        if r["name"] == "main" and _JAVA_MAIN_SIGNATURE.search(r["signature"] or "")
+    }
+    pids = st.group_project_ids()
+    marks = ",".join("?" * len(pids))
+    repo_ifaces: set[int] = set()
+    for r in st.conn.execute(
+        f"""SELECT DISTINCT u.src_symbol_id, u.target_name FROM symbol_ref u
+            JOIN symbol s ON s.id = u.src_symbol_id JOIN file f ON f.id = s.file_id
+            WHERE u.ref_type = 'inherit'
+              AND f.project_id IN ({marks})""",
+        tuple(pids),
+    ):
+        if r["target_name"] in _SPRING_DATA_REPOSITORY_BASES:
+            repo_ifaces.add(int(r["src_symbol_id"]))
+    if repo_ifaces:
+        subs: dict[int, set[int]] = {}
+        for r in st.conn.execute(
+            f"""SELECT e.src_symbol_id, e.dst_symbol_id FROM symbol_edge e
+                JOIN symbol s ON s.id = e.src_symbol_id JOIN file f ON f.id = s.file_id
+                WHERE e.edge_type = 'inherits'
+                  AND f.project_id IN ({marks})""",
+            tuple(pids),
+        ):
+            subs.setdefault(int(r["dst_symbol_id"]), set()).add(int(r["src_symbol_id"]))
+        stack = list(repo_ifaces)
+        while stack:
+            for sub in subs.get(stack.pop(), ()):
+                if sub not in repo_ifaces:
+                    repo_ifaces.add(sub)
+                    stack.append(sub)
+        out |= {
+            int(r["id"])
+            for r in java
+            if r["parent_symbol_id"] is not None and int(r["parent_symbol_id"]) in repo_ifaces
+        }
+    overriding = [r for r in java if '"Override"' in (r["decorators"] or "")]
+    if overriding:
+        from livespec_mcp.domain.hierarchy import Hierarchy
+
+        hier = Hierarchy(st.conn, pids)
+        for r in overriding:
+            owner = hier.method_owner(int(r["id"]))
+            if (
+                owner is not None
+                and not hier.is_complete(owner)
+                and hier.overridden_method(int(r["id"])) is None
+            ):
+                out.add(int(r["id"]))
+    return out
+
+
 def _is_implicit_entry_point(meta: dict) -> bool:
     """Stricter subset of `_is_infrastructure`: only the cases where a symbol
     has invisible callers (Python protocol dunders, FastMCP `register`, DI
@@ -5224,6 +5321,7 @@ def register(mcp: FastMCP) -> None:
         edge_params: list[Any] = [*weight_param, *weight_param, pid, *weight_param]
         rows = st.conn.execute(
             f"""SELECT s.id, s.qualified_name, s.name, s.kind, s.decorators,
+                      s.signature, s.parent_symbol_id,
                       s.visibility, s.start_line, s.end_line, f.path AS file_path,
                       EXISTS (
                         SELECT 1 FROM symbol_edge e
@@ -5415,9 +5513,13 @@ def register(mcp: FastMCP) -> None:
         def _drop(reason: str) -> None:
             filtered_out[reason] = filtered_out.get(reason, 0) + 1
 
+        framework_implemented = _java_framework_implemented(st, rows)
         for r in rows:
             meta = dict(r)
             kept_inherits = bool(meta.pop("kept_inherits"))
+            if int(meta["id"]) in framework_implemented:
+                _drop("framework_implemented")
+                continue
             kept_references = bool(meta.pop("kept_references"))
             # Pulled ahead of is_entry_point_path (which also returns True for
             # test paths when include_tests is False) purely to attribute the
@@ -5584,7 +5686,9 @@ def register(mcp: FastMCP) -> None:
                 "include them: tests=include_tests, non_python="
                 "include_non_python, public=include_public, infrastructure="
                 "include_infrastructure, fs_routing="
-                "include_ts_framework_routes. Counts are not mutually "
+                "include_ts_framework_routes; framework_implemented has no "
+                "flag (Java `main`, Spring Data repository methods, overrides "
+                "of a base outside the project). Counts are not mutually "
                 "exclusive across runs — a symbol is attributed to the first "
                 "filter that excluded it."
             )
