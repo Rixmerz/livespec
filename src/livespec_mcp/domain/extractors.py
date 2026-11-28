@@ -129,18 +129,30 @@ class ExtractedModel:
     """A class that maps to a table (`role='model'`) or a repository interface
     that maps to an entity (`role='repository'`). `table` stays None when the
     source does not state it; `table_source` says whether it was declared or
-    follows the framework's naming convention. `src_qname` is empty for a
-    declaration outside every symbol (a module-level SQLAlchemy `Table`)."""
+    follows the framework's naming convention (`flask_candidate`: the
+    Flask-SQLAlchemy convention, valid only once the resolver has seen that its
+    base `db` is a Flask-SQLAlchemy instance). `src_qname` is empty for a
+    declaration outside every symbol (a module-level SQLAlchemy `Table`).
+
+    Other roles feed the resolver and the inventory: `table` (a CREATE TABLE
+    written in code), `sqlconst` / `constref` (tables of a module-level SQL
+    constant / a use of one imported from another module), `relationship` (a
+    write-only or dynamic collection: `name`=attribute, `entity`=target model,
+    `owner`=declaring class, `secondary`=association table, `detail`=mode),
+    `flask_db` and `skip` (a statement whose table is interpolated)."""
 
     src_qname: str
     name: str
-    role: str  # model | repository
+    role: str  # model | repository | table | sqlconst | constref | relationship | flask_db | skip
     mechanism: str
     line: int
     table: str | None = None
     schema: str | None = None
     entity: str | None = None
-    table_source: str | None = None  # declared | convention
+    table_source: str | None = None  # declared | convention | flask_candidate
+    owner: str | None = None
+    secondary: str | None = None
+    detail: str | None = None
 
 
 @dataclass

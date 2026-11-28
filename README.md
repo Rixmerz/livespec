@@ -504,7 +504,7 @@ Always registered (including markdown Spec import + OpenSpec sync).
   files — it reports `external_edges_stale` when a re-extract invalidated
   ingested rows.
 
-- `find_data_access(table=None, qname=None, access=None, include_callers=False, limit=200, cursor=0, summary_only=False)` — **which code touches which
+- `find_data_access(table=None, qname=None, access=None, include_callees=False, limit=200, cursor=0, summary_only=False, include_system=False)` — **which code touches which
   database table** (Unreleased). Read at index time with no annotation, for
   Python, TypeScript/JavaScript and Java: SQL / JPQL in string literals
   (multi-line, interpolation holes, concatenation; SELECT/JOIN = read,
@@ -512,8 +512,9 @@ Always registered (including markdown Spec import + OpenSpec sync).
   and unambiguous ORM / query-builder shapes (SQLAlchemy, Django, Prisma,
   Knex, Supabase, TypeORM, Sequelize, JPA / Spring Data). `table=` lists who
   reads, writes or defines it; `qname=` lists the tables a symbol touches
-  (`include_callers=True` follows its callees, 3 hops); with neither, the table
-  inventory joined with `.sql` CREATE TABLE files. A table is never guessed: an
+  (`include_callees=True` follows its callees, 3 hops; `include_callers` is its
+  deprecated alias); with neither, the table inventory joined with CREATE TABLE
+  statements in `.sql` files and in code; `table=` also accepts an ORM model name. A table is never guessed: an
   ORM model whose table the source does not state is listed as unresolved.
 
 - `ingest_traces(trace_path=None, dry_run=True, remove=False)` — **add what

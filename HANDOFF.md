@@ -55,9 +55,9 @@ de `tests/test_trace_ingest.py` ahora deja los spans abiertos hasta `close()`/`w
 (el orden real); los exits inmediatos que escribía antes eran órdenes imposibles.
 
 **Rama `ccr-e8c6f0df-fdpwls` (PR #31, borrador), sobre `c9b7afd` (v0.37.0).**
-`pyproject.toml` sigue en 0.37.0. Suite medida en este árbol: **1449 passed**
+`pyproject.toml` sigue en 0.37.0. Suite medida en este árbol: **1490 passed**
 (`uv sync --all-extras && uv run pytest -q`; antes del lote, 1326).
-**44 core / 59 tools**, migraciones 29–31. Cuatro piezas, cada una con su
+**44 core / 59 tools**, migraciones 29–33. Cuatro piezas, cada una con su
 commit y su entrada en CHANGELOG `[Unreleased]`:
 
 - `ingest_traces` (mig. 29): detalle abajo.
@@ -70,7 +70,10 @@ commit y su entrada en CHANGELOG `[Unreleased]`:
 - `find_data_access` (mig. 31, `tools/data_access.py`): qué símbolo lee o
   escribe qué tabla, desde SQL en strings y ORM (SQLAlchemy, Django, Prisma,
   Knex, JPA). Los modelos Prisma y las entidades JPA sin `@Table` quedan como
-  no resueltos. Sin probar en un repo real grande.
+  no resueltos. Rama `fix/data-access-recall` (mig. 33): SQL en constantes y
+  variables locales, constantes importadas (un salto), `CREATE TABLE` en código
+  como declaración, convención Flask-SQLAlchemy, SQLAlchemy 2.0 y colecciones
+  write-only; validado en delta-cube, livespec y microblog (ver CHANGELOG).
 - `find_clone_clusters` (`tools/clones.py`, sin migración) y modo esquema en
   `quick_orient` (acepta una ruta de archivo; en clases agrega sus miembros).
 
