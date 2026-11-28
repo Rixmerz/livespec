@@ -99,8 +99,9 @@ async def test_dead_code_path_reports_the_scoped_runtime_coverage(repo: Path):
     }
     # The whole package is the repo-wide figure minus nothing outside pkg/.
     assert listed["runtime_coverage"]["symbols_non_test"] == overview["symbols_non_test"]
-    assert listed["runtime_coverage"]["symbols_with_hits_non_test"] == (
-        overview["symbols_with_hits_non_test"]
+    assert (
+        listed["runtime_coverage"]["symbols_with_hits_non_test"]
+        == (overview["symbols_with_hits_non_test"])
     )
 
 

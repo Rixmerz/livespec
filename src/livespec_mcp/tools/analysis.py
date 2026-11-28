@@ -2906,9 +2906,9 @@ def compute_project_overview(
         ):
             if r["name"] in structural_names and not _is_test_file_path(r["path"]):
                 files_by_name.setdefault(r["name"], set()).add(r["path"])
-    listed_structural = sorted(
-        files_by_name, key=lambda n: (-len(files_by_name[n]), n)
-    )[:_STRUCTURAL_LISTED_MAX]
+    listed_structural = sorted(files_by_name, key=lambda n: (-len(files_by_name[n]), n))[
+        :_STRUCTURAL_LISTED_MAX
+    ]
     view = load_graph(st.conn, pid)
     ranks = graph_pagerank(view)
     ordered = sorted(ranks.items(), key=lambda x: x[1], reverse=True)
@@ -2954,7 +2954,9 @@ def compute_project_overview(
         **(
             {
                 "structural_patterns_filtered_total": len(structural_names),
-                "structural_patterns_filtered_test_only": len(structural_names - set(files_by_name)),
+                "structural_patterns_filtered_test_only": len(
+                    structural_names - set(files_by_name)
+                ),
             }
             if len(structural_names) > len(listed_structural)
             else {}

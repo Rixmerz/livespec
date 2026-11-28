@@ -1591,7 +1591,10 @@ def _resolve_refs(
                 c
                 for c in candidates
                 if c[1].startswith(own_prefix)
-                or (c[0] not in methods and (u["scope_module"] is not None or c[2] == u["src_file_id"]))
+                or (
+                    c[0] not in methods
+                    and (u["scope_module"] is not None or c[2] == u["src_file_id"])
+                )
             ]
             if not candidates:
                 continue
@@ -1644,7 +1647,9 @@ def _resolve_refs(
                     scope,
                     str(u["target_name"]),
                     int(u["src_file_id"]),
-                    lambda n: [c for c in name_index.get(n, []) if family_of.get(c[0]) == src_family],
+                    lambda n, src_family=src_family: [
+                        c for c in name_index.get(n, []) if family_of.get(c[0]) == src_family
+                    ],
                 )
                 if via is not None:
                     scoped = [via[0]]

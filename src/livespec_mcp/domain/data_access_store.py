@@ -491,7 +491,7 @@ class FileScope:
 
     path: str | None = None
     include_tests: bool = False
-    is_test: Callable[[str], bool] = lambda _p: False  # noqa: E731
+    is_test: Callable[[str], bool] = lambda _p: False
     dropped_tests: int = 0
 
     def __post_init__(self) -> None:

@@ -253,11 +253,7 @@ class PyModules:
             if isinstance(node, ast.ImportFrom) and any(a.name == "*" for a in node.names):
                 stars.append("." * node.level + (node.module or ""))
             elif isinstance(node, (ast.Assign, ast.AugAssign, ast.AnnAssign)):
-                targets = (
-                    node.targets
-                    if isinstance(node, ast.Assign)
-                    else [node.target]
-                )
+                targets = node.targets if isinstance(node, ast.Assign) else [node.target]
                 if not any(isinstance(t, ast.Name) and t.id == "__all__" for t in targets):
                     continue
                 value = node.value

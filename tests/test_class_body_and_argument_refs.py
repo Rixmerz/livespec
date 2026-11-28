@@ -54,8 +54,12 @@ async def test_bare_builtin_call_in_class_body_never_binds_to_another_classes_me
     )
     async with Client(mcp) as c:
         await c.call_tool("index_project", {})
-        assert (await c.call_tool("who_calls", {"qname": "other.Cache.set", "min_weight": 0.0})).data["callers"] == []
-        assert (await c.call_tool("who_calls", {"qname": "other.Cache.list", "min_weight": 0.0})).data["callers"] == []
+        assert (
+            await c.call_tool("who_calls", {"qname": "other.Cache.set", "min_weight": 0.0})
+        ).data["callers"] == []
+        assert (
+            await c.call_tool("who_calls", {"qname": "other.Cache.list", "min_weight": 0.0})
+        ).data["callers"] == []
         for q in ("mod.helper", "mod.Field.make"):
             callers = (await c.call_tool("who_calls", {"qname": q})).data["callers"]
             assert [x["qualified_name"] for x in callers] == ["mod.Field"], q

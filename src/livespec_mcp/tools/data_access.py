@@ -103,9 +103,7 @@ def compute_find_data_access(
     if wanted is not None and not wanted[1]:
         return mcp_error("table is empty", hint="omit table for the inventory")
     if wanted is not None and wanted[1] not in known_tables(st.conn, pids):
-        by_model = _model_payload(
-            st, pids, table or "", access, limit, cursor, summary_only, scope
-        )
+        by_model = _model_payload(st, pids, table or "", access, limit, cursor, summary_only, scope)
         if by_model is not None:
             return by_model
         return mcp_error(
@@ -235,9 +233,7 @@ def _model_payload(
 ) -> dict[str, Any] | None:
     """`table=` that names no table: answer with the accesses of the ORM model
     of that name, saying so, or None when no access names it either."""
-    rows, by_kind, tables = model_accesses(
-        st.conn, pids, split_table_name(name)[1], access, scope
-    )
+    rows, by_kind, tables = model_accesses(st.conn, pids, split_table_name(name)[1], access, scope)
     if not sum(by_kind.values()):
         return None
     payload: dict[str, Any] = {
@@ -274,7 +270,9 @@ def _scope_note(payload: dict[str, Any], scope: FileScope) -> None:
         payload["path"] = scope.path
     if scope.dropped_tests:
         payload["tests_excluded"] = scope.dropped_tests
-        payload["tests_hint"] = "accesses from test files are left out; include_tests=True keeps them"
+        payload["tests_hint"] = (
+            "accesses from test files are left out; include_tests=True keeps them"
+        )
 
 
 def register(mcp: FastMCP) -> None:

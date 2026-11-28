@@ -21,9 +21,7 @@ FILES = {
         "def load_invoice(conn):\n"
         '    return conn.execute("SELECT * FROM invoices")\n'
     ),
-    "app/users/repo.py": (
-        'def load_user(conn):\n    return conn.execute("SELECT * FROM users")\n'
-    ),
+    "app/users/repo.py": ('def load_user(conn):\n    return conn.execute("SELECT * FROM users")\n'),
     "tests/test_repo.py": (
         "def test_fixture(conn):\n"
         '    conn.execute("INSERT INTO invoices (id) VALUES (2)")\n'
@@ -61,7 +59,9 @@ async def test_inventory_excludes_tests_and_scopes_to_a_path(workspace):
         assert scoped["path"] == "app/billing"
         assert (scoped["tables"][0]["read"], scoped["tables"][0]["write"]) == (1, 1)
         # a file works as a path too, and a prefix is a directory, not a substring
-        assert [r["table"] for r in (await _fda(c, path="app/users/repo.py"))["tables"]] == ["users"]
+        assert [r["table"] for r in (await _fda(c, path="app/users/repo.py"))["tables"]] == [
+            "users"
+        ]
         assert (await _fda(c, path="app/bill"))["tables"] == []
 
 
