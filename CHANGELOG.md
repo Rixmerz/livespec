@@ -93,6 +93,15 @@ follows [SemVer](https://semver.org/).
 - Migration 30 (`inherit_reference_refs`, no schema change) queues the one-time
   re-extract so existing indexes pick the edges up on their next
   `index_project`. Downgrading: re-index with `force=True`.
+- Python type refs and scoped calls resolve an import to the ONE indexed module
+  it names (relative dots counted from the importing file, whole dotted
+  segments, a re-export followed to the single symbol it binds), instead of
+  matching the module's name anywhere in a qualified name. `import typing as t`
+  no longer reaches a project `Tuple` because a directory is called `typing`;
+  `from .blueprints import Blueprint` no longer reaches every `Blueprint`; and
+  the typed edges no longer depend on indexing order. An ambiguous import emits
+  no edge. Migration 32 (`python_import_scopes`, no schema change) queues a
+  re-extract so `symbol_ref.scope_module` keeps relative imports' leading dots.
 - `find_dead_code`: a symbol with an inbound `inherits` or `references` edge is
   no longer a candidate (as `corroborate_with` already did for ingested ones).
   The payload gains `kept_alive_by_edge_type` (+ `_hint`) counting what they

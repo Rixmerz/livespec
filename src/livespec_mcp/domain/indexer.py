@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import os
 import sqlite3
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -37,6 +38,7 @@ from livespec_mcp.domain.languages import (
     detect_language,
     reset_grammar_failures,
 )
+from livespec_mcp.domain.py_modules import PyModules
 from livespec_mcp.storage.db import (
     clear_reextract_flag,
     get_or_create_project,
@@ -790,6 +792,25 @@ def _language_family(language: str | None) -> str:
     return _LANGUAGE_FAMILIES.get(language or "", language or "")
 
 
+def _source_reader(
+    conn: sqlite3.Connection, project_id: int, paths: dict[int, str]
+) -> Callable[[int], str | None]:
+    """Reads a Python file of the project from disk, for the re-export lookup
+    (the indexed tables do not keep a module's import bindings)."""
+    row = conn.execute("SELECT root FROM project WHERE id=?", (project_id,)).fetchone()
+    root = Path(row["root"]) if row else None
+
+    def read(file_id: int) -> str | None:
+        if root is None or file_id not in paths:
+            return None
+        try:
+            return (root / paths[file_id]).read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            return None
+
+    return read
+
+
 def _under_scope(candidates: list[tuple[int, str, int]], scope: str) -> list[tuple[int, str, int]]:
     # Match either the exact module prefix or its tail (because the extractor
     # may emit module names without the package prefix that the indexer
@@ -837,6 +858,8 @@ def _resolve_type_ref(
     family: str,
     project_scopes: set[str],
     file_paths: dict[int, str],
+    target_name: str = "",
+    py_modules: PyModules | None = None,
 ) -> tuple[list[tuple[int, str, int]], float]:
     """Targets and weight for one `inherit` / `type` ref. `candidates` are
     already the same-language, type-like symbols carrying the name.
@@ -871,6 +894,18 @@ def _resolve_type_ref(
     ]
     if not candidates:
         return [], 0.0
+    if scope and family == "python" and py_modules is not None:
+        # An imported Python name: the file's own import says which module it
+        # came from, resolved to ONE indexed file (relative dots counted from
+        # the importer, whole dotted segments, re-exports followed to the
+        # single symbol they bind). An import that names no indexed module
+        # (`typing`, a third-party package) or one that does not yield exactly
+        # one symbol links nothing: precision over recall. The answer depends
+        # only on the files, never on which scopes happen to exist.
+        hit = py_modules.lookup_type(scope, target_name, src_file_id, candidates)
+        if hit is None:
+            return [], 0.0
+        return [hit[0]], 0.9 if hit[1] else 1.0
     if scope:
         scoped = _under_scope(candidates, scope)
         if scoped:
@@ -983,7 +1018,11 @@ def _resolve_refs(
             name_placeholders = ",".join("?" * len(names_in_changed))
             sql += f" OR u.target_name IN ({name_placeholders})"
             params.extend(names_in_changed)
-        sql += ")"
+        # A Python type ref resolves through module structure and re-exports
+        # (`pkg/__init__.py` gaining `from .core import Thing`), which a changed
+        # file can alter without defining a symbol of that name. They are few,
+        # and re-walking them keeps the typed edges a function of the tree.
+        sql += " OR (u.ref_type IN ('inherit', 'type') AND f.language = 'python'))"
         rows = conn.execute(sql, params).fetchall()
     else:
         rows = conn.execute(
@@ -1038,6 +1077,14 @@ def _resolve_refs(
             project_scopes.add(".".join(parts[:i]))
             project_scopes.add(parts[i - 1])
 
+    py_files = {
+        int(r["id"]): r["path"]
+        for r in conn.execute(
+            "SELECT id, path FROM file WHERE project_id=? AND language='python'", (project_id,)
+        )
+    }
+    py_modules = PyModules(py_files, _source_reader(conn, project_id, py_files))
+
     edge_count = 0
     # (src, dst) -> best weight written this walk. Two refs of one caller can
     # reach the same callee with different evidence (`helper()` and
@@ -1068,6 +1115,8 @@ def _resolve_refs(
                 family=src_family,
                 project_scopes=project_scopes,
                 file_paths=file_paths,
+                target_name=str(u["target_name"]),
+                py_modules=py_modules,
             )
             for tid, _qname, _fid in targets:
                 type_key = (src_id, tid, edge_type)
@@ -1113,7 +1162,31 @@ def _resolve_refs(
         # one matches, drop the rest — that's a confident, scoped resolution.
         scope = u["scope_module"]
         scoped: list[tuple[int, str, int]] = []
-        if scope:
+        if scope and src_family == "python":
+            # Resolved like a type ref's import: to an indexed module by whole
+            # dotted segments, not by the module's name appearing somewhere in
+            # a qualified name. `import typing as t; t.cast()` stays outside
+            # the project even when a directory is called `typing`.
+            found = py_modules.module_scope_prefix(scope, int(u["src_file_id"]))
+            if found is None:
+                continue
+            prefix, past_module, module_file = found
+            scoped = [c for c in candidates if c[1].startswith(f"{prefix}.")]
+            # A package's own definition beats a same-named method or function
+            # of one of its submodules (`from .json import dumps`).
+            own = [c for c in scoped if c[2] == module_file]
+            if own and not past_module:
+                scoped = own
+            if scoped:
+                candidates = scoped
+            elif past_module:
+                # `request_ctx.pop()`, `_shells.clear()`: a VALUE the module
+                # holds, whose methods live somewhere unknown. Dropped, as a
+                # relative import always was; only an absolute one used to
+                # fan out to the whole top package. A module that merely
+                # failed to match the symbol (a re-export) stays ambiguous.
+                continue
+        elif scope:
             scoped = _under_scope(candidates, scope)
             if not scoped and receiver == RECEIVER_MODULE and scope not in project_scopes:
                 # `from pkg import client; client.get()`: the receiver scope is

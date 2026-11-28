@@ -985,6 +985,19 @@ def _m031_data_access(conn: sqlite3.Connection) -> None:
         _flag_reextract(conn)
 
 
+def _m032_python_import_scopes(conn: sqlite3.Connection) -> None:
+    """Unreleased: Python relative imports keep their leading dots.
+
+    No column. `symbol_ref.scope_module` of a Python `from .x import Y` used to
+    hold the bare `x`, which the resolver matched against every module of that
+    name; it now holds `.x` so the import resolves to the one module it names.
+    Refs are stored per file at extraction, so unchanged files keep the old
+    text until they are read again: queue the one-time re-extract. Skipped on
+    an empty DB."""
+    if conn.execute("SELECT 1 FROM symbol LIMIT 1").fetchone() is not None:
+        _flag_reextract(conn)
+
+
 MIGRATIONS: list[Migration] = [
     (1, "drop_dead_tables", _m001_drop_dead_tables),
     (2, "drop_dead_columns", _m002_drop_dead_columns),
@@ -1017,6 +1030,7 @@ MIGRATIONS: list[Migration] = [
     (29, "runtime_evidence", _m029_runtime_evidence),
     (30, "inherit_reference_refs", _m030_inherit_reference_refs),
     (31, "data_access", _m031_data_access),
+    (32, "python_import_scopes", _m032_python_import_scopes),
 ]
 
 
