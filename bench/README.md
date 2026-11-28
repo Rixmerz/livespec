@@ -358,6 +358,42 @@ Follow-up, same day:
   A reference to a member that has no symbol, on a fully indexed class, gives
   no edge.
 
+### One capability migrated inside Django 5.1.4, and a Spring application (2026-11-28)
+
+Two end-to-end runs of the Tracer `orient` and `migrate` procedures, one
+agent each, single runs. They measure whether the tools hold at scale and in
+Java, not token cost.
+
+| | Django 5.1.4 (`django/forms`, one rule) | Spring PetClinic (one rule) |
+|---|---|---|
+| Index | 2,832 files, 39,763 symbols, 62 s; reindex 4 s | 87 non-test symbols |
+| Trace of the capability's tests | 98 s against 1.8 s untraced, 1.43 GB, 3.45 M lines | four runs, 9,254 enter events |
+| `ingest_traces` | 23 s, 1,724,664 of 1,724,664 events resolved | 8,709 of 9,254 resolved (the rest are generated mock classes) |
+| Tool calls, orient / migrate | 44 / 168 | 28 / 71 |
+| Source files opened whole | 0 | 0 |
+| Comparisons old against new | 8 inputs equal, both controls different | driver and controller flow equal; driver control different, entry-point control equal (not detected) |
+
+What the runs found and what changed afterwards, measured on the same copies:
+
+- Java calls on a typed receiver were fanned out by name and hidden:
+  `Owner.addVisit` showed 0 callers and has 2 in the original code. After the
+  fix it shows those 2 plus the trial's own driver.
+- Four of PetClinic's seven tables were reported unaccessed (reached only
+  through JPA relationships); after the fix none is.
+- After a Python function moved behind a re-export, its callers through the
+  re-exporting module were not listed. Following re-exports changed the
+  Django edge count from 373,252 to 346,076: of the 113 removed edges outside
+  tests, 25 were sampled and all were name fan-out; the callers of the three
+  symbols benchmarked above did not change.
+- Payloads on Django: `find_data_access(summary_only=True)` 175 KB to 808
+  bytes, `get_project_overview` 20,783 to 5,610 bytes, `analyze_impact` on a
+  symbol with 226 callers 63,028 to 18,981 bytes.
+- Repository-wide runtime coverage (20%) said nothing about the capability
+  (55%); `find_dead_code(path=)` now returns the scoped number.
+
+Not fixed: a call on a value whose type is not visible still resolves by
+name; a caller that only a trace shows is the nearest traced ancestor.
+
 ## Not yet covered
 
 - TS/Go/Rust real repos (need a fixture beyond Python)
