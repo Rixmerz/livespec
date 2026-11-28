@@ -53,6 +53,13 @@ follows [SemVer](https://semver.org/).
   30 most widespread structural-pattern names (non-test) and counts the rest
   (`structural_patterns_filtered_total`, `_test_only`): 20.8 KB -> 5.6 KB on
   Django. Test symbols were already out of `top_symbols`.
+- **A runtime-only caller says what it is.** `ingest_traces` attributes a call to
+  the nearest TRACED ancestor, so a test runner frame showed up as a direct
+  caller of `all_valid`. Rows were already labelled `via_external_edge:
+  runtime:flowtrace`; `who_calls` / `analyze_impact` (and `who_does_this_call`)
+  now add `external_edges.runtime_only_rows` and `runtime_only_hint` (a
+  runtime-only caller is the nearest traced ancestor, not necessarily the direct
+  caller). Nothing was guessed away: the edges stay, labelled.
 ### Fixed — Java trial on Spring PetClinic
 
 - **Java calls on a typed receiver bind to the receiver's class.** `x.m()` where

@@ -515,6 +515,9 @@ Reading the results:
   (functions and methods outside test paths). For ONE capability use
   `find_dead_code(path=..., summary_only=True)`: its `runtime_coverage` has the
   same two numbers counted under that path.
+- A caller marked `via_external_edge: runtime:flowtrace` and nothing else is the
+  nearest TRACED ancestor, not necessarily the direct caller (`external_edges.
+  runtime_only_hint`): untraced frames (test runner, framework) may sit between.
 - Idempotent per trace file (re-ingesting replaces, never double-counts);
   `ingest_traces(remove=True)` with no `trace_path` deletes all of its edges
   and hits; with `trace_path=[...]` only those sources (an edge another file

@@ -3555,6 +3555,24 @@ def _attach_external_edges(
     }
     if stale:
         block["stale"] = stale
+    # A trace cannot tell a direct call from one through frames nobody traced
+    # (a test runner, a framework, a library): ingest attributes the call to the
+    # nearest TRACED ancestor. A row that rests only on such an edge says
+    # who was seen above the callee, not who called it.
+    runtime_rows = sum(
+        1
+        for key in ("callers", "impacted_callers", "calls_into")
+        for r in payload.get(key) or ()
+        if isinstance(r, dict) and r.get("via_external_edge") == RUNTIME_ORIGIN
+    )
+    if runtime_rows:
+        block["runtime_only_rows"] = runtime_rows
+        block["runtime_only_hint"] = (
+            f"Rows marked via_external_edge `{RUNTIME_ORIGIN}` were seen only in a "
+            "trace, which records the nearest traced ancestor: such a caller is not "
+            "necessarily the direct caller (untraced frames may sit between), and "
+            "a callee may be reached the same way."
+        )
     payload["external_edges"] = block
     return payload
 

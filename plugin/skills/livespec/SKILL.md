@@ -297,6 +297,10 @@ or reflection: the callee reads as called by nobody. A
   outside test paths). That is repo-wide; for one capability read
   `find_dead_code(path=..., summary_only=True)` → `runtime_coverage` (same two
   numbers, counted under `path`).
+- **A runtime-only caller is the nearest traced ancestor.** A caller carrying
+  only `via_external_edge: runtime:flowtrace` was seen above the callee in a
+  trace; untraced frames (test runner, framework) may sit between, so it is not
+  necessarily the direct caller (`external_edges.runtime_only_hint`).
 - **A trace is the runs that were traced, not production.** `not_seen` on a
   thin test run is weak; say which run it came from.
 - Pass every process's file of a distributed trace together (a list, or the
