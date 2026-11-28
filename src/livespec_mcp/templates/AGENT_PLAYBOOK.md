@@ -66,7 +66,7 @@ client cached the short tool list.
 | What implements a spec? | `get_spec_implementation(spec_id)` | One round-trip |
 | Coverage gaps | `audit_coverage()` | Orphans, low-confidence links |
 | Brownfield Spec ideas | `propose_specs_from_codebase()` | Heuristic; user approves before create |
-| Dead-code candidates | `find_dead_code()` | Respects entry points / `pub` / frameworks; TS-only auto-enables non-Python |
+| Dead-code candidates | `find_dead_code(path=None)` | Respects entry points / `pub` / frameworks; TS-only auto-enables non-Python. `path` = workspace-relative file or directory prefix: candidates, runtime tiers and counts only for symbols defined under it (callers may be anywhere); unknown path → error with a hint |
 | Likely-unused HTTP flows | `find_legacy_flows()` | Best with `group_db`; graph ≠ traffic; orphan_client often = missing SA |
 | HTTP/CLI entry points | `find_endpoints(framework?)` | Default sweep includes Express+Hono call-style; prefer `summary_only=True` if huge |
 | Literal grep (indexed files) | `grep_in_indexed_files(pattern)` | Check `scope_fresh`; re-index if stale |
@@ -501,6 +501,16 @@ Reading the results:
   "not_seen"` (a traced run reached the file and never executed the symbol —
   the strongest removal evidence) or `"no_evidence"` (no trace touched the
   file — says nothing). With no traces ingested the payload is unchanged.
+- A rescued symbol (`runtime.rescued`, and `quick_orient`'s
+  `runtime_calls` on a symbol nothing calls) carries `stale_evidence: true`
+  with its `sources` when every trace file that saw it run was ingested before
+  the latest index run that changed files — callers may have moved since.
+  Only marked, never dropped: re-trace, or `ingest_traces(remove=True,
+  trace_path=[...])` the named sources, then re-index and ingest the new run.
+  The rule is coarse (any changed file, not only a former caller's).
+- Coverage as one number over another: `get_project_overview`'s
+  `runtime_evidence.symbols_with_hits_non_test` over `symbols_non_test`
+  (functions and methods outside test paths).
 - Idempotent per trace file (re-ingesting replaces, never double-counts);
   `ingest_traces(remove=True)` with no `trace_path` deletes all of its edges
   and hits; with `trace_path=[...]` only those sources (an edge another file

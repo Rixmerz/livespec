@@ -844,6 +844,31 @@ def _m028_symbol_ref_receiver(conn: sqlite3.Connection) -> None:
         _flag_reextract(conn)
 
 
+def _m035_runtime_source_index_run(conn: sqlite3.Connection) -> None:
+    """Unreleased: `runtime_source.index_run_id` — what code a trace saw.
+
+    A trace describes the code that ran when it was recorded. The id of the
+    latest finished index run that changed files, taken when the source was
+    ingested, is what lets `find_dead_code` / `quick_orient` say "this evidence
+    predates a later change to the code" (`stale_evidence`) without comparing
+    wall clocks to the one-second `index_run` timestamps. Rows that already
+    exist are backfilled from their `ingested_at`; 0 = no changing run before
+    it. Idempotent.
+    """
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(runtime_source)")}
+    if "index_run_id" not in cols:
+        conn.execute("ALTER TABLE runtime_source ADD COLUMN index_run_id INTEGER")
+    conn.execute(
+        """UPDATE runtime_source SET index_run_id = COALESCE((
+               SELECT MAX(r.id) FROM index_run r
+               WHERE r.project_id = runtime_source.project_id
+                 AND r.finished_at IS NOT NULL AND r.files_changed > 0
+                 AND r.finished_at <= datetime(runtime_source.ingested_at, 'unixepoch')
+           ), 0)
+           WHERE index_run_id IS NULL"""
+    )
+
+
 # Ordered registry. Append-only — never reuse a version number.
 def _m029_runtime_evidence(conn: sqlite3.Connection) -> None:
     """Unreleased: runtime evidence from FlowTrace traces (`ingest_traces`).
@@ -925,6 +950,8 @@ def _m030_inherit_reference_refs(conn: sqlite3.Connection) -> None:
     Downgrade caveat: code older than this version never reads `ref_type` and
     would resolve the new refs as calls, so re-index with `force=True` after
     going back to it."""
+    if conn.execute("SELECT 1 FROM symbol LIMIT 1").fetchone() is not None:
+        _flag_reextract(conn)
 
 
 def _m031_data_access(conn: sqlite3.Connection) -> None:
@@ -1115,6 +1142,7 @@ MIGRATIONS: list[Migration] = [
     (32, "python_import_scopes", _m032_python_import_scopes),
     (33, "data_access_shapes", _m033_data_access_shapes),
     (34, "symbol_ref_receiver_class", _m034_symbol_ref_receiver_class),
+    (35, "runtime_source_index_run", _m035_runtime_source_index_run),
 ]
 
 

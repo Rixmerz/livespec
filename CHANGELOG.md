@@ -6,6 +6,28 @@ follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Added — second trial findings: `find_dead_code(path=)`, coverage denominator, stale evidence
+
+- **`find_dead_code(path=<file or directory>)`** — workspace-relative, POSIX,
+  same prefix semantics as `find_clone_clusters(path=)`. Candidates, the runtime
+  tiers, `filtered_out`, `by_kind` / `by_top_dir`, `count` and the `not_swept`
+  hints cover only symbols defined under it; callers outside it still count. A
+  path matching no indexed file is an `mcp_error` with a hint. The payload
+  echoes `path`.
+- **Coverage denominator.** `get_project_overview`'s `runtime_evidence` gains
+  `symbols_non_test` (functions and methods outside test paths) and
+  `symbols_with_hits_non_test`, so coverage is one number over the other.
+- **Stale runtime evidence.** Migration 35 adds `runtime_source.index_run_id`
+  (the latest index run that changed files when the trace was ingested;
+  existing rows are backfilled from `ingested_at`). A `find_dead_code`
+  `runtime.rescued` entry gets `stale_evidence: true` and `sources` when every
+  source with a hit on it predates the latest run that changed any file, with a
+  `stale_evidence_hint` ("re-trace or remove these sources: …");
+  `quick_orient` adds `runtime_stale_evidence` / `runtime_stale_sources` on a
+  symbol nothing calls. The rescue is kept, only marked. The rule is coarse by
+  necessity: the finer one ("a former caller's file changed") cannot be asked
+  once the caller's re-extract has dropped its runtime edges.
+
 ### Fixed — Java members the source never spells out
 
 - **Records are classes with accessors.** `record Car(String make, int year)` is

@@ -391,11 +391,23 @@ def _find_clusters(
     )
 
 
-def _under(file_path: str, path: str) -> bool:
-    p = path.replace("\\", "/").lstrip("./").rstrip("/")
+def normalise_path_prefix(path: str) -> str:
+    """A workspace-relative file/dir prefix as stored in `file.path` ('' = all)."""
+    p = path.replace("\\", "/")
+    while p.startswith("./"):
+        p = p[2:]
+    return p.strip("/")
+
+
+def under_path(file_path: str, path: str) -> bool:
+    """True when `file_path` is the file `path` or lies under the directory `path`."""
+    p = normalise_path_prefix(path)
     if not p:
         return True
     return file_path == p or file_path.startswith(p + "/")
+
+
+_under = under_path
 
 
 def _drop_self_nested(group: list[CorpusSymbol]) -> list[CorpusSymbol]:
