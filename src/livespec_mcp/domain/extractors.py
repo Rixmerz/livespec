@@ -994,12 +994,13 @@ def _py_annotation_class(ann: ast.AST | None, out: ExtractResult) -> str | None:
 
 def _py_local_classes(func_node: ast.AST, out: ExtractResult) -> dict[str, str]:
     """Local names that are evidently an instance of one class in this function:
-    bound only by `x = Cls(...)` / `x: Cls = ...` (never a parameter without an
-    annotation, however it is rebound), or a parameter annotated `x: Cls` and
+    bound only by `x = Cls(...)` / `x: Cls = ...` (a parameter without an annotation only
+    once a direct body statement rebinds it before any other mention), or a parameter annotated `x: Cls` and
     never rebound to another class. Any other binding of the name (a second class,
     a loop target, `with ... as x`, a call result) drops it."""
     evidence: dict[str, str] = {}
     dropped: set[str] = set()
+    unannotated: set[str] = set()
 
     def note(name: str, cls: str | None) -> None:
         if cls is None or (name in evidence and evidence[name] != cls):
@@ -1013,10 +1014,7 @@ def _py_local_classes(func_node: ast.AST, out: ExtractResult) -> dict[str, str]:
             if a.annotation is not None and a.arg not in ("self", "cls"):
                 note(a.arg, _py_annotation_class(a.annotation, out))
             else:
-                # An unannotated parameter holds whatever the caller passed
-                # (`time_keeper=None`); rebinding it inside the body does not
-                # make its class evident (the caller's value may be another).
-                dropped.add(a.arg)
+                unannotated.add(a.arg)
         for a in (args.vararg, args.kwarg):
             if a is not None:
                 dropped.add(a.arg)
@@ -1052,6 +1050,31 @@ def _py_local_classes(func_node: ast.AST, out: ExtractResult) -> dict[str, str]:
                         dropped.add(n.id)
         elif isinstance(node, ast.ExceptHandler) and node.name:
             dropped.add(node.name)
+    if unannotated:
+        # An unannotated parameter holds what the caller passed, until a direct
+        # statement of the body rebinds it (`t = Template(t)`) before any other
+        # mention of it: from then on it is that class. A rebinding inside an
+        # if/try/loop/with leaves the caller's value possibly intact.
+        body = getattr(func_node, "body", None)
+        pinned: set[str] = set()
+        if isinstance(body, list):
+            for i, stmt in enumerate(body):
+                if (
+                    isinstance(stmt, ast.Assign)
+                    and len(stmt.targets) == 1
+                    and isinstance(stmt.targets[0], ast.Name)
+                    and stmt.targets[0].id in unannotated
+                    and stmt.targets[0].id not in pinned
+                    and isinstance(stmt.value, ast.Call)
+                ):
+                    name = stmt.targets[0].id
+                    if not any(
+                        isinstance(n, ast.Name) and n.id == name
+                        for prev in body[:i]
+                        for n in ast.walk(prev)
+                    ):
+                        pinned.add(name)
+        dropped |= unannotated - pinned
     return {k: v for k, v in evidence.items() if k not in dropped}
 
 
