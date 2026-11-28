@@ -504,7 +504,7 @@ Always registered (including markdown Spec import + OpenSpec sync).
   files — it reports `external_edges_stale` when a re-extract invalidated
   ingested rows.
 
-- `find_data_access(table=None, qname=None, access=None, include_callees=False, limit=200, cursor=0, summary_only=False, include_system=False)` — **which code touches which
+- `find_data_access(table=None, qname=None, access=None, include_callees=False, limit=200, cursor=0, summary_only=False, include_system=False, path=None, include_tests=False)` — **which code touches which
   database table** (Unreleased). Read at index time with no annotation, for
   Python, TypeScript/JavaScript and Java: SQL / JPQL in string literals
   (multi-line, interpolation holes, concatenation; SELECT/JOIN = read,

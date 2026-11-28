@@ -28,6 +28,16 @@ follows [SemVer](https://semver.org/).
   call argument becomes a `references` ref when it names a project class.
   `find_dead_code(path=django/forms)` no longer lists `DateTimeFormatsIterator`
   and `MediaOrderConflictWarning`. Module-level code still has no caller symbol.
+- **`find_data_access`: `summary_only` is a summary, and a capability can be
+  listed alone.** `summary_only=True` on the inventory no longer carries
+  `unresolved_models` (175 KB on Django); `counts.unresolved_models` stays.
+  New `path` (directory prefix or one file): only the accesses made by symbols
+  under it, so the tables one capability touches are listed without the rest.
+  New `include_tests` (default False, as in `find_dead_code` and
+  `find_clone_clusters`): accesses from test files are left out of the
+  inventory, `table=` and model modes and counted in `tests_excluded` /
+  `counts.filtered_out` (a table only tests touch is not listed, or flagged
+  `test_only` when declared). `qname` mode is never filtered.
 ### Fixed — Java trial on Spring PetClinic
 
 - **Java calls on a typed receiver bind to the receiver's class.** `x.m()` where

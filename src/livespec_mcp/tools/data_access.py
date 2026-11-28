@@ -14,6 +14,7 @@ from pydantic import Field
 from livespec_mcp.domain.data_access_store import (
     ACCESS_KINDS,
     CALLEE_DEPTH,
+    FileScope,
     declared_tables,
     inventory,
     is_system_table,
@@ -27,7 +28,12 @@ from livespec_mcp.domain.data_access_store import (
 from livespec_mcp.state import AppState, get_state
 from livespec_mcp.tool_params import Cursor, Limit, SummaryOnly
 from livespec_mcp.tools._errors import mcp_error
-from livespec_mcp.tools.analysis import _resolve_symbol, _workspace_note, symbol_not_found_error
+from livespec_mcp.tools.analysis import (
+    _is_test_file_path,
+    _resolve_symbol,
+    _workspace_note,
+    symbol_not_found_error,
+)
 from livespec_mcp.workspace_param import Workspace
 
 UnresolvedCursor = Annotated[
@@ -78,8 +84,11 @@ def compute_find_data_access(
     summary_only: bool = False,
     include_system: bool = False,
     unresolved_cursor: int = 0,
+    path: str | None = None,
+    include_tests: bool = False,
 ) -> dict[str, Any]:
     """The ``find_data_access`` payload, or an ``mcp_error``."""
+    scope = FileScope(path, include_tests, _is_test_file_path)
     pids = st.group_project_ids()
     deprecated = include_callers and not include_callees
     include_callees = include_callees or include_callers
@@ -94,7 +103,9 @@ def compute_find_data_access(
     if wanted is not None and not wanted[1]:
         return mcp_error("table is empty", hint="omit table for the inventory")
     if wanted is not None and wanted[1] not in known_tables(st.conn, pids):
-        by_model = _model_payload(st, pids, table or "", access, limit, cursor, summary_only)
+        by_model = _model_payload(
+            st, pids, table or "", access, limit, cursor, summary_only, scope
+        )
         if by_model is not None:
             return by_model
         return mcp_error(
@@ -146,7 +157,7 @@ def compute_find_data_access(
         return payload
 
     if wanted is not None:
-        rows, by_kind = table_accesses(st.conn, pids, wanted[0], wanted[1], access)
+        rows, by_kind = table_accesses(st.conn, pids, wanted[0], wanted[1], access, scope)
         declared = declared_tables(st.conn, pids).get(wanted[1], [])
         payload = {
             "mode": "table",
@@ -176,7 +187,8 @@ def compute_find_data_access(
                 )
             payload["accesses"] = grouped
         payload.update(page)
-        if not sum(by_kind.values()):
+        _scope_note(payload, scope)
+        if not sum(by_kind.values()) and not scope.dropped_tests and not scope.path:
             payload["hint"] = "declared in a .sql file but no indexed code reads or writes it"
         return payload
 
@@ -186,9 +198,11 @@ def compute_find_data_access(
         access,
         include_system=include_system,
         unresolved_cursor=unresolved_cursor,
-        unresolved_limit=limit,
+        unresolved_limit=0 if summary_only else limit,
+        scope=scope,
     )
     payload = {"mode": "inventory", "counts": counts}
+    _scope_note(payload, scope)
     if deprecated:
         payload["deprecated"] = _DEPRECATED_CALLERS
     page = _page(rows, limit, cursor, summary_only)
@@ -197,7 +211,7 @@ def compute_find_data_access(
     payload.update(page)
     payload["counts"]["listed"] = len(rows)
     n_models = counts["unresolved_models"]
-    if unresolved:
+    if unresolved and not summary_only:  # summary_only: the count only
         payload["unresolved_models"] = unresolved
         payload["unresolved_cursor"] = unresolved_cursor
         end = unresolved_cursor + len(unresolved)
@@ -217,10 +231,13 @@ def _model_payload(
     limit: int,
     cursor: int,
     summary_only: bool,
+    scope: FileScope | None = None,
 ) -> dict[str, Any] | None:
     """`table=` that names no table: answer with the accesses of the ORM model
     of that name, saying so, or None when no access names it either."""
-    rows, by_kind, tables = model_accesses(st.conn, pids, split_table_name(name)[1], access)
+    rows, by_kind, tables = model_accesses(
+        st.conn, pids, split_table_name(name)[1], access, scope
+    )
     if not sum(by_kind.values()):
         return None
     payload: dict[str, Any] = {
@@ -245,7 +262,19 @@ def _model_payload(
             grouped.setdefault(r["kind"], []).append({k: v for k, v in r.items() if k != "kind"})
         payload["accesses"] = grouped
     payload.update(page)
+    if scope is not None:
+        _scope_note(payload, scope)
     return payload
+
+
+def _scope_note(payload: dict[str, Any], scope: FileScope) -> None:
+    """Say what a `path` / test filter left out, so a short answer is not read
+    as the whole truth."""
+    if scope.path:
+        payload["path"] = scope.path
+    if scope.dropped_tests:
+        payload["tests_excluded"] = scope.dropped_tests
+        payload["tests_hint"] = "accesses from test files are left out; include_tests=True keeps them"
 
 
 def register(mcp: FastMCP) -> None:
@@ -262,6 +291,16 @@ def register(mcp: FastMCP) -> None:
         summary_only: SummaryOnly = False,
         include_system: bool = False,
         unresolved_cursor: UnresolvedCursor = 0,
+        path: Annotated[
+            str | None,
+            Field(
+                description=(
+                    "Directory prefix (or one file), project-relative: only accesses made "
+                    "by symbols under it. Inventory / table / model modes; ignored with qname."
+                )
+            ),
+        ] = None,
+        include_tests: bool = False,
         workspace: Workspace | None = None,
     ) -> dict[str, Any]:
         """Which code touches which database table? Call it BEFORE changing a
@@ -310,7 +349,17 @@ def register(mcp: FastMCP) -> None:
         ``include_system=True``; in ``qname`` / ``table`` modes they carry
         ``system: true``. ``access`` keeps one kind. Unknown table:
         ``did_you_mean``. ``limit`` / ``cursor`` page the rows; counts are
-        exact; ``summary_only`` drops the rows."""
+        exact; ``summary_only`` drops the rows AND the ``unresolved_models``
+        list (``counts.unresolved_models`` stays).
+
+        Scope (inventory, ``table`` and model modes). ``path`` keeps only the
+        accesses made by symbols under that directory (or file), so the tables
+        of one capability can be listed without the rest; a table only
+        declared elsewhere is then not listed. Accesses from test files are
+        left out unless ``include_tests=True`` (counted in ``tests_excluded``
+        and ``counts.filtered_out``; a table only tests touch is not listed,
+        or marked ``test_only`` when it is declared). ``qname`` mode is never
+        filtered."""
         st = get_state(workspace)
         return compute_find_data_access(
             st,
@@ -324,4 +373,6 @@ def register(mcp: FastMCP) -> None:
             summary_only=summary_only,
             include_system=include_system,
             unresolved_cursor=unresolved_cursor,
+            path=path,
+            include_tests=include_tests,
         )

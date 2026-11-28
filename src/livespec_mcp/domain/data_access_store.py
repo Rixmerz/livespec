@@ -28,7 +28,7 @@ from __future__ import annotations
 import difflib
 import sqlite3
 from collections import deque
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from typing import Any
 
@@ -482,6 +482,40 @@ _ROW_SELECT = """SELECT d.table_name, d.table_schema, d.model, d.access, d.mecha
                  JOIN project p ON p.id = f.project_id"""
 
 
+@dataclass(slots=True)
+class FileScope:
+    """Which accessing files a ``find_data_access`` answer covers: those under
+    ``path`` (a directory prefix, or one file), minus test files unless
+    ``include_tests``. Test accesses it leaves out are counted in
+    ``dropped_tests`` as the queries run."""
+
+    path: str | None = None
+    include_tests: bool = False
+    is_test: Callable[[str], bool] = lambda _p: False  # noqa: E731
+    dropped_tests: int = 0
+
+    def __post_init__(self) -> None:
+        if self.path:
+            self.path = self.path.replace("\\", "/").strip().lstrip("./").rstrip("/") or None
+
+    def allows(self, file_path: str) -> bool:
+        if self.path and file_path != self.path and not file_path.startswith(f"{self.path}/"):
+            return False
+        return self.include_tests or not self.is_test(file_path)
+
+    def keep(self, file_path: str) -> bool:
+        """`allows`, counting the test accesses it drops."""
+        if self.allows(file_path):
+            return True
+        if (
+            not self.include_tests
+            and self.is_test(file_path)
+            and (not self.path or file_path == self.path or file_path.startswith(f"{self.path}/"))
+        ):
+            self.dropped_tests += 1
+        return False
+
+
 def _in(ids: Iterable[int]) -> tuple[str, tuple[int, ...]]:
     t = tuple(ids)
     return ",".join("?" for _ in t), t
@@ -578,6 +612,7 @@ def table_accesses(
     schema: str | None,
     table: str,
     access: str | None,
+    scope: FileScope | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, int]]:
     """Rows touching `table` (any schema unless given) and exact per-kind counts
     over ALL kinds, so a kind filter never hides what else is there."""
@@ -589,31 +624,42 @@ def table_accesses(
         # different explicit schema rules a row out.
         where += " AND (d.table_schema IS NULL OR d.table_schema = ?)"
         params.append(schema)
-    return _accesses(conn, where, params, access)
+    return _accesses(conn, where, params, access, scope)
 
 
 def model_accesses(
-    conn: sqlite3.Connection, pids: list[int], model: str, access: str | None
+    conn: sqlite3.Connection,
+    pids: list[int],
+    model: str,
+    access: str | None,
+    scope: FileScope | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, int], set[str]]:
     """Rows whose ORM model (case-insensitive) is `model`, the exact per-kind
     counts, and the tables those rows resolved to (empty if none did)."""
     ph, args = _in(pids)
     where = f"f.project_id IN ({ph}) AND (lower(d.model) = ? OR lower(d.ref_name) = ?)"
     params: list[Any] = [*args, model.lower(), model.lower()]
-    rows, counts = _accesses(conn, where, params, access)
+    rows, counts = _accesses(conn, where, params, access, scope)
     tables = {
         str(r["table_name"])
         for r in conn.execute(f"{_ROW_SELECT} WHERE {where} AND d.table_name IS NOT NULL", params)
+        if scope is None or scope.allows(r["file_path"])
     }
     return rows, counts, tables
 
 
 def _accesses(
-    conn: sqlite3.Connection, where: str, params: list[Any], access: str | None
+    conn: sqlite3.Connection,
+    where: str,
+    params: list[Any],
+    access: str | None,
+    scope: FileScope | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, int]]:
     rows = conn.execute(
         f"{_ROW_SELECT} WHERE {where} ORDER BY f.path, d.line, d.access", params
     ).fetchall()
+    if scope is not None:
+        rows = [r for r in rows if scope.keep(r["file_path"])]
     counts = {k: 0 for k in ACCESS_KINDS}
     for r in rows:
         counts[r["access"]] += 1
@@ -724,6 +770,7 @@ def inventory(
     include_system: bool = False,
     unresolved_cursor: int = 0,
     unresolved_limit: int = 200,
+    scope: FileScope | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, Any], list[dict[str, Any]]]:
     """(table rows, exact counts, unresolved ORM models).
 
@@ -745,9 +792,15 @@ def inventory(
     the ``file:line`` of their accesses (at most ``UNRESOLVED_LOCATIONS`` each,
     the rest counted in ``accesses_more``); the list is sliced by
     `unresolved_cursor` / `unresolved_limit` and its exact length is
-    ``counts['unresolved_models']``."""
+    ``counts['unresolved_models']``.
+
+    `scope` keeps only the accesses made from files under its path, without
+    test files unless it includes them; a table whose every access was left out
+    by it is not listed unless declared (then ``test_only`` or ``status``
+    ``unaccessed`` says why)."""
     ph, args = _in(pids)
     declared = declared_tables(conn, pids)
+    left_out: set[str] = set()
     acc: dict[str, dict[str, Any]] = {}
     unresolved: dict[tuple[str, str], dict[str, Any]] = {}
     for r in conn.execute(
@@ -757,6 +810,12 @@ def inventory(
             WHERE f.project_id IN ({ph}) ORDER BY f.path, d.line""",
         args,
     ):
+        if scope is not None:
+            before = scope.dropped_tests
+            if not scope.keep(r["file_path"]):
+                if scope.dropped_tests > before and r["table_name"] is not None:
+                    left_out.add(r["table_name"])
+                continue
         if r["table_name"] is None:
             model = r["model"] or r["ref_name"]
             u = unresolved.setdefault(
@@ -792,7 +851,10 @@ def inventory(
 
     rows: list[dict[str, Any]] = []
     hidden = 0
-    for name in sorted(set(acc) | set(declared)):
+    # Under a path only the tables its code touches are of interest; a table
+    # merely declared somewhere else says nothing about it.
+    names = set(acc) if scope is not None and scope.path else set(acc) | set(declared)
+    for name in sorted(names):
         a = acc.get(name)
         system = is_system_table(next(iter(sorted(a["schemas"])), None) if a else None, name)
         if system and not include_system:
@@ -809,6 +871,8 @@ def inventory(
         }
         if system:
             row["system"] = True
+        if a is None and name in left_out:
+            row["test_only"] = True  # only test code touches it
         if a and a["schemas"]:
             row["schema"] = (
                 sorted(a["schemas"])[0] if len(a["schemas"]) == 1 else sorted(a["schemas"])
@@ -840,6 +904,11 @@ def inventory(
         "system_tables_hidden": hidden,
         "skipped": {"dynamic_table": int(skipped)},
     }
+    if scope is not None and scope.dropped_tests:
+        counts["filtered_out"] = {
+            "tests": scope.dropped_tests,
+            "test_only_tables": len(left_out - set(acc)),
+        }
     if access is not None:
         rows = [r for r in rows if r[access] > 0]
     unresolved_rows = sorted(unresolved.values(), key=lambda u: (u["model"] or "", u["mechanism"]))
