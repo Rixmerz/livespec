@@ -6,6 +6,39 @@ follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed — Java trial on Spring PetClinic
+
+- **Java calls on a typed receiver bind to the receiver's class.** `x.m()` where
+  `x` is a local, a parameter, a field or `this.field` with a declared class
+  (generics stripped, import-scoped) now resolves to `m` on that class or its
+  nearest indexed ancestor, at weight 1.0, and no longer fans out at 0.5 to every
+  same-named method (which `who_calls` / `analyze_impact` / `quick_orient` hid:
+  `Owner.addVisit` showed 0 callers while 3 existed). `symbol_ref` now carries
+  `receiver='object'` and `receiver_class` for these calls. `var`, lambda
+  parameters, names declared twice with different types, chains (`a.b.m()`),
+  and declared types that are not project classes (library types, type
+  parameters) keep the previous resolution. **Existing indexed projects:** the
+  next `index_project` re-extracts Java.
+- **`find_endpoints` (Spring) applies the class-level `@RequestMapping` prefix**
+  (`/owners/{ownerId}` + `/pets/new`), accepts the array and named forms
+  (`@GetMapping({"/vets"})`, `value = {...}`, `path = {...}`, one endpoint per
+  path) and method-level `@RequestMapping(method = ...)`. A bare `@GetMapping`
+  is the prefix itself. A path that is not a plain literal is not guessed.
+- **`find_dead_code` (Java):** `public static void main(String[])`, methods of an
+  interface that extends a Spring Data repository type (also through project
+  interfaces) and `@Override` methods of a class whose base lies outside the
+  project (and that no indexed base declares) are never candidates, even with
+  `include_infrastructure`; counted in `filtered_out.framework_implemented`.
+- **`find_data_access` (JPA):** an access to an entity also reaches the tables of
+  the entities its `@OneToMany` / `@ManyToOne` / `@OneToOne` / `@ManyToMany`
+  fields point to (`ref_kind` relationship, `through: "Owner.pets:jpa"`): one hop
+  for reads, cascade (`ALL`/`PERSIST`/`MERGE`/`REMOVE`) transitively for writes,
+  and the `@JoinTable` with the access to its owning side. Tables only reachable
+  that way (pets, visits, specialties, vet_specialties) are no longer
+  `unaccessed`.
+- Unchanged on purpose: `propose_specs_from_codebase` already caps its list with
+  `max_proposals`; no `limit` alias was added.
+
 ### Fixed — third trial findings (JavaScript CLI)
 
 - **`new X(...)` is a call of `X`** in JS/TS/TSX: a `calls` edge from the
