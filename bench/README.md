@@ -297,7 +297,13 @@ What it shows:
 
 So on a large Python repository with deep inheritance the index is a faster
 first step, not a replacement for searching, until those edges exist. The
-missing edges are the next resolver work.
+sessions above ran before the resolver fix that followed them (migration 34).
+With it, asked on its own, the graph gives: callers of `Collector.collect` 1
+of 8 -> 7 of 8 (five direct, two through the override it now lists);
+`_alter_field` callers and overriders 1 of 3 -> 3 of 3; `add_fields` 2 of 4 ->
+4 of 4. Two caller questions did not move (4 of 5 and 1 of 3): a call on a
+receiver with no evident type is still resolved by name or not at all. The
+sessions were not repeated after the fix. Index time on Django rose about 4%.
 
 ## Not yet covered
 
