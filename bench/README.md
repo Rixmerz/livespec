@@ -263,6 +263,42 @@ What it says:
 What it does not say: anything about a large repository, about questions that
 do not name the mechanism, or about variance — it is one run per arm.
 
+### Four real agent sessions on Django 5.1.4 (2026-11-28)
+
+The same comparison on a large repository (2,898 files, 40,263 symbols,
+400,953 edges; index built in 41.5 s, 188 MiB). Eight questions with a key
+checked by reading the code: callers of three methods, callers plus
+overriders of two, the subclasses of one class, the public methods of one
+class, and which of six helpers nothing uses. Two sessions per arm, same
+model and effort, no traces.
+
+| Session | Fully right | Tool calls | Tool-result chars | Turns | Input tokens | Output tokens |
+| --- | --- | --- | --- | --- | --- | --- |
+| files only, run 1 | 7 / 8 | 15 | 25,662 | 19 | 2,371,163 | 18,292 |
+| files only, run 2 | 8 / 8 | 27 | 54,829 | 35 | 4,678,463 | 34,243 |
+| livespec, run 1 | 8 / 8 | 9 | 23,094 | 17 | 2,149,813 | 10,393 |
+| livespec, run 2 | 8 / 8 | 10 | 19,626 | 16 | 2,023,095 | 8,598 |
+
+What it shows:
+
+- **The saving is again in turns, and it is steadier than it is large.**
+  The livespec arm took 16 and 17 turns; the files arm took 19 and 35. Against
+  the cheaper files run the saving is 9-15% of input tokens; against the
+  dearer one it is over half. Two runs per arm do not make a mean.
+- **The one wrong answer was in the files arm**: a caller that does not
+  exist, written next to two real ones.
+- **The livespec arm did not get its answers from the graph alone.** Both
+  sessions asked the graph first, saw too few callers, and finished with
+  `grep` on the indexed copy. Asked on its own, the graph returns 4 of 5, 1 of
+  8 and 1 of 3 callers for the three caller questions and no overriders at
+  all: calls through `super()`, calls on an instance of a subclass, and
+  overrides are not edges. The subclass and class-outline questions were
+  answered by one call each, with nothing wrong.
+
+So on a large Python repository with deep inheritance the index is a faster
+first step, not a replacement for searching, until those edges exist. The
+missing edges are the next resolver work.
+
 ## Not yet covered
 
 - TS/Go/Rust real repos (need a fixture beyond Python)
