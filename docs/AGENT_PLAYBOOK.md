@@ -36,6 +36,8 @@ list_specs(workspace="PROJECT")
 
 Report: file/symbol/edge counts, languages, top symbols, Spec totals.
 
+Vendored/generated code (vendor, third_party, dist, build, out, coverage, `*.min.js`, `*.bundle.js`/`.mjs`, JS with a >2000-char line in its first 2 KB) is skipped; the payload's `generated_skipped` reports the count and up to 10 paths. `index_project(include_generated=True)` or `!vendor/` in `.livespec.toml` `[index].ignore` brings it back.
+
 **Plugins (v0.18):** Spec/docs mutation tools appear in `tools/list` after a
 `workspace=` call when that repo has `spec` and/or `doc` rows. On a **fresh** repo with no index yet, set `LIVESPEC_PLUGINS=spec` or
 `=all` in MCP config, or run `index_project` first and reconnect MCP if the

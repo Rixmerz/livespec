@@ -234,7 +234,7 @@ async def test_trivial_bodies_and_generated_paths_stay_out(workspace):
         },
     )
     async with Client(mcp) as c:
-        await c.call_tool("index_project", {})
+        await c.call_tool("index_project", {"include_generated": True})
         out = await _clusters(c)
 
     assert out["totals"]["clusters"] == 0

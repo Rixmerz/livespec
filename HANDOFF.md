@@ -46,6 +46,13 @@ Todo el stack es local-first: 0 servicios externos, 0 API keys obligatorias, 0 D
 
 ### Unreleased — evidencia de ejecución, aristas de herencia/tipo, acceso a datos, clones
 
+**Rama `fix/trial3-js` (local): tercer trial (CLI JavaScript), 1570 tests + 14 nuevos
+(`tests/test_trial3_js.py`).** `new X()` en JS/TS crea arista `calls`; los símbolos `module` ya no son
+candidatos de `find_dead_code`; vendor/bundles (`vendor`, `third_party`, `dist`, `build`, `out`,
+`coverage`, `*.min.js`, `*.bundle.js|mjs`, línea >2000 chars en 2 KB) se omiten por defecto con
+`generated_skipped` en `index_project` (`include_generated=True` o `!vendor/` en `.livespec.toml`);
+los errores de middleware ya no vienen en sobre de lista. Export JS sin callers: no reproducido.
+
 **Rama `fix/trial2-findings` (local, sobre `4a9240c`): segundo trial.** `find_dead_code(path=)`
 (archivo o directorio relativo, mismo prefijo que `find_clone_clusters`; candidatos, tiers
 runtime y todos los conteos solo de lo definido ahí; ruta desconocida -> `mcp_error` con hint);

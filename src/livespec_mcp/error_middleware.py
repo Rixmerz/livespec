@@ -21,6 +21,7 @@ from typing import Any
 
 from fastmcp.server.middleware import Middleware
 from fastmcp.tools.base import ToolResult
+from mcp.types import TextContent
 
 from livespec_mcp import state as _state
 from livespec_mcp.tools._errors import mcp_error
@@ -133,7 +134,11 @@ class WorkspaceErrorMiddleware(Middleware):
 
 
 def _as_tool_result(payload: dict[str, Any]) -> ToolResult:
+    # A real TextContent block. A list of plain dicts is not content to
+    # FastMCP: it serialises the whole list to JSON and wraps THAT in one text
+    # block, so the caller read `[{"type":"text","text":"{...}"}]` instead of
+    # the `{error, isError, hint}` object.
     return ToolResult(
-        content=[{"type": "text", "text": json.dumps(payload, default=str)}],
+        content=[TextContent(type="text", text=json.dumps(payload, default=str))],
         structured_content=payload,
     )

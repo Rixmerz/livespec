@@ -69,12 +69,14 @@ def compute_index_status(st: AppState) -> dict[str, Any]:
     return status
 
 
-def run_index_pipeline(st: AppState, *, force: bool = False) -> dict[str, Any]:
+def run_index_pipeline(
+    st: AppState, *, force: bool = False, include_generated: bool = False
+) -> dict[str, Any]:
     """Index + idempotent chunk rebuild. Shared by the `index_project` MCP
     tool and the `livespec index` CLI subcommand — both surfaces must report
     the same payload shape."""
     with st.lock():
-        stats = run_index(st.settings, st.conn, force=force)
+        stats = run_index(st.settings, st.conn, force=force, include_generated=include_generated)
         existing = st.conn.execute(
             "SELECT COUNT(*) c FROM chunk WHERE project_id=?", (st.project_id,)
         ).fetchone()["c"]
@@ -101,6 +103,21 @@ def run_index_pipeline(st: AppState, *, force: bool = False) -> dict[str, Any]:
         "watcher_started": False,
         "chunks": chunk_stats,
     }
+    if stats.generated_files or stats.generated_paths:
+        payload["generated_skipped"] = {
+            "files": stats.generated_files,
+            "paths": stats.generated_paths,
+            "hint": (
+                "Generated / vendored code left out of the index: directories "
+                "named vendor, third_party, dist, build, out, coverage, and "
+                "bundle or minified JS (*.min.js, *.bundle.js, *.bundle.mjs, "
+                "or a first-2KB line over 2000 chars). `files` counts indexable "
+                "files, `paths` lists up to 10 skipped directories/files. "
+                "index_project(include_generated=True) indexes them; or add "
+                "`!vendor/` to [index].ignore in .livespec.toml to re-include "
+                "one path."
+            ),
+        }
     _attach_grammar_failures(payload, stats)
     _attach_zero_symbol_warning(payload, stats, st)
     _attach_tracks(st, payload)
@@ -697,6 +714,7 @@ def register(mcp: FastMCP) -> None:
     def index_project(
         force: bool = False,
         watch: bool = False,
+        include_generated: bool = False,
         workspace: Workspace | None = None,
     ) -> dict[str, Any]:
         """Walk the workspace, parse code, persist symbols + call edges.
@@ -710,6 +728,14 @@ def register(mcp: FastMCP) -> None:
         idempotently. Records the workspace in the user-level registry
         (outside the repo) that `livespec ui` reads; nothing UI-related is
         written into the workspace.
+        Generated / vendored code is left out by default: directories named
+        vendor, third_party, dist, build, out, coverage, and bundle or
+        minified JS (*.min.js, *.bundle.js, *.bundle.mjs, or a JS file whose
+        first 2 KB has a line over 2000 characters). The payload's
+        ``generated_skipped`` says how many files and which paths (up to 10).
+        ``include_generated=True`` indexes them anyway; a ``!vendor/`` line in
+        ``.livespec.toml`` ``[index].ignore`` re-includes one path. Re-indexing
+        a project indexed before this existed drops those files.
         When ``[specs].sync_from`` is set in ``.livespec.toml``, markdown
         specs are re-imported after each index (idempotent). Optional
         ``[specs].links_seed`` replays ``bulk_link_spec_symbols`` from JSON.
@@ -723,7 +749,7 @@ def register(mcp: FastMCP) -> None:
         # longer exist to be counted. Comparing the two counts is the only way
         # to report what a run actually cost an ingest.
         external_before = _external_edge_counts(st)
-        result = run_index_pipeline(st, force=force)
+        result = run_index_pipeline(st, force=force, include_generated=include_generated)
         _maybe_auto_ingest(st, result)
         _attach_external_edge_staleness(st, result, external_before)
         try:
@@ -754,7 +780,7 @@ def register(mcp: FastMCP) -> None:
 
                 conn = connect(db_path)
                 try:
-                    stats = run_index(settings, conn)
+                    stats = run_index(settings, conn, include_generated=include_generated)
                 finally:
                     conn.close()
                 if stats.files_changed or stats.files_deleted:

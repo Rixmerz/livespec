@@ -3798,6 +3798,48 @@ def _ts_collect_calls(
                 return t, receiver_text or t
         return None, None
 
+    def _js_new_ref(new_node) -> None:
+        """JS/TS `new X(...)` / `new ns.X(...)`: an instantiation is a call of
+        the class, the edge `X(...)` already is in Python. Without it a class
+        built only with `new` (an error type thrown at every call site) had no
+        inbound edge and read as dead. Resolved by the same import scope as a
+        call; `new this.K()` / `new obj.K()` / `new (f())()` name no class the
+        file's imports can place, so they make no ref."""
+        ctor = new_node.child_by_field_name("constructor")
+        if ctor is None:
+            return
+        scope = None
+        receiver = None
+        if ctor.type == "identifier":
+            tgt = text(ctor).strip()
+            scope = out.imports.get(tgt)
+        elif ctor.type == "member_expression":
+            prop = ctor.child_by_field_name("property")
+            base = ctor.child_by_field_name("object")
+            while base is not None and base.type == "member_expression":
+                base = base.child_by_field_name("object")
+            if prop is None or base is None or base.type != "identifier":
+                return
+            tgt = text(prop).strip()
+            root = text(base).strip()
+            if root not in out.imports:
+                return
+            receiver = RECEIVER_MODULE
+            scope = out.imports[root]
+        else:
+            return
+        if not tgt:
+            return
+        out.refs.append(
+            ExtractedRef(
+                src_qname=src_qname,
+                target_name=out.import_aliases.get(tgt, tgt) if receiver is None else tgt,
+                line=new_node.start_point[0] + 1,
+                scope_module=scope,
+                receiver=receiver,
+            )
+        )
+
     def _callback_arg_refs(call_node, tgt: str) -> None:
         """v0.13 P3: named handlers passed to registration-style calls.
 
@@ -4136,6 +4178,8 @@ def _ts_collect_calls(
             if tgt:
                 # v0.13 P3: named handlers passed to registration calls.
                 _callback_arg_refs(node, tgt)
+        elif node.type == "new_expression":
+            _js_new_ref(node)
         # v0.11 P2: JSX element references as call-graph edges (bug #20).
         # Only jsx_opening_element (paired tags) and jsx_self_closing_element
         # are walked; jsx_closing_element is skipped (duplicate of opening tag).
