@@ -19,6 +19,15 @@ follows [SemVer](https://semver.org/).
   used to ignore star imports). Fewer 0.9-weight fan-out edges for names a
   package re-exports from several submodules. **Existing indexed projects:** the
   next `index_project` re-extracts Python.
+- **A class used from a class body, or passed to a call, is used.** The Python
+  extractor never scanned class-body statements (`input_formats = Formats()`,
+  `@register(Cls)`), so a class instantiated there had no incoming edge, and a
+  class handed to a call as a value (`warnings.warn(msg, MyWarning)`) left no
+  ref at all. Class bodies are now scanned like a function body (the calls are
+  the class's, nested defs keep their own) and a bare or dotted name given as a
+  call argument becomes a `references` ref when it names a project class.
+  `find_dead_code(path=django/forms)` no longer lists `DateTimeFormatsIterator`
+  and `MediaOrderConflictWarning`. Module-level code still has no caller symbol.
 ### Fixed — Java trial on Spring PetClinic
 
 - **Java calls on a typed receiver bind to the receiver's class.** `x.m()` where

@@ -567,6 +567,10 @@ def _py_extract(source: str, module_name: str) -> ExtractResult:
         for stmt in node.body:
             if isinstance(stmt, ast.AnnAssign):
                 _py_emit_type_refs(stmt.annotation, qname, out, seen_types)
+        # The class body RUNS when the class is defined: `input_formats =
+        # Formats()`, `objects = Manager()`, `@register(Cls)` are calls the
+        # class makes. Nested defs keep their own calls.
+        _collect_calls(node, qname, out, seen_types)
         flavor = _py_schema_flavor(node, schema_classes)
         if flavor is not None:
             fields = _py_class_fields(node, enum_names, schema_classes)
@@ -1128,6 +1132,13 @@ def _collect_calls(
             ):
                 _py_emit_type_refs(node.args[1], src_qname, out, seen_types)
             _emit_py_callback_refs(node, src_qname, out)
+            # A class handed over as a value (`warnings.warn(msg, Warn)`,
+            # `Thread(target=..., cls=Foo)`) is used by the callee. Only names
+            # this file imports or defines become refs, and the resolver keeps
+            # the ones that name a class.
+            for arg in (*node.args, *(k.value for k in node.keywords)):
+                if isinstance(arg, (ast.Name, ast.Attribute)):
+                    _py_emit_type_refs(arg, src_qname, out, seen_types)
             client = _py_client_route(node)
             if client is not None:
                 method, path = client
