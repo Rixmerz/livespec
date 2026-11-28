@@ -3728,6 +3728,92 @@ def _java_collect_imports(root_node, src_bytes: bytes) -> dict[str, str]:
     return imports
 
 
+_JAVA_CLASS_LIKE = frozenset(
+    {"class_declaration", "enum_declaration", "record_declaration", "interface_declaration"}
+)
+
+
+def _java_type_name(node, text) -> str | None:
+    """The class a Java type node names, generics dropped: `List<Pet>` -> `List`,
+    `a.b.Owner` -> `a.b.Owner`. Arrays, primitives and `var` name no class."""
+    if node is None:
+        return None
+    if node.type in ("type_identifier", "scoped_type_identifier"):
+        name = text(node).strip()
+        return name if name and name != "var" else None
+    if node.type == "generic_type":
+        first = next((c for c in node.children if c.is_named), None)
+        return _java_type_name(first, text)
+    return None
+
+
+def _java_declared_types(def_node, text) -> tuple[dict, dict]:
+    """Declared types visible to a Java member body: ``(locals, fields)``, each
+    ``{name: class name | None}``. ``None`` marks a name that is declared but
+    whose class cannot be told (`var`, or two declarations that disagree), so
+    it shadows an outer name instead of falling through to it."""
+    fields: dict[str, str | None] = {}
+    locs: dict[str, str | None] = {}
+
+    def put(target: dict, name_node, type_node) -> None:
+        if name_node is None:
+            return
+        name = text(name_node).strip()
+        typ = _java_type_name(type_node, text)
+        if name in target and target[name] != typ:
+            typ = None
+        target[name] = typ
+
+    def declarators(target: dict, decl) -> None:
+        type_node = decl.child_by_field_name("type")
+        for d in decl.children:
+            if d.type == "variable_declarator":
+                put(target, d.child_by_field_name("name"), type_node)
+
+    # Enclosing classes, outermost first so an inner field shadows an outer one.
+    chain = []
+    cur = def_node
+    while cur is not None:
+        if cur.type in _JAVA_CLASS_LIKE:
+            chain.append(cur)
+        cur = cur.parent
+    for cls in reversed(chain):
+        body = cls.child_by_field_name("body")
+        for c in body.children if body is not None else ():
+            if c.type == "field_declaration":
+                declarators(fields, c)
+        params = cls.child_by_field_name("parameters")  # record components
+        for c in params.children if params is not None else ():
+            if c.type == "formal_parameter":
+                put(fields, c.child_by_field_name("name"), c.child_by_field_name("type"))
+
+    def walk(n) -> None:
+        if n.type == "local_variable_declaration":
+            declarators(locs, n)
+        elif n.type in ("formal_parameter", "enhanced_for_statement", "resource"):
+            put(locs, n.child_by_field_name("name"), n.child_by_field_name("type"))
+        elif n.type in ("inferred_parameters", "catch_formal_parameter", "pattern"):
+            for c in n.children:
+                if c.type == "identifier":
+                    put(locs, c, None)
+        elif n.type == "lambda_expression":
+            lam = n.child_by_field_name("parameters")
+            if lam is not None and lam.type == "identifier":
+                put(locs, lam, None)
+        elif n.type == "spread_parameter":
+            for c in n.children:
+                if c.type == "variable_declarator":
+                    put(locs, c.child_by_field_name("name"), None)
+        for c in n.children:
+            if c is not def_node and c.type in _JAVA_CLASS_LIKE:
+                continue
+            walk(c)
+
+    if def_node.type not in _JAVA_CLASS_LIKE:
+        walk(def_node)
+    return locs, fields
+
+
 def _ts_collect_calls(
     def_node,
     src_qname: str,
@@ -4102,6 +4188,39 @@ def _ts_collect_calls(
             return None
         return method, path
 
+    java_types: list = []
+
+    def _java_receiver_class(call_node) -> str | None:
+        """`x.m()` / `this.x.m()` where `x` is a local, parameter or field with
+        a declared class: that class (`scope::Name` when its import is known).
+        Java declares its types, so the receiver's class needs no inference;
+        anything else (`a.b.m()`, `f().m()`, `var x`) stays unclassified."""
+        obj = call_node.child_by_field_name("object")
+        if obj is None:
+            return None
+        this_field = False
+        if obj.type == "field_access":
+            inner = obj.child_by_field_name("object")
+            fld = obj.child_by_field_name("field")
+            if inner is None or inner.type != "this" or fld is None:
+                return None
+            name, this_field = text(fld).strip(), True
+        elif obj.type == "identifier":
+            name = text(obj).strip()
+        else:
+            return None
+        if not java_types:
+            java_types.append(_java_declared_types(def_node, text))
+        locs, fields = java_types[0]
+        if this_field or name not in locs:
+            raw = fields.get(name)
+        else:
+            raw = locs[name]
+        if not raw:
+            return None
+        scope = type_refs.scope_of(raw) if type_refs is not None else None
+        return f"{scope}::{raw.rsplit('.', 1)[-1]}" if scope else raw
+
     def walk(node):
         if type_refs is not None:
             type_refs.visit(node)
@@ -4154,6 +4273,11 @@ def _ts_collect_calls(
             # it still counts.
             if tgt and not _ts_receiver_is_literal(node):
                 receiver, base = _js_receiver(node, text, out.imports)
+                receiver_class: str | None = None
+                if receiver is None and node.type == "method_invocation":
+                    receiver_class = _java_receiver_class(node)
+                    if receiver_class is not None:
+                        receiver = RECEIVER_OBJECT
                 if receiver is not None:
                     # JS/TS member call: scoped by its receiver only. A named
                     # import of `join` says nothing about `parts.join(",")`.
@@ -4173,6 +4297,7 @@ def _ts_collect_calls(
                         line=node.start_point[0] + 1,
                         scope_module=scope,
                         receiver=receiver,
+                        receiver_class=receiver_class,
                     )
                 )
             if tgt:
