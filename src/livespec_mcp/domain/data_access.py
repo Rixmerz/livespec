@@ -1746,6 +1746,8 @@ _JPA_REPO_BASES = frozenset(
     ListPagingAndSortingRepository Repository JpaSpecificationExecutor
     ReactiveCrudRepository""".split()
 )
+_JPA_RELATIONS = ("OneToMany", "ManyToOne", "OneToOne", "ManyToMany")
+_JPA_WRITE_CASCADE = re.compile(r"\b(?:ALL|PERSIST|MERGE|REMOVE)\b")
 _REPO_READ_RE = re.compile(r"^(?:find|get|read|count|exists|query|search|stream)")
 _REPO_WRITE_RE = re.compile(r"^(?:save|delete|insert|update|remove|persist)")
 _REPO_TYPE_RE = re.compile(r"(?:Repository|Repo|Dao|DAO)$")
@@ -1907,6 +1909,7 @@ class _Java:
                     _Model(_line(n), _txt(name, src), "model", "jpa", table, schema,
                            table_source="declared")
                 )  # fmt: skip
+                self._relationships(n, _txt(name, src))
         elif t == "interface_declaration":
             name = n.child_by_field_name("name")
             ext = next((c for c in n.children if c.type == "extends_interfaces"), None)
@@ -1928,6 +1931,45 @@ class _Java:
                         _Model(_line(n), _txt(name, src), "repository", "jpa", entity=entity)
                     )
                 break
+
+    def _relationships(self, cls, owner: str) -> None:
+        """`@OneToMany(cascade = ALL) List<Pet> pets` / `@ManyToMany @JoinTable(
+        name = "vet_specialties") Set<Specialty> specialties`: the entities an
+        entity reaches through its fields, as `relationship` models (owner =
+        the entity, entity = the target; ``secondary`` = the join table;
+        detail ``jpa-cascade`` when a write cascades)."""
+        src = self.src
+        body = cls.child_by_field_name("body")
+        for f in body.children if body is not None else ():
+            if f.type != "field_declaration":
+                continue
+            anns = _java_annotations(f, src)
+            kind = next((k for k in _JPA_RELATIONS if k in anns), None)
+            if kind is None:
+                continue
+            type_node = f.child_by_field_name("type")
+            if type_node is not None and type_node.type == "generic_type":
+                targs = next((c for c in type_node.children if c.type == "type_arguments"), None)
+                type_node = targs.named_children[-1] if targs and targs.named_children else None
+            target = _java_type_name(type_node, src)
+            decl = next((c for c in f.children if c.type == "variable_declarator"), None)
+            fname = decl.child_by_field_name("name") if decl is not None else None
+            if not target or fname is None:
+                continue
+            values = (
+                _java_annotation_values(anns[kind], src) if anns[kind].type == "annotation" else {}
+            )
+            cascade = values.get("cascade")
+            writes = cascade is not None and bool(_JPA_WRITE_CASCADE.search(_txt(cascade, src)))
+            join = anns.get("JoinTable")
+            join_name = None
+            if join is not None and join.type == "annotation":
+                join_name = _java_literal(_java_annotation_values(join, src).get("name"), src)
+            self.found.models.append(
+                _Model(_line(f), _txt(fname, src), "relationship", "jpa", entity=target,
+                       owner=owner, secondary=f"={join_name}" if join_name else None,
+                       detail="jpa-cascade" if writes else "jpa")
+            )  # fmt: skip
 
     def call(self, c) -> None:
         src = self.src

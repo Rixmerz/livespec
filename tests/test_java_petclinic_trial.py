@@ -248,3 +248,68 @@ async def test_java_entry_points_and_framework_implemented_are_not_dead(workspac
     assert out["filtered_out"]["framework_implemented"] == 4
 
 
+# --------------------------------------------------------------------------
+# 4. JPA relationships
+# --------------------------------------------------------------------------
+
+JPA = {
+    "p/Owner.java": (
+        "package p;\nimport jakarta.persistence.*;\nimport java.util.*;\n"
+        '@Entity @Table(name = "owners")\npublic class Owner {\n'
+        "  @OneToMany(cascade = CascadeType.ALL, fetch = FetchType.EAGER)\n"
+        "  private List<Pet> pets;\n}\n"
+    ),
+    "p/Pet.java": (
+        "package p;\nimport jakarta.persistence.*;\nimport java.util.*;\n"
+        '@Entity @Table(name = "pets")\npublic class Pet {\n'
+        "  @ManyToOne private PetType type;\n"
+        "  @OneToMany(cascade = CascadeType.ALL) private Set<Visit> visits;\n}\n"
+    ),
+    "p/Visit.java": 'package p;\nimport jakarta.persistence.*;\n@Entity @Table(name = "visits")\npublic class Visit {}\n',
+    "p/PetType.java": 'package p;\nimport jakarta.persistence.*;\n@Entity @Table(name = "types")\npublic class PetType {}\n',
+    "p/Vet.java": (
+        "package p;\nimport jakarta.persistence.*;\nimport java.util.*;\n"
+        '@Entity @Table(name = "vets")\npublic class Vet {\n'
+        "  @ManyToMany(fetch = FetchType.EAGER)\n"
+        '  @JoinTable(name = "vet_specialties", joinColumns = @JoinColumn(name = "vet_id"))\n'
+        "  private Set<Specialty> specialties;\n}\n"
+    ),
+    "p/Specialty.java": 'package p;\nimport jakarta.persistence.*;\n@Entity @Table(name = "specialties")\npublic class Specialty {}\n',
+    "p/OwnerRepository.java": (
+        "package p;\nimport org.springframework.data.jpa.repository.JpaRepository;\n"
+        "public interface OwnerRepository extends JpaRepository<Owner, Integer> {}\n"
+    ),
+    "p/VetRepository.java": (
+        "package p;\nimport org.springframework.data.jpa.repository.JpaRepository;\n"
+        "public interface VetRepository extends JpaRepository<Vet, Integer> {}\n"
+    ),
+    "p/Svc.java": (
+        "package p;\npublic class Svc {\n"
+        "  private OwnerRepository owners;\n  private VetRepository vets;\n"
+        "  void save(Owner o) { owners.save(o); }\n"
+        "  void list() { vets.findAll(); }\n}\n"
+    ),
+}
+
+
+@pytest.mark.asyncio
+async def test_jpa_entities_reached_only_through_relationships_are_accessed(workspace: Path):
+    requires_grammar("java")
+    _write(workspace, JPA)
+    async with Client(mcp) as c:
+        await _index(c)
+        out = (await c.call_tool("find_data_access", {})).data
+        visits = (await c.call_tool("find_data_access", {"table": "visits"})).data
+    tables = {t["table"]: t for t in out["tables"]}
+    assert all(t["status"] != "unaccessed" for t in tables.values()), tables
+    # Owner.pets and Pet.visits cascade: saving an owner writes both
+    assert (tables["pets"]["read"], tables["pets"]["write"]) == (0, 1)
+    assert tables["visits"]["write"] == 1 and tables["visits"]["read"] == 0
+    # `Pet.type` is not cascaded and two hops away from a read: not reached
+    assert "types" not in tables or tables["types"]["read"] == 0
+    # reading a vet reads its specialties and the join table
+    assert tables["specialties"]["read"] == 1 and tables["vet_specialties"]["read"] == 1
+    (w,) = visits["accesses"]["write"]
+    assert w["through"] == "Pet.visits:jpa" and w["symbol"].endswith("Svc.save")
+    # the direct access is unchanged
+    assert tables["owners"]["write"] == 1

@@ -32,7 +32,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Any
 
-from livespec_mcp.domain.data_access import READ, REL_EDGE_OPS, REL_OPS
+from livespec_mcp.domain.data_access import READ, REL_EDGE_OPS, REL_OPS, WRITE
 from livespec_mcp.domain.extractors import ExtractResult
 from livespec_mcp.domain.graph import INVOCATION_EDGE_TYPES
 
@@ -262,7 +262,79 @@ def resolve_data_access(conn: sqlite3.Connection) -> int:
         "UPDATE data_access SET model=?, table_name=?, table_schema=?, confidence=? WHERE id=?",
         updates,
     )
+    _derive_jpa_relationship_rows(conn, rows, by_name)
     return examined
+
+
+def _derive_jpa_relationship_rows(
+    conn: sqlite3.Connection, rows: list[_ModelRow], by_name: dict[str, list[_ModelRow]]
+) -> None:
+    """An access to a JPA entity reaches the tables of the entities its
+    relationship fields point to: `owners.save(owner)` writes `pets` and
+    `visits` when the cascade says so, reading an owner reads its `pets`.
+
+    One hop for a read (a lazy collection is loaded on first use, and what it
+    holds is a second access); a write follows `cascade` (ALL / PERSIST / MERGE
+    / REMOVE) transitively. A many-to-many reaches its `@JoinTable` with the
+    access that touched the owning side. Rows are `ref_kind='relationship'`,
+    mechanism `jpa`, with the field as `through`."""
+    rels: dict[str, list[_ModelRow]] = {}
+    for r in rows:
+        if r.role == "relationship" and r.mechanism == "jpa" and r.entity and r.owner:
+            rels.setdefault(r.owner, []).append(r)
+    if not rels:
+        return
+    out: list[tuple[Any, ...]] = []
+    seen: set[tuple[Any, ...]] = set()
+
+    def emit(a: sqlite3.Row, rel: _ModelRow, access: str, model: str, join: str | None) -> None:
+        pid = int(a["project_id"])
+        table = schema = None
+        confidence = "unresolved"
+        if join:
+            table, confidence = join, "model"
+        else:
+            table, schema, confidence = _resolve_model(by_name, model, pid, "jpa")
+        key = (a["symbol_id"], a["line"], access, model, table)
+        if key in seen:
+            return
+        seen.add(key)
+        out.append(
+            (a["symbol_id"], table, schema, None if join else model,
+             f"{rel.owner}.{rel.name}:jpa", "relationship", access, "jpa", a["line"], confidence)
+        )  # fmt: skip
+
+    for a in conn.execute(
+        """SELECT d.symbol_id, d.line, d.access, d.model, f.project_id
+           FROM data_access d JOIN symbol s ON s.id = d.symbol_id JOIN file f ON f.id = s.file_id
+           WHERE d.mechanism = 'jpa' AND d.ref_kind IN ('model', 'repository')
+             AND d.model IS NOT NULL"""
+    ).fetchall():
+        pid = int(a["project_id"])
+        reached = {a["model"]}
+        frontier = [a["model"]]
+        depth = 0
+        while frontier:
+            nxt: list[str] = []
+            for owner in frontier:
+                for rel in _pick(rels.get(owner, []), pid, "jpa"):
+                    cascades = rel.detail == "jpa-cascade"
+                    access = WRITE if a["access"] == WRITE and cascades else READ
+                    if depth == 0 or (a["access"] == WRITE and cascades):
+                        emit(a, rel, access, rel.entity or "", None)
+                        if rel.secondary and rel.secondary.startswith("=") and depth == 0:
+                            emit(a, rel, a["access"], "", rel.secondary[1:].lower())
+                    if a["access"] == WRITE and cascades and rel.entity not in reached:
+                        reached.add(rel.entity or "")
+                        nxt.append(rel.entity or "")
+            frontier = nxt
+            depth += 1
+    conn.executemany(
+        """INSERT INTO data_access(symbol_id, table_name, table_schema, model, ref_name,
+               ref_kind, access, mechanism, line, confidence)
+           VALUES(?,?,?,?,?,?,?,?,?,?)""",
+        out,
+    )
 
 
 def _derive_const_rows(conn: sqlite3.Connection, rows: list[_ModelRow]) -> None:
