@@ -54,6 +54,13 @@ qname); enum/`@interface` Java y enum/alias TS son símbolos; barrels TS (5 salt
 y alias de import; `Type::method` y tipos anidados en Java. Migración **34**
 (`symbol_ref.receiver_class`, re-extract). Suite: **1514 passed**.
 
+**Rama `fix/evident-class-param`:** un parámetro sin anotación es de clase evidente
+solo si una sentencia directa del cuerpo lo reasigna (`t = Template(t)`) antes de
+cualquier otro uso; si no, resolución por nombre. `Type::miembro` en Java sin símbolo
+(Lombok, record) y clase con ancestros todos indexados: sin arista. Django: +1 en
+`django/` (`setup_databases -> TimeKeeper.timed`), +65 en `tests/` (`render_template`,
+reasignación condicional), 0 quitadas. Suite: **1517 passed**.
+
 **Rama `fix/trace-noise`: `ingest_traces` ignora spans de orden imposible.**
 `parent_not_yet_entered` / `parent_already_exited` (misma traza, mismo hilo; Node
 exento) no crean arista ni hit y se cuentan en `skipped` y `discarded_spans`.

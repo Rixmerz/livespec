@@ -271,3 +271,93 @@ async def test_evident_class_with_unindexed_base_keeps_name_based_edges(workspac
     assert ("m.open_base", "m.Mixin.as_p") in calls
     # every ancestor of Closed is indexed and none defines it: no edge
     assert ("m.closed_base", "m.Mixin.as_p") not in calls
+
+
+@pytest.mark.asyncio
+async def test_unannotated_parameter_is_never_evident_even_when_rebound(workspace: Path):
+    """Django's `setup_databases(time_keeper=None)`: `if time_keeper is None:
+    time_keeper = NullTimeKeeper()` does not make the caller's value a
+    NullTimeKeeper, so the edge to the base-class method must survive."""
+    _write(
+        workspace,
+        {
+            "m.py": (
+                "class TimeKeeper:\n    def timed(self):\n        return 1\n\n"
+                "class NullTimeKeeper(TimeKeeper):\n    def timed(self):\n        return 0\n\n"
+                "def setup(tk=None):\n"
+                "    if tk is None:\n        tk = NullTimeKeeper()\n"
+                "    return tk.timed()\n\n"
+                "def setup_always(tk):\n    tk = NullTimeKeeper()\n    return tk.timed()\n\n"
+                "def used_first(tk):\n    tk.timed()\n    tk = NullTimeKeeper()\n    return tk.timed()\n\n"
+                "def setup_annotated(tk: TimeKeeper):\n    return tk.timed()\n\n"
+                "def local():\n    tk = NullTimeKeeper()\n    return tk.timed()\n"
+            )
+        },
+    )
+    async with Client(mcp) as c:
+        await _index(c)
+    calls = _calls(workspace)
+    # rebound only inside an `if`: the caller's value may be a TimeKeeper
+    assert ("m.setup", "m.TimeKeeper.timed") in calls
+    assert ("m.setup", "m.NullTimeKeeper.timed") in calls
+    # rebound by a direct body statement before any other use: evidently Null
+    assert ("m.setup_always", "m.NullTimeKeeper.timed") in calls
+    assert ("m.setup_always", "m.TimeKeeper.timed") not in calls
+    # used before the rebinding: not evident
+    assert ("m.used_first", "m.TimeKeeper.timed") in calls
+    # an annotated parameter still resolves by its annotation (with overrides)
+    assert ("m.setup_annotated", "m.TimeKeeper.timed") in calls
+    # a plain local `x = Cls()` is still evident: only Cls's method, not the base's
+    assert ("m.local", "m.NullTimeKeeper.timed") in calls
+    assert ("m.local", "m.TimeKeeper.timed") not in calls
+
+
+@pytest.mark.asyncio
+async def test_variable_assigned_two_classes_is_not_evident(workspace: Path):
+    _write(
+        workspace,
+        {
+            "m.py": (
+                "class A:\n    def m(self):\n        return 1\n\n"
+                "class B:\n    def m(self):\n        return 2\n\n"
+                "def pick(flag):\n"
+                "    if flag:\n        c = A()\n    else:\n        c = B()\n"
+                "    return c.m()\n\n"
+                "def only_a():\n    c = A()\n    return c.m()\n"
+            )
+        },
+    )
+    async with Client(mcp) as c:
+        await _index(c)
+    calls = _calls(workspace)
+    assert ("m.pick", "m.A.m") in calls and ("m.pick", "m.B.m") in calls
+    assert ("m.only_a", "m.A.m") in calls and ("m.only_a", "m.B.m") not in calls
+
+
+@pytest.mark.asyncio
+async def test_java_method_reference_to_member_without_symbol_adds_no_edge(workspace: Path):
+    """`Type::getName` where Type has no `getName` symbol (Lombok getter, record
+    accessor) and every ancestor is indexed: no edge to another class's getName.
+    With a library ancestor the method may live there, so the name decides."""
+    requires_grammar("java")
+    _write(
+        workspace,
+        {
+            "p/Other.java": 'package p;\npublic class Other {\n  public String getName() { return ""; }\n}\n',
+            "p/Plain.java": "package p;\npublic class Plain {\n  int x;\n}\n",
+            "p/Lib.java": "package p;\npublic class Lib extends ext.Base {\n  int x;\n}\n",
+            "p/Own.java": 'package p;\npublic class Own {\n  public String getName() { return ""; }\n}\n',
+            "p/Use.java": (
+                "package p;\nimport java.util.List;\npublic class Use {\n"
+                "  void plain(List<Plain> l) { l.stream().map(Plain::getName); }\n"
+                "  void lib(List<Lib> l) { l.stream().map(Lib::getName); }\n"
+                "  void own(List<Own> l) { l.stream().map(Own::getName); }\n}\n"
+            ),
+        },
+    )
+    async with Client(mcp) as c:
+        await _index(c)
+    calls = {(s.rsplit(".", 1)[-1], d.rsplit(".", 2)[-2]) for s, d in _calls(workspace)}
+    assert ("plain", "Other") not in calls and ("plain", "Own") not in calls
+    assert ("lib", "Other") in calls  # unindexed ancestor: name-based fallback
+    assert ("own", "Own") in calls and ("own", "Other") not in calls

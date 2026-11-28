@@ -1374,9 +1374,11 @@ def _resolve_refs(
                     # Not found: nobody defines it only when the WHOLE ancestry
                     # is indexed; with a library or unresolved base the method
                     # may live there, so the name-based path decides.
-                    if receiver == RECEIVER_TYPE or hier.is_complete(hits[0][0]):
+                    if hier.is_complete(hits[0][0]):
                         continue
-            if receiver == RECEIVER_TYPE:
+            if receiver == RECEIVER_TYPE and not (
+                len(hits) == 1 and get_hierarchy().is_class(hits[0][0])
+            ):
                 continue  # a class name that is not ONE project class: no edge
         if receiver in (RECEIVER_SELF, RECEIVER_OBJECT):
             candidates = [c for c in candidates if c[0] in methods]
