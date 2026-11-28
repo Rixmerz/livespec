@@ -5256,6 +5256,13 @@ def register(mcp: FastMCP) -> None:
         `summary_only=True` returns just the count + breakdown without the
         list. The total count is always exact, regardless of pagination.
 
+        Unreleased: with `path` and runtime evidence (`ingest_traces`),
+        `runtime_coverage` gives the coverage of THAT path, with the
+        definitions `get_project_overview.runtime_evidence` uses repo-wide:
+        `symbols_non_test` (functions and methods under `path`, outside test
+        paths) and `symbols_with_hits_non_test` (how many of them were seen
+        running). It is in `summary_only` too.
+
         Unreleased: `filtered_out` reports how many candidates each default
         filter excluded, keyed by the flag that would include them
         (`tests`, `non_python`, `public`, `infrastructure`, `fs_routing`).
@@ -5659,6 +5666,16 @@ def register(mcp: FastMCP) -> None:
             payload["corroboration_available"] = corroboration_hint
         if runtime_tiers is not None:
             payload["runtime"] = runtime_tiers
+            if prefix:
+                from livespec_mcp.domain.trace_ingest import public_runtime_state
+
+                scoped = public_runtime_state(st.conn, pid, _is_test_file_path, path=prefix)
+                if scoped is not None:
+                    payload["runtime_coverage"] = {
+                        "path": prefix,
+                        "symbols_non_test": scoped["symbols_non_test"],
+                        "symbols_with_hits_non_test": scoped["symbols_with_hits_non_test"],
+                    }
         if kept_alive:
             payload["kept_alive_by_edge_type"] = {
                 **dict(sorted(kept_alive.items())),

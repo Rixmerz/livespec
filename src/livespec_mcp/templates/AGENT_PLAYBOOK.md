@@ -512,7 +512,9 @@ Reading the results:
   The rule is coarse (any changed file, not only a former caller's).
 - Coverage as one number over another: `get_project_overview`'s
   `runtime_evidence.symbols_with_hits_non_test` over `symbols_non_test`
-  (functions and methods outside test paths).
+  (functions and methods outside test paths). For ONE capability use
+  `find_dead_code(path=..., summary_only=True)`: its `runtime_coverage` has the
+  same two numbers counted under that path.
 - Idempotent per trace file (re-ingesting replaces, never double-counts);
   `ingest_traces(remove=True)` with no `trace_path` deletes all of its edges
   and hits; with `trace_path=[...]` only those sources (an edge another file

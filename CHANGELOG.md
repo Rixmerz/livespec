@@ -38,6 +38,12 @@ follows [SemVer](https://semver.org/).
   inventory, `table=` and model modes and counted in `tests_excluded` /
   `counts.filtered_out` (a table only tests touch is not listed, or flagged
   `test_only` when declared). `qname` mode is never filtered.
+- **`find_dead_code(path=...)` reports the runtime coverage of that path.** With
+  runtime evidence ingested, `runtime_coverage` (also in `summary_only`) has
+  `symbols_non_test` and `symbols_with_hits_non_test`, defined as in
+  `get_project_overview.runtime_evidence` but counted under `path`, so one
+  capability's coverage (54.8% for `django/forms`) is no longer hidden by the
+  repo-wide figure (20%).
 ### Fixed — Java trial on Spring PetClinic
 
 - **Java calls on a typed receiver bind to the receiver's class.** `x.m()` where

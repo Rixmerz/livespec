@@ -294,7 +294,9 @@ or reflection: the callee reads as called by nobody. A
   sources, re-index, ingest the new run. The rule is coarse: any changed file.
 - **Coverage.** `get_project_overview` → `runtime_evidence`:
   `symbols_with_hits_non_test` over `symbols_non_test` (functions and methods
-  outside test paths).
+  outside test paths). That is repo-wide; for one capability read
+  `find_dead_code(path=..., summary_only=True)` → `runtime_coverage` (same two
+  numbers, counted under `path`).
 - **A trace is the runs that were traced, not production.** `not_seen` on a
   thin test run is weak; say which run it came from.
 - Pass every process's file of a distributed trace together (a list, or the
