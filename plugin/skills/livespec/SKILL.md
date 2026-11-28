@@ -89,6 +89,7 @@ list_specs(workspace="REPO")
 Then report: file/symbol/edge counts, languages, top symbols, Spec totals.
 `index_project` is content-hash incremental — re-run it on demand (after pulls/edits),
 it is not a background watcher you should lean on while editing.
+Vendored/generated code (vendor, third_party, dist, build, out, coverage, `*.min.js`, `*.bundle.js`/`.mjs`, JS with a >2000-char line in its first 2 KB) is skipped; the payload's `generated_skipped` reports the count and up to 10 paths. `index_project(include_generated=True)` or `!vendor/` in `.livespec.toml` `[index].ignore` brings it back.
 
 ## Tool map — what to call when
 

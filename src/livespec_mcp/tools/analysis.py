@@ -5208,6 +5208,11 @@ def register(mcp: FastMCP) -> None:
         if min_weight > 0.0:
             edge_extra = " AND e.weight >= ?"
             weight_param = [float(min_weight)]
+        # A file's module symbol (`lib.detect`) is the file, not a removable
+        # definition: it is never a candidate, so it never reaches the runtime
+        # tiers either (it used to be listed, or `rescued` by any hit inside
+        # the file). Deleting a dead file is a conclusion drawn from its
+        # symbols, not a symbol of its own.
         # A symbol with ANY inbound edge is not a candidate, whatever the edge
         # type: being inherited from or named in a type position is use. The
         # rows kept alive by one of those two alone are still selected (and
@@ -5227,6 +5232,7 @@ def register(mcp: FastMCP) -> None:
                       ) AS kept_references
                FROM symbol s JOIN file f ON f.id=s.file_id
                WHERE f.project_id=?
+                 AND s.kind != 'module'
                  AND NOT EXISTS (
                    SELECT 1 FROM symbol_edge e
                    WHERE e.dst_symbol_id=s.id{edge_extra}

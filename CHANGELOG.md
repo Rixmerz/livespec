@@ -6,6 +6,36 @@ follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed — third trial findings (JavaScript CLI)
+
+- **`new X(...)` is a call of `X`** in JS/TS/TSX: a `calls` edge from the
+  enclosing symbol to the class, resolved by the same import scope as a call
+  (named import, `ns.X` through a module namespace). A class built only with
+  `new` (an error type thrown at every site) is no longer `not_seen` dead code.
+  `who_calls`, `analyze_impact` and `find_dead_code` all see it. Python `X()`
+  already made a `calls` edge; Java `new X()` makes a `references` edge (dead
+  code sees it, `who_calls` does not) and is unchanged.
+- **`find_dead_code` never lists module symbols** (`lib.detect`) as candidates,
+  so they no longer appear in the runtime tiers or `rescued`.
+- **Generated / vendored code is skipped by default**: directories named
+  `vendor`, `third_party`, `dist`, `build`, `out`, `coverage`, and JS bundles
+  (`*.min.js`, `*.bundle.js`, `*.bundle.mjs`, or a JS file with a line over
+  2000 chars in its first 2 KB). `index_project` reports `generated_skipped`
+  `{files, paths (max 10), hint}`. Opt out with `index_project(
+  include_generated=True)`, or re-include one path with `!vendor/` in
+  `.livespec.toml` `[index].ignore` (a `.gitignore` that speaks about the
+  directory's contents is honoured too). **Existing indexed projects:** the
+  next `index_project` drops those files and their symbols, edges and runtime
+  hits (the state db shrinks); runtime-coverage ratios change accordingly.
+- **Middleware errors are the standard object.** The unknown-parameter and
+  plugin-blocked errors were returned as a list of raw dicts that FastMCP
+  serialised into one text block (`[{"type":"text","text":"{...}"}]`); the text
+  is now the `{error, isError, hint}` object itself.
+- Not reproduced: an exported JS function with no callers missing from
+  `find_dead_code`. With the trial's exact steps it is listed (ESM `export`
+  needs `include_public=True`; CommonJS exports carry no visibility mark and
+  are listed by default). Locked by a test.
+
 ### Added — second trial findings: `find_dead_code(path=)`, coverage denominator, stale evidence
 
 - **`find_dead_code(path=<file or directory>)`** — workspace-relative, POSIX,

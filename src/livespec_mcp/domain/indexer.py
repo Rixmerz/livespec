@@ -60,8 +60,6 @@ DEFAULT_IGNORES = {
     "__pycache__",
     ".venv",
     "venv",
-    "dist",
-    "build",
     ".tox",
     ".mypy_cache",
     ".pytest_cache",
@@ -75,6 +73,18 @@ DEFAULT_IGNORES = {
     ".cache",
     ".mcp-docs",
 }
+
+# Generated / vendored output: skipped by default and REPORTED (unlike the
+# silent ignores above), because 2,743 of 2,971 symbols in one trial repo were
+# `vendor/` bundles — they drowned the overview, the spec proposals, the
+# runtime-coverage denominator and the state db. `index_project(
+# include_generated=True)` or a `!vendor/` line in `.livespec.toml`
+# `[index].ignore` brings them back.
+GENERATED_DIRS = frozenset({"vendor", "third_party", "dist", "build", "out", "coverage"})
+_GENERATED_FILE_SUFFIXES = (".min.js", ".bundle.js", ".bundle.mjs")
+_MINIFIED_PROBE_BYTES = 2048
+_MINIFIED_LINE_CHARS = 2000
+_GENERATED_PATHS_REPORTED = 10
 
 # Languages a file is read for: full extractors, plus `.sql`, which yields only
 # schema tables and needs no tree-sitter grammar.
@@ -103,6 +113,11 @@ class IndexStats:
     # payload can say WHY, not just how many files were skipped.
     parser_errors: dict[str, str] = None  # type: ignore
     repo_config: dict[str, Any] | None = None  # echo of .livespec.toml, if present
+    # Generated / vendored code left out of this run (see GENERATED_DIRS):
+    # indexable files under skipped directories + skipped bundle files, and up
+    # to 10 of the directories / files that were skipped.
+    generated_files: int = 0
+    generated_paths: list[str] = None  # type: ignore
 
     def __post_init__(self) -> None:
         if self.languages is None:
@@ -113,6 +128,8 @@ class IndexStats:
             self.languages_failed = {}
         if self.parser_errors is None:
             self.parser_errors = {}
+        if self.generated_paths is None:
+            self.generated_paths = []
 
 
 def _hash_bytes(b: bytes) -> str:
@@ -152,19 +169,74 @@ def _iter_files(
     cfg: RepoConfig | None = None,
     *,
     unsupported: dict[str, int] | None = None,
+    include_generated: bool = False,
+    generated: IndexStats | None = None,
 ) -> list[Path]:
     cfg = cfg or RepoConfig()
     # .livespec.toml [index].ignore outranks every .gitignore: when the
     # config has an opinion (ignore or !re-include), that decision is final.
     cfg_spec = GitIgnoreSpec.from_lines(cfg.ignore) if cfg.ignore else None
 
+    def _cfg_verdict(path: Path, *, is_dir: bool) -> bool | None:
+        """True = config ignores it, False = config re-includes it (`!x`)."""
+        if cfg_spec is None:
+            return None
+        rel = path.relative_to(root).as_posix()
+        return cfg_spec.check_file(rel + "/" if is_dir else rel).include
+
     def _decide(path: Path, *, is_dir: bool, specs: list[tuple[Path, GitIgnoreSpec]]) -> bool:
-        if cfg_spec is not None:
-            rel = path.relative_to(root).as_posix()
-            verdict = cfg_spec.check_file(rel + "/" if is_dir else rel).include
-            if verdict is not None:
-                return verdict
+        verdict = _cfg_verdict(path, is_dir=is_dir)
+        if verdict is not None:
+            return verdict
         return bool(specs) and _gitignored(path, specs, is_dir=is_dir)
+
+    def _note_generated(rel: str, files: int) -> None:
+        if generated is None:
+            return
+        generated.generated_files += files
+        if len(generated.generated_paths) < _GENERATED_PATHS_REPORTED:
+            generated.generated_paths.append(rel)
+
+    def _generated_dir(path: Path, name: str, specs: list[tuple[Path, GitIgnoreSpec]]) -> bool:
+        """A vendored/build-output directory to leave out (and count)."""
+        if include_generated or name not in GENERATED_DIRS:
+            return False
+        if _cfg_verdict(path, is_dir=True) is False:  # `!vendor/` in .livespec.toml
+            return False
+        # A .gitignore that speaks about the directory's CONTENTS (`vendor/*`
+        # with `!vendor/keep.py`) is the project's own opinion: honour it.
+        probe = path / "_"
+        if any(
+            sp.check_file(probe.relative_to(base).as_posix()).include is not None
+            for base, sp in specs
+        ):
+            return False
+        n = 0
+        for _dp, _dn, fns in os.walk(path):
+            n += sum(
+                1
+                for f in fns
+                if not f.startswith(".") and detect_language(Path(f)) in _INDEXED_LANGUAGES
+            )
+        _note_generated(path.relative_to(root).as_posix() + "/", n)
+        return True
+
+    def _generated_file(path: Path, lang: str) -> bool:
+        """A bundle / minified file: by name, or a JS file whose first 2 KB
+        holds a line over 2,000 characters."""
+        if include_generated or _cfg_verdict(path, is_dir=False) is False:
+            return False
+        hit = path.name.endswith(_GENERATED_FILE_SUFFIXES)
+        if not hit and lang == "javascript":
+            try:
+                with path.open("rb") as fh:
+                    head = fh.read(_MINIFIED_PROBE_BYTES)
+            except OSError:
+                return False
+            hit = any(len(line) > _MINIFIED_LINE_CHARS for line in head.split(b"\n"))
+        if hit:
+            _note_generated(path.relative_to(root).as_posix(), 1)
+        return hit
 
     out: list[Path] = []
     # Each walked dir inherits the .gitignore specs of its ancestors;
@@ -183,6 +255,7 @@ def _iter_files(
             if d not in ignores
             and not d.startswith(".")
             and not _decide(dp / d, is_dir=True, specs=specs)
+            and not _generated_dir(dp / d, d, specs)
         ]
         for d in dirnames:
             inherited[os.path.join(dirpath, d)] = specs
@@ -196,6 +269,8 @@ def _iter_files(
             if cfg.languages is not None and lang not in cfg.languages:
                 continue
             if _decide(p, is_dir=False, specs=specs):
+                continue
+            if lang in _INDEXED_LANGUAGES and _generated_file(p, lang):
                 continue
             if lang not in _INDEXED_LANGUAGES:
                 if unsupported is not None:
@@ -216,6 +291,7 @@ def index_project(
     *,
     project_name: str | None = None,
     force: bool = False,
+    include_generated: bool = False,
 ) -> IndexStats:
     """@spec:indexing-indexing-workspace-walk"""
     settings.ensure_dirs()
@@ -241,7 +317,12 @@ def index_project(
     if (settings.workspace / ".livespec.toml").is_file():
         stats.repo_config = repo_cfg.as_payload()
     files = _iter_files(
-        settings.workspace, DEFAULT_IGNORES, repo_cfg, unsupported=stats.languages_unsupported
+        settings.workspace,
+        DEFAULT_IGNORES,
+        repo_cfg,
+        unsupported=stats.languages_unsupported,
+        include_generated=include_generated,
+        generated=stats,
     )
 
     # Build a snapshot of existing files for delta detection

@@ -34,6 +34,10 @@ PARAM_DESCRIPTIONS: dict[str, str] = {
         "If true, start a filesystem watcher after indexing (debounce ~2s) so "
         "edits trigger automatic re-index."
     ),
+    "include_generated": (
+        "If true, also index vendor/third_party/dist/build/out/coverage "
+        "directories and bundle or minified JS (skipped by default)."
+    ),
     "include_infrastructure": (
         "Include infrastructure / generated / migration-style *symbols* that are "
         "normally filtered out. For HTTP routes see ``include_infra_routes``."
