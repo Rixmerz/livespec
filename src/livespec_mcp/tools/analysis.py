@@ -27,8 +27,7 @@ from livespec_mcp.domain.extractors import (
     JAVA_GENERATED_MARK,
     _ts_collect_imports,
     get_parser,
-    infer_python_http_framework,
-    parse_python_http_route,
+    parse_python_http_route_details,
     scan_go_routes,
     scan_hono_routes,
     ts_registered_callback_names,
@@ -45,6 +44,7 @@ from livespec_mcp.domain.graph import (
 from livespec_mcp.domain.indexer import DEFAULT_IGNORES, _hash_bytes, _iter_files
 from livespec_mcp.domain.languages import detect_language
 from livespec_mcp.domain.legacy_flows import compute_legacy_flows
+from livespec_mcp.domain.py_routes import PythonRouteContext
 from livespec_mcp.domain.schema_impact import diff_schema_impact
 from livespec_mcp.domain.test_coverage_reports import discover_report_coverage
 from livespec_mcp.domain.tracks import changed_qnames_by_path, spec_definition_edits
@@ -599,6 +599,52 @@ def _has_entry_point_decorator(
         or _decorator_lastseg(n) in alias_lastsegs
         for n in names
     )
+
+
+# Modules whose attributes are decorators that wrap or annotate a function but
+# do not hand it to a framework (`@functools.wraps`, `@abc.abstractmethod`...).
+# Any OTHER `@receiver.attr` / `@receiver.attr(...)` registers the function on an
+# object (`@login.user_loader`, `@celery_app.on_after_configure`, `@signal.connect`)
+# and the framework calls it back.
+_NON_REGISTERING_DECORATOR_MODULES = frozenset(
+    {
+        "functools",
+        "abc",
+        "contextlib",
+        "typing",
+        "typing_extensions",
+        "dataclasses",
+        "enum",
+        "unittest",
+        "mock",
+        "pytest",
+        "warnings",
+        "asyncio",
+        "builtins",
+        "collections",
+        "click",
+    }
+)
+
+
+def _registered_by_decorator(decorators_json: str | None, file_path: str = "") -> bool:
+    """True when a Python symbol is registered on an object by a decorator.
+
+    ``@obj.something`` / ``@obj.something(...)`` hands the function to ``obj``,
+    which calls it later: the static graph shows zero callers and a trace that
+    never exercised the framework shows zero hits, yet the symbol is live.
+    """
+    if not decorators_json or not file_path.endswith(".py"):
+        return False
+    try:
+        names = json.loads(decorators_json)
+    except (json.JSONDecodeError, TypeError):
+        return False
+    for n in names or []:
+        parts = str(n).split(".")
+        if len(parts) >= 2 and parts[0].lower() not in _NON_REGISTERING_DECORATOR_MODULES:
+            return True
+    return False
 
 
 def _decorator_matches_any(name: str, patterns: tuple[str, ...]) -> bool:
@@ -1656,6 +1702,23 @@ def compute_endpoints(
                 py_source_cache[rel_path] = ""
         return py_source_cache[rel_path]
 
+    py_ctx: PythonRouteContext | None = None
+
+    def _py_route_context() -> PythonRouteContext:
+        nonlocal py_ctx
+        if py_ctx is None:
+            py_files = [
+                str(fr["path"])
+                for fr in st.conn.execute(
+                    "SELECT path FROM file WHERE project_id=? AND path LIKE '%.py'", (pid,)
+                )
+            ]
+            py_ctx = PythonRouteContext(py_files, _py_source_strict)
+        return py_ctx
+
+    def _py_source_strict(rel_path: str) -> str:
+        return (workspace_path / rel_path).read_text(encoding="utf-8", errors="replace")
+
     def _attach_python_http_route(entry: dict[str, Any], matching_decs: list[str]) -> None:
         if not any(_decorator_lastseg(d) in HTTP_ROUTE_DECORATOR_LASTSEGS for d in matching_decs):
             return
@@ -1665,12 +1728,21 @@ def compute_endpoints(
         source = _py_source(fp)
         if not source:
             return
-        route = parse_python_http_route(source, int(entry["start_line"]))
-        if route["http_method"] is not None:
-            entry["http_method"] = route["http_method"]
-        if route["http_path"] is not None:
-            entry["http_path"] = route["http_path"]
-            entry["http_framework"] = infer_python_http_framework(source)
+        route = parse_python_http_route_details(source, int(entry["start_line"]))
+        if route is None:
+            return
+        methods = route["methods"]
+        if methods:
+            entry["http_method"] = methods[0]
+            entry["http_methods"] = methods
+        ctx = _py_route_context()
+        path, prefix = ctx.prefixed_path(fp, route["receiver"], route["path"])
+        entry["http_path"] = path
+        if prefix is not None:
+            entry["http_path_prefix"] = prefix
+        framework_name = ctx.framework_of(fp, route["receiver"])
+        if framework_name is not None:
+            entry["http_framework"] = framework_name
 
     # Java annotations reach `decorators` as bare names (`GetMapping`) — the
     # argument holding the path is dropped there but the extractor already
@@ -3355,6 +3427,9 @@ def _attach_external_edges(
     return payload
 
 
+_RESCUED_LISTED = 50
+
+
 def _apply_runtime_tiers(
     st: AppState, project_id: int, candidates: list[dict[str, Any]]
 ) -> dict[str, Any] | None:
@@ -3385,31 +3460,51 @@ def _apply_runtime_tiers(
 
     kept: list[dict[str, Any]] = []
     rescued = 0
-    tiers = {"not_seen": 0, "no_evidence": 0}
+    rescued_names: list[dict[str, Any]] = []
+    tiers = {"not_seen": 0, "no_evidence": 0, "registered_by_decorator": 0}
     for meta in candidates:
         if meta["id"] in hits:
             rescued += 1
+            rescued_names.append(
+                {"qualified_name": meta["qualified_name"], "calls": hits[meta["id"]]["calls"]}
+            )
             continue
         inside = meta["qualified_name"] + "."
         if any(q.startswith(inside) for q in hit_qnames_by_file.get(meta["file_path"], ())):
             rescued += 1
+            rescued_names.append({"qualified_name": meta["qualified_name"], "calls": 0})
             continue
-        tier = "not_seen" if meta["file_path"] in files_reached else "no_evidence"
+        if _registered_by_decorator(meta.get("decorators"), meta["file_path"]):
+            # Only reachable with include_infrastructure=True. Called back by
+            # the framework it registered with: a trace that did not drive
+            # that framework proves nothing, so it is not a removal signal.
+            tier = "registered_by_decorator"
+        else:
+            tier = "not_seen" if meta["file_path"] in files_reached else "no_evidence"
         tiers[tier] += 1
         kept.append({**meta, "runtime": tier})
     return {
         "candidates": kept,
         "origin": RUNTIME_ORIGIN,
         "rescued_by_runtime": rescued,
+        "rescued": rescued_names[:_RESCUED_LISTED],
         "not_seen": tiers["not_seen"],
         "no_evidence": tiers["no_evidence"],
+        "registered_by_decorator": tiers["registered_by_decorator"],
         "hint": (
             "From ingested traces (ingest_traces). rescued_by_runtime: "
-            "candidates that were seen running, removed from this list. "
+            "candidates that were seen running, removed from this list and "
+            "named in `rescued` (first "
+            f"{_RESCUED_LISTED}) — a symbol with no callers that is missing "
+            "from the candidates is usually here: hits recorded before its "
+            "callers moved still count, so trace again after changing callers. "
             "not_seen: a traced run reached the file and never executed the "
             "symbol — the strongest removal evidence here. no_evidence: no "
-            "trace touched the file, so the trace says nothing. A trace is "
-            "what the traced runs did, not production."
+            "trace touched the file, so the trace says nothing. "
+            "registered_by_decorator (include_infrastructure=True only): "
+            "registered on an object with `@obj.something`, so the framework "
+            "calls it — never a removal signal, whatever the trace saw. A "
+            "trace is what the traced runs did, not production."
         ),
     }
 
@@ -5249,6 +5344,11 @@ def register(mcp: FastMCP) -> None:
                 continue
             if not include_infrastructure and _has_entry_point_decorator(
                 meta.get("decorators"), alias_lastsegs
+            ):
+                _drop("infrastructure")
+                continue
+            if not include_infrastructure and _registered_by_decorator(
+                meta.get("decorators"), meta["file_path"]
             ):
                 _drop("infrastructure")
                 continue

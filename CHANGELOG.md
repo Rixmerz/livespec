@@ -298,6 +298,15 @@ follows [SemVer](https://semver.org/).
 - `resolve_location`'s query moved to `domain/location.py` (shared with the
   trace resolver). Payload unchanged.
 
+### Fixed — first end-to-end trial on a Flask app
+
+- `find_endpoints`: Flask routes list every method (`http_methods`; `http_method` stays the first), the blueprint prefix from a literal `url_prefix` (registration wins over the `Blueprint(...)` one; ambiguous or non-literal leaves the path as written; `http_path_prefix` when applied), and `http_framework` from the router's constructor or the imports, no longer a `fastapi` guess.
+- `find_dead_code`: `@obj.something` registrations (e.g. `@login.user_loader`) count as infrastructure; with `include_infrastructure` they get runtime tier `registered_by_decorator`, never `not_seen`. `runtime.rescued` names the symbols the traces rescued.
+- `find_data_access`: a `select()` / `.join(Owner.coll)` through a many-to-many collection reads its association table too.
+- `ingest_traces(remove=True, trace_path=...)` removes only the named sources (no `trace_path`: all, as before).
+- An unknown tool parameter is an `mcp_error` with `hint` (accepted/required names) and `did_you_mean`.
+- `.mcp-docs/.gitignore` (`*`) is written when absent.
+
 ## [0.37.0] - 2026-11-26
 
 ### Added — spec verification and staleness

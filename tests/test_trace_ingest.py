@@ -954,6 +954,8 @@ async def test_find_dead_code_runtime_tiers(repo: Path):
     runtime = after["runtime"]
     assert runtime["origin"] == RUNTIME_ORIGIN
     assert runtime["rescued_by_runtime"] == 1
+    # The symbol that left the list is named, so its absence is explainable.
+    assert runtime["rescued"] == [{"qualified_name": "pkg.main.run", "calls": 1}]
     assert runtime["not_seen"] == sum(1 for t in tiers.values() if t == "not_seen")
     assert runtime["no_evidence"] == sum(1 for t in tiers.values() if t == "no_evidence")
     assert after["count"] == len(tiers) == runtime["not_seen"] + runtime["no_evidence"]
@@ -1130,3 +1132,155 @@ async def test_error_shapes(repo: Path):
         assert needle in zero["hint"], needle
     # A failed ingest wrote nothing.
     assert _count(repo, "runtime_source") == 0
+
+
+# --------------------------------------------------------------------------
+# A function registered with `@obj.something` is called by the framework that
+# owns `obj`. A trace that never drove the framework says nothing about it, so
+# it must not be offered as the strongest removal candidate.
+# --------------------------------------------------------------------------
+
+
+def _plugin_module(repo: Path) -> None:
+    (repo / "pkg" / "plugin.py").write_text(
+        "manager = object()\n"
+        "\n"
+        "\n"
+        "@manager.user_loader\n"  # 4
+        "def load_user(uid):\n"  # 5
+        "    return uid\n"
+        "\n"
+        "\n"
+        "@manager.hook('x')\n"  # 9
+        "def on_x():\n"  # 10
+        "    return 1\n"
+        "\n"
+        "\n"
+        "def plain_unused():\n"  # 14
+        "    return 2\n"
+        "\n"
+        "\n"
+        "def touched():\n"  # 18
+        "    return 3\n"
+    )
+
+
+def _touch_plugin_trace(repo: Path) -> str:
+    t = _Trace()
+    t.enter("touched", module="pkg.plugin", file="pkg/plugin.py", line=18)
+    return t.write(repo / "traces" / "plugin.jsonl")
+
+
+@pytest.mark.asyncio
+async def test_decorator_registered_function_is_not_a_removal_candidate(repo: Path):
+    _plugin_module(repo)
+    trace = _touch_plugin_trace(repo)
+    async with Client(mcp) as c:
+        await _call(c, "index_project")
+        await _call(c, "ingest_traces", trace_path=trace, dry_run=False)
+        default = await _call(c, "find_dead_code", include_public=True)
+        wide = await _call(c, "find_dead_code", include_public=True, include_infrastructure=True)
+
+    names = {r["qualified_name"]: r["runtime"] for r in default["dead_symbols"]}
+    # Same file as a traced symbol, zero callers, zero hits: not_seen for a plain
+    # function, absent for the two that a framework calls back.
+    assert names["pkg.plugin.plain_unused"] == "not_seen"
+    assert "pkg.plugin.load_user" not in names
+    assert "pkg.plugin.on_x" not in names
+    assert default["filtered_out"]["infrastructure"] >= 2
+
+    # With include_infrastructure they are listed, but under their own tier.
+    wide_tiers = {r["qualified_name"]: r["runtime"] for r in wide["dead_symbols"]}
+    assert wide_tiers["pkg.plugin.load_user"] == "registered_by_decorator"
+    assert wide_tiers["pkg.plugin.on_x"] == "registered_by_decorator"
+    assert wide_tiers["pkg.plugin.plain_unused"] == "not_seen"
+    assert wide["runtime"]["registered_by_decorator"] == 2
+
+
+@pytest.mark.asyncio
+async def test_stdlib_module_decorators_do_not_protect(repo: Path):
+    (repo / "pkg" / "wrapped.py").write_text(
+        "import functools\n"
+        "\n"
+        "\n"
+        "@functools.lru_cache(maxsize=None)\n"
+        "def cached_unused():\n"
+        "    return 1\n"
+    )
+    async with Client(mcp) as c:
+        await _call(c, "index_project")
+        dead = await _call(c, "find_dead_code", include_public=True)
+    assert "pkg.wrapped.cached_unused" in {r["qualified_name"] for r in dead["dead_symbols"]}
+
+
+# --------------------------------------------------------------------------
+# remove=True with trace_path takes out only the sources named.
+# --------------------------------------------------------------------------
+
+
+def _refund_trace() -> _Trace:
+    """dispatch -> handle_pay (the edge the other trace also has) and run -> handle_refund."""
+    t = _Trace()
+    run = t.enter("run", module="pkg.main", file="pkg/main.py", line=4)
+    d = t.enter("dispatch", parent=run, module="pkg.registry", file="pkg/registry.py", line=4)
+    t.enter("handle_pay", parent=d, module="pkg.handlers", file="pkg/handlers.py", line=1)
+    t.enter("handle_refund", parent=run, module="pkg.handlers", file="pkg/handlers.py", line=5)
+    return t
+
+
+def _runtime_pairs(workspace: Path) -> set[tuple[str, str]]:
+    return {(a, b) for a, b, _t, _w, origin in _edge_rows(workspace) if origin == RUNTIME_ORIGIN}
+
+
+@pytest.mark.asyncio
+async def test_remove_with_paths_removes_only_those_sources(repo: Path):
+    pay = _dispatch_trace().write(repo / "traces" / "pay.jsonl")
+    refund = _refund_trace().write(repo / "traces" / "refund.jsonl")
+    async with Client(mcp) as c:
+        await _call(c, "index_project")
+        await _call(c, "ingest_traces", trace_path=[pay, refund], dry_run=False)
+        assert _count(repo, "runtime_source") == 2
+        both = _runtime_pairs(repo)
+
+        # refund goes (a relative spelling, plus a name that was never ingested):
+        # its own edge is retracted, the edge pay also observed stays
+        out = await _call(
+            c, "ingest_traces", remove=True, trace_path=["traces/refund.jsonl", "traces/nope.jsonl"]
+        )
+        after_refund = _runtime_pairs(repo)
+        hits_after_refund = _hits(repo)
+        sources_after_refund = _count(repo, "runtime_source")
+        mid = await _call(c, "find_dead_code")
+
+        # the file need not exist any more
+        Path(pay).unlink()
+        gone = await _call(c, "ingest_traces", remove=True, trace_path=pay)
+
+    assert both == {
+        ("pkg.registry.dispatch", "pkg.handlers.handle_pay"),
+        ("pkg.main.run", "pkg.handlers.handle_refund"),
+    }
+    assert out["scope"] == "named_sources"
+    assert out["trace_files_removed"] == 1 and out["removed"] == 1
+    assert out["not_ingested"] == ["traces/nope.jsonl"]
+    assert after_refund == {("pkg.registry.dispatch", "pkg.handlers.handle_pay")}
+    assert sources_after_refund == 1
+    assert "pkg.handlers.handle_refund" not in hits_after_refund
+    assert hits_after_refund["pkg.handlers.handle_pay"] == 3
+    assert "runtime" in mid
+    assert gone["trace_files_removed"] == 1 and "not_ingested" not in gone
+    assert _runtime_pairs(repo) == set()
+    assert _count(repo, "runtime_source") == 0
+
+
+@pytest.mark.asyncio
+async def test_remove_without_paths_still_removes_everything(repo: Path):
+    pay = _dispatch_trace().write(repo / "traces" / "pay.jsonl")
+    refund = _refund_trace().write(repo / "traces" / "refund.jsonl")
+    async with Client(mcp) as c:
+        await _call(c, "index_project")
+        await _call(c, "ingest_traces", trace_path=[pay, refund], dry_run=False)
+        out = await _call(c, "ingest_traces", remove=True)
+
+    assert out["scope"] == "all" and out["trace_files_removed"] == 2
+    assert _count(repo, "runtime_source") == 0 and _runtime_pairs(repo) == set()

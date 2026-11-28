@@ -502,7 +502,9 @@ Reading the results:
   the strongest removal evidence) or `"no_evidence"` (no trace touched the
   file — says nothing). With no traces ingested the payload is unchanged.
 - Idempotent per trace file (re-ingesting replaces, never double-counts);
-  `ingest_traces(remove=True)` deletes exactly its own edges and hits.
+  `ingest_traces(remove=True)` with no `trace_path` deletes all of its edges
+  and hits; with `trace_path=[...]` only those sources (an edge another file
+  still supports stays).
 - **A trace is the runs that were traced, not production.**
 
 ---

@@ -814,7 +814,11 @@ async def test_sqlalchemy_2_calls_and_write_only_collections(tmp_path: Path):
         tagged = await _sym(c, ws, "app.service.tagged")
 
     # `x.following.select()` in a file that never imports SQLAlchemy: seen; `x.tags.add()`: not
-    assert [(r["table"], r["kind"]) for r in followed["tables"]] == [("user", "read")]
+    # (`following` is many-to-many: its association table is read too)
+    assert {(r["table"], r["kind"]) for r in followed["tables"]} == {
+        ("user", "read"),
+        ("followers", "read"),
+    }
     assert tagged["tables"] == []
     # a statement bound to a local, paginated later: the select(Model) is found
     assert [(r["table"], r["kind"]) for r in page["tables"]] == [("post", "read")]
@@ -920,6 +924,75 @@ def outside(node):
     assert [(r["model"], r["table"]) for r in dishes["tables"]] == [("Dish", None)]
     # two classes declare `children`: from any other receiver it is not known which
     assert outside["tables"] == []
+
+
+@pytest.mark.asyncio
+async def test_reads_through_a_many_to_many_collection_reach_its_association_table(
+    tmp_path: Path,
+):
+    """`self.following.select()`, a count over it and a join through it read the
+    association table as well as the target; add / remove still only write it."""
+    root = tmp_path / "m2m"
+    (root / "app").mkdir(parents=True)
+    (root / "app" / "__init__.py").write_text(
+        "from flask_sqlalchemy import SQLAlchemy\n\ndb = SQLAlchemy()\n", encoding="utf-8"
+    )
+    (root / "app" / "models.py").write_text(
+        """import sqlalchemy as sa
+import sqlalchemy.orm as so
+
+from app import db
+
+followers = sa.Table(
+    "followers",
+    db.metadata,
+    sa.Column("follower_id", sa.Integer, sa.ForeignKey("user.id"), primary_key=True),
+    sa.Column("followed_id", sa.Integer, sa.ForeignKey("user.id"), primary_key=True),
+)
+
+
+class User(db.Model):
+    id: so.Mapped[int] = so.mapped_column(primary_key=True)
+    following: so.WriteOnlyMapped["User"] = so.relationship(secondary=followers)
+    followers: so.WriteOnlyMapped["User"] = so.relationship(secondary=followers)
+
+    def follow(self, other):
+        self.following.add(other)
+
+    def is_following(self, other):
+        return db.session.scalar(self.following.select().where(User.id == other.id))
+
+    def following_count(self):
+        return db.session.scalar(
+            sa.select(sa.func.count()).select_from(self.following.select().subquery())
+        )
+
+    def feed(self):
+        Author = so.aliased(User)
+        return sa.select(User).join(Author.followers.of_type(Author), isouter=True)
+
+    def raw(self):
+        return db.session.execute(sa.select(followers.c.follower_id).select_from(followers))
+""",
+        encoding="utf-8",
+    )
+    async with Client(mcp) as c:
+        out = (await c.call_tool("index_project", {"workspace": str(root)})).data
+        assert "error" not in out, out
+        follow = await _sym(c, root, "app.models.User.follow")
+        is_following = await _sym(c, root, "app.models.User.is_following")
+        count = await _sym(c, root, "app.models.User.following_count")
+        feed = await _sym(c, root, "app.models.User.feed")
+        raw = await _sym(c, root, "app.models.User.raw")
+
+    def pairs(sym: dict[str, Any]) -> set[tuple[str, str]]:
+        return {(r["table"], r["kind"]) for r in sym["tables"]}
+
+    assert pairs(follow) == {("followers", "write")}
+    assert pairs(is_following) == {("followers", "read"), ("user", "read")}
+    assert pairs(count) == {("followers", "read"), ("user", "read")}
+    assert ("followers", "read") in pairs(feed)
+    assert pairs(raw) == {("followers", "read")}
 
 
 # --------------------------------------------------------------------------

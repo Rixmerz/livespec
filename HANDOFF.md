@@ -154,6 +154,12 @@ Pendiente / a decidir por el owner:
   resolución por ubicación está probada con trazas escritas a mano, no con
   salida real de las capas de captura.
 
+**Rama `fix/trial-findings` (local, sin integrar; commits dc1dd65..b1d7f2e).** Siete hallazgos del primer
+ensayo en una app Flask: métodos/prefijo/framework en `find_endpoints`, tier `registered_by_decorator` y
+`runtime.rescued` en `find_dead_code`, lecturas de la tabla de asociación en `find_data_access`,
+`ingest_traces(remove=True, trace_path=...)` parcial, error de parámetro desconocido con hint, y
+`.mcp-docs/.gitignore`. Detalle en CHANGELOG `[Unreleased]`.
+
 ### v0.36.0 (released 2026-11-01)
 
 Release of three fixes found running livespec on a mid-size Python + TypeScript repository:

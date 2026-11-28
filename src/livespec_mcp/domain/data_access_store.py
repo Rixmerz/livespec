@@ -32,7 +32,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Any
 
-from livespec_mcp.domain.data_access import REL_EDGE_OPS, REL_OPS
+from livespec_mcp.domain.data_access import READ, REL_EDGE_OPS, REL_OPS
 from livespec_mcp.domain.extractors import ExtractResult
 from livespec_mcp.domain.graph import INVOCATION_EDGE_TYPES
 
@@ -313,6 +313,14 @@ def _derive_const_rows(conn: sqlite3.Connection, rows: list[_ModelRow]) -> None:
     )
 
 
+def _secondary_target(secondary: str) -> tuple[str, str | None]:
+    """`(model, table)` of a relationship's ``secondary=``: a literal name is the
+    table itself, a bare name is a Table / model variable resolved later."""
+    if secondary.startswith("="):
+        return "", secondary[1:].lower()
+    return secondary, None
+
+
 def _derive_relationship_rows(
     conn: sqlite3.Connection, rows: list[_ModelRow], by_name: dict[str, list[_ModelRow]]
 ) -> None:
@@ -345,25 +353,33 @@ def _derive_relationship_rows(
             continue
         rel = cands[0]
         access = REL_OPS[rel.detail or ""][op]
-        model = rel.entity or ""
-        table = schema = None
-        confidence = "unresolved"
+        # (model, table): the target model for most operations, the association
+        # table for add / remove. A READ through a many-to-many collection also
+        # reads its association table (`select()` joins it), so both rows.
+        reached: list[tuple[str, str | None]] = []
         if op in REL_EDGE_OPS and rel.secondary:
-            if rel.secondary.startswith("="):
-                table, confidence = rel.secondary[1:].lower(), "model"
-                model = ""
-            else:
-                model = rel.secondary
-        if model:
-            table, schema, confidence = _resolve_model(by_name, model, ph.project_id, "sqlalchemy")
-        key = (ph.symbol_id, ph.line, access, model, table)
-        if key in seen:
-            continue
-        seen.add(key)
-        out.append(
-            (ph.symbol_id, table, schema, model or None, f"{rel.owner}.{ph.name}:{op}",
-             "relationship", access, "sqlalchemy", ph.line, confidence)
-        )  # fmt: skip
+            reached.append(_secondary_target(rel.secondary))
+        else:
+            reached.append((rel.entity or "", None))
+            if access == READ and rel.secondary:
+                reached.append(_secondary_target(rel.secondary))
+        for model, fixed_table in reached:
+            table = schema = None
+            confidence = "unresolved"
+            if fixed_table:
+                table, confidence = fixed_table, "model"
+            elif model:
+                table, schema, confidence = _resolve_model(
+                    by_name, model, ph.project_id, "sqlalchemy"
+                )
+            key = (ph.symbol_id, ph.line, access, model, table)
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append(
+                (ph.symbol_id, table, schema, model or None, f"{rel.owner}.{ph.name}:{op}",
+                 "relationship", access, "sqlalchemy", ph.line, confidence)
+            )  # fmt: skip
     conn.executemany(
         """INSERT INTO data_access(symbol_id, table_name, table_schema, model, ref_name,
                ref_kind, access, mechanism, line, confidence)
