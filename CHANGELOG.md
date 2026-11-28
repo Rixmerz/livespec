@@ -8,6 +8,17 @@ follows [SemVer](https://semver.org/).
 
 ### Fixed — Django trial (scale)
 
+- **A bare call in a class body sees only what the scope sees.** `x = set()` /
+  `list(...)` in a class body no longer binds to a same-named method of another
+  class (`Field -> DummyCache.set`): only a module-level def/class, an import or a
+  name of that same class body resolves, and an unshadowed builtin resolves to
+  nothing. Class-sourced `calls` edges onto another class's method on Django:
+  511 -> 336, of which 14 are at weight >= 0.6 (attribute calls such as
+  `Manager.from_queryset`); the rest are 0.5 fan-out below the default filter.
+- **Migration 36 queues a re-extract** (no schema change) so an index built
+  before the Python class-body / re-export / alias extraction and the Java
+  receiver / route extraction picks them up on a plain `index_project`
+  (`files_changed` was 0 and the old edges stayed).
 - **Python calls through a re-export reach the defining symbol.** `from pkg.forms
   import f`, `forms.f()`, `formsets.f()` and `from m import f as g` now resolve
   through the re-export chain (`from .x import f`, `from .x import f as g`,

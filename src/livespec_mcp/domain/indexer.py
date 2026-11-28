@@ -1575,6 +1575,26 @@ def _resolve_refs(
                 # A declared type that is no project class (a library type, a
                 # type parameter): same evidence as no declaration at all.
                 receiver = None
+        if (
+            receiver is None
+            and src_family == "python"
+            and span_of[src_id_][2] == "class"
+            and u["ref_type"] == "call"
+        ):
+            # A bare name called in a CLASS BODY (`x = set()`, `list(...)`, the
+            # class's own class attributes) sees what the scope sees: a module
+            # level def or class, an import, or a name bound earlier in this
+            # body. It never reaches a method of some other class, and a
+            # builtin the module does not shadow reaches nothing.
+            own_prefix = f"{u['src_qname']}."
+            candidates = [
+                c
+                for c in candidates
+                if c[1].startswith(own_prefix)
+                or (c[0] not in methods and (u["scope_module"] is not None or c[2] == u["src_file_id"]))
+            ]
+            if not candidates:
+                continue
         if receiver in (RECEIVER_SELF, RECEIVER_OBJECT):
             candidates = [c for c in candidates if c[0] in methods]
             if receiver == RECEIVER_SELF:
