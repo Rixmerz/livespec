@@ -44,6 +44,15 @@ follows [SemVer](https://semver.org/).
   `get_project_overview.runtime_evidence` but counted under `path`, so one
   capability's coverage (54.8% for `django/forms`) is no longer hidden by the
   repo-wide figure (20%).
+- **Smaller `analyze_impact` and `get_project_overview` payloads.**
+  `analyze_impact` on a symbol now lists its depth-1 callers and callees; what
+  lies beyond is counted per depth (`counts.impacted_callers_by_depth`,
+  `calls_into_by_depth`; the totals and `affected_specs` still cover the whole
+  cone) and `include_transitive=True` lists it all, as before. A Django function
+  with 226 transitive callers: 63 KB -> 19 KB. `get_project_overview` names the
+  30 most widespread structural-pattern names (non-test) and counts the rest
+  (`structural_patterns_filtered_total`, `_test_only`): 20.8 KB -> 5.6 KB on
+  Django. Test symbols were already out of `top_symbols`.
 ### Fixed — Java trial on Spring PetClinic
 
 - **Java calls on a typed receiver bind to the receiver's class.** `x.m()` where

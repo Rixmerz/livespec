@@ -37,7 +37,9 @@ from livespec_mcp.domain.git_range import changed_paths as changed_paths_of
 from livespec_mcp.domain.git_range import diff_name_status
 from livespec_mcp.domain.graph import (
     GraphView,
+    ancestor_depths,
     ancestors_within,
+    descendant_depths,
     descendants_within,
     graph_pagerank,
     load_graph,
@@ -1597,6 +1599,10 @@ def _is_ts_framework_entry_point(meta: dict) -> bool:
     )
 
 
+#: Most structural-pattern names `get_project_overview` lists (the rest are counted).
+_STRUCTURAL_LISTED_MAX = 30
+
+
 def _structural_pattern_names(conn, project_id: int, threshold: int) -> set[str]:
     """Names appearing as a symbol in ≥`threshold` distinct files in the project.
 
@@ -2887,6 +2893,22 @@ def compute_project_overview(
         if include_structural_patterns
         else _structural_pattern_names(st.conn, pid, _STRUCTURAL_NAME_FILE_THRESHOLD)
     )
+    # The names are filtered from the ranking whatever file they live in, but
+    # only those some NON-test symbol carries are worth listing, and only the
+    # most widespread ones: the full list was 9-15 KB on Django (`__add__`,
+    # `Meta`, every test model name) in a response that is fixed-size by design.
+    files_by_name: dict[str, set[str]] = {}
+    if structural_names:
+        for r in st.conn.execute(
+            "SELECT DISTINCT s.name, f.path FROM symbol s JOIN file f ON f.id = s.file_id "
+            "WHERE f.project_id = ?",
+            (pid,),
+        ):
+            if r["name"] in structural_names and not _is_test_file_path(r["path"]):
+                files_by_name.setdefault(r["name"], set()).add(r["path"])
+    listed_structural = sorted(
+        files_by_name, key=lambda n: (-len(files_by_name[n]), n)
+    )[:_STRUCTURAL_LISTED_MAX]
     view = load_graph(st.conn, pid)
     ranks = graph_pagerank(view)
     ordered = sorted(ranks.items(), key=lambda x: x[1], reverse=True)
@@ -2927,7 +2949,16 @@ def compute_project_overview(
         **group_fields(st),
         "languages": langs,
         "top_symbols": top_syms,
-        "structural_patterns_filtered": sorted(structural_names),
+        "structural_patterns_filtered": sorted(listed_structural),
+        # The list is the most widespread non-test names; the rest are counts.
+        **(
+            {
+                "structural_patterns_filtered_total": len(structural_names),
+                "structural_patterns_filtered_test_only": len(structural_names - set(files_by_name)),
+            }
+            if len(structural_names) > len(listed_structural)
+            else {}
+        ),
         # Capped: when fewer than 20 symbols survive the filters the loop
         # never breaks and scans the whole PageRank ordering, so this would
         # otherwise carry EVERY test symbol in the project into a response
@@ -3666,6 +3697,18 @@ def _resolve_edge_types(edge_types: list[str] | None) -> frozenset[str]:
     if edge_types is None:
         return INVOCATION_EDGE_TYPES
     return frozenset(edge_types)
+
+
+def _count_by_depth(depths: dict[int, int]) -> dict[str, int]:
+    """{"1": n, "2": m, ...}: how many symbols sit at each hop of a cone."""
+    out: dict[int, int] = {}
+    for d in depths.values():
+        out[d] = out.get(d, 0) + 1
+    return {str(k): out[k] for k in sorted(out)}
+
+
+def _at_depth_one(depths: dict[int, int]) -> set[int]:
+    return {n for n, d in depths.items() if d == 1}
 
 
 def _label_direct_edges(
@@ -4841,6 +4884,7 @@ def register(mcp: FastMCP) -> None:
         cursor: Cursor = 0,
         summary_only: SummaryOnly = False,
         min_weight: MinWeight = 0.6,
+        include_transitive: bool = False,
         workspace: Workspace | None = None,
     ) -> dict[str, Any]:
         """Topological impact analysis: what changes if `target` changes.
@@ -4867,6 +4911,16 @@ def register(mcp: FastMCP) -> None:
         scope match). Surfaced by Django battle-test where
         ``calls_into`` reported ~70 symbols vs ~10 actual. Pass
         ``min_weight=0.0`` for legacy unfiltered behavior.
+
+        Unreleased: for a ``symbol`` target the lists hold the DIRECT neighbours
+        only (depth 1: callers in ``impacted_callers``, callees in
+        ``calls_into``); what lies beyond is counted per depth in
+        ``counts.impacted_callers_by_depth`` / ``counts.calls_into_by_depth``
+        (``counts.impacted_callers`` / ``calls_into`` stay the exact size of
+        the whole cone to ``max_depth``, and ``affected_specs`` still covers
+        it). Pass ``include_transitive=True`` to list the whole cone — on
+        Django a function with 4 real callers listed 44 symbols (40 of them
+        transitive test machinery) and 288 callees, 67 KB.
         """
         st = get_state(workspace)
         pid = st.project_id
@@ -4912,16 +4966,21 @@ def register(mcp: FastMCP) -> None:
             sid = int(sym["id"])
             graph_pid = _graph_project_id(sym, pid)
             view = load_graph(st.conn, graph_pid)
-            impacted = (
-                ancestors_within(view.g, sid, max_depth, min_weight=min_weight)
+            impacted_d = (
+                ancestor_depths(view.g, sid, max_depth, min_weight=min_weight)
                 if sid in view.g
-                else set()
+                else {}
             )
-            forward = (
-                descendants_within(view.g, sid, max_depth, min_weight=min_weight)
+            forward_d = (
+                descendant_depths(view.g, sid, max_depth, min_weight=min_weight)
                 if sid in view.g
-                else set()
+                else {}
             )
+            impacted, forward = set(impacted_d), set(forward_d)
+            by_depth = {
+                "impacted_callers_by_depth": _count_by_depth(impacted_d),
+                "calls_into_by_depth": _count_by_depth(forward_d),
+            }
             if summary_only:
                 summary_payload: dict[str, Any] = {
                     "root": sym["qualified_name"],
@@ -4929,6 +4988,7 @@ def register(mcp: FastMCP) -> None:
                         "impacted_callers": len(impacted),
                         "calls_into": len(forward),
                         "affected_specs": len(specs_for_symbols(impacted | {sid})),
+                        **by_depth,
                     },
                 }
                 direct_by_type = _direct_dependents_by_edge_type(view, sid, min_weight)
@@ -4941,8 +5001,10 @@ def register(mcp: FastMCP) -> None:
                     if ov_base is not None:
                         summary_payload["overrides"] = ov_base
                 return _out(summary_payload, graph_pid)
-            callers_page, callers_total, callers_next = _paginate_meta(impacted, view)
-            calls_page, calls_total, calls_next = _paginate_meta(forward, view)
+            listed_callers = impacted if include_transitive else _at_depth_one(impacted_d)
+            listed_calls = forward if include_transitive else _at_depth_one(forward_d)
+            callers_page, callers_total, callers_next = _paginate_meta(listed_callers, view)
+            calls_page, calls_total, calls_next = _paginate_meta(listed_calls, view)
             warn = _payload_warning(
                 max(callers_total, calls_total),
                 limit=limit,
@@ -4957,11 +5019,21 @@ def register(mcp: FastMCP) -> None:
                 "calls_into": _label_direct_edges(calls_page, view, sid, incoming=False),
                 "affected_specs": specs_for_symbols(impacted | {sid}),
                 "counts": {
-                    "impacted_callers": callers_total,
-                    "calls_into": calls_total,
+                    "impacted_callers": len(impacted),
+                    "calls_into": len(forward),
+                    **by_depth,
                 },
                 "next_cursor": callers_next if callers_next is not None else calls_next,
             }
+            if not include_transitive and (
+                len(impacted) > len(listed_callers) or len(forward) > len(listed_calls)
+            ):
+                impact_payload["transitive_hint"] = (
+                    f"Lists hold depth-1 neighbours only; {len(impacted) - len(listed_callers)} "
+                    f"more callers and {len(forward) - len(listed_calls)} more callees lie "
+                    "within max_depth (counts per depth in `counts`). "
+                    "include_transitive=True lists them."
+                )
             direct_by_type = _direct_dependents_by_edge_type(view, sid, min_weight)
             if direct_by_type:
                 impact_payload["direct_dependents_by_edge_type"] = direct_by_type
@@ -5165,8 +5237,11 @@ def register(mcp: FastMCP) -> None:
           files: `.get`, `add_parser`, `run`, `__init__`, `from_dict`,
           etc.). PageRank correctly identifies them as central but they
           carry near-zero "what is this codebase about" signal. Pass
-          `include_structural_patterns=True` to keep them. The names
-          actually filtered come back in `structural_patterns_filtered`.
+          `include_structural_patterns=True` to keep them. The 30 most
+          widespread names (by number of non-test files) come back in
+          `structural_patterns_filtered`; `structural_patterns_filtered_total`
+          is how many were filtered and `..._test_only` how many of those only
+          test files define (test model classes, `test_*`): counts, not names.
         - test-file symbols (`createMockDb`, `signTestToken`,
           `fakeAuthMiddleware`, …). Test scaffolding ranks high by PageRank
           but is the opposite of "what is this repo's core". No opt-out;

@@ -102,7 +102,7 @@ Vendored/generated code (vendor, third_party, dist, build, out, coverage, `*.min
 | Read a body only | `get_symbol_source(qname)` |
 | Who calls this? | `who_calls(qname, max_depth=1)` — `summary_only=True` on huge repos |
 | What does this call? | `who_does_this_call(qname, max_depth=1)` |
-| Blast radius + Spec rollup | `analyze_impact(target_type, target, max_depth)` — `symbol`\|`file`\|`spec`. On a method, `overriding_methods` lists the subclass methods that override it (`calls_super` says whether they call the parent via `super()`), `overrides` the base method — check them BEFORE changing a signature |
+| Blast radius + Spec rollup | `analyze_impact(target_type, target, max_depth, include_transitive?)` — `symbol`\|`file`\|`spec`. A symbol lists its depth-1 callers and callees; the rest is counted per depth (`counts.impacted_callers_by_depth`, `calls_into_by_depth`), `include_transitive=True` lists the whole cone. On a method, `overriding_methods` lists the subclass methods that override it (`calls_super` says whether they call the parent via `super()`), `overrides` the base method — check them BEFORE changing a signature |
 | PR / diff scope | `git_diff_impact(base_ref, head_ref)` — git repos only; symbol-precise (an untouched function in a changed file is not listed); a `schema_impact` key appears when a `@schema:` declaration changed |
 | Keyword search over chunks | `search(query, scope)` — FTS5 over AST-aware symbol + Spec chunks |
 | Literal string search over indexed files | `grep_in_indexed_files(pattern)` — check `scope_fresh`, see the staleness trap below |

@@ -56,7 +56,7 @@ client cached the short tool list.
 | Read body only | `get_symbol_source(qname)` | Lighter than full orient |
 | Who calls this? | `who_calls(qname, max_depth=1)` | Use `summary_only=True` on huge repos; `route_callers` for HTTP |
 | What does this call? | `who_does_this_call(qname, max_depth=1)` | Forward cone + `invokes_endpoints` (cross-repo with `group_db`) |
-| Blast radius + Spec rollup | `analyze_impact(target_type, target, max_depth)` | `symbol` \| `file` \| `spec` |
+| Blast radius + Spec rollup | `analyze_impact(target_type, target, max_depth, include_transitive?)` | `symbol` \| `file` \| `spec`; a symbol lists its depth-1 callers / callees and counts the rest per depth (`counts.*_by_depth`); `include_transitive=True` lists the whole cone |
 | Who overrides this method? | `analyze_impact(target_type="symbol", target=<method>)` → `overriding_methods` (+ `calls_super`), `overrides`; `quick_orient` → `overridden_by` count | Before changing a signature |
 | PR / diff scope | `git_diff_impact(base_ref, head_ref)` | Inside a git repo only; symbol-precise changed set; `schema_impact` key when a `@schema:` declaration changed |
 | Draft a track (range → per-Spec changes) | `propose_track(base_ref, head_ref)` | Writes nothing; `changed_specs` (OpenSpec delta, or the first `@spec:` of changed code) vs `touched_specs` (only through shared code), symbols added/modified/removed, OpenSpec deltas, `unlinked` code |
