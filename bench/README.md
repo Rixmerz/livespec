@@ -336,6 +336,28 @@ whose only visible class is its default value is treated as that class. The
 three unclear ones reach `QuerySet.using` through a manager method generated
 at runtime. The removed edges under `tests/` were not read.
 
+Follow-up, same day:
+
+- The removed edges with a source under `tests/` (23,859) were sampled too: 80
+  read, 79 wrong, 0 correct, 1 unclear.
+- The lost `setup_databases` edge is back. An unannotated parameter is now of
+  evident class only when a direct statement of the function body rebinds it
+  to one class before any other use; a rebinding inside a condition leaves it
+  to name resolution. Against the index above: 0 edges removed, 66 added, one
+  under `django/` (the lost edge) and 65 under `tests/` from one helper whose
+  rebinding sits inside `if isinstance(...)`; of those 65 only one target is
+  plausible, which is what name resolution gives there.
+- Java method references on real code (`iluwatar/java-design-patterns`, 2,042
+  files, 94 `Type::method` / `this::method` references to project types, 40
+  sampled): 29 have the right edge, 8 have none, and 3 sit in a method whose
+  edges fan out to same-named methods. The 8 are members with no symbol
+  (record accessors, Lombok-generated getters and `toString`) and one class
+  name that exists in both `src/main` and `src/test`. The 3 are a `this::add`
+  in a constructor, where the inherited method is not looked up, and two
+  lambdas whose plain `.getName()` calls on Lombok classes resolve by name.
+  A reference to a member that has no symbol, on a fully indexed class, gives
+  no edge.
+
 ## Not yet covered
 
 - TS/Go/Rust real repos (need a fixture beyond Python)
