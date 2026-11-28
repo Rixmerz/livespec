@@ -47,7 +47,11 @@ from livespec_mcp.server import mcp
 
 
 def _repo(workspace: Path) -> None:
-    """`Base` is referenced only in type position — a livespec blind spot."""
+    """`Base` is referenced only in a `# type:` comment — a livespec blind spot.
+
+    A real annotation (`item: Base`) is extracted natively since `references`
+    edges exist, which would leave nothing for an ingest to add. A type comment
+    is invisible to the AST, so these tests keep exercising a borrowed edge."""
     pkg = workspace / "pkg"
     pkg.mkdir()
     (pkg / "__init__.py").write_text("")
@@ -57,7 +61,7 @@ def _repo(workspace: Path) -> None:
     (pkg / "service.py").write_text(
         "from pkg.models import Base\n"
         "\n"
-        "def describe(item: Base) -> str:\n"
+        "def describe(item):  # type: (Base) -> str\n"
         "    return 'x'\n"
         "\n"
         "def main() -> str:\n"
@@ -513,7 +517,7 @@ async def test_reindexing_after_an_ingest_says_the_edges_may_be_stale(
             {"graph_path": _graph(workspace, [TYPE_POSITION_LINK]), "dry_run": False},
         )
         (workspace / "pkg" / "service.py").write_text(
-            "from pkg.models import Base\n\n\ndef describe(item: Base) -> str:\n"
+            "from pkg.models import Base\n\n\ndef describe(item):  # type: (Base) -> str\n"
             "    return 'y'\n\n\ndef main() -> str:\n    return describe(None)\n"
         )
         out = (await c.call_tool("index_project", {})).data

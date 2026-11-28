@@ -117,11 +117,27 @@ def load_graph(conn: sqlite3.Connection, project_id: int) -> GraphView:
         # is. Carried as an attribute rather than filtered here: an ingested
         # edge is an ordinary edge for traversal, and the tools that report it
         # are the ones that should say where it came from.
+        src_id, dst_id = int(r["src_symbol_id"]), int(r["dst_symbol_id"])
+        weight = float(r["weight"])
+        # The graph holds one edge per (src, dst) pair, but `symbol_edge` can
+        # hold several: a function that calls a class AND names it in an
+        # annotation has a `calls` and a `references` row. The invocation edge
+        # must survive whatever the row order, or `who_calls` would lose a real
+        # caller to a type annotation; between two non-invocation edges the
+        # stronger one is kept.
+        if g.has_edge(src_id, dst_id):
+            kept = g[src_id][dst_id]
+            kept_inv = kept["edge_type"] in INVOCATION_EDGE_TYPES
+            new_inv = r["edge_type"] in INVOCATION_EDGE_TYPES
+            if kept_inv and not new_inv:
+                continue
+            if kept_inv == new_inv and kept["weight"] >= weight:
+                continue
         g.add_edge(
-            int(r["src_symbol_id"]),
-            int(r["dst_symbol_id"]),
+            src_id,
+            dst_id,
             edge_type=r["edge_type"],
-            weight=float(r["weight"]),
+            weight=weight,
             origin=r["origin"] or "livespec",
         )
 

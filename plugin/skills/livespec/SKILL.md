@@ -216,10 +216,16 @@ the group, or its declaration is not annotated.
 
 ### A second extractor (Graphify) — optional, zero LLM
 
-livespec's blind spots are known and specific: **type-position use**
-(`def f(x: Base)`), **inheritance** (`class A extends B`), and cross-file calls
-the resolver could not disambiguate. None of them produce an edge, so a base
-class or an interface used only as a type reads as referenced by nothing.
+For **Python, TypeScript/TSX and Java**, livespec itself now extracts
+**inheritance** (`inherits` edges: `class A(B)`, `extends`, `implements`) and
+**type-position use** (`references` edges: annotations, generic arguments,
+`isinstance`/`instanceof`, `except`/`catch`, `throws`, `as`/`satisfies`), so a
+base class or an interface used only that way is no longer reported dead and
+`analyze_impact` on it lists the subclasses and users. You do not need Graphify
+for those two gaps in those languages. `find_dead_code` says how many symbols
+that kept alive under `kept_alive_by_edge_type`. What remains blind: other
+languages, and cross-file calls the resolver could not disambiguate. A symbol
+used only as a type still reads as referenced by nothing there.
 
 A second AST extractor has *different* blind spots, which is what makes it
 worth reading. [Graphify](https://github.com/Graphify-Labs/graphify)'s code

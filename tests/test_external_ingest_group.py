@@ -249,7 +249,7 @@ async def test_an_ungrouped_workspace_behaves_exactly_as_before(tmp_path: Path):
     (root / "pkg" / "__init__.py").write_text("")
     (root / "pkg" / "models.py").write_text("class Ticket:\n    pass\n")
     (root / "pkg" / "view.py").write_text(
-        "from pkg.models import Ticket\n\n\ndef render(i: Ticket):\n    return 1\n"
+        "from pkg.models import Ticket\n\n\ndef render(i):  # type: (Ticket) -> int\n    return 1\n"
     )
 
     async with Client(mcp) as c:

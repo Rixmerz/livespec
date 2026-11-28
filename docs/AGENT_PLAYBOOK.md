@@ -417,10 +417,16 @@ When explaining code to the user, cite **Spec ids** from `list_specs` / annotati
 
 ### 7.1 A second extractor (Graphify) — optional, zero LLM
 
-livespec's blind spots are specific and known: **type-position use**
-(`def f(x: Base)`), **inheritance** (`class A extends B`), and cross-file calls
-the resolver could not disambiguate. None of them produce an edge, so a base
-class or an interface used only as a type reads as referenced by nothing.
+For **Python, TypeScript/TSX and Java**, livespec itself now extracts
+**inheritance** (`inherits` edges: `class A(B)`, `extends`, `implements`) and
+**type-position use** (`references` edges: annotations, generic arguments,
+`isinstance`/`instanceof`, `except`/`catch`, `throws`, `as`/`satisfies`), so a
+base class or an interface used only that way is no longer reported dead and
+`analyze_impact` on it lists the subclasses and users. You do not need Graphify
+for those two gaps in those languages. `find_dead_code` says how many symbols
+that kept alive under `kept_alive_by_edge_type`. What remains blind: other
+languages, and cross-file calls the resolver could not disambiguate. A symbol
+used only as a type still reads as referenced by nothing there.
 
 [Graphify](https://github.com/Graphify-Labs/graphify)'s code pass is
 tree-sitter with **no LLM and no API key** — `graphify update <repo>` writes

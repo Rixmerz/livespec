@@ -117,6 +117,10 @@ class ExtractResult:
     # `m` to `a.b`; `import a.b` binds `a` to `a`). Scopes an attribute call's
     # receiver to the module it names, not the package it came from.
     bindings: dict[str, str] = field(default_factory=dict)
+    # Python only: the names this file itself defines as a class or binds at
+    # module level. A bare name in a type position that is neither imported
+    # nor in here cannot name a project symbol, so no ref is stored for it.
+    local_type_names: set[str] = field(default_factory=set)
     # True when the source could not be parsed (Python ast.parse SyntaxError).
     # The indexer uses this to PRESERVE the file's existing symbols instead of
     # wiping them (and their spec_symbol links) on a transient parse failure —
@@ -150,6 +154,123 @@ if hasattr(ast, "Match"):  # py3.10+ — descend Match and its case bodies
     _COMPOUND_STMTS = (*_COMPOUND_STMTS, ast.Match, ast.match_case)
 if hasattr(ast, "TryStar"):  # py3.11+
     _COMPOUND_STMTS = (*_COMPOUND_STMTS, ast.TryStar)
+
+
+# ---------- Inheritance and type-position refs ----------
+
+# `symbol_ref.ref_type` values the resolver turns into something other than a
+# `calls` edge (indexer._resolve_refs). A class naming its base emits
+# REF_INHERIT (-> `inherits`); a name used in a type position (annotation,
+# generic argument, isinstance/instanceof, except/catch, throws, as/satisfies)
+# emits REF_TYPE (-> `references`). Both resolve only to an indexed symbol of
+# a type-like kind, so a builtin or a stdlib name produces no edge.
+REF_INHERIT = "inherit"
+REF_TYPE = "type"
+
+# Subscripts whose arguments are values, not types: `Literal["users"]` must not
+# read as a forward reference to something named `users`.
+_PY_VALUE_SUBSCRIPTS = frozenset({"Literal"})
+
+
+def _py_type_names(node: ast.AST | None) -> Iterator[tuple[str, str | None, int]]:
+    """Names in a type expression: ``(name, dotted receiver or None, line)``.
+
+    Walks only the shapes a type is written in (name, attribute, subscript,
+    `X | Y`, tuple/list of types, a quoted forward reference); a call or any
+    other value expression inside an annotation (`Annotated[int, Field(...)]`)
+    names no type and is skipped.
+    """
+    stack: list[tuple[ast.AST, int]] = [(node, getattr(node, "lineno", 0))] if node else []
+    while stack:
+        cur, line = stack.pop()
+        line = getattr(cur, "lineno", line) or line
+        if isinstance(cur, ast.Name):
+            yield cur.id, None, line
+        elif isinstance(cur, ast.Attribute):
+            chain: list[str] = []
+            base: ast.AST = cur.value
+            while isinstance(base, ast.Attribute):
+                chain.append(base.attr)
+                base = base.value
+            if isinstance(base, ast.Name):
+                yield cur.attr, ".".join([base.id, *reversed(chain)]), line
+        elif isinstance(cur, ast.Subscript):
+            stack.append((cur.value, line))
+            head = cur.value
+            head_name = (
+                head.id
+                if isinstance(head, ast.Name)
+                else head.attr
+                if isinstance(head, ast.Attribute)
+                else None
+            )
+            if head_name not in _PY_VALUE_SUBSCRIPTS:
+                stack.append((cur.slice, line))
+        elif isinstance(cur, ast.BinOp):
+            stack.append((cur.left, line))
+            stack.append((cur.right, line))
+        elif isinstance(cur, (ast.Tuple, ast.List)):
+            stack.extend((e, line) for e in cur.elts)
+        elif isinstance(cur, ast.Starred):
+            stack.append((cur.value, line))
+        elif isinstance(cur, ast.Constant) and isinstance(cur.value, str):
+            # A quoted forward reference: `def f() -> "Node"`.
+            text = cur.value.strip()
+            if text and len(text) <= 200:
+                try:
+                    stack.append((ast.parse(text, mode="eval").body, line))
+                except (SyntaxError, ValueError):
+                    pass
+
+
+def _py_emit_type_refs(
+    expr: ast.AST | None,
+    src_qname: str,
+    out: ExtractResult,
+    seen: set[tuple[str, str, str | None]],
+    ref_type: str = REF_TYPE,
+) -> None:
+    """Emit one ref per distinct type name in `expr`, scoped by the file's
+    imports the way a call is. A bare name that this file neither imports nor
+    defines cannot be a project symbol (it is a builtin, or a type variable),
+    so no ref is stored for it."""
+    if expr is None:
+        return
+    for name, receiver, line in _py_type_names(expr):
+        scope: str | None
+        if receiver is None:
+            scope = out.imports.get(name)
+            if scope is None:
+                if name not in out.local_type_names:
+                    continue
+            else:
+                # `from m import Foo as F`: the symbol is named `Foo`.
+                bound = out.bindings.get(name, "")
+                real = bound.rsplit(".", 1)[-1]
+                if real and real != name and bound.endswith(f".{real}"):
+                    name = real
+        else:
+            first, _, rest = receiver.partition(".")
+            base = out.bindings.get(first)
+            if base is not None:
+                scope = f"{base}.{rest}" if rest else base
+            elif first in out.local_type_names:
+                scope = None  # `Outer.Inner`, both in this file
+            else:
+                continue  # `self.x`, a local object: no type named here
+        key = (ref_type, name, scope)
+        if key in seen:
+            continue
+        seen.add(key)
+        out.refs.append(
+            ExtractedRef(
+                src_qname=src_qname,
+                target_name=name,
+                line=line,
+                ref_type=ref_type,
+                scope_module=scope,
+            )
+        )
 
 
 # ---------- Python via ast ----------
@@ -274,6 +395,16 @@ def _py_extract(source: str, module_name: str) -> ExtractResult:
         elif isinstance(node, ast.ClassDef):
             classes.append(node)
 
+    out.local_type_names = {c.name for c in classes}
+    for node in tree.body:
+        if isinstance(node, ast.Assign):
+            out.local_type_names.update(t.id for t in node.targets if isinstance(t, ast.Name))
+        elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+            out.local_type_names.add(node.target.id)
+        elif hasattr(ast, "TypeAlias") and isinstance(node, ast.TypeAlias):
+            if isinstance(node.name, ast.Name):
+                out.local_type_names.add(node.name.id)
+
     enum_names = _py_enum_names(classes)
     # Same-file schema classes by name, in source order: a base declared
     # earlier in the file contributes its fields to a subclass.
@@ -341,6 +472,20 @@ def _py_extract(source: str, module_name: str) -> ExtractResult:
                 decorators=_py_decorator_names(node),
             )
         )
+        # Bases -> `inherits`; generic arguments of a base and the class
+        # body's own annotated fields -> `references`, all from the class.
+        seen_types: set[tuple[str, str, str | None]] = set()
+        for base in node.bases:
+            while isinstance(base, ast.Subscript):
+                _py_emit_type_refs(base.slice, qname, out, seen_types)
+                base = base.value
+            if isinstance(base, ast.Name) and base.id == "object":
+                continue
+            if isinstance(base, (ast.Name, ast.Attribute)):
+                _py_emit_type_refs(base, qname, out, seen_types, REF_INHERIT)
+        for stmt in node.body:
+            if isinstance(stmt, ast.AnnAssign):
+                _py_emit_type_refs(stmt.annotation, qname, out, seen_types)
         flavor = _py_schema_flavor(node, schema_classes)
         if flavor is not None:
             fields = _py_class_fields(node, enum_names, schema_classes)
@@ -412,6 +557,8 @@ def _py_extract(source: str, module_name: str) -> ExtractResult:
                     parent_qname=parent_qname,
                 )
             )
+            # The types an alias is built from: `Rows = list[Row]` uses `Row`.
+            _py_emit_type_refs(value, qname, out, set())
 
     def visit(node: ast.AST, parent_qname: str | None, in_class: bool) -> None:
         for child in ast.iter_child_nodes(node):
@@ -759,12 +906,28 @@ def _collect_calls(func_node: ast.AST, src_qname: str, out: ExtractResult) -> No
     # who_calls report a class/outer that never issues the call.
     stack: list[ast.AST] = _py_children(func_node)
     call_type = ast.Call
+    # Type-position names of this symbol (parameter, return and variable
+    # annotations, isinstance/issubclass targets, except types), one ref per
+    # distinct name.
+    seen_types: set[tuple[str, str, str | None]] = set()
+    _py_emit_type_refs(getattr(func_node, "returns", None), src_qname, out, seen_types)
     while stack:
         node = stack.pop()
         if isinstance(node, _PY_SCOPE_NODES):
             continue
         stack.extend(_py_children(node))
-        if type(node) is call_type:
+        node_type = type(node)
+        if node_type is ast.arg or node_type is ast.AnnAssign:
+            _py_emit_type_refs(node.annotation, src_qname, out, seen_types)
+        elif node_type is ast.ExceptHandler:
+            _py_emit_type_refs(node.type, src_qname, out, seen_types)
+        if node_type is call_type:
+            if (
+                type(node.func) is ast.Name
+                and node.func.id in ("isinstance", "issubclass")
+                and len(node.args) == 2
+            ):
+                _py_emit_type_refs(node.args[1], src_qname, out, seen_types)
             _emit_py_callback_refs(node, src_qname, out)
             client = _py_client_route(node)
             if client is not None:
@@ -1968,6 +2131,15 @@ def _ts_extract(
     def text(n) -> str:
         return src_bytes[n.start_byte : n.end_byte].decode("utf-8", errors="replace")
 
+    # Inheritance + type-position refs (TypeScript/TSX and Java only).
+    type_refs: _TypeRefCollector | None = None
+    if language in ("typescript", "tsx"):
+        type_refs = _TypeRefCollector(src_bytes, out, language, out.imports)
+    elif language == "java":
+        type_refs = _TypeRefCollector(
+            src_bytes, out, language, _java_collect_imports(tree.root_node, src_bytes)
+        )
+
     # Schema declarations. TS interfaces and object type aliases are resolved
     # after the walk (an interface may extend one declared below it); Zod
     # schemas as they are met (`.extend` needs a const declared above it).
@@ -2117,7 +2289,7 @@ def _ts_extract(
                         decl_node=decl,
                         doc_node=_ts_declaration_anchor(node) or node,
                     )
-                    _ts_collect_calls(value, qname, src_bytes, out, http_wrappers)
+                    _ts_collect_calls(value, qname, src_bytes, out, http_wrappers, type_refs)
                     return  # do not double-walk
             # `export const session = define.middleware(async (ctx) => {…})`
             # / `export const handler = define.handlers({ GET() {…} })`: the
@@ -2140,7 +2312,7 @@ def _ts_extract(
                         doc_node=_ts_declaration_anchor(node) or node,
                         wrapper_call=True,
                     )
-                    _ts_collect_calls(value, qname, src_bytes, out, http_wrappers)
+                    _ts_collect_calls(value, qname, src_bytes, out, http_wrappers, type_refs)
                     # A Zod object holding a callback (`.refine(v => …)`,
                     # `.transform(…)`) is already this function symbol, which
                     # owns its calls; its fields hang off it rather than off
@@ -2208,7 +2380,7 @@ def _ts_extract(
                     name = module_name.rsplit(".", 1)[-1] or "default"
                 kind = "class" if "class" in value.type else "function"
                 qname = emit_symbol(value, name, parent_qname, kind)
-                _ts_collect_calls(value, qname, src_bytes, out, http_wrappers)
+                _ts_collect_calls(value, qname, src_bytes, out, http_wrappers, type_refs)
                 for c in value.children:
                     walk(c, qname)
                 return
@@ -2226,7 +2398,7 @@ def _ts_extract(
                 qname = emit_symbol(
                     call, name, parent_qname, "function", doc_node=node, wrapper_call=True
                 )
-                _ts_collect_calls(call, qname, src_bytes, out, http_wrappers)
+                _ts_collect_calls(call, qname, src_bytes, out, http_wrappers, type_refs)
                 for c in call.children:
                     walk(c, parent_qname)
                 return
@@ -2239,6 +2411,8 @@ def _ts_extract(
             if name and value is not None and value.type == "object_type":
                 qname = emit_symbol(node, name, parent_qname, "type_alias")
                 ts_schema_decls.append((qname, name, node, value, "ts_type"))
+                # No calls live in a type, but the types it names do.
+                _ts_collect_calls(node, qname, src_bytes, out, http_wrappers, type_refs)
                 return
 
         # ----- Standard def nodes -----
@@ -2270,7 +2444,7 @@ def _ts_extract(
                     body = node.child_by_field_name("body")
                     if body is not None:
                         ts_schema_decls.append((qname, name, node, body, "ts_interface"))
-                _ts_collect_calls(node, qname, src_bytes, out, http_wrappers)
+                _ts_collect_calls(node, qname, src_bytes, out, http_wrappers, type_refs)
                 for c in node.children:
                     walk(c, qname)
                 return
@@ -2284,7 +2458,7 @@ def _ts_extract(
             name = find_name(node)
             if name:
                 qname = emit_symbol(node, name, parent_qname, "method", qname_sep="::")
-                _ts_collect_calls(node, qname, src_bytes, out, http_wrappers)
+                _ts_collect_calls(node, qname, src_bytes, out, http_wrappers, type_refs)
                 return
         for c in node.children:
             walk_rust_method(c, parent_qname)
@@ -2337,7 +2511,7 @@ def _ts_extract(
                 parent_qname=None,
             )
         )
-        _ts_collect_calls(tree.root_node, module_qname, src_bytes, out, http_wrappers)
+        _ts_collect_calls(tree.root_node, module_qname, src_bytes, out, http_wrappers, type_refs)
 
     return out
 
@@ -2914,15 +3088,210 @@ def _is_named_scope_boundary(node) -> bool:
     return False
 
 
+# Declarations whose `name` child is a `type_identifier` naming the thing being
+# declared, not a use of it.
+_TS_TYPE_DECL_NODES = frozenset(
+    {
+        "class_declaration",
+        "abstract_class_declaration",
+        "class",
+        "interface_declaration",
+        "type_alias_declaration",
+        "enum_declaration",
+    }
+)
+# Nodes that bind a type variable: the name they introduce (`T`, `infer U`,
+# `[K in keyof T]`) is not a project type, here or anywhere it is used.
+_TYPE_PARAM_BINDERS = frozenset({"type_parameter", "infer_type", "mapped_type_clause"})
+# Clauses naming what a class or interface inherits from. `extends_clause` (a
+# TS class's `extends`) holds an expression and is handled on its own.
+_HERITAGE_CLAUSES = frozenset(
+    {
+        "implements_clause",  # TS class implements
+        "extends_type_clause",  # TS interface extends
+        "superclass",  # Java class extends
+        "super_interfaces",  # Java class/enum/record implements
+        "extends_interfaces",  # Java interface extends
+    }
+)
+_QUALIFIED_TYPE_NODES = frozenset({"nested_type_identifier", "scoped_type_identifier"})
+_TYPE_NAME_WRAPPERS = frozenset(
+    {"generic_type", "nested_type_identifier", "scoped_type_identifier", "type_list"}
+)
+
+
+class _TypeRefCollector:
+    """Inheritance and type-position refs for TypeScript/TSX and Java.
+
+    Rides the `_ts_collect_calls` walk (same node order, same "stop at a named
+    scope" boundaries), so a type named in a method belongs to the method and
+    a field's type to its class, exactly like their calls.
+
+    Both grammars spell a name in a type position as a `type_identifier`
+    node, which is what makes this exact rather than heuristic: an identifier
+    in a value position is a different node type. Type variables are skipped
+    by remembering every name a `type_parameter` binds in the file; a
+    declaration always precedes its uses in walk order.
+    """
+
+    def __init__(
+        self, src_bytes: bytes, out: ExtractResult, language: str, imports: dict[str, str]
+    ) -> None:
+        self._src = src_bytes
+        self._out = out
+        self._java = language == "java"
+        self._imports = imports
+        self._type_params: set[str] = set()
+        self._src_qname = ""
+        self._seen: set[tuple[str, str, str | None]] = set()
+
+    def _text(self, n) -> str:
+        return self._src[n.start_byte : n.end_byte].decode("utf-8", errors="replace")
+
+    def begin(self, src_qname: str) -> None:
+        self._src_qname = src_qname
+        self._seen = set()
+
+    def owns_symbol(self, node) -> bool:
+        """`type User = {...}` has its own symbol and its own collection pass,
+        so the module pass must not claim the types it names as well."""
+        if node.type != "type_alias_declaration":
+            return False
+        value = node.child_by_field_name("value")
+        return value is not None and value.type == "object_type"
+
+    def _emit(self, name: str, scope: str | None, line: int, ref_type: str) -> None:
+        key = (ref_type, name, scope)
+        if not name or key in self._seen:
+            return
+        self._seen.add(key)
+        self._out.refs.append(
+            ExtractedRef(
+                src_qname=self._src_qname,
+                target_name=name,
+                line=line,
+                ref_type=ref_type,
+                scope_module=scope,
+            )
+        )
+
+    def visit(self, node) -> None:
+        kind = node.type
+        if kind == "type_identifier":
+            self._type_identifier(node)
+        elif kind == "extends_clause":
+            # TS `class A extends B` / `extends ns.B<T>`: B is an expression.
+            for c in node.children:
+                if c.type == "identifier":
+                    name = self._text(c)
+                    self._emit(name, self._imports.get(name), c.start_point[0] + 1, REF_INHERIT)
+                elif c.type == "member_expression":
+                    prop = c.child_by_field_name("property")
+                    left = c
+                    while left is not None and left.type == "member_expression":
+                        left = left.child_by_field_name("object")
+                    if prop is not None and left is not None and left.type == "identifier":
+                        self._emit(
+                            self._text(prop),
+                            self._imports.get(self._text(left)),
+                            c.start_point[0] + 1,
+                            REF_INHERIT,
+                        )
+        elif kind == "binary_expression" and not self._java:
+            # `x instanceof Foo`: Foo is a value-position identifier in TS.
+            op = node.child_by_field_name("operator")
+            right = node.child_by_field_name("right")
+            if (
+                op is not None
+                and op.type == "instanceof"
+                and right is not None
+                and right.type == "identifier"
+            ):
+                name = self._text(right)
+                self._emit(name, self._imports.get(name), right.start_point[0] + 1, REF_TYPE)
+
+    def _type_identifier(self, node) -> None:
+        parent = node.parent
+        if parent is None:
+            return
+        name = self._text(node)
+        ptype = parent.type
+        if ptype in _TYPE_PARAM_BINDERS:
+            # The variable being bound is the `name` field where the grammar
+            # has one, else the first type name (`infer U extends X`; Java's
+            # `T extends Base` keeps the bound under its own `type_bound`).
+            bound = parent.child_by_field_name("name") or next(
+                (c for c in parent.children if c.type == "type_identifier"), None
+            )
+            if bound == node:
+                self._type_params.add(name)
+                return
+        if ptype in _TS_TYPE_DECL_NODES and parent.child_by_field_name("name") == node:
+            return
+        if name in self._type_params:
+            return
+        scope: str | None = self._imports.get(name)
+        if ptype in _QUALIFIED_TYPE_NODES:
+            # `ns.Foo` / `Outer.Inner` / `com.acme.Foo`: only the last name is
+            # the type, scoped by what the leftmost name was imported as.
+            grand = parent.parent
+            if (parent.children and parent.children[-1] != node) or (
+                grand is not None and grand.type in _QUALIFIED_TYPE_NODES
+            ):
+                return  # a qualifier, not the type
+            left = parent
+            while left is not None and left.type in _QUALIFIED_TYPE_NODES:
+                left = left.children[0] if left.children else None
+            scope = self._imports.get(self._text(left)) if left is not None else None
+            if scope is None and self._java:
+                # A fully qualified name is its own import.
+                scope = self._text(parent)
+        # Inheritance when the name sits directly in a heritage clause, i.e.
+        # not inside the type arguments of something that does.
+        ref_type = REF_TYPE
+        cur, up = node, parent
+        while up is not None and up.type in _TYPE_NAME_WRAPPERS:
+            if up.type == "generic_type" and up.children and up.children[0] != cur:
+                break
+            cur, up = up, up.parent
+        if up is not None and up.type in _HERITAGE_CLAUSES:
+            ref_type = REF_INHERIT
+        self._emit(name, scope, node.start_point[0] + 1, ref_type)
+
+
+def _java_collect_imports(root_node, src_bytes: bytes) -> dict[str, str]:
+    """`import com.acme.model.User;` -> {"User": "com.acme.model.User"}.
+
+    Used only to scope type-position refs. A wildcard import names no single
+    type and is skipped: the resolver falls back to the same package, then to
+    a name that is unique in the project.
+    """
+    imports: dict[str, str] = {}
+    for child in root_node.children:
+        if child.type != "import_declaration":
+            continue
+        raw = src_bytes[child.start_byte : child.end_byte].decode("utf-8", errors="replace")
+        dotted = raw.removeprefix("import").strip().rstrip(";").strip()
+        dotted = dotted.removeprefix("static").strip()
+        if not dotted or dotted.endswith("*"):
+            continue
+        imports[dotted.rsplit(".", 1)[-1]] = dotted
+    return imports
+
+
 def _ts_collect_calls(
     def_node,
     src_qname: str,
     src_bytes: bytes,
     out: ExtractResult,
     http_wrappers: frozenset[str] = frozenset(),
+    type_refs: _TypeRefCollector | None = None,
 ) -> None:
     def text(n) -> str:
         return src_bytes[n.start_byte : n.end_byte].decode("utf-8", errors="replace")
+
+    if type_refs is not None:
+        type_refs.begin(src_qname)
 
     import re as _re_local
 
@@ -3202,6 +3571,8 @@ def _ts_collect_calls(
         return method, path
 
     def walk(node):
+        if type_refs is not None:
+            type_refs.visit(node)
         if node.type in _CALL_NODE_TYPES:
             route = _server_route(node)
             if route is not None:
@@ -3270,6 +3641,8 @@ def _ts_collect_calls(
             # anonymous arrows/callbacks (not def-typed) are still walked, so
             # their calls correctly belong to the enclosing symbol.
             if c is not def_node and _is_named_scope_boundary(c):
+                continue
+            if type_refs is not None and type_refs.owns_symbol(c):
                 continue
             walk(c)
 

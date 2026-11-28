@@ -3441,6 +3441,26 @@ def _label_direct_edges(
     return out
 
 
+def _direct_dependents_by_edge_type(view: Any, sid: int, min_weight: float) -> dict[str, int]:
+    """Direct (depth-1) dependents of a symbol, counted per edge type.
+
+    Empty when every one of them is a plain call, so a payload on a symbol
+    nothing inherits from or names as a type is exactly what it was.
+    """
+    if sid not in view.g:
+        return {}
+    counts: dict[str, int] = {}
+    for n in view.g.predecessors(sid):
+        data = view.g[n][sid]
+        if min_weight > 0.0 and float(data.get("weight", 1.0)) < min_weight:
+            continue
+        et = data.get("edge_type", "calls")
+        counts[et] = counts.get(et, 0) + 1
+    if set(counts) <= {"calls"}:
+        return {}
+    return dict(sorted(counts.items()))
+
+
 def _note_excluded_edge_types(
     payload: dict[str, Any],
     view: Any,
@@ -4339,8 +4359,20 @@ def register(mcp: FastMCP) -> None:
         # by Django battle-test where two different `process_request`
         # methods reported identical top_callers because every callsite
         # matched both their short names.
-        callers_all = ancestors_within(view.g, sid, 1, min_weight=0.6) if sid in view.g else set()
-        callees_all = descendants_within(view.g, sid, 1, min_weight=0.6) if sid in view.g else set()
+        # Invocation edges only, like who_calls: a subclass or a function that
+        # names this symbol in an annotation depends on it but does not call
+        # it. Those are counted in `excluded_by_edge_type` below.
+        invocations = _resolve_edge_types(None)
+        callers_all = (
+            ancestors_within(view.g, sid, 1, min_weight=0.6, edge_types=invocations)
+            if sid in view.g
+            else set()
+        )
+        callees_all = (
+            descendants_within(view.g, sid, 1, min_weight=0.6, edge_types=invocations)
+            if sid in view.g
+            else set()
+        )
 
         def _topn(ids: set[int], n: int = 5) -> list[dict[str, Any]]:
             scored = sorted(
@@ -4398,6 +4430,9 @@ def register(mcp: FastMCP) -> None:
             "top_callees": _topn(callees_all),
             "specs": [dict(r) for r in specs],
         }
+        _note_excluded_edge_types(
+            oriented, view, sid, incoming=True, edge_types=invocations, min_weight=0.6
+        )
         # Only on an index traces were ingested into (ingest_traces): how many
         # times this symbol was seen entered. 0 there is information — the
         # traced runs never executed it — which is why it is not omitted.
@@ -4494,17 +4529,18 @@ def register(mcp: FastMCP) -> None:
                 else set()
             )
             if summary_only:
-                return _out(
-                    {
-                        "root": sym["qualified_name"],
-                        "counts": {
-                            "impacted_callers": len(impacted),
-                            "calls_into": len(forward),
-                            "affected_specs": len(specs_for_symbols(impacted | {sid})),
-                        },
+                summary_payload: dict[str, Any] = {
+                    "root": sym["qualified_name"],
+                    "counts": {
+                        "impacted_callers": len(impacted),
+                        "calls_into": len(forward),
+                        "affected_specs": len(specs_for_symbols(impacted | {sid})),
                     },
-                    graph_pid,
-                )
+                }
+                direct_by_type = _direct_dependents_by_edge_type(view, sid, min_weight)
+                if direct_by_type:
+                    summary_payload["direct_dependents_by_edge_type"] = direct_by_type
+                return _out(summary_payload, graph_pid)
             callers_page, callers_total, callers_next = _paginate_meta(impacted, view)
             calls_page, calls_total, calls_next = _paginate_meta(forward, view)
             warn = _payload_warning(
@@ -4512,23 +4548,24 @@ def register(mcp: FastMCP) -> None:
                 limit=limit,
                 summary_only=summary_only,
             )
-            return _out(
-                _attach_payload_warning(
-                    {
-                        "root": sym["qualified_name"],
-                        "impacted_callers": callers_page,
-                        "calls_into": calls_page,
-                        "affected_specs": specs_for_symbols(impacted | {sid}),
-                        "counts": {
-                            "impacted_callers": callers_total,
-                            "calls_into": calls_total,
-                        },
-                        "next_cursor": callers_next if callers_next is not None else calls_next,
-                    },
-                    warn,
-                ),
-                graph_pid,
-            )
+            impact_payload: dict[str, Any] = {
+                "root": sym["qualified_name"],
+                # Depth-1 rows say which edge put them here: a subclass
+                # (`inherits`) and a function that takes this as a parameter
+                # type (`references`) break differently from a caller.
+                "impacted_callers": _label_direct_edges(callers_page, view, sid, incoming=True),
+                "calls_into": _label_direct_edges(calls_page, view, sid, incoming=False),
+                "affected_specs": specs_for_symbols(impacted | {sid}),
+                "counts": {
+                    "impacted_callers": callers_total,
+                    "calls_into": calls_total,
+                },
+                "next_cursor": callers_next if callers_next is not None else calls_next,
+            }
+            direct_by_type = _direct_dependents_by_edge_type(view, sid, min_weight)
+            if direct_by_type:
+                impact_payload["direct_dependents_by_edge_type"] = direct_by_type
+            return _out(_attach_payload_warning(impact_payload, warn), graph_pid)
         if target_type == "file":
             sids = [
                 int(r["id"])
@@ -4828,18 +4865,33 @@ def register(mcp: FastMCP) -> None:
                 include_non_python = True
                 auto_enabled.append("include_non_python")
         edge_extra = ""
-        edge_params: list[Any] = [pid]
+        weight_param: list[Any] = []
         if min_weight > 0.0:
             edge_extra = " AND e.weight >= ?"
-            edge_params = [pid, float(min_weight)]
+            weight_param = [float(min_weight)]
+        # A symbol with ANY inbound edge is not a candidate, whatever the edge
+        # type: being inherited from or named in a type position is use. The
+        # rows kept alive by one of those two alone are still selected (and
+        # run through the same filters below) so the payload can say how many
+        # there were, the way `corroboration` does for a second extractor.
+        edge_params: list[Any] = [*weight_param, *weight_param, pid, *weight_param]
         rows = st.conn.execute(
             f"""SELECT s.id, s.qualified_name, s.name, s.kind, s.decorators,
-                      s.visibility, s.start_line, s.end_line, f.path AS file_path
+                      s.visibility, s.start_line, s.end_line, f.path AS file_path,
+                      EXISTS (
+                        SELECT 1 FROM symbol_edge e
+                        WHERE e.dst_symbol_id=s.id AND e.edge_type='inherits'{edge_extra}
+                      ) AS kept_inherits,
+                      EXISTS (
+                        SELECT 1 FROM symbol_edge e
+                        WHERE e.dst_symbol_id=s.id AND e.edge_type='references'{edge_extra}
+                      ) AS kept_references
                FROM symbol s JOIN file f ON f.id=s.file_id
                WHERE f.project_id=?
                  AND NOT EXISTS (
                    SELECT 1 FROM symbol_edge e
                    WHERE e.dst_symbol_id=s.id{edge_extra}
+                     AND e.edge_type NOT IN ('inherits', 'references')
                  )
                  AND NOT EXISTS (
                    SELECT 1 FROM spec_symbol rs WHERE rs.symbol_id=s.id
@@ -5005,12 +5057,18 @@ def register(mcp: FastMCP) -> None:
         # tell which number it is looking at. Counts only (never name lists) so
         # the payload stays bounded.
         filtered_out: dict[str, int] = {}
+        # Would-be candidates whose only inbound edges are `inherits` /
+        # `references`, per edge type (a symbol with both counts in each).
+        kept_alive: dict[str, int] = {}
+        kept_alive_symbols = 0
 
         def _drop(reason: str) -> None:
             filtered_out[reason] = filtered_out.get(reason, 0) + 1
 
         for r in rows:
             meta = dict(r)
+            kept_inherits = bool(meta.pop("kept_inherits"))
+            kept_references = bool(meta.pop("kept_references"))
             # Pulled ahead of is_entry_point_path (which also returns True for
             # test paths when include_tests is False) purely to attribute the
             # skip; the set of skipped symbols is unchanged.
@@ -5093,6 +5151,13 @@ def register(mcp: FastMCP) -> None:
                         _drop("infrastructure")
                         continue
 
+            if kept_inherits or kept_references:
+                kept_alive_symbols += 1
+                if kept_inherits:
+                    kept_alive["inherits"] = kept_alive.get("inherits", 0) + 1
+                if kept_references:
+                    kept_alive["references"] = kept_alive.get("references", 0) + 1
+                continue
             filtered.append(meta)
 
         corroboration: dict[str, Any] | None = None
@@ -5130,6 +5195,19 @@ def register(mcp: FastMCP) -> None:
             payload["corroboration_available"] = corroboration_hint
         if runtime_tiers is not None:
             payload["runtime"] = runtime_tiers
+        if kept_alive:
+            payload["kept_alive_by_edge_type"] = {
+                **dict(sorted(kept_alive.items())),
+                "symbols": kept_alive_symbols,
+            }
+            payload["kept_alive_by_edge_type_hint"] = (
+                "Symbols nothing calls that are NOT listed because something "
+                "inherits from them (`inherits`) or names them in a type "
+                "position (`references`: annotation, generic argument, "
+                "isinstance/instanceof, except/catch). Counted after the same "
+                "filters as the candidates; `symbols` counts each once. "
+                "analyze_impact on one of them lists what depends on it."
+            )
         # Ingested edges silence dead candidates through the base query's
         # NOT EXISTS, before any of this code runs. A count that a `graph.json`
         # helped produce must not read as a purely livespec finding.
