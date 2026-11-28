@@ -54,6 +54,11 @@ qname); enum/`@interface` Java y enum/alias TS son símbolos; barrels TS (5 salt
 y alias de import; `Type::method` y tipos anidados en Java. Migración **34**
 (`symbol_ref.receiver_class`, re-extract). Suite: **1514 passed**.
 
+**Rama `fix/evident-class-param`:** un parámetro sin anotación nunca es de clase
+evidente (aunque se reasigne); cae a la resolución por nombre. Django: +1 arista en
+`django/` (`setup_databases -> TimeKeeper.timed`), 0 quitadas; +130 en `tests/`
+(helpers `tpl = Template(tpl)` ahora abren abanico a todos los `render`). Suite: **1516 passed**.
+
 **Rama `fix/trace-noise`: `ingest_traces` ignora spans de orden imposible.**
 `parent_not_yet_entered` / `parent_already_exited` (misma traza, mismo hilo; Node
 exento) no crean arista ni hit y se cuentan en `skipped` y `discarded_spans`.

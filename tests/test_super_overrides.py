@@ -271,3 +271,58 @@ async def test_evident_class_with_unindexed_base_keeps_name_based_edges(workspac
     assert ("m.open_base", "m.Mixin.as_p") in calls
     # every ancestor of Closed is indexed and none defines it: no edge
     assert ("m.closed_base", "m.Mixin.as_p") not in calls
+
+
+@pytest.mark.asyncio
+async def test_unannotated_parameter_is_never_evident_even_when_rebound(workspace: Path):
+    """Django's `setup_databases(time_keeper=None)`: `if time_keeper is None:
+    time_keeper = NullTimeKeeper()` does not make the caller's value a
+    NullTimeKeeper, so the edge to the base-class method must survive."""
+    _write(
+        workspace,
+        {
+            "m.py": (
+                "class TimeKeeper:\n    def timed(self):\n        return 1\n\n"
+                "class NullTimeKeeper(TimeKeeper):\n    def timed(self):\n        return 0\n\n"
+                "def setup(tk=None):\n"
+                "    if tk is None:\n        tk = NullTimeKeeper()\n"
+                "    return tk.timed()\n\n"
+                "def setup_always(tk):\n    tk = NullTimeKeeper()\n    return tk.timed()\n\n"
+                "def setup_annotated(tk: TimeKeeper):\n    return tk.timed()\n\n"
+                "def local():\n    tk = NullTimeKeeper()\n    return tk.timed()\n"
+            )
+        },
+    )
+    async with Client(mcp) as c:
+        await _index(c)
+    calls = _calls(workspace)
+    for fn in ("m.setup", "m.setup_always"):
+        assert (fn, "m.TimeKeeper.timed") in calls
+        assert (fn, "m.NullTimeKeeper.timed") in calls
+    # an annotated parameter still resolves by its annotation (with overrides)
+    assert ("m.setup_annotated", "m.TimeKeeper.timed") in calls
+    # a plain local `x = Cls()` is still evident: only Cls's method, not the base's
+    assert ("m.local", "m.NullTimeKeeper.timed") in calls
+    assert ("m.local", "m.TimeKeeper.timed") not in calls
+
+
+@pytest.mark.asyncio
+async def test_variable_assigned_two_classes_is_not_evident(workspace: Path):
+    _write(
+        workspace,
+        {
+            "m.py": (
+                "class A:\n    def m(self):\n        return 1\n\n"
+                "class B:\n    def m(self):\n        return 2\n\n"
+                "def pick(flag):\n"
+                "    if flag:\n        c = A()\n    else:\n        c = B()\n"
+                "    return c.m()\n\n"
+                "def only_a():\n    c = A()\n    return c.m()\n"
+            )
+        },
+    )
+    async with Client(mcp) as c:
+        await _index(c)
+    calls = _calls(workspace)
+    assert ("m.pick", "m.A.m") in calls and ("m.pick", "m.B.m") in calls
+    assert ("m.only_a", "m.A.m") in calls and ("m.only_a", "m.B.m") not in calls

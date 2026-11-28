@@ -45,6 +45,14 @@ follows [SemVer](https://semver.org/).
   imported directly (`import a.Outer.Inner`) or through its outer class resolve.
 - Migration 34 adds `symbol_ref.receiver_class` and queues a re-extract.
 
+### Fixed — a rebound parameter is not an evident class
+
+- `def f(tk=None): if tk is None: tk = NullTimeKeeper(); tk.timed()` no longer
+  resolves only to `NullTimeKeeper.timed`: a parameter without an annotation holds
+  what the caller passed, so rebinding it is no evidence of its class and the call
+  falls back to name-based resolution (Django `setup_databases -> TimeKeeper.timed`
+  is back). Annotated parameters and plain locals (`c = Child(); c.m()`) are unchanged.
+
 ### Changed — `ingest_traces` ignores order-impossible spans
 
 - A span whose `enter` is read before its parent's `enter` in the same trace

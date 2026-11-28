@@ -994,8 +994,9 @@ def _py_annotation_class(ann: ast.AST | None, out: ExtractResult) -> str | None:
 
 def _py_local_classes(func_node: ast.AST, out: ExtractResult) -> dict[str, str]:
     """Local names that are evidently an instance of one class in this function:
-    bound only by `x = Cls(...)` / `x: Cls = ...`, or a parameter annotated
-    `x: Cls` and never rebound. Any other binding of the name (a second class,
+    bound only by `x = Cls(...)` / `x: Cls = ...` (never a parameter without an
+    annotation, however it is rebound), or a parameter annotated `x: Cls` and
+    never rebound to another class. Any other binding of the name (a second class,
     a loop target, `with ... as x`, a call result) drops it."""
     evidence: dict[str, str] = {}
     dropped: set[str] = set()
@@ -1011,6 +1012,11 @@ def _py_local_classes(func_node: ast.AST, out: ExtractResult) -> dict[str, str]:
         for a in [*args.posonlyargs, *args.args, *args.kwonlyargs]:
             if a.annotation is not None and a.arg not in ("self", "cls"):
                 note(a.arg, _py_annotation_class(a.annotation, out))
+            else:
+                # An unannotated parameter holds whatever the caller passed
+                # (`time_keeper=None`); rebinding it inside the body does not
+                # make its class evident (the caller's value may be another).
+                dropped.add(a.arg)
         for a in (args.vararg, args.kwarg):
             if a is not None:
                 dropped.add(a.arg)
