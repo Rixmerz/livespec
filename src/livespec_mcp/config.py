@@ -21,6 +21,21 @@ else:  # pragma: no cover — py3.10 fallback
     import tomli as tomllib
 
 
+def write_state_gitignore(state_dir: Path) -> None:
+    """Keep ``<repo>/.mcp-docs/`` out of the repository's git status.
+
+    Writes ``.gitignore`` containing ``*`` inside it, only when absent, so the
+    directory ignores itself (the file included) and nothing outside it is
+    touched. Never overwrites a ``.gitignore`` someone already wrote there.
+    """
+    target = state_dir / ".gitignore"
+    try:
+        if not target.exists():
+            target.write_text("*\n", encoding="utf-8")
+    except OSError:  # read-only dir: indexing reports its own error elsewhere
+        pass
+
+
 @dataclass(frozen=True)
 class Settings:
     workspace: Path
@@ -33,6 +48,7 @@ class Settings:
 
     def ensure_dirs(self) -> None:
         self.state_dir.mkdir(parents=True, exist_ok=True)
+        write_state_gitignore(self.state_dir)
         self.docs_dir.mkdir(parents=True, exist_ok=True)
 
     def safe_path(self, rel: str | Path) -> Path:
