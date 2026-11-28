@@ -135,3 +135,37 @@ async def test_ingest_traces_error_shapes(sample_repo):
         ):
             out = (await c.call_tool("ingest_traces", args)).data
             _assert_canonical_error(out, must_have_hint=True)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("tool", "wrong", "right", "required"),
+    [
+        ("ingest_traces", "path", "trace_path", None),
+        ("link_spec_symbol", "qname", "symbol_qname", "spec_id, symbol_qname"),
+        ("analyze_impact", "qname", "target", "target_type, target"),
+    ],
+)
+async def test_unknown_parameter_names_the_accepted_ones(workspace, tool, wrong, right, required):
+    """A wrong parameter name is an mcp_error whose hint lists what the tool
+    takes and whose did_you_mean names the closest, not a raw pydantic dump."""
+    async with Client(mcp) as c:
+        await c.call_tool("index_project", {})
+        out = (await c.call_tool(tool, {wrong: "x"}, raise_on_error=False)).data
+
+    _assert_canonical_error(out, must_have_hint=True)
+    assert wrong in out["error"] and tool in out["error"]
+    assert right in out["did_you_mean"]
+    assert f"{tool} accepts:" in out["hint"] and right in out["hint"]
+    assert "workspace" in out["hint"]
+    if required:
+        assert f"Required: {required}." in out["hint"]
+
+
+@pytest.mark.asyncio
+async def test_known_parameters_are_not_intercepted(workspace):
+    async with Client(mcp) as c:
+        await c.call_tool("index_project", {})
+        out = (await c.call_tool("ingest_traces", {"trace_path": "nope.jsonl"})).data
+    # a real error from the tool, not the unknown-parameter one
+    assert "unknown parameter" not in out["error"]
