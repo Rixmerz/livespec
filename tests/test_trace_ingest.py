@@ -1130,3 +1130,82 @@ async def test_error_shapes(repo: Path):
         assert needle in zero["hint"], needle
     # A failed ingest wrote nothing.
     assert _count(repo, "runtime_source") == 0
+
+
+# --------------------------------------------------------------------------
+# A function registered with `@obj.something` is called by the framework that
+# owns `obj`. A trace that never drove the framework says nothing about it, so
+# it must not be offered as the strongest removal candidate.
+# --------------------------------------------------------------------------
+
+
+def _plugin_module(repo: Path) -> None:
+    (repo / "pkg" / "plugin.py").write_text(
+        "manager = object()\n"
+        "\n"
+        "\n"
+        "@manager.user_loader\n"  # 4
+        "def load_user(uid):\n"  # 5
+        "    return uid\n"
+        "\n"
+        "\n"
+        "@manager.hook('x')\n"  # 9
+        "def on_x():\n"  # 10
+        "    return 1\n"
+        "\n"
+        "\n"
+        "def plain_unused():\n"  # 14
+        "    return 2\n"
+        "\n"
+        "\n"
+        "def touched():\n"  # 18
+        "    return 3\n"
+    )
+
+
+def _touch_plugin_trace(repo: Path) -> str:
+    t = _Trace()
+    t.enter("touched", module="pkg.plugin", file="pkg/plugin.py", line=18)
+    return t.write(repo / "traces" / "plugin.jsonl")
+
+
+@pytest.mark.asyncio
+async def test_decorator_registered_function_is_not_a_removal_candidate(repo: Path):
+    _plugin_module(repo)
+    trace = _touch_plugin_trace(repo)
+    async with Client(mcp) as c:
+        await _call(c, "index_project")
+        await _call(c, "ingest_traces", trace_path=trace, dry_run=False)
+        default = await _call(c, "find_dead_code", include_public=True)
+        wide = await _call(c, "find_dead_code", include_public=True, include_infrastructure=True)
+
+    names = {r["qualified_name"]: r["runtime"] for r in default["dead_symbols"]}
+    # Same file as a traced symbol, zero callers, zero hits: not_seen for a plain
+    # function, absent for the two that a framework calls back.
+    assert names["pkg.plugin.plain_unused"] == "not_seen"
+    assert "pkg.plugin.load_user" not in names
+    assert "pkg.plugin.on_x" not in names
+    assert default["filtered_out"]["infrastructure"] >= 2
+
+    # With include_infrastructure they are listed, but under their own tier.
+    wide_tiers = {r["qualified_name"]: r["runtime"] for r in wide["dead_symbols"]}
+    assert wide_tiers["pkg.plugin.load_user"] == "registered_by_decorator"
+    assert wide_tiers["pkg.plugin.on_x"] == "registered_by_decorator"
+    assert wide_tiers["pkg.plugin.plain_unused"] == "not_seen"
+    assert wide["runtime"]["registered_by_decorator"] == 2
+
+
+@pytest.mark.asyncio
+async def test_stdlib_module_decorators_do_not_protect(repo: Path):
+    (repo / "pkg" / "wrapped.py").write_text(
+        "import functools\n"
+        "\n"
+        "\n"
+        "@functools.lru_cache(maxsize=None)\n"
+        "def cached_unused():\n"
+        "    return 1\n"
+    )
+    async with Client(mcp) as c:
+        await _call(c, "index_project")
+        dead = await _call(c, "find_dead_code", include_public=True)
+    assert "pkg.wrapped.cached_unused" in {r["qualified_name"] for r in dead["dead_symbols"]}

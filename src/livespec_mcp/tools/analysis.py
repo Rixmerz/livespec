@@ -600,6 +600,52 @@ def _has_entry_point_decorator(
     )
 
 
+# Modules whose attributes are decorators that wrap or annotate a function but
+# do not hand it to a framework (`@functools.wraps`, `@abc.abstractmethod`...).
+# Any OTHER `@receiver.attr` / `@receiver.attr(...)` registers the function on an
+# object (`@login.user_loader`, `@celery_app.on_after_configure`, `@signal.connect`)
+# and the framework calls it back.
+_NON_REGISTERING_DECORATOR_MODULES = frozenset(
+    {
+        "functools",
+        "abc",
+        "contextlib",
+        "typing",
+        "typing_extensions",
+        "dataclasses",
+        "enum",
+        "unittest",
+        "mock",
+        "pytest",
+        "warnings",
+        "asyncio",
+        "builtins",
+        "collections",
+        "click",
+    }
+)
+
+
+def _registered_by_decorator(decorators_json: str | None, file_path: str = "") -> bool:
+    """True when a Python symbol is registered on an object by a decorator.
+
+    ``@obj.something`` / ``@obj.something(...)`` hands the function to ``obj``,
+    which calls it later: the static graph shows zero callers and a trace that
+    never exercised the framework shows zero hits, yet the symbol is live.
+    """
+    if not decorators_json or not file_path.endswith(".py"):
+        return False
+    try:
+        names = json.loads(decorators_json)
+    except (json.JSONDecodeError, TypeError):
+        return False
+    for n in names or []:
+        parts = str(n).split(".")
+        if len(parts) >= 2 and parts[0].lower() not in _NON_REGISTERING_DECORATOR_MODULES:
+            return True
+    return False
+
+
 def _decorator_matches_any(name: str, patterns: tuple[str, ...]) -> bool:
     """True if `name` equals or has-as-last-segment any of `patterns`."""
     last = _decorator_lastseg(name)
@@ -3410,7 +3456,7 @@ def _apply_runtime_tiers(
 
     kept: list[dict[str, Any]] = []
     rescued = 0
-    tiers = {"not_seen": 0, "no_evidence": 0}
+    tiers = {"not_seen": 0, "no_evidence": 0, "registered_by_decorator": 0}
     for meta in candidates:
         if meta["id"] in hits:
             rescued += 1
@@ -3419,7 +3465,13 @@ def _apply_runtime_tiers(
         if any(q.startswith(inside) for q in hit_qnames_by_file.get(meta["file_path"], ())):
             rescued += 1
             continue
-        tier = "not_seen" if meta["file_path"] in files_reached else "no_evidence"
+        if _registered_by_decorator(meta.get("decorators"), meta["file_path"]):
+            # Only reachable with include_infrastructure=True. Called back by
+            # the framework it registered with: a trace that did not drive
+            # that framework proves nothing, so it is not a removal signal.
+            tier = "registered_by_decorator"
+        else:
+            tier = "not_seen" if meta["file_path"] in files_reached else "no_evidence"
         tiers[tier] += 1
         kept.append({**meta, "runtime": tier})
     return {
@@ -3428,13 +3480,17 @@ def _apply_runtime_tiers(
         "rescued_by_runtime": rescued,
         "not_seen": tiers["not_seen"],
         "no_evidence": tiers["no_evidence"],
+        "registered_by_decorator": tiers["registered_by_decorator"],
         "hint": (
             "From ingested traces (ingest_traces). rescued_by_runtime: "
             "candidates that were seen running, removed from this list. "
             "not_seen: a traced run reached the file and never executed the "
             "symbol — the strongest removal evidence here. no_evidence: no "
-            "trace touched the file, so the trace says nothing. A trace is "
-            "what the traced runs did, not production."
+            "trace touched the file, so the trace says nothing. "
+            "registered_by_decorator (include_infrastructure=True only): "
+            "registered on an object with `@obj.something`, so the framework "
+            "calls it — never a removal signal, whatever the trace saw. A "
+            "trace is what the traced runs did, not production."
         ),
     }
 
@@ -5269,6 +5325,11 @@ def register(mcp: FastMCP) -> None:
                 continue
             if not include_infrastructure and _has_entry_point_decorator(
                 meta.get("decorators"), alias_lastsegs
+            ):
+                _drop("infrastructure")
+                continue
+            if not include_infrastructure and _registered_by_decorator(
+                meta.get("decorators"), meta["file_path"]
             ):
                 _drop("infrastructure")
                 continue
