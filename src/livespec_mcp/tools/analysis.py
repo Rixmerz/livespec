@@ -2952,6 +2952,22 @@ def group_fields(st: AppState) -> dict[str, Any]:
     }
 
 
+def _attach_clone_note(out: dict[str, Any], st: AppState, pids: list[int], sym: dict) -> None:
+    """Say so when the symbol being opened exists N more times.
+
+    An agent that lands on a pasted function through `search` or a stack trace
+    has no reason to suspect the next three hits are the same body. Level 0
+    only and only from the fingerprint cache (see
+    ``domain.clones.identical_copies``): absent until `find_clone_clusters` or
+    `search_similar` has run once, and never a cost on this read.
+    """
+    from livespec_mcp.domain.clones import identical_copies
+
+    note = identical_copies(st.conn, tuple(pids), int(sym["id"]), sym["body_hash"])
+    if note:
+        out["clones"] = note
+
+
 def _symbol_source_path(st: AppState, sym: dict) -> Path:
     """Filesystem path for a symbol body — uses owning project root when set."""
     root = sym.get("project_root")
@@ -3833,6 +3849,10 @@ def register(mcp: FastMCP) -> None:
         body text is needed. Returns `{qualified_name, file_path, start_line,
         end_line, source, body_hash}`. Resolution accepts either a fully-
         qualified name (preferred) or a short name when unambiguous.
+
+        `clones` appears when the same structure exists elsewhere in the index
+        (`identical_copies`, `also_at`): read this one, not the copies —
+        `find_clone_clusters` shows what they change.
         """
         st = get_state(workspace)
         pids = st.group_project_ids()
@@ -3860,6 +3880,7 @@ def register(mcp: FastMCP) -> None:
         }
         if st.settings.grouped and sym.get("project_root"):
             out["project_root"] = sym["project_root"]
+        _attach_clone_note(out, st, pids, sym)
         return out
 
     @mcp.tool(annotations={"readOnlyHint": True, "idempotentHint": True})
@@ -3891,6 +3912,10 @@ def register(mcp: FastMCP) -> None:
         have resolved and did not are listed in `unresolved_types` — read them
         before relying on their shape rather than assuming the closure is
         complete.
+
+        `clones` appears when the same structure exists elsewhere in the index
+        (`identical_copies`, `also_at`): this read covers the copies too —
+        `find_clone_clusters` shows what they change.
         """
         from livespec_mcp.domain.contract_closure import build_closure
 
@@ -3924,6 +3949,7 @@ def register(mcp: FastMCP) -> None:
         out = closure.as_dict()
         if st.settings.grouped and sym.get("project_root"):
             out["project_root"] = sym["project_root"]
+        _attach_clone_note(out, st, pids, sym)
         return _attach_external_edges(out, st, st.project_id)
 
     @mcp.tool(annotations={"idempotentHint": False})
@@ -4323,11 +4349,26 @@ def register(mcp: FastMCP) -> None:
         so a `callers_count: 0` result is not misread as dead code.
         Designed for an agent's first contact with an unfamiliar symbol:
         instead of `find_symbol` -> `get_symbol_info` -> `analyze_impact`
-        -> `get_spec_implementation`, run this once."""
+        -> `get_spec_implementation`, run this once.
+
+        Pass an indexed **file path** instead of a symbol (`qname=
+        "src/pkg/mod.py"`) to get that file's `outline`: one line per symbol,
+        `start-end signature — docstring lead`, indented by nesting, no
+        bodies. That answers "what does this module do?" for about a tenth of
+        the file. A **class** (any symbol with members) carries the same
+        `outline` of its members next to the usual fields, so "what does this
+        class offer?" is one call instead of one per method. Outlines stop at
+        150 lines (`outline_truncated` says how many were left out)."""
+        from livespec_mcp.domain.outline import file_outline, members_outline
+
         st = get_state(workspace)
         pids = st.group_project_ids()
         sym = _resolve_symbol(st.conn, pids, qname)
         if not sym:
+            module = file_outline(st.conn, pids, qname)
+            if module is not None:
+                module["next"] = "quick_orient / read_unit on the one symbol you need"
+                return module
             return symbol_not_found_error(st.conn, pids, qname)
         sid = int(sym["id"])
         graph_pid = _graph_project_id(sym, st.project_id)
@@ -4406,6 +4447,12 @@ def register(mcp: FastMCP) -> None:
         runtime_calls = symbol_runtime_calls(st.conn, st.project_id, sid)
         if runtime_calls is not None:
             oriented["runtime_calls"] = runtime_calls
+        if sym["kind"] != "function":
+            # A class answers "what does it offer?" with its members; functions
+            # with nested helpers are left alone — their body is the answer.
+            members = members_outline(st.conn, sid)
+            if members is not None:
+                oriented.update(members)
         return _attach_external_edges(oriented, st, graph_pid)
 
     @mcp.tool(annotations={"readOnlyHint": True, "idempotentHint": True})

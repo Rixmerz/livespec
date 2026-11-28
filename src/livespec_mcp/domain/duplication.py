@@ -360,8 +360,33 @@ def _decode(structural: str, minhashes: str, count: int) -> Fingerprint:
     )
 
 
+@dataclass(frozen=True)
+class CorpusSymbol:
+    """One indexed function/method with its fingerprint and where it lives."""
+
+    symbol_id: int
+    qualified_name: str
+    file_path: str
+    start_line: int
+    end_line: int
+    fingerprint: Fingerprint
+    project_root: str | None = None
+
+
 def load_corpus(conn, project_ids: tuple[int, ...], root) -> list[tuple[str, str, Fingerprint]]:
     """Every function/method in the index, fingerprinted, reading as little as possible.
+
+    The `(qualified_name, file_path, fingerprint)` view of `load_symbol_corpus`
+    — what `find_duplicates` and the debt baseline consume.
+    """
+    return [
+        (s.qualified_name, s.file_path, s.fingerprint)
+        for s in load_symbol_corpus(conn, project_ids, root)
+    ]
+
+
+def load_symbol_corpus(conn, project_ids: tuple[int, ...], root) -> list[CorpusSymbol]:
+    """Every function/method in the index with its span, fingerprinted.
 
     Fingerprints are cached in `symbol_fingerprint` keyed by the symbol's
     `body_hash`. Only bodies whose hash is not already cached get read off
@@ -372,14 +397,20 @@ def load_corpus(conn, project_ids: tuple[int, ...], root) -> list[tuple[str, str
     between files does not change the body, so the cached fingerprint stays
     valid across both. A body that actually changed gets a new hash and misses,
     which is the whole of the invalidation logic.
+
+    Ordered by symbol id, so every consumer sees the same sequence.
     """
+    from pathlib import Path as _Path
+
     placeholders = ",".join("?" * len(project_ids))
     rows = conn.execute(
-        f"SELECT s.qualified_name, s.body_hash, s.start_line, s.end_line, "
-        f"       f.path, f.language "
+        f"SELECT s.id, s.qualified_name, s.body_hash, s.start_line, s.end_line, "
+        f"       f.path, f.language, f.project_id, p.root AS project_root "
         f"FROM symbol s JOIN file f ON f.id = s.file_id "
+        f"JOIN project p ON p.id = f.project_id "
         f"WHERE f.project_id IN ({placeholders}) "
-        f"  AND s.kind IN ('function', 'method') AND s.body_hash IS NOT NULL",
+        f"  AND s.kind IN ('function', 'method') AND s.body_hash IS NOT NULL "
+        f"ORDER BY s.id",
         tuple(project_ids),
     ).fetchall()
 
@@ -389,32 +420,48 @@ def load_corpus(conn, project_ids: tuple[int, ...], root) -> list[tuple[str, str
             "SELECT body_hash, structural_hash, minhashes, token_count FROM symbol_fingerprint"
         )
     }
+    # In a shared group DB a file path is relative to its *own* project root,
+    # not to the calling workspace. The home project keeps using `root`.
+    home = project_ids[0] if project_ids else None
 
-    corpus: list[tuple[str, str, Fingerprint]] = []
+    corpus: list[CorpusSymbol] = []
     fresh: dict[str, Fingerprint] = {}
     # One read per file, not one per symbol: a module with 40 functions was
     # being opened 40 times.
-    file_lines: dict[str, list[str]] = {}
+    file_lines: dict[tuple[int, str], list[str]] = {}
 
     for r in rows:
         bh = r["body_hash"]
+        foreign = r["project_id"] != home and r["project_root"]
         fp = cached.get(bh) or fresh.get(bh)
         if fp is None:
             path = r["path"]
-            if path not in file_lines:
+            key = (r["project_id"], path)
+            if key not in file_lines:
+                base = _Path(r["project_root"]) if foreign else root
                 try:
-                    file_lines[path] = (
-                        (root / path).read_text(encoding="utf-8", errors="replace").splitlines()
+                    file_lines[key] = (
+                        (base / path).read_text(encoding="utf-8", errors="replace").splitlines()
                     )
                 except OSError:
-                    file_lines[path] = []
-            lines = file_lines[path]
+                    file_lines[key] = []
+            lines = file_lines[key]
             body = "\n".join(lines[max(r["start_line"] - 1, 0) : min(r["end_line"], len(lines))])
             if not body.strip():
                 continue
             fp = fingerprint(body, language=r["language"] or "python")
             fresh[bh] = fp
-        corpus.append((r["qualified_name"], r["path"], fp))
+        corpus.append(
+            CorpusSymbol(
+                symbol_id=int(r["id"]),
+                qualified_name=r["qualified_name"],
+                file_path=r["path"],
+                start_line=int(r["start_line"]),
+                end_line=int(r["end_line"]),
+                fingerprint=fp,
+                project_root=r["project_root"] if foreign else None,
+            )
+        )
 
     if fresh:
         conn.executemany(

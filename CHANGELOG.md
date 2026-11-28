@@ -6,6 +6,26 @@ follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Added — clone clusters (`find_clone_clusters`)
+
+- `find_clone_clusters(min_size=2, threshold=0.80, path=None,
+  include_tests=False, limit=50, cursor=0, summary_only=False)` — new core
+  tool (42 → 43 core, 57 → 58 total). Clusters of functions/methods whose
+  bodies are identical after identifier normalisation (level 0) or similar
+  above `threshold` (level 1, winnowed fingerprints), built from the
+  fingerprints `search_similar` already caches: bucket by structural hash,
+  candidate pairs by shared winnowed hashes, then verify — never all pairs.
+  Each cluster names a `representative` (most callers, then non-test /
+  shortest path, then lexical) with span, and every other copy is `identical`
+  or a bounded diff summary (counts + capped excerpt); no body is returned.
+  Ordered by `lines_saved`; `totals` are exact across pages and
+  `summary_only`. Trivial bodies, build/vendored/generated paths and tests are
+  excluded (tests via `include_tests=True`), counted in `filtered_out`.
+- `get_symbol_source` / `read_unit` add a `clones` note when the symbol has
+  identical copies in the fingerprint cache.
+- `quick_orient` accepts an indexed file path and returns that file's
+  `outline`; classes carry an `outline` of their members.
+
 ### Added — runtime evidence from FlowTrace traces
 
 - `ingest_traces(trace_path=None, dry_run=True, remove=False)` — new core tool

@@ -394,7 +394,7 @@ gates it, you build with live links; *brownfield* → `/livespec-onboard` orient
 `propose_specs_from_codebase` reconstructs intent, **author OpenSpec first**
 (export only as a bootstrap dump).
 
-## Tools (57 total: 42 core + 12 Spec plugin + 3 docs plugin)
+## Tools (58 total: 43 core + 12 Spec plugin + 3 docs plugin)
 
 Every tool requires `workspace` (absolute project root). Pass it on each call;
 omitting it is an error (no env fallback). LRU cache (8 workspaces) — one MCP
@@ -558,6 +558,13 @@ Always registered (including markdown Spec import + OpenSpec sync).
   today's duplication as accepted debt so `search_similar` reports only what is
   new. Run once at install; without it, a legacy repo lights up everywhere and
   the check gets switched off before it ever catches a fresh duplicate.
+- `find_clone_clusters(min_size=2, threshold=0.80, path=None, include_tests=False, limit=50, cursor=0, summary_only=False)` — **which
+  bodies are pasted N times**, for first contact with a legacy repo. Clusters
+  of functions/methods identical after identifier normalisation or similar
+  above `threshold` (winnowed fingerprints, bucketed — not O(n²)); each names a
+  `representative` to read and shows every other copy as `identical` or a
+  bounded diff, never a body. Ordered by `lines_saved`; `totals` exact across
+  pages.
 - `search_similar(code, threshold=0.80)` — "does this already exist?" before
   writing a helper. Level 0 matches a structural copy with every identifier
   renamed; level 1 matches a near-duplicate that was edited after pasting.

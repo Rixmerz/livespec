@@ -194,6 +194,25 @@ TOOL_PARAM_DESCRIPTIONS: dict[tuple[str, str], str] = {
         "re-capturing without it quietly accepts whatever duplication landed "
         "since the last capture."
     ),
+    ("quick_orient", "qname"): (
+        "Fully-qualified symbol name, or an indexed file path "
+        "(``src/pkg/mod.py``) to get that file's outline instead."
+    ),
+    ("find_clone_clusters", "min_size"): (
+        "Smallest cluster to report, in copies. Default 2 (any body that exists twice)."
+    ),
+    ("find_clone_clusters", "threshold"): (
+        "Minimum winnowed-fingerprint overlap for two bodies to be near-copies "
+        "(level 1). Default 0.80, the same bar ``search_similar`` uses."
+    ),
+    ("find_clone_clusters", "path"): (
+        "File or directory (workspace-relative). Keeps clusters with at least "
+        "one copy under it; the other copies may be anywhere."
+    ),
+    ("find_clone_clusters", "include_tests"): (
+        "Also cluster functions in test files and fixtures. Off by default: "
+        "test bodies are repetitive by design and bury the production clones."
+    ),
     ("search_similar", "touched_files"): (
         "Files this session already edited. Only meaningful with ``boy_scout``; ignored otherwise."
     ),
