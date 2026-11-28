@@ -954,6 +954,8 @@ async def test_find_dead_code_runtime_tiers(repo: Path):
     runtime = after["runtime"]
     assert runtime["origin"] == RUNTIME_ORIGIN
     assert runtime["rescued_by_runtime"] == 1
+    # The symbol that left the list is named, so its absence is explainable.
+    assert runtime["rescued"] == [{"qualified_name": "pkg.main.run", "calls": 1}]
     assert runtime["not_seen"] == sum(1 for t in tiers.values() if t == "not_seen")
     assert runtime["no_evidence"] == sum(1 for t in tiers.values() if t == "no_evidence")
     assert after["count"] == len(tiers) == runtime["not_seen"] + runtime["no_evidence"]

@@ -3426,6 +3426,9 @@ def _attach_external_edges(
     return payload
 
 
+_RESCUED_LISTED = 50
+
+
 def _apply_runtime_tiers(
     st: AppState, project_id: int, candidates: list[dict[str, Any]]
 ) -> dict[str, Any] | None:
@@ -3456,14 +3459,19 @@ def _apply_runtime_tiers(
 
     kept: list[dict[str, Any]] = []
     rescued = 0
+    rescued_names: list[dict[str, Any]] = []
     tiers = {"not_seen": 0, "no_evidence": 0, "registered_by_decorator": 0}
     for meta in candidates:
         if meta["id"] in hits:
             rescued += 1
+            rescued_names.append(
+                {"qualified_name": meta["qualified_name"], "calls": hits[meta["id"]]["calls"]}
+            )
             continue
         inside = meta["qualified_name"] + "."
         if any(q.startswith(inside) for q in hit_qnames_by_file.get(meta["file_path"], ())):
             rescued += 1
+            rescued_names.append({"qualified_name": meta["qualified_name"], "calls": 0})
             continue
         if _registered_by_decorator(meta.get("decorators"), meta["file_path"]):
             # Only reachable with include_infrastructure=True. Called back by
@@ -3478,12 +3486,17 @@ def _apply_runtime_tiers(
         "candidates": kept,
         "origin": RUNTIME_ORIGIN,
         "rescued_by_runtime": rescued,
+        "rescued": rescued_names[:_RESCUED_LISTED],
         "not_seen": tiers["not_seen"],
         "no_evidence": tiers["no_evidence"],
         "registered_by_decorator": tiers["registered_by_decorator"],
         "hint": (
             "From ingested traces (ingest_traces). rescued_by_runtime: "
-            "candidates that were seen running, removed from this list. "
+            "candidates that were seen running, removed from this list and "
+            "named in `rescued` (first "
+            f"{_RESCUED_LISTED}) — a symbol with no callers that is missing "
+            "from the candidates is usually here: hits recorded before its "
+            "callers moved still count, so trace again after changing callers. "
             "not_seen: a traced run reached the file and never executed the "
             "symbol — the strongest removal evidence here. no_evidence: no "
             "trace touched the file, so the trace says nothing. "
