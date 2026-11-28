@@ -22,6 +22,7 @@ from typing import Any, Literal
 from fastmcp import FastMCP
 
 from livespec_mcp.config import load_repo_config
+from livespec_mcp.domain.clones import normalise_path_prefix, under_path
 from livespec_mcp.domain.extractors import (
     HTTP_ROUTE_DECORATOR_LASTSEGS,
     JAVA_GENERATED_MARK,
@@ -3448,19 +3449,25 @@ def _apply_runtime_tiers(
     Order is left alone: candidates stay sorted by file and line, which the
     pagination cursor depends on.
     """
-    from livespec_mcp.domain.trace_ingest import RUNTIME_ORIGIN, runtime_hits
+    from livespec_mcp.domain.trace_ingest import (
+        RUNTIME_ORIGIN,
+        hit_sources,
+        runtime_hits,
+        stale_runtime_sources,
+    )
 
     hits = runtime_hits(st.conn, project_id)
     if not hits:
         return None
     files_reached = {h["file_path"] for h in hits.values()}
-    hit_qnames_by_file: dict[str, list[str]] = {}
-    for h in hits.values():
-        hit_qnames_by_file.setdefault(h["file_path"], []).append(h["qualified_name"])
+    hit_qnames_by_file: dict[str, list[tuple[str, int]]] = {}
+    for sid, h in hits.items():
+        hit_qnames_by_file.setdefault(h["file_path"], []).append((h["qualified_name"], sid))
 
     kept: list[dict[str, Any]] = []
     rescued = 0
     rescued_names: list[dict[str, Any]] = []
+    rescued_ids: list[list[int]] = []  # per rescued row: the symbols whose hits rescued it
     tiers = {"not_seen": 0, "no_evidence": 0, "registered_by_decorator": 0}
     for meta in candidates:
         if meta["id"] in hits:
@@ -3468,11 +3475,16 @@ def _apply_runtime_tiers(
             rescued_names.append(
                 {"qualified_name": meta["qualified_name"], "calls": hits[meta["id"]]["calls"]}
             )
+            rescued_ids.append([meta["id"]])
             continue
         inside = meta["qualified_name"] + "."
-        if any(q.startswith(inside) for q in hit_qnames_by_file.get(meta["file_path"], ())):
+        inner = [
+            sid for q, sid in hit_qnames_by_file.get(meta["file_path"], ()) if q.startswith(inside)
+        ]
+        if inner:
             rescued += 1
             rescued_names.append({"qualified_name": meta["qualified_name"], "calls": 0})
+            rescued_ids.append(inner)
             continue
         if _registered_by_decorator(meta.get("decorators"), meta["file_path"]):
             # Only reachable with include_infrastructure=True. Called back by
@@ -3483,7 +3495,23 @@ def _apply_runtime_tiers(
             tier = "not_seen" if meta["file_path"] in files_reached else "no_evidence"
         tiers[tier] += 1
         kept.append({**meta, "runtime": tier})
-    return {
+    # Stale evidence (migration 35): marked, never dropped. Checked for every
+    # rescued symbol, not just the listed page, so the count is exact.
+    stale_sources: set[str] = set()
+    stale_n = 0
+    stale = stale_runtime_sources(st.conn, project_id) if rescued_ids else {}
+    if stale:
+        by_symbol = hit_sources(st.conn, sorted({i for ids in rescued_ids for i in ids}))
+        for entry, ids in zip(rescued_names, rescued_ids, strict=True):
+            behind: set[int] = set()
+            for i in ids:
+                behind |= by_symbol.get(i, set())
+            if behind and behind <= set(stale):
+                entry["stale_evidence"] = True
+                entry["sources"] = sorted(stale[b] for b in behind)
+                stale_sources.update(entry["sources"])
+                stale_n += 1
+    out_tiers: dict[str, Any] = {
         "candidates": kept,
         "origin": RUNTIME_ORIGIN,
         "rescued_by_runtime": rescued,
@@ -3507,6 +3535,21 @@ def _apply_runtime_tiers(
             "trace is what the traced runs did, not production."
         ),
     }
+    if stale_n:
+        out_tiers["rescued_stale_evidence"] = stale_n
+        out_tiers["stale_evidence_hint"] = (
+            f"{stale_n} rescued symbol(s) are marked `stale_evidence: true`: "
+            "every trace source with a hit on them was ingested before the "
+            "latest index run that changed files, so it may show code that no "
+            "longer runs that way (callers moved away, the rescue still "
+            "stands). Rule: a source is stale when any file changed in an "
+            "index run after the source was ingested — coarser than "
+            "'a former caller's file changed', which cannot be asked once the "
+            "caller's re-extract has dropped its runtime edges. The rescue is "
+            "kept, only marked. Re-trace or remove these sources: "
+            + ", ".join(sorted(stale_sources))
+        )
+    return out_tiers
 
 
 def _attach_unknown_relations(report: dict[str, Any], graph: Any) -> None:
@@ -4658,6 +4701,23 @@ def register(mcp: FastMCP) -> None:
         runtime_calls = symbol_runtime_calls(st.conn, st.project_id, sid)
         if runtime_calls is not None:
             oriented["runtime_calls"] = runtime_calls
+            # A rescued symbol: nothing calls it statically, yet traces saw it
+            # run. If every source behind that is older than the latest index
+            # run that changed files, the rescue may be a ghost of callers that
+            # have since moved (same rule as find_dead_code's `rescued`).
+            if runtime_calls > 0 and not callers_all:
+                from livespec_mcp.domain.trace_ingest import stale_evidence_for
+
+                behind = stale_evidence_for(st.conn, st.project_id, [sid])
+                if behind is not None:
+                    oriented["runtime_stale_evidence"] = True
+                    oriented["runtime_stale_sources"] = behind
+                    oriented["runtime_stale_hint"] = (
+                        "No static caller, and every trace source that saw it run was "
+                        "ingested before the latest index run that changed files: "
+                        "the callers may have moved since. Re-trace or remove these "
+                        "sources: " + ", ".join(behind)
+                    )
         if sym["kind"] == "method":
             _ov, ov_total, ov_base = _override_info(st, sid, limit=0)
             if ov_total:
@@ -5011,12 +5071,19 @@ def register(mcp: FastMCP) -> None:
           `fakeAuthMiddleware`, …). Test scaffolding ranks high by PageRank
           but is the opposite of "what is this repo's core". No opt-out;
           the ones that outranked the returned top-N are listed by
-          qualified name in `test_symbols_filtered`."""
+          qualified name in `test_symbols_filtered`.
+
+        `runtime_evidence` (only once `ingest_traces` ran) carries the numbers
+        for stating runtime coverage: `symbols_with_hits_non_test` over
+        `symbols_non_test` — functions and methods outside test paths (the
+        same detector as the ranking filter above), and how many of them a
+        trace saw entered. `symbols_with_hits` counts every kind, tests
+        included; use the non-test pair for a ratio."""
         st = get_state(workspace)
         overview = compute_project_overview(st, include_infrastructure, include_structural_patterns)
         from livespec_mcp.domain.trace_ingest import public_runtime_state
 
-        runtime = public_runtime_state(st.conn, st.project_id)
+        runtime = public_runtime_state(st.conn, st.project_id, _is_test_file_path)
         if runtime is not None:
             overview["runtime_evidence"] = runtime
         return _attach_external_edges(overview, st, st.project_id)
@@ -5031,6 +5098,7 @@ def register(mcp: FastMCP) -> None:
         include_tests: bool = False,
         min_weight: float = 0.0,
         corroborate_with: str | None = None,
+        path: str | None = None,
         limit: int = 200,
         cursor: int = 0,
         summary_only: bool = False,
@@ -5074,6 +5142,15 @@ def register(mcp: FastMCP) -> None:
         `min_weight` (default 0.0): when >0, an inbound edge below this weight
         does not count as a caller (aligns with graph impact filters; try 0.6).
 
+        Unreleased: `path` (workspace-relative, POSIX; a file or a directory
+        prefix, as in `find_clone_clusters`) restricts the candidates — and with
+        them the runtime tiers, `filtered_out`, `by_kind`/`by_top_dir`, `count`
+        and the `not_swept` hints — to symbols defined under it. Callers may
+        live anywhere: a symbol under `path` that something outside it calls is
+        still not dead. A path that matches no indexed file is an error naming
+        the form to use. Use it to look at one directory without a scripts or
+        driver directory's symbols in the list.
+
         v0.7 (B3): paginated. `limit` (default 200) caps `dead_symbols` per
         call; `cursor` resumes from a previous call's `next_cursor`;
         `summary_only=True` returns just the count + breakdown without the
@@ -5098,6 +5175,21 @@ def register(mcp: FastMCP) -> None:
         """
         st = get_state(workspace)
         pid = st.project_id
+        prefix = normalise_path_prefix(path) if path else ""
+        if prefix:
+            known = st.conn.execute(
+                "SELECT 1 FROM file WHERE project_id=? AND (path=? OR substr(path, 1, ?)=?) LIMIT 1",
+                (pid, prefix, len(prefix) + 1, prefix + "/"),
+            ).fetchone()
+            if known is None:
+                return mcp_error(
+                    f"path {path!r} matches no indexed file or directory",
+                    hint=(
+                        "pass a workspace-relative POSIX path of an indexed file or "
+                        "directory, e.g. 'src/app' or 'src/app/models.py'; "
+                        "index_project first if it is new"
+                    ),
+                )
         auto_enabled: list[str] = []
         # TS/JS-only repos: Python-only default is a silent false zero. Auto-
         # enable non-Python sweep (audit: Composer reported count=0 + not_swept).
@@ -5150,6 +5242,8 @@ def register(mcp: FastMCP) -> None:
                ORDER BY f.path, s.start_line""",
             tuple(edge_params),
         ).fetchall()
+        if prefix:
+            rows = [r for r in rows if under_path(r["file_path"], prefix)]
 
         def is_entry_point_path(p: str) -> bool:
             if not include_tests and _is_test_file_path(p):
@@ -5444,6 +5538,8 @@ def register(mcp: FastMCP) -> None:
             "by_kind": by_kind,
             "by_top_dir": by_dir,
         }
+        if prefix:
+            payload["path"] = path
         if auto_enabled:
             payload["auto_enabled"] = auto_enabled
         if corroboration is not None:

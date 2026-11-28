@@ -47,7 +47,7 @@ import json
 import re
 import sqlite3
 import time
-from collections.abc import Iterable, Sequence
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -789,6 +789,11 @@ def apply_plan(
     """
     now = time.time()
     replaced = 0
+    # The code these traces saw = the index as of now (migration 35). Read once:
+    # the caller holds the index lock, so no run lands in the middle.
+    from livespec_mcp.domain.graph import _latest_run_id
+
+    seen_run = _latest_run_id(conn, project_id)
     for src in plan.sources:
         prior = [
             int(r["id"])
@@ -812,8 +817,9 @@ def apply_plan(
         source_id = conn.execute(
             """INSERT INTO runtime_source(
                    project_id, origin, path, content_hash, size, mtime, events,
-                   resolved_events, symbols_hit, edges_observed, ingested_at)
-               VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
+                   resolved_events, symbols_hit, edges_observed, ingested_at,
+                   index_run_id)
+               VALUES(?,?,?,?,?,?,?,?,?,?,?,?)""",
             (
                 project_id,
                 plan.origin,
@@ -826,6 +832,7 @@ def apply_plan(
                 len(src.hits),
                 len(src.edges),
                 now,
+                seen_run,
             ),
         ).lastrowid
         conn.executemany(
@@ -995,6 +1002,67 @@ def symbol_runtime_calls(conn: sqlite3.Connection, project_id: int, symbol_id: i
     return int(row["c"])
 
 
+def stale_runtime_sources(conn: sqlite3.Connection, project_id: int) -> dict[int, str]:
+    """`{source id: path}` of trace files ingested before the latest code change.
+
+    Rule (deliberately the simple one): a source is stale when an index run
+    that changed any file finished after the run that was current when the
+    source was ingested (`runtime_source.index_run_id`, migration 35). The
+    finer rule — only runs that changed a file holding one of the symbol's
+    former runtime callers — cannot be answered afterwards: `runtime_edge`
+    cascades away with a re-extracted caller, which is exactly the case. So
+    this over-reports (an unrelated edit marks every earlier source) and never
+    under-reports. A source with no recorded run is never called stale.
+    """
+    from livespec_mcp.domain.graph import _latest_run_id
+
+    latest = _latest_run_id(conn, project_id)
+    try:
+        rows = conn.execute(
+            """SELECT id, path FROM runtime_source
+               WHERE project_id = ? AND origin = ?
+                 AND index_run_id IS NOT NULL AND index_run_id < ?""",
+            (project_id, RUNTIME_ORIGIN, latest),
+        ).fetchall()
+    except sqlite3.OperationalError:
+        return {}
+    return {int(r["id"]): r["path"] for r in rows}
+
+
+def hit_sources(conn: sqlite3.Connection, symbol_ids: Sequence[int]) -> dict[int, set[int]]:
+    """symbol id -> ids of the sources with a hit on it."""
+    out: dict[int, set[int]] = {}
+    ids = list(symbol_ids)
+    for i in range(0, len(ids), 500):
+        chunk = ids[i : i + 500]
+        for r in conn.execute(
+            f"SELECT symbol_id, source_id FROM runtime_hit WHERE symbol_id IN ({_in(chunk)})",
+            tuple(chunk),
+        ):
+            out.setdefault(int(r["symbol_id"]), set()).add(int(r["source_id"]))
+    return out
+
+
+def stale_evidence_for(
+    conn: sqlite3.Connection, project_id: int, symbol_ids: Sequence[int]
+) -> list[str] | None:
+    """Paths of the sources behind a symbol's hits when ALL of them are stale, else None.
+
+    `symbol_ids` is the symbol plus whatever defined inside it that was hit (a
+    rescue by nested hit). Nothing to say (None) when any source with a hit is
+    current, or when there are no hits at all.
+    """
+    stale = stale_runtime_sources(conn, project_id)
+    if not stale:
+        return None
+    sources: set[int] = set()
+    for srcs in hit_sources(conn, symbol_ids).values():
+        sources |= srcs
+    if not sources or not sources <= set(stale):
+        return None
+    return sorted(stale[s] for s in sources)
+
+
 def runtime_state(conn: sqlite3.Connection, project_id: int) -> dict[str, Any] | None:
     """Has runtime evidence been ingested for this project, and how much survives?"""
     try:
@@ -1033,12 +1101,37 @@ def runtime_state(conn: sqlite3.Connection, project_id: int) -> dict[str, Any] |
     }
 
 
-def public_runtime_state(conn: sqlite3.Connection, project_id: int) -> dict[str, Any] | None:
-    """`runtime_state` without the bookkeeping, for a tool payload."""
+def public_runtime_state(
+    conn: sqlite3.Connection,
+    project_id: int,
+    is_test_path: Callable[[str], bool] | None = None,
+) -> dict[str, Any] | None:
+    """`runtime_state` without the bookkeeping, for a tool payload.
+
+    With `is_test_path` (the project's test-path rule, injected so this module
+    stays free of `tools/`) it adds the denominator for coverage:
+    `symbols_non_test` — functions and methods outside test paths — and
+    `symbols_with_hits_non_test` — how many of those were seen running.
+    """
     state = runtime_state(conn, project_id)
     if state is None:
         return None
-    return {k: v for k, v in state.items() if not k.startswith("_")}
+    out = {k: v for k, v in state.items() if not k.startswith("_")}
+    if is_test_path is not None:
+        non_test: set[int] = {
+            int(r["id"])
+            for r in conn.execute(
+                """SELECT s.id, f.path FROM symbol s JOIN file f ON f.id = s.file_id
+                   WHERE f.project_id = ? AND s.kind IN ('function', 'method')""",
+                (project_id,),
+            )
+            if not is_test_path(r["path"])
+        }
+        total = len(non_test)
+        hit = len(non_test & runtime_hits(conn, project_id).keys())
+        out["symbols_non_test"] = total
+        out["symbols_with_hits_non_test"] = hit
+    return out
 
 
 def runtime_freshness(conn: sqlite3.Connection, project_id: int) -> dict[str, Any]:

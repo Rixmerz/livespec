@@ -46,6 +46,24 @@ Todo el stack es local-first: 0 servicios externos, 0 API keys obligatorias, 0 D
 
 ### Unreleased — evidencia de ejecución, aristas de herencia/tipo, acceso a datos, clones
 
+**Rama `fix/trial2-findings` (local, sobre `4a9240c`): segundo trial.** `find_dead_code(path=)`
+(archivo o directorio relativo, mismo prefijo que `find_clone_clusters`; candidatos, tiers
+runtime y todos los conteos solo de lo definido ahí; ruta desconocida -> `mcp_error` con hint);
+`get_project_overview.runtime_evidence` suma `symbols_non_test` y `symbols_with_hits_non_test`
+(denominador de cobertura); migración 35 `runtime_source.index_run_id` (último run que cambió
+archivos al ingerir, backfill desde `ingested_at`) y `stale_evidence: true` + `sources` en
+`runtime.rescued` y `runtime_stale_*` en `quick_orient` cuando toda fuente con hit es anterior
+al último run que cambió algo (regla gruesa: no se puede preguntar por "archivo de un llamador
+previo" porque su re-extract ya borró las aristas runtime). Se marca, no se descarta. Además
+se restauró el cuerpo de `_m030` (solo tenía docstring, no encolaba el re-extract) y
+`test_migration_30` ya no usa `MIGRATIONS[-1]`. Suite: **1556 passed**.
+
+**Merge previo `fix/trial-findings` (`4a9240c`): hallazgos del primer trial.** Endpoints Flask,
+tier `registered_by_decorator` en `find_dead_code`, lecturas por relaciones many-to-many en
+`find_data_access`, `ingest_traces(remove=True, trace_path=[...])` selectivo, parámetros
+desconocidos -> `mcp_error` con los nombres válidos, y `.mcp-docs/` con `.gitignore`
+autoexcluyente.
+
 **Rama `fix/java-implicit-members` (local, sobre `5f5567b`): miembros Java implícitos.**
 Records = símbolo `class` + un método accesor por componente; Lombok (`@Getter`/
 `@Setter`/`@Data`/`@Value`, clase o campo) genera `getX`/`isX`/`setX` en la línea del

@@ -521,7 +521,7 @@ async def test_migration_30_queues_one_reextract_on_a_populated_index(workspace:
         st.conn.execute("DELETE FROM symbol_ref WHERE ref_type IN ('inherit','type')")
         st.conn.commit()
         assert _typed(workspace) == set()
-        MIGRATIONS[-1][2](st.conn)
+        {v: fn for v, _n, fn in MIGRATIONS}[30](st.conn)
         st.conn.commit()
         await c.call_tool("index_project", {})
     assert ("p.sub.Sub", "p.base.Base", "inherits") in _typed(workspace)

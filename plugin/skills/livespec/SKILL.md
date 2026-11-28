@@ -105,7 +105,7 @@ it is not a background watcher you should lean on while editing.
 | PR / diff scope | `git_diff_impact(base_ref, head_ref)` — git repos only; symbol-precise (an untouched function in a changed file is not listed); a `schema_impact` key appears when a `@schema:` declaration changed |
 | Keyword search over chunks | `search(query, scope)` — FTS5 over AST-aware symbol + Spec chunks |
 | Literal string search over indexed files | `grep_in_indexed_files(pattern)` — check `scope_fresh`, see the staleness trap below |
-| Dead-code candidates | `find_dead_code()` — respects entry points / `pub` / frameworks; TS-only auto-enables `include_non_python` |
+| Dead-code candidates | `find_dead_code(path=None)` — respects entry points / `pub` / frameworks; TS-only auto-enables `include_non_python`; `path="src/app"` (file or directory prefix, workspace-relative) keeps only symbols defined there, callers anywhere; unknown path → error with a hint |
 | Likely-unused HTTP flows | `find_legacy_flows()` — see polyrepo section; graph ≠ traffic |
 | Orphan tests | `find_orphan_tests()` — tests only (helpers counted in `test_helper_symbols_skipped`); check `test_files_count` / `test_function_symbols` + `hint` (Jest anonymous `test()` → honest zero) |
 | HTTP/CLI entry points | `find_endpoints(framework=None)` — see the Hono trap below; prefer `summary_only=True` if JSON is huge |
@@ -285,6 +285,15 @@ or reflection: the callee reads as called by nobody. A
   has `runtime: "not_seen"` (a traced run reached its file and never executed
   it — the strongest removal evidence) or `"no_evidence"` (no trace touched
   the file; the trace says nothing).
+- **Stale rescues.** A `runtime.rescued` entry (and `quick_orient` on a symbol
+  nothing calls, as `runtime_stale_evidence`) is marked `stale_evidence: true`
+  with its `sources` when every trace file that saw it run predates the latest
+  index run that changed files — callers may have moved since. Marked, not
+  dropped: re-trace or `ingest_traces(remove=True, trace_path=[...])` those
+  sources, re-index, ingest the new run. The rule is coarse: any changed file.
+- **Coverage.** `get_project_overview` → `runtime_evidence`:
+  `symbols_with_hits_non_test` over `symbols_non_test` (functions and methods
+  outside test paths).
 - **A trace is the runs that were traced, not production.** `not_seen` on a
   thin test run is weak; say which run it came from.
 - Pass every process's file of a distributed trace together (a list, or the
