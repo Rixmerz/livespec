@@ -6,6 +6,45 @@ follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed — `super()`, overrides, same-name symbols, barrels (resolver and extractors)
+
+- **`super().m()` / `super(Cls, self).m()` / `super.m()` / `super(...)`** (Python,
+  TS/JS, Java `super.m()`) resolve to `m` on the nearest indexed base of the
+  enclosing class, left-to-right depth-first over the `inherits` edges (not C3:
+  it can differ from Python's MRO only for a diamond whose shared ancestor also
+  defines `m`). No indexed base defining it, or `super(Other, self)` naming
+  another class: no edge. The builtin `super()` call itself no longer resolves
+  to a project symbol named `super` (Django's `BlockNode.super`); `x.super()`
+  still resolves normally.
+- **Overrides are reported.** `analyze_impact` on a method adds
+  `overriding_methods` (bounded by `limit`; each `qualified_name`, `file_path`,
+  `start_line`, `calls_super`, `depth`), exact `counts.overriding_methods` and
+  `overrides` (the base method); `quick_orient` adds `overridden_by` (count) and
+  `overrides`. Derived from `inherits` edges + class membership
+  (`domain/hierarchy.py`); with no overrides the payloads are unchanged.
+- **Instance dispatch.** `c = Child(); c.m()` (also `c: Child` parameters) resolves
+  to the most-derived `m` on `Child`'s own MRO (weight 0.9) instead of every
+  same-named method; a name bound twice, or a class that is not one project
+  class, keeps the name-based path.
+- **Edges bind by span.** A ref belongs to the symbol whose line span contains
+  it, not to "the" symbol of its qualified name: overloads, anonymous classes,
+  enum-constant bodies, same-named local classes and a function defined in both
+  branches of an `if` no longer pile their edges on one row (gson: 19 of 565
+  `references` edges sat on a symbol that never mentions the target; 55 type uses
+  on the wrong overload). A reference to a name defined more than once gets ONE
+  target: the first overload of a method, the definition in scope at the line for
+  a class/function.
+- **Java `enum` and `@interface`** are indexed (kind `class`, like Rust's enums;
+  enum methods are `method`s) and `enum X implements Y` yields `inherits`. TS
+  `enum` and non-object `type` aliases are symbols too (`class` / `type_alias`;
+  they carry no schema).
+- **TS imports.** Barrel chains (`export * from`, `export { X } from`,
+  `export { X as Y } from`) are followed up to 5 hops with cycle protection to
+  the single defining symbol (`domain/ts_modules.py`); `import { A as B }` binds
+  `A` for type refs and calls. Java `Type::method` references and a nested type
+  imported directly (`import a.Outer.Inner`) or through its outer class resolve.
+- Migration 34 adds `symbol_ref.receiver_class` and queues a re-extract.
+
 ### Changed — `ingest_traces` ignores order-impossible spans
 
 - A span whose `enter` is read before its parent's `enter` in the same trace

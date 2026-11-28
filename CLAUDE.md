@@ -203,6 +203,10 @@ domain/         Pure business logic, no MCP coupling
                   from runtime_edge; find_dead_code's runtime tiers read it
   location.py     symbols spanning a path:line — shared by resolve_location
                   and trace_ingest
+  hierarchy.py    class hierarchy from `inherits` edges: super() target (left-to-right
+                  DFS), overriders / overridden method (analyze_impact, quick_orient)
+  ts_modules.py   TS/JS relative-import resolution through `export ... from`
+                  barrels (5 hops, cycle-safe) to the one defining symbol
   md_specs.py     markdown spec importer (v0.20, was md_rfs.py)
   git_range.py    base..head plumbing (name-status -M, rev-parse, cat-file
                   --batch), every ref after --end-of-options; GitProblem data
@@ -216,7 +220,7 @@ domain/         Pure business logic, no MCP coupling
 storage/        SQLite persistence
   schema.sql      single-file schema; CREATE TABLE IF NOT EXISTS for everything
   db.py           connection bootstrap + ordered migration framework
-                  (schema_migrations table; MIGRATIONS list append-only, at v33)
+                  (schema_migrations table; MIGRATIONS list append-only, at v34)
 ```
 
 ### Critical contracts (don't break)

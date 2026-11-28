@@ -1067,6 +1067,19 @@ def _m033_data_access_shapes(conn: sqlite3.Connection) -> None:
         _flag_reextract(conn)
 
 
+def _m034_symbol_ref_receiver_class(conn: sqlite3.Connection) -> None:
+    """Unreleased: ``symbol_ref.receiver_class`` — the class a call's receiver
+    evidently is (``super(Cls, self).f()``, ``c = Child(); c.f()``), so the
+    resolver can pick the most-derived definition and the right base for
+    ``super()``. A ``super().f()`` / ``super.f()`` ref also gets receiver
+    ``super``. Re-extract is queued only on a DB that already holds symbols;
+    until then a NULL column resolves as before. Rolling back is ignoring the
+    column, which v33 code never reads."""
+    _try_add_column(conn, "symbol_ref", "receiver_class", "TEXT")
+    if conn.execute("SELECT 1 FROM symbol LIMIT 1").fetchone() is not None:
+        _flag_reextract(conn)
+
+
 MIGRATIONS: list[Migration] = [
     (1, "drop_dead_tables", _m001_drop_dead_tables),
     (2, "drop_dead_columns", _m002_drop_dead_columns),
@@ -1101,7 +1114,21 @@ MIGRATIONS: list[Migration] = [
     (31, "data_access", _m031_data_access),
     (32, "python_import_scopes", _m032_python_import_scopes),
     (33, "data_access_shapes", _m033_data_access_shapes),
+    (34, "symbol_ref_receiver_class", _m034_symbol_ref_receiver_class),
 ]
+
+
+def _m034_symbol_ref_receiver_class(conn: sqlite3.Connection) -> None:
+    """Unreleased: ``symbol_ref.receiver_class`` — the class a call's receiver
+    evidently is (``super(Cls, self).f()``, ``c = Child(); c.f()``), so the
+    resolver can pick the most-derived definition and the right base for
+    ``super()``. A ``super().f()`` / ``super.f()`` ref also gets receiver
+    ``super``. Re-extract is queued only on a DB that already holds symbols;
+    until then a NULL column resolves as before. Rolling back is ignoring the
+    column, which v33 code never reads."""
+    _try_add_column(conn, "symbol_ref", "receiver_class", "TEXT")
+    if conn.execute("SELECT 1 FROM symbol LIMIT 1").fetchone() is not None:
+        _flag_reextract(conn)
 
 
 def _run_migrations(conn: sqlite3.Connection) -> None:

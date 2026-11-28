@@ -105,7 +105,8 @@ CREATE TABLE IF NOT EXISTS symbol_ref (
     ref_type TEXT NOT NULL DEFAULT 'call',
     scope_module TEXT,             -- v0.6 P0.4: import-aware resolution hint (added by migration v4)
     line INTEGER,
-    receiver TEXT                  -- after v0.35.0: what X is in `X.f()` (module|self|object), NULL for `f()` (migration v28)
+    receiver TEXT,                 -- after v0.35.0: what X is in `X.f()` (module|self|super|object), NULL for `f()` (migration v28)
+    receiver_class TEXT            -- the class a receiver evidently is: `Child` / `scope::Child` (migration v34)
 );
 
 CREATE INDEX IF NOT EXISTS idx_symref_target ON symbol_ref(target_name);

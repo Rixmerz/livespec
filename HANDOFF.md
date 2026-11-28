@@ -46,6 +46,14 @@ Todo el stack es local-first: 0 servicios externos, 0 API keys obligatorias, 0 D
 
 ### Unreleased — evidencia de ejecución, aristas de herencia/tipo, acceso a datos, clones
 
+**Rama `fix/super-overrides-barrels` (local, sin integrar).** Resolver/extractores:
+`super()` resuelve al método de la base más cercana (DFS izquierda-derecha);
+`analyze_impact`/`quick_orient` informan overrides (`overriding_methods`,
+`overridden_by`, `overrides`); aristas atadas por span (símbolos con el mismo
+qname); enum/`@interface` Java y enum/alias TS son símbolos; barrels TS (5 saltos)
+y alias de import; `Type::method` y tipos anidados en Java. Migración **34**
+(`symbol_ref.receiver_class`, re-extract). Suite: **1514 passed**.
+
 **Rama `fix/trace-noise`: `ingest_traces` ignora spans de orden imposible.**
 `parent_not_yet_entered` / `parent_already_exited` (misma traza, mismo hilo; Node
 exento) no crean arista ni hit y se cuentan en `skipped` y `discarded_spans`.
