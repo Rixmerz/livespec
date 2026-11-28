@@ -44,6 +44,58 @@ Todo el stack es local-first: 0 servicios externos, 0 API keys obligatorias, 0 D
 
 ## 3. Estado actual
 
+### Unreleased — runtime evidence desde trazas FlowTrace (`ingest_traces`)
+
+**HEAD: `c9b7afd` (v0.37.0) + working tree SIN commitear** (a pedido del
+owner: sin commit, sin push, sin cambio de rama; queda para review).
+`pyproject.toml` sigue en 0.37.0. Suite medida en este árbol: **1352 passed**
+(`uv sync --all-extras && uv run pytest -q`; antes del cambio, 1326).
+
+Qué aterrizó (CHANGELOG `[Unreleased]`):
+
+- **Tool core nueva `ingest_traces(trace_path=None, dry_run=True, remove=False)`**
+  → **42 core / 57 tools**. Lee JSONL FlowTrace schema v2 (un archivo, una
+  lista, o un directorio de `*.jsonl`), en streaming, y resuelve cada `enter` a
+  un símbolo ya indexado: por `file`+`line` (path exacto, si no sufijo único; el
+  nombre del método tiene que coincidir con el símbolo de esa línea) o por
+  nombre único (method + class + module según el runtime). Nunca adivina; lo
+  demás va a `unresolved` por razón.
+- **Dominio:** `domain/trace_ingest.py` (lector, `SymbolResolver`, `TracePlan`,
+  persistencia, lectura de evidencia) y `domain/location.py` (la query de
+  `resolve_location`, ahora compartida; payload de esa tool sin cambios).
+- **Migración 29 `runtime_evidence`:** `runtime_source` (una fila por ARCHIVO
+  de traza: path + content hash), `runtime_hit` (conteos por símbolo y
+  source), `runtime_edge` (pares caller→callee por source). Las filas
+  `symbol_edge` con `origin='runtime:flowtrace'` se derivan de `runtime_edge`.
+  No se reutilizó `external_ingest` (mig 23): es una fila por (project, origin)
+  con un solo path, y la evidencia runtime es la suma de varios archivos.
+- **Idempotencia = por archivo fuente.** Re-ingerir un archivo (mismo path, o
+  mismo contenido en otro path) reemplaza lo que aportó: no duplica hits y
+  retira la arista que sólo ese archivo sostenía. Archivos distintos acumulan.
+  `remove=True` borra exactamente aristas + hits + provenance de este origen.
+- **Consumidores:** `who_calls` / `who_does_this_call` marcan
+  `via_external_edge: "runtime:flowtrace"`; el bloque `external_edges` nombra
+  el origen y reporta `stale.evidence_lost` tras un re-extract;
+  `find_dead_code` gana `runtime` (`rescued_by_runtime`, `not_seen`,
+  `no_evidence`) y `runtime` por candidato — sólo si hay hits; sin trazas el
+  payload es idéntico byte a byte (test). `quick_orient.runtime_calls`,
+  `get_project_overview.runtime_evidence` y `project://index/status` idem.
+- `ingest_external_graph(remove=True)` ya no se lleva una arista que una traza
+  también observó (se re-afirma bajo el origen runtime).
+- **Tests:** `tests/test_trace_ingest.py` (21) + un caso en
+  `tests/test_error_shape.py`.
+
+Pendiente / a decidir por el owner:
+
+- OpenSpec: `openspec/specs/graph/spec.md` no tiene todavía un requirement
+  para evidencia runtime (no se abrió un change en `openspec/changes/`).
+- Un `index_project(force=True)` re-inserta todos los símbolos y por lo tanto
+  borra toda la evidencia runtime (igual que hace con las aristas Graphify);
+  no hay auto-re-ingesta equivalente a `[graph] auto_ingest`.
+- Los golden fixtures de FlowTrace todavía no traen `file`/`line`; la
+  resolución por ubicación está probada con trazas escritas a mano, no con
+  salida real de las capas de captura.
+
 ### v0.36.0 (released 2026-11-01)
 
 Release of three fixes found running livespec on a mid-size Python + TypeScript repository:

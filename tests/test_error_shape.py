@@ -112,3 +112,26 @@ async def test_git_diff_not_a_repo_error_shape(sample_repo):
         await c.call_tool("index_project", {})
         out = (await c.call_tool("git_diff_impact", {})).data
         _assert_canonical_error(out)
+
+
+@pytest.mark.asyncio
+async def test_ingest_traces_error_shapes(sample_repo):
+    """Missing file, no `enter` events, and nothing resolved: all canonical,
+    all with a hint that says what to do next."""
+    (sample_repo / "exits.jsonl").write_text(
+        '{"ts":1,"trace_id":"t","span_id":"s","event":"exit","result":{}}\n'
+    )
+    (sample_repo / "foreign.jsonl").write_text(
+        '{"ts":1,"trace_id":"t","span_id":"s","parent_id":null,"event":"enter",'
+        '"lang":"python","module":"elsewhere","class":"","method":"nobody"}\n'
+    )
+    async with Client(mcp) as c:
+        await c.call_tool("index_project", {})
+        for args in (
+            {},
+            {"trace_path": "does-not-exist.jsonl"},
+            {"trace_path": "exits.jsonl"},
+            {"trace_path": "foreign.jsonl", "dry_run": False},
+        ):
+            out = (await c.call_tool("ingest_traces", args)).data
+            _assert_canonical_error(out, must_have_hint=True)

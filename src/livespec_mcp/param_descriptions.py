@@ -173,6 +173,22 @@ TOOL_PARAM_DESCRIPTIONS: dict[tuple[str, str], str] = {
         "available but off by default — ``who_calls`` does not distinguish "
         "edge types, so ingesting them makes importers read as callers."
     ),
+    ("ingest_traces", "trace_path"): (
+        "FlowTrace schema v2 trace to ingest: one ``flowtrace.jsonl``, a list "
+        "of them (pass every process's file of a distributed trace together "
+        "so callers resolve across files), or a directory (every ``*.jsonl`` "
+        "in it). Relative paths resolve against the workspace root."
+    ),
+    ("ingest_traces", "dry_run"): (
+        "If true (default), report what the traces would add — hit counts, "
+        "new vs already-known edges, unresolved events by reason — and write "
+        "nothing. Pass false to write."
+    ),
+    ("ingest_traces", "remove"): (
+        "Delete every edge, hit count and provenance row a trace ingest wrote "
+        "(``origin='runtime:flowtrace'``) and write nothing. livespec's own "
+        "edges and other origins are never touched."
+    ),
     ("debt_baseline_capture", "reset"): (
         "Drop the previous snapshot before capturing. Say it deliberately — "
         "re-capturing without it quietly accepts whatever duplication landed "

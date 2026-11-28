@@ -394,7 +394,7 @@ gates it, you build with live links; *brownfield* → `/livespec-onboard` orient
 `propose_specs_from_codebase` reconstructs intent, **author OpenSpec first**
 (export only as a bootstrap dump).
 
-## Tools (56 total: 41 core + 12 Spec plugin + 3 docs plugin)
+## Tools (57 total: 42 core + 12 Spec plugin + 3 docs plugin)
 
 Every tool requires `workspace` (absolute project root). Pass it on each call;
 omitting it is an error (no env fallback). LRU cache (8 workspaces) — one MCP
@@ -504,6 +504,41 @@ Always registered (including markdown Spec import + OpenSpec sync).
   files — it reports `external_edges_stale` when a re-extract invalidated
   ingested rows.
 
+- `ingest_traces(trace_path=None, dry_run=True, remove=False)` — **add what
+  actually ran to the call graph** (Unreleased). Reads a
+  [FlowTrace](https://github.com/Rixmerz/flowtrace-debugger) schema v2 trace
+  (`flowtrace.jsonl`: one file, a list — one per process of a distributed
+  trace — or a directory of `*.jsonl`), streamed line by line, and resolves
+  each `enter` event to a symbol livespec already indexed. Two results no
+  static pass can produce:
+
+  - **Calls through dynamic dispatch** (`getattr(obj, name)()`, a registry of
+    callables, DI, reflection) land in `symbol_edge` as `calls` edges tagged
+    `origin='runtime:flowtrace'`, so `who_calls` / `who_does_this_call` /
+    `analyze_impact` see them, marked `via_external_edge`. The payload
+    separates `edges_to_add` (the static graph lacks them) from
+    `already_known` (it had them; the trace confirms).
+  - **Per-symbol hit counts**, which give `find_dead_code` its `runtime`
+    tiers (below).
+
+  Resolution never guesses: `file` + `line` first when the trace carries them
+  (exact path, else a unique path-suffix match — Java reports paths relative
+  to the source root — and the method name must agree with the symbol found
+  there), otherwise method + class + module, accepted only when it names
+  exactly one symbol. Everything else is counted under `unresolved` by reason
+  (`ambiguous_name`, `ambiguous_file`, `file_not_indexed`,
+  `location_name_mismatch`, …) with samples. No symbol is ever created.
+
+  `dry_run=True` by default. Idempotent **per trace file** (migration 29):
+  ingesting a file again — same path, or the same content elsewhere — replaces
+  what it contributed, so hits are not double-counted and an edge only that
+  file supported is retracted; different files accumulate. `remove=True`
+  deletes exactly this origin's edges, hits and provenance and never touches
+  an edge livespec's resolver (or a Graphify ingest) owns. Re-indexing a
+  changed file drops the evidence for its symbols on purpose — the body that
+  ran is gone — and the `external_edges.stale` block says so. A trace is what
+  the traced runs did, not production traffic.
+
 #### Search (1, v0.12; vectors removed)
 - `search(query, scope='all'|'code'|'specs', limit=20)` — FTS5 keyword
   retrieval over AST-aware chunks of symbols + Specs (splits `snake_case`
@@ -559,6 +594,13 @@ Always registered (including markdown Spec import + OpenSpec sync).
 - `find_dead_code(include_infrastructure=False, corroborate_with=None)` —
   symbols with zero callers and zero Spec links. Skips entry-point paths,
   framework decorators, `__main__` guards, list-stored callbacks.
+  After `ingest_traces` (and only then — the payload is otherwise unchanged),
+  a candidate that was seen running is dropped and counted in
+  `runtime.rescued_by_runtime`, and every remaining row carries `runtime`:
+  `"not_seen"` (a traced run reached its file and never executed it — the
+  strongest removal evidence) or `"no_evidence"` (no trace touched the file).
+  `runtime.not_seen` / `runtime.no_evidence` are exact regardless of
+  pagination.
   `filtered_out` reports what each default filter excluded, keyed by the flag
   that would include it — two runs on the same repo can differ several-fold
   purely by flags.

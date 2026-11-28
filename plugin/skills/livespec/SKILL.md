@@ -251,6 +251,36 @@ Rules that matter when you use it:
 - **Never treat it as traffic.** Two extractors agreeing is still static
   analysis.
 
+### What actually ran (FlowTrace traces) — optional
+
+Static analysis cannot see `getattr(obj, name)()`, a registry of callables, DI
+or reflection: the callee reads as called by nobody. A
+[FlowTrace](https://github.com/Rixmerz/flowtrace-debugger) trace
+(`flowtrace.jsonl`, schema v2) of the program running can.
+
+| Intent | Tool |
+|--------|------|
+| Before trusting dead-code candidates, when a trace exists | `ingest_traces(trace_path=..., dry_run=True)` then `dry_run=False`, then `find_dead_code()` |
+| `who_calls` returns nothing for something obviously used dynamically | same — the observed caller appears, marked `via_external_edge: "runtime:flowtrace"` |
+| Take it back out | `ingest_traces(remove=True)` |
+
+- **Never a substitute for `index_project`.** Events resolve only to symbols
+  livespec already indexed; index first, and re-ingest after re-indexing
+  changed files (their evidence is dropped with the old body — the payload
+  says so under `external_edges.stale`).
+- **Read the dry run.** `edges_to_add` = calls the static graph lacks,
+  `already_known` = calls the trace confirms, `unresolved` = events it refused
+  to place (by reason — it never guesses between two same-named functions).
+- **`find_dead_code` tiers** (only once traces are ingested): candidates that
+  ran are gone and counted in `runtime.rescued_by_runtime`; each remaining row
+  has `runtime: "not_seen"` (a traced run reached its file and never executed
+  it — the strongest removal evidence) or `"no_evidence"` (no trace touched
+  the file; the trace says nothing).
+- **A trace is the runs that were traced, not production.** `not_seen` on a
+  thin test run is weak; say which run it came from.
+- Pass every process's file of a distributed trace together (a list, or the
+  directory) so callers resolve across files.
+
 **`find_endpoints` — Hono / Express.** Call-style `router.get/post` routes
 are included in the **default** sweep (`framework=None`). Pass
 `framework="express"` or `"hono"` to filter to one framework. Receivers like
@@ -427,4 +457,7 @@ For the full annotation grammar and examples, fetch the MCP prompt `agent_playbo
   `excluded_by_edge_type` without saying what was excluded.
 - Do not run `ingest_external_graph(dry_run=False)` on someone's index without
   telling them: it writes rows into `symbol_edge`. `remove=True` undoes it
-  exactly.
+  exactly. Same for `ingest_traces(dry_run=False)`.
+- Do not call `ingest_traces` instead of `index_project`, and do not read
+  `runtime: "no_evidence"` as "safe to delete" — it means the trace never
+  reached that file.

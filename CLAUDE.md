@@ -112,7 +112,7 @@ populates new fields.
 ### Layered stack
 
 ```
-tools/          MCP-exposed surface (56 tools: 41 core + 12 Spec + 3 docs)
+tools/          MCP-exposed surface (57 tools: 42 core + 12 Spec + 3 docs)
   analysis.py     find_symbol, quick_orient, get_symbol_source, who_calls,
                   who_does_this_call, analyze_impact, audit_coverage,
                   find_dead_code, find_legacy_flows, find_orphan_tests,
@@ -122,7 +122,9 @@ tools/          MCP-exposed surface (56 tools: 41 core + 12 Spec + 3 docs)
                   (propose_specs_from_codebase) + bulk_link_spec_symbols
                   + Spec mutation tools (create/update/delete_spec, etc.
                   gated by register(mcp, agentic=, mutation=))
-  indexing.py     index_project (runs rebuild_chunks inside)
+  indexing.py     index_project (runs rebuild_chunks inside),
+                  ingest_external_graph, ingest_traces (FlowTrace runtime
+                  evidence; domain in trace_ingest.py)
   search.py       search (FTS5 over AST-aware chunks)
   tracks.py       propose_track, record_track, get_spec_history,
                   get_symbol_history (CHANGESPEC.md; domain in tracks.py,
@@ -193,6 +195,14 @@ domain/         Pure business logic, no MCP coupling
                   place tools/ may reach for; returns failures as data
                   (GraphProblem) so domain/ never imports the MCP surface
   external_ingest.py  plan/apply ingestion + provenance (migration 23)
+  trace_ingest.py  FlowTrace schema v2 JSONL -> runtime evidence: streamed
+                  reader, event->symbol resolver (location first, unique name
+                  otherwise, never a guess), plan, per-source persistence
+                  (migration 29: runtime_source / runtime_hit / runtime_edge),
+                  `symbol_edge` rows with origin 'runtime:flowtrace' derived
+                  from runtime_edge; find_dead_code's runtime tiers read it
+  location.py     symbols spanning a path:line — shared by resolve_location
+                  and trace_ingest
   md_specs.py     markdown spec importer (v0.20, was md_rfs.py)
   git_range.py    base..head plumbing (name-status -M, rev-parse, cat-file
                   --batch), every ref after --end-of-options; GitProblem data
@@ -206,7 +216,7 @@ domain/         Pure business logic, no MCP coupling
 storage/        SQLite persistence
   schema.sql      single-file schema; CREATE TABLE IF NOT EXISTS for everything
   db.py           connection bootstrap + ordered migration framework
-                  (schema_migrations table; MIGRATIONS list append-only, at v28)
+                  (schema_migrations table; MIGRATIONS list append-only, at v29)
 ```
 
 ### Critical contracts (don't break)
@@ -252,7 +262,7 @@ produce duplicate symbols at the same line. Keep the first occurrence
 The v0.8 curation pass shipped: battle-test data (3 sessions, 40 calls,
 11 bug fixes) drove the tier split. Current state:
 
-- **41 core tools** always registered: code intel (find_symbol,
+- **42 core tools** always registered: code intel (find_symbol,
   quick_orient, get_symbol_source, who_calls, who_does_this_call,
   analyze_impact, git_diff_impact, find_dead_code, find_legacy_flows,
   find_orphan_tests, find_endpoints, get_project_overview, index_project,
@@ -266,6 +276,7 @@ The v0.8 curation pass shipped: battle-test data (3 sessions, 40 calls,
   + tracks (propose_track, record_track, get_spec_history,
   get_symbol_history — v0.33)
   + schemas (schema_drift, schema_impact, plan_schema_change — v0.34)
+  + runtime evidence (ingest_traces — Unreleased)
   + scan_annotation_verbs.
 - **Plugin `livespec-spec` (12 tools)** — Spec mutation ceremony: CRUD,
   link/unlink, Spec-Spec graph, scans (import moved to core v0.19),

@@ -53,8 +53,9 @@ your operating manual and follow its tool map and contracts exactly.
      against code that has since moved.
 
 5. **Never write to someone's index without saying so.**
-   `ingest_external_graph(dry_run=False)` adds rows to the call graph. Show the
-   dry run, get agreement, and remember `remove=True` undoes it exactly.
+   `ingest_external_graph(dry_run=False)` and `ingest_traces(dry_run=False)`
+   add rows to the call graph. Show the dry run, get agreement, and remember
+   `remove=True` undoes it exactly.
 
 6. **Prefer livespec tools over ad-hoc grep** for structural questions (callers,
    callees, impact, Specs, HTTP flows). Use `Grep`/`Bash` only for things the

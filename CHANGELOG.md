@@ -6,6 +6,57 @@ follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Added — runtime evidence from FlowTrace traces
+
+- `ingest_traces(trace_path=None, dry_run=True, remove=False)` — new core tool
+  (41 → 42 core, 56 → 57 total). Reads a FlowTrace schema v2 trace
+  (`flowtrace.jsonl`; one file, a list, or a directory of `*.jsonl`), streamed
+  line by line, and resolves each `enter` event to a symbol livespec already
+  indexed: by `file` + `line` when the trace carries them (exact path, else a
+  unique path-suffix match; the method name must agree with the symbol at
+  that line), otherwise by method + class + module, only when that names
+  exactly one symbol. Nothing is guessed and no symbol is created; everything
+  else is counted under `unresolved` by reason, with samples.
+- Observed caller → callee pairs are written to `symbol_edge` as `calls`
+  edges with `origin='runtime:flowtrace'` (INSERT OR IGNORE — an edge the
+  resolver derived is never re-tagged, and the resolver reclaims a runtime row
+  it later derives). `who_calls` / `who_does_this_call` mark them with
+  `via_external_edge: "runtime:flowtrace"`; the `external_edges` block names
+  the origin and, after a re-extract dropped evidence, reports it under
+  `stale` (`evidence_lost`). The payload separates `edges_to_add` (calls the
+  static graph lacks: dynamic dispatch, DI, reflection) from `already_known`.
+- `find_dead_code`: once traces are ingested, a candidate that was seen
+  running is dropped and counted in `runtime.rescued_by_runtime`, and every
+  remaining candidate carries `runtime: "not_seen"` (a traced run reached its
+  file and never executed it) or `"no_evidence"` (no trace touched its file),
+  with exact per-tier counts in `runtime` independent of pagination. With no
+  traces ingested the payload is byte-for-byte what it was. Candidate order is
+  unchanged.
+- `quick_orient` gains `runtime_calls`, and `get_project_overview` and the
+  `project://index/status` resource gain `runtime_evidence`
+  (`trace_files`, `symbols_with_hits`, `last_ingested_at`) — all only on an
+  index traces were ingested into.
+- Migration 29 (`runtime_evidence`): `runtime_source` (one row per ingested
+  trace file: path, content hash, what it contributed), `runtime_hit`
+  (per-symbol call counts per source, first/last ingest time) and
+  `runtime_edge` (observed pairs per source). Evidence is keyed by source
+  file, so re-ingesting a file (same path, or same content under another
+  path) replaces what it contributed instead of double-counting, an edge only
+  that file supported is retracted, and `remove=True` deletes exactly this
+  origin's edges, hits and provenance. Everything cascades from `symbol`:
+  re-indexing a changed file drops the evidence for its symbols, by design.
+  New empty tables; no re-extract.
+- `ingest_external_graph(remove=True)` no longer takes an edge out of the
+  graph when a trace also observed it: the pair is re-asserted under the
+  runtime origin.
+- `index_project`'s `external_edges_stale.hint` names `ingest_traces` when the
+  run dropped runtime edges.
+
+### Changed
+
+- `resolve_location`'s query moved to `domain/location.py` (shared with the
+  trace resolver). Payload unchanged.
+
 ## [0.37.0] - 2026-11-26
 
 ### Added — spec verification and staleness

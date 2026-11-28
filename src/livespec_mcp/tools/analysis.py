@@ -3304,20 +3304,97 @@ def _attach_external_edges(
     # ingest, believes the graph still carries it, and is now reading a payload
     # that mentions nothing.
     stale = ingest_freshness(st.conn, project_id, summary)
+    # Runtime evidence (ingest_traces) is a second non-livespec origin with its
+    # own provenance and its own way of going stale: a re-extract drops it on
+    # purpose, because the body that was observed is gone.
+    from livespec_mcp.domain.trace_ingest import RUNTIME_ORIGIN, runtime_freshness
+
+    stale.update(runtime_freshness(st.conn, project_id))
     if not summary and not stale:
         return payload
-    block: dict[str, Any] = {
-        "by_origin": summary,
-        "hint": (
+    origins = set(summary) | set(stale)
+    hints: list[str] = []
+    if origins - {RUNTIME_ORIGIN}:
+        hints.append(
             "Part of this answer rests on edges ingested from another "
             "extractor (ingest_external_graph). Re-run it after re-indexing, "
             "or ingest_external_graph(remove=True) for a livespec-only graph."
-        ),
+        )
+    if RUNTIME_ORIGIN in origins:
+        hints.append(
+            "Part of this answer rests on calls observed at runtime "
+            f"(ingest_traces, `{RUNTIME_ORIGIN}`). They describe the runs that "
+            "were traced, and the evidence for a symbol is dropped when its "
+            "file is re-extracted — trace again and re-run ingest_traces, or "
+            "ingest_traces(remove=True) for a static-only graph."
+        )
+    block: dict[str, Any] = {
+        "by_origin": summary,
+        "hint": " ".join(hints),
     }
     if stale:
         block["stale"] = stale
     payload["external_edges"] = block
     return payload
+
+
+def _apply_runtime_tiers(
+    st: AppState, project_id: int, candidates: list[dict[str, Any]]
+) -> dict[str, Any] | None:
+    """Sort dead-code candidates by what ingested traces say. None = no traces.
+
+    Three outcomes per candidate, and they are not symmetric:
+
+    - it has hits, or something defined inside it has -> it ran, so it is not
+      dead. Dropped and counted (`rescued_by_runtime`). A zero-caller symbol
+      that executes is the dynamic-dispatch case the static graph cannot see.
+    - `not_seen`: traces resolved another symbol in the same file, so a traced
+      run reached this file and this symbol did not execute. The strongest
+      removal evidence the tool can offer.
+    - `no_evidence`: no trace touched its file. Says nothing either way.
+
+    Order is left alone: candidates stay sorted by file and line, which the
+    pagination cursor depends on.
+    """
+    from livespec_mcp.domain.trace_ingest import RUNTIME_ORIGIN, runtime_hits
+
+    hits = runtime_hits(st.conn, project_id)
+    if not hits:
+        return None
+    files_reached = {h["file_path"] for h in hits.values()}
+    hit_qnames_by_file: dict[str, list[str]] = {}
+    for h in hits.values():
+        hit_qnames_by_file.setdefault(h["file_path"], []).append(h["qualified_name"])
+
+    kept: list[dict[str, Any]] = []
+    rescued = 0
+    tiers = {"not_seen": 0, "no_evidence": 0}
+    for meta in candidates:
+        if meta["id"] in hits:
+            rescued += 1
+            continue
+        inside = meta["qualified_name"] + "."
+        if any(q.startswith(inside) for q in hit_qnames_by_file.get(meta["file_path"], ())):
+            rescued += 1
+            continue
+        tier = "not_seen" if meta["file_path"] in files_reached else "no_evidence"
+        tiers[tier] += 1
+        kept.append({**meta, "runtime": tier})
+    return {
+        "candidates": kept,
+        "origin": RUNTIME_ORIGIN,
+        "rescued_by_runtime": rescued,
+        "not_seen": tiers["not_seen"],
+        "no_evidence": tiers["no_evidence"],
+        "hint": (
+            "From ingested traces (ingest_traces). rescued_by_runtime: "
+            "candidates that were seen running, removed from this list. "
+            "not_seen: a traced run reached the file and never executed the "
+            "symbol — the strongest removal evidence here. no_evidence: no "
+            "trace touched the file, so the trace says nothing. A trace is "
+            "what the traced runs did, not production."
+        ),
+    }
 
 
 def _attach_unknown_relations(report: dict[str, Any], graph: Any) -> None:
@@ -4022,18 +4099,9 @@ def register(mcp: FastMCP) -> None:
         if line < 1:
             return mcp_error("line must be >= 1", hint="lines are 1-indexed")
 
-        needle = path.strip().lstrip("./")
-        placeholders = ",".join("?" * len(pids))
-        rows = st.conn.execute(
-            f"SELECT s.qualified_name, s.name, s.kind, s.signature, "
-            f"       s.start_line, s.end_line, f.path "
-            f"FROM symbol s JOIN file f ON f.id = s.file_id "
-            f"WHERE f.project_id IN ({placeholders}) "
-            f"  AND (f.path = ? OR f.path LIKE ?) "
-            f"  AND s.start_line <= ? AND s.end_line >= ? "
-            f"ORDER BY (s.end_line - s.start_line) ASC",
-            (*pids, needle, f"%{needle}", line, line),
-        ).fetchall()
+        from livespec_mcp.domain.location import symbols_spanning
+
+        rows = symbols_spanning(st.conn, pids, line, path=path)
 
         if not rows:
             return {
@@ -4314,26 +4382,31 @@ def register(mcp: FastMCP) -> None:
             except (json.JSONDecodeError, TypeError):
                 pass
 
-        return _attach_external_edges(
-            {
-                "qualified_name": sym["qualified_name"],
-                "kind": sym["kind"],
-                "signature": sym["signature"],
-                "file_path": sym["file_path"],
-                "start_line": sym["start_line"],
-                "end_line": sym["end_line"],
-                "docstring_lead": docstring_lead,
-                "is_entry_point": is_entry_point,
-                "framework_decorators": framework_decorators,
-                "callers_count": len(callers_all),
-                "callees_count": len(callees_all),
-                "top_callers": _topn(callers_all),
-                "top_callees": _topn(callees_all),
-                "specs": [dict(r) for r in specs],
-            },
-            st,
-            graph_pid,
-        )
+        oriented: dict[str, Any] = {
+            "qualified_name": sym["qualified_name"],
+            "kind": sym["kind"],
+            "signature": sym["signature"],
+            "file_path": sym["file_path"],
+            "start_line": sym["start_line"],
+            "end_line": sym["end_line"],
+            "docstring_lead": docstring_lead,
+            "is_entry_point": is_entry_point,
+            "framework_decorators": framework_decorators,
+            "callers_count": len(callers_all),
+            "callees_count": len(callees_all),
+            "top_callers": _topn(callers_all),
+            "top_callees": _topn(callees_all),
+            "specs": [dict(r) for r in specs],
+        }
+        # Only on an index traces were ingested into (ingest_traces): how many
+        # times this symbol was seen entered. 0 there is information — the
+        # traced runs never executed it — which is why it is not omitted.
+        from livespec_mcp.domain.trace_ingest import symbol_runtime_calls
+
+        runtime_calls = symbol_runtime_calls(st.conn, st.project_id, sid)
+        if runtime_calls is not None:
+            oriented["runtime_calls"] = runtime_calls
+        return _attach_external_edges(oriented, st, graph_pid)
 
     @mcp.tool(annotations={"readOnlyHint": True, "idempotentHint": True})
     def analyze_impact(
@@ -4656,11 +4729,13 @@ def register(mcp: FastMCP) -> None:
           the ones that outranked the returned top-N are listed by
           qualified name in `test_symbols_filtered`."""
         st = get_state(workspace)
-        return _attach_external_edges(
-            compute_project_overview(st, include_infrastructure, include_structural_patterns),
-            st,
-            st.project_id,
-        )
+        overview = compute_project_overview(st, include_infrastructure, include_structural_patterns)
+        from livespec_mcp.domain.trace_ingest import public_runtime_state
+
+        runtime = public_runtime_state(st.conn, st.project_id)
+        if runtime is not None:
+            overview["runtime_evidence"] = runtime
+        return _attach_external_edges(overview, st, st.project_id)
 
     @mcp.tool(annotations={"readOnlyHint": True, "idempotentHint": True})
     @_workspace_note
@@ -5027,6 +5102,12 @@ def register(mcp: FastMCP) -> None:
             if corroboration.get("isError"):
                 return corroboration
 
+        # Runtime evidence (ingest_traces). Absent on an index nobody ingested
+        # traces into, and then nothing below changes: no key, no reordering.
+        runtime_tiers = _apply_runtime_tiers(st, pid, filtered)
+        if runtime_tiers is not None:
+            filtered = runtime_tiers.pop("candidates")
+
         total = len(filtered)
         # by_kind / by_dir breakdowns (cheap; useful for summary mode)
         by_kind: dict[str, int] = {}
@@ -5047,6 +5128,8 @@ def register(mcp: FastMCP) -> None:
             payload["corroboration"] = corroboration
         elif corroboration_hint:
             payload["corroboration_available"] = corroboration_hint
+        if runtime_tiers is not None:
+            payload["runtime"] = runtime_tiers
         # Ingested edges silence dead candidates through the base query's
         # NOT EXISTS, before any of this code runs. A count that a `graph.json`
         # helped produce must not read as a purely livespec finding.
@@ -5087,6 +5170,7 @@ def register(mcp: FastMCP) -> None:
                 "file_path": m["file_path"],
                 "start_line": m["start_line"],
                 "end_line": m["end_line"],
+                **({"runtime": m["runtime"]} if "runtime" in m else {}),
             }
             for m in page
         ]

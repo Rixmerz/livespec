@@ -845,6 +845,72 @@ def _m028_symbol_ref_receiver(conn: sqlite3.Connection) -> None:
 
 
 # Ordered registry. Append-only — never reuse a version number.
+def _m029_runtime_evidence(conn: sqlite3.Connection) -> None:
+    """Unreleased: runtime evidence from FlowTrace traces (`ingest_traces`).
+
+    Three tables, because a trace says two things `symbol_edge` cannot hold and
+    both have to come back out exactly:
+
+    - `runtime_source` — one row per ingested trace FILE (not per ingest):
+      path, content hash and what it contributed. `external_ingest` (migration
+      23) was not reused: it is one row per (project, origin) with one path,
+      and runtime evidence is the sum of several files — two test runs, one
+      file per process of a distributed trace. Keying evidence by source is
+      also what makes a re-ingest replace instead of double-count.
+    - `runtime_hit` — how many times each symbol was entered, per source. This
+      is what lets `find_dead_code` tell "no static caller but it runs" from
+      "the run reached this file and never executed it".
+    - `runtime_edge` — observed caller -> callee pairs, per source. The row in
+      `symbol_edge` (origin `runtime:flowtrace`) is derived from these, so an
+      edge is retracted exactly when the last trace supporting it is replaced
+      or removed, and never while another still does.
+
+    Everything cascades from `symbol`: a re-extracted file takes its evidence
+    with it, which is right — the body that was observed is gone. New empty
+    tables, nothing to backfill, no re-extract.
+    """
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS runtime_source (
+            id INTEGER PRIMARY KEY,
+            project_id INTEGER NOT NULL REFERENCES project(id) ON DELETE CASCADE,
+            origin TEXT NOT NULL,
+            path TEXT NOT NULL,
+            content_hash TEXT,
+            size INTEGER,
+            mtime REAL,
+            events INTEGER NOT NULL,
+            resolved_events INTEGER NOT NULL,
+            symbols_hit INTEGER NOT NULL,
+            edges_observed INTEGER NOT NULL,
+            ingested_at REAL NOT NULL,
+            UNIQUE(project_id, origin, path)
+        )"""
+    )
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS runtime_hit (
+            symbol_id INTEGER NOT NULL REFERENCES symbol(id) ON DELETE CASCADE,
+            source_id INTEGER NOT NULL REFERENCES runtime_source(id) ON DELETE CASCADE,
+            origin TEXT NOT NULL,
+            calls INTEGER NOT NULL,
+            first_ingested_at REAL NOT NULL,
+            last_ingested_at REAL NOT NULL,
+            PRIMARY KEY (symbol_id, source_id)
+        )"""
+    )
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_runtime_hit_source ON runtime_hit(source_id)")
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS runtime_edge (
+            src_symbol_id INTEGER NOT NULL REFERENCES symbol(id) ON DELETE CASCADE,
+            dst_symbol_id INTEGER NOT NULL REFERENCES symbol(id) ON DELETE CASCADE,
+            source_id INTEGER NOT NULL REFERENCES runtime_source(id) ON DELETE CASCADE,
+            calls INTEGER NOT NULL,
+            PRIMARY KEY (src_symbol_id, dst_symbol_id, source_id)
+        )"""
+    )
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_runtime_edge_source ON runtime_edge(source_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_runtime_edge_dst ON runtime_edge(dst_symbol_id)")
+
+
 MIGRATIONS: list[Migration] = [
     (1, "drop_dead_tables", _m001_drop_dead_tables),
     (2, "drop_dead_columns", _m002_drop_dead_columns),
@@ -874,6 +940,7 @@ MIGRATIONS: list[Migration] = [
     (26, "track_spec_tier", _m026_track_spec_tier),
     (27, "schema_symbols", _m027_schema_symbols),
     (28, "symbol_ref_receiver", _m028_symbol_ref_receiver),
+    (29, "runtime_evidence", _m029_runtime_evidence),
 ]
 
 

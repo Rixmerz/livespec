@@ -51,7 +51,7 @@ def compute_index_status(st: AppState) -> dict[str, Any]:
     specs = st.conn.execute("SELECT COUNT(*) c FROM spec WHERE project_id=?", (pid,)).fetchone()[
         "c"
     ]
-    return {
+    status: dict[str, Any] = {
         "workspace": str(st.settings.workspace),
         "project_id": pid,
         "files": int(files),
@@ -60,6 +60,13 @@ def compute_index_status(st: AppState) -> dict[str, Any]:
         "specs": int(specs),
         "last_run": dict(last) if last else None,
     }
+    # Only when traces were ingested, so the shape is unchanged otherwise.
+    from livespec_mcp.domain.trace_ingest import public_runtime_state
+
+    runtime = public_runtime_state(st.conn, pid)
+    if runtime is not None:
+        status["runtime_evidence"] = runtime
+    return status
 
 
 def run_index_pipeline(st: AppState, *, force: bool = False) -> dict[str, Any]:
@@ -235,19 +242,32 @@ def _attach_external_edge_staleness(
     if not (result.get("files_changed") or result.get("files_deleted")):
         return
     after = _external_edge_counts(st)
+    from livespec_mcp.domain.trace_ingest import RUNTIME_ORIGIN
+
     total_before = sum(before.values())
     total_after = sum(after.values())
+    hint = (
+        f"This run changed files. {total_before - total_after} of "
+        f"{total_before} ingested edges went with the symbols that were "
+        f"re-extracted; {total_after} survive and may no longer match the "
+        "code."
+    )
+    if set(before) - {RUNTIME_ORIGIN}:
+        hint += (
+            " Regenerate the external graph and re-run "
+            "ingest_external_graph, or ingest_external_graph(remove=True)."
+        )
+    if RUNTIME_ORIGIN in before:
+        hint += (
+            f" `{RUNTIME_ORIGIN}` edges and hits are dropped with a "
+            "re-extracted symbol on purpose (the body that ran is gone): run "
+            "the traced program again and re-run ingest_traces."
+        )
     result["external_edges_stale"] = {
         "by_origin": before,
         "surviving_by_origin": after,
         "dropped_by_reextract": total_before - total_after,
-        "hint": (
-            f"This run changed files. {total_before - total_after} of "
-            f"{total_before} ingested edges went with the symbols that were "
-            f"re-extracted; {total_after} survive and may no longer match the "
-            "code. Regenerate the external graph and re-run "
-            "ingest_external_graph, or ingest_external_graph(remove=True)."
-        ),
+        "hint": hint,
     }
 
 
@@ -497,6 +517,11 @@ def _run_external_ingest(
             relations=frozenset(relations) if relations else DEFAULT_RELATIONS,
             edges_written=plan.edge_count,
         )
+        # The DELETE above removed every row this origin owned, including a
+        # pair a trace also observed and the new graph no longer reports.
+        from livespec_mcp.domain.trace_ingest import restore_runtime_edges
+
+        restore_runtime_edges(st.conn, pids)
         st.conn.commit()
     for project in pids:
         invalidate_graph_cache(project)
@@ -507,6 +532,152 @@ def _run_external_ingest(
         "who_calls / analyze_impact / find_dead_code, labelled "
         f"`{EXTERNAL_ORIGIN}`. Re-run after any index_project that changed "
         "files; remove=True takes them back out."
+    )
+    return payload
+
+
+def _run_trace_ingest(st: AppState, *, paths: list[Any], dry_run: bool) -> dict[str, Any]:
+    """Plan (and optionally apply) a FlowTrace ingest. One write path."""
+    from livespec_mcp.domain.graph import invalidate_graph_cache
+    from livespec_mcp.domain.trace_ingest import (
+        RUNTIME_ORIGIN,
+        SymbolResolver,
+        apply_plan,
+        classify_edges,
+        read_traces,
+        sample_new_edges,
+    )
+    from livespec_mcp.tools._errors import mcp_error
+
+    pid = st.project_id
+    pids = st.group_project_ids()
+    placeholders = ",".join("?" for _ in pids)
+    plan = read_traces(paths, SymbolResolver(st.conn, pids, st.settings.workspace))
+
+    if plan.enter_events == 0:
+        return mcp_error(
+            "No FlowTrace `enter` events in the trace.",
+            hint=(
+                f"Read {plan.events_read} event(s) and {plan.malformed_lines} "
+                "malformed line(s). Expected FlowTrace schema v2 JSONL: one "
+                'object per line with "event": "enter", trace_id and span_id.'
+            ),
+        )
+    if not plan.hits:
+        reasons = ", ".join(f"{k}={v}" for k, v in sorted(plan.unresolved.items()))
+        return mcp_error(
+            f"None of the {plan.enter_events} enter events resolved to an indexed symbol.",
+            hint=(
+                f"Unresolved by reason: {reasons}. {plan.with_location} event(s) "
+                "carried a `file`. `file` / `line` are emitted by FlowTrace "
+                "releases whose schema v2 includes them — with an older capture "
+                "layer only the name fallback runs, and it needs a method + "
+                "class that is unique in its module (overloads and same-named "
+                "functions are skipped, never guessed). Also check that the "
+                "trace is of THIS workspace and that index_project has run."
+            ),
+        )
+
+    # Rows this origin owns are excluded from "already known", exactly as the
+    # external ingest does: a second dry run of the same file must report the
+    # same new edges as the first, not a no-op.
+    known = {
+        (int(r["src_symbol_id"]), int(r["dst_symbol_id"]))
+        for r in st.conn.execute(
+            f"""SELECT e.src_symbol_id, e.dst_symbol_id
+               FROM symbol_edge e
+               JOIN symbol s ON s.id = e.src_symbol_id
+               JOIN file f ON f.id = s.file_id
+               WHERE f.project_id IN ({placeholders})
+                 AND e.edge_type = 'calls' AND e.origin <> ?""",
+            (*pids, RUNTIME_ORIGIN),
+        )
+    }
+    classify_edges(plan, known)
+
+    # Names only for the edges the sample will show (the most-travelled ones).
+    top = sorted(plan.new_edges, key=lambda pair: (-plan.edges[pair], pair))[:20]
+    sample_ids = {i for pair in top for i in pair}
+    sym_meta: dict[int, dict[str, Any]] = {}
+    if sample_ids:
+        ids = sorted(sample_ids)
+        sym_meta = {
+            int(r["id"]): dict(r)
+            for r in st.conn.execute(
+                f"SELECT id, qualified_name FROM symbol WHERE id IN ({','.join('?' * len(ids))})",
+                tuple(ids),
+            )
+        }
+
+    sources = [
+        {
+            "path": src.path,
+            "enter_events": src.enter_events,
+            "resolved_events": src.resolved_events,
+            "malformed_lines": src.malformed_lines,
+        }
+        for src in plan.sources[:20]
+    ]
+    payload: dict[str, Any] = {
+        "origin": RUNTIME_ORIGIN,
+        "dry_run": dry_run,
+        "trace_files": len(plan.sources),
+        "sources": sources,
+        "events_read": plan.events_read,
+        "enter_events": plan.enter_events,
+        "malformed_lines": plan.malformed_lines,
+        "traces": plan.traces,
+        "langs": dict(sorted(plan.langs.items())),
+        "events_with_location": plan.with_location,
+        "resolved_events": plan.resolved_events,
+        "resolved_by": dict(sorted(plan.resolved_by.items())),
+        "unresolved_events": sum(plan.unresolved.values()),
+        "unresolved": dict(sorted(plan.unresolved.items())),
+        "unresolved_samples": {k: v for k, v in sorted(plan.unresolved_samples.items())},
+        "symbols_hit": len(plan.hits),
+        "edges_observed": len(plan.edges),
+        "edges_to_add": len(plan.new_edges),
+        "already_known": plan.confirmed_edges,
+        "skipped": dict(sorted(plan.edges_skipped.items())),
+        "sample": sample_new_edges(plan, sym_meta),
+    }
+    if len(plan.sources) > len(sources):
+        payload["sources_truncated"] = len(plan.sources) - len(sources)
+
+    if dry_run:
+        payload["next"] = (
+            "ingest_traces(trace_path=…, dry_run=False) to apply. "
+            "`edges_to_add` are calls the static graph lacks; `already_known` "
+            "are calls it had and the trace confirms."
+        )
+        return payload
+
+    # Under the lock `index_project` takes, for the reason the external ingest
+    # gives: a re-extract between the DELETE and the INSERT cascades symbols
+    # away and the INSERT fails on a foreign key.
+    # One transaction: the connection is in autocommit mode, and an ingest that
+    # stopped halfway would leave hits without the edges they came with.
+    import sqlite3
+
+    from livespec_mcp.storage.db import transaction
+
+    try:
+        with st.lock(), transaction(st.conn):
+            written = apply_plan(st.conn, pid, pids, plan)
+    except sqlite3.IntegrityError:
+        return mcp_error(
+            "The index changed while the trace was being read; nothing was written.",
+            hint="A re-index replaced symbols this ingest resolved to. Run ingest_traces again.",
+        )
+    for project in pids:
+        invalidate_graph_cache(project)
+    payload.update(written)
+    payload["hint"] = (
+        "Observed calls are now part of the call graph, labelled "
+        f"`{RUNTIME_ORIGIN}` (`via_external_edge` in who_calls), and "
+        "find_dead_code reports a `runtime` tier per candidate. Evidence for a "
+        "symbol is dropped when its file is re-extracted; remove=True takes "
+        "everything back out."
     )
     return payload
 
@@ -657,6 +828,12 @@ def register(mcp: FastMCP) -> None:
             with st.lock():
                 removed = _delete_external_edges(st, group, EXTERNAL_ORIGIN)
                 clear_ingest(st.conn, pid, EXTERNAL_ORIGIN)
+                # A pair both a graph and a trace reported is one row, owned by
+                # whichever arrived first. If that was the graph, the call that
+                # was observed at runtime must not leave with it.
+                from livespec_mcp.domain.trace_ingest import restore_runtime_edges
+
+                restore_runtime_edges(st.conn, group)
                 st.conn.commit()
             for project in group:
                 invalidate_graph_cache(project)
@@ -709,6 +886,98 @@ def register(mcp: FastMCP) -> None:
         )
 
     ingest_external_graph.__doc__ = (ingest_external_graph.__doc__ or "") + WORKSPACE_DOCSTRING_NOTE
+
+    @mcp.tool(
+        annotations={
+            "readOnlyHint": False,
+            "idempotentHint": True,
+            "destructiveHint": False,
+        }
+    )
+    def ingest_traces(
+        trace_path: str | list[str] | None = None,
+        dry_run: bool = True,
+        remove: bool = False,
+        workspace: Workspace | None = None,
+    ) -> dict[str, Any]:
+        """Add what actually ran (a FlowTrace trace) to this index's call graph.
+
+        Reads FlowTrace schema v2 JSONL — one file, a list of files (one per
+        process of a distributed trace), or a directory of `*.jsonl` — and
+        resolves each `enter` event to a symbol livespec already indexed. Two
+        things come out of it that no static pass can produce:
+
+        - **Calls through dynamic dispatch.** `getattr(obj, name)()`, a
+          registry of callables, DI, reflection: the caller -> callee pairs the
+          trace observed are written to `symbol_edge` as `calls` edges tagged
+          `origin='runtime:flowtrace'`, so `who_calls` / `who_does_this_call` /
+          `analyze_impact` see them (marked `via_external_edge`).
+          `edges_to_add` counts the ones the static graph lacks;
+          `already_known` the ones it had and the trace confirms.
+        - **Per-symbol hit counts**, which give `find_dead_code` its `runtime`
+          tiers: a candidate that ran is dropped (`rescued_by_runtime`), one
+          whose file was reached while it never executed is `not_seen` (the
+          strongest removal evidence), one in a file no trace touched is
+          `no_evidence`.
+
+        What to know before running it:
+
+        - **No symbol is ever created, and nothing is guessed.** An event
+          resolves by `file` + `line` when the trace carries them (the method
+          name must still agree with the symbol there), otherwise by method +
+          class + module, and only when that names exactly one symbol.
+          Everything else is counted under `unresolved` by reason, with
+          samples.
+        - **`dry_run=True` is the default.** It reports the plan and a sample
+          of the new edges and writes nothing.
+        - **Idempotent per trace file.** Ingesting a file again (same path, or
+          the same content elsewhere) replaces what it contributed: hits are
+          not double-counted, and an edge only that file supported is
+          retracted. Different files accumulate. `remove=True` deletes exactly
+          this origin's edges, hits and provenance; an edge livespec's own
+          resolver derives is never touched.
+        - **Evidence follows the code.** Re-indexing a changed file drops the
+          evidence for its symbols — the body that ran is gone. Trace again
+          and re-ingest. A trace is evidence of what one run did: `not_seen`
+          means that run, not production.
+        """
+        from livespec_mcp.domain.graph import invalidate_graph_cache
+        from livespec_mcp.domain.trace_ingest import (
+            RUNTIME_ORIGIN,
+            expand_trace_paths,
+            remove_runtime,
+        )
+        from livespec_mcp.tools._errors import mcp_error
+
+        st = get_state(workspace)
+
+        if remove:
+            group = st.group_project_ids()
+            from livespec_mcp.storage.db import transaction
+
+            with st.lock(), transaction(st.conn):
+                gone = remove_runtime(st.conn, group)
+            for project in group:
+                invalidate_graph_cache(project)
+            return {
+                "removed": gone["edges"],
+                "hits_removed": gone["symbols_with_hits"],
+                "trace_files_removed": gone["sources"],
+                "origin": RUNTIME_ORIGIN,
+                "hint": (
+                    "Runtime evidence is gone: the call graph and "
+                    "find_dead_code are static-only again. Edges from any "
+                    "other origin were never touched — the delete is scoped "
+                    "to rows carrying this origin."
+                ),
+            }
+
+        paths, problem = expand_trace_paths(st.settings.workspace, trace_path)
+        if problem is not None:
+            return mcp_error(problem.message, hint=problem.hint)
+        return _run_trace_ingest(st, paths=paths, dry_run=dry_run)
+
+    ingest_traces.__doc__ = (ingest_traces.__doc__ or "") + WORKSPACE_DOCSTRING_NOTE
 
     # Append the shared workspace note as a real docstring. A bare f-string as
     # the first statement is an expression, not a docstring, so __doc__ would be

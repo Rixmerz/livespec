@@ -80,6 +80,7 @@ client cached the short tool list.
 | Freeze accepted duplication | `debt_baseline_capture()` / `debt_baseline_status()` | Old copies stay quiet; a NEW copy still reports |
 | Annotations the extractor cannot see | `scan_annotation_verbs()` | `@spec:` above a bare route registration that owns no symbol |
 | Borrow a second extractor's edges | `ingest_external_graph(graph_path?, dry_run=True)` | See §7.1; `remove=True` undoes it exactly |
+| Add what actually ran (FlowTrace trace) | `ingest_traces(trace_path, dry_run=True)` | Before trusting dead-code candidates, or when `who_calls` is empty for something used via dynamic dispatch / DI / reflection; see §7.2. Never instead of `index_project` |
 | Do the schemas of one entity agree? | `schema_drift(entity?)` | Field by field across every `@schema: <entity>` declaration (group-wide with `group_db`); see §5.9 |
 | What breaks if I change this field? | `schema_impact(entity, change, field)` | Call BEFORE adding / removing / renaming / retyping a shared field: each declaration's action + readers across repos; see §5.9 |
 | Make that field change in every repo | `plan_schema_change(entity, change, field)` | AFTER `schema_impact`: exact line edits per declaration across repos; plan first, `apply=True` only once the person agreed; see §5.9 |
@@ -451,6 +452,42 @@ What to hold on to when you read the results:
 - **Still not traffic.** Two static extractors agreeing is two static
   extractors agreeing.
 
+### 7.2 Runtime evidence (FlowTrace traces)
+
+`getattr(obj, name)()`, a registry of callables, DI, reflection: no static
+extractor produces that edge, so the callee reads as called by nobody.
+`ingest_traces(trace_path=...)` reads a FlowTrace schema v2 trace
+(`flowtrace.jsonl`; one file, a list — one per process of a distributed trace —
+or a directory) and adds what the run observed.
+
+Call it:
+
+- **before trusting `find_dead_code` candidates**, when a trace exists or can
+  be produced;
+- **when `who_calls` returns nothing for something obviously used** through
+  dynamic dispatch / DI / reflection;
+- **never as a substitute for `index_project`** — events resolve only to
+  symbols already indexed, and re-indexing a changed file drops the evidence
+  for its symbols (reported under `external_edges.stale`); trace again and
+  re-ingest.
+
+Reading the results:
+
+- `dry_run=True` is the default. `edges_to_add` = calls the static graph
+  lacks; `already_known` = calls the trace confirms; `unresolved` = events it
+  refused to place, by reason. It resolves by `file` + `line` when the trace
+  has them, otherwise by a method + class + module that names exactly one
+  symbol — never a guess between two.
+- Observed callers carry `via_external_edge: "runtime:flowtrace"`.
+- `find_dead_code` then reports `runtime.rescued_by_runtime` (candidates that
+  ran — removed from the list) and tags every remaining row: `runtime:
+  "not_seen"` (a traced run reached the file and never executed the symbol —
+  the strongest removal evidence) or `"no_evidence"` (no trace touched the
+  file — says nothing). With no traces ingested the payload is unchanged.
+- Idempotent per trace file (re-ingesting replaces, never double-counts);
+  `ingest_traces(remove=True)` deletes exactly its own edges and hits.
+- **A trace is the runs that were traced, not production.**
+
 ---
 
 ## 8. Anti-patterns
@@ -468,6 +505,7 @@ What to hold on to when you read the results:
 | Trust counts on a repo whose index reported `languages_failed` / `parser_errors` / `warning` | Those files were never parsed — follow `parser_errors[].hint` (CA bundle env var, or `livespec grammars`), re-index |
 | Report a `who_calls` count while ignoring `excluded_by_edge_type` | Say what was excluded, or widen `edge_types` |
 | Run `ingest_external_graph(dry_run=False)` on someone's index unannounced | Show the dry run first; `remove=True` undoes it |
+| Run `ingest_traces` instead of indexing, or read `runtime: "no_evidence"` as "safe to delete" | `index_project` first; `no_evidence` means no trace reached that file — only `not_seen` is removal evidence |
 
 ---
 
