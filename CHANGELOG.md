@@ -6,6 +6,33 @@ follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed — Java members the source never spells out
+
+- **Records are classes with accessors.** `record Car(String make, int year)` is
+  a `class` symbol and each component gets a method symbol (`Car.year`, on the
+  component's line, `public`) unless the body declares one. A record's own
+  methods used to hang off the file, and calls made in it had no caller.
+  `Car::year` and `car.year()` now resolve.
+- **Lombok accessors.** `@Getter` / `@Setter` / `@Data` / `@Value` on a class or
+  `@Getter` / `@Setter` on a field (file imports `lombok`) yield `getX` / `isX`
+  (primitive `boolean`) / `setX` at the field's line: no setter for a final field
+  or under `@Value`, none for a name the class declares, `AccessLevel.NONE` and
+  static fields skipped. `@ToString` / `equals` / `hashCode` / `@Builder` are NOT
+  modelled. Generated members carry `livespec:generated:<record|lombok>` in
+  `decorators` (no migration); `find_dead_code` skips them unless
+  `include_infrastructure=true`, and a call on another object
+  (`model.getList()`) is never drawn to the caller's own generated getter by the
+  same-file/lexical preference.
+- **`this::m`, `this.m()` and a bare `m()` in a constructor or initializer** (the
+  source symbol is the class) resolve on the enclosing class, then its indexed
+  ancestors (`domain/hierarchy.py`), then the class it is nested in (1.0 own,
+  0.9 inherited), before any name fallback. Java `m()` / `this.m()` now carry
+  receiver `self`, so they reach methods only.
+- **`src/main/java/<pkg>` and `src/test/java/<pkg>` are one package.** Same-package
+  type resolution compares the `package` declaration inside one build module
+  (not the directory) and prefers the definition under the caller's own source
+  root when both exist.
+
 ### Fixed — `super()`, overrides, same-name symbols, barrels (resolver and extractors)
 
 - **`super().m()` / `super(Cls, self).m()` / `super.m()` / `super(...)`** (Python,

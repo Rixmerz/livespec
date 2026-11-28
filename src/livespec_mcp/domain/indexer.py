@@ -12,6 +12,7 @@ unchanged files are always preserved."""
 from __future__ import annotations
 
 import os
+import re
 import sqlite3
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -23,6 +24,7 @@ from pathspec import GitIgnoreSpec
 
 from livespec_mcp.config import RepoConfig, Settings, load_repo_config
 from livespec_mcp.domain.extractors import (
+    JAVA_GENERATED_MARK,
     RECEIVER_MODULE,
     RECEIVER_OBJECT,
     RECEIVER_SELF,
@@ -943,6 +945,73 @@ def _collapse_same_qname(
     return [t for t in targets if t[0] in keep]
 
 
+_JAVA_PACKAGE_RE = re.compile(r"^\s*package\s+([\w.]+)\s*;", re.MULTILINE)
+_JAVA_SRC_SET_RE = re.compile(r"^(.*?)/?src/[^/]+/")
+
+
+def _java_package_of(source: str | None) -> str | None:
+    """The `package a.b;` a Java source declares ('' for the default package),
+    None when the source could not be read."""
+    if source is None:
+        return None
+    m = _JAVA_PACKAGE_RE.search(source)
+    return m.group(1) if m else ""
+
+
+def _java_root(path: str, package: str) -> str:
+    """The source root of a file: its directory less the package's own."""
+    directory = path.rpartition("/")[0]
+    tail = package.replace(".", "/")
+    if tail and (directory == tail or directory.endswith(f"/{tail}")):
+        return directory[: len(directory) - len(tail)].rstrip("/")
+    return directory
+
+
+def _java_module_of(root: str) -> str:
+    """The build module a source root belongs to: what precedes `src/<set>/`
+    (`mod/src/main/java` and `mod/src/test/java` are one module)."""
+    m = _JAVA_SRC_SET_RE.match(f"{root}/")
+    return m.group(1) if m else root
+
+
+def _java_same_package(
+    candidates: list[tuple[int, str, int]],
+    src_file_id: int,
+    file_paths: dict[int, str],
+    java_package: Callable[[int], str | None] | None,
+) -> list[tuple[int, str, int]]:
+    """Candidates visible without an import from the caller's file.
+
+    Same package means the same `package` declaration within one build module,
+    so `src/main/java/p` and `src/test/java/p` are ONE package (a test sees the
+    class it tests, and the test's helpers). When both roots define the name
+    the caller's own root wins. Where a declaration cannot be read it falls
+    back to the directory."""
+    src_path = file_paths.get(src_file_id, "")
+    src_pkg = java_package(src_file_id) if java_package is not None else None
+    if src_pkg is None:
+        src_dir = src_path.rpartition("/")[0]
+        return [c for c in candidates if file_paths.get(c[2], "").rpartition("/")[0] == src_dir]
+    src_root = _java_root(src_path, src_pkg)
+    src_module = _java_module_of(src_root)
+    package: list[tuple[int, str, int]] = []
+    own_root: list[tuple[int, str, int]] = []
+    for c in candidates:
+        path = file_paths.get(c[2], "")
+        pkg = java_package(c[2]) if java_package is not None else None
+        if pkg is None:
+            same = path.rpartition("/")[0] == src_path.rpartition("/")[0]
+            root = None
+        else:
+            root = _java_root(path, pkg)
+            same = pkg == src_pkg and _java_module_of(root) == src_module
+        if same:
+            package.append(c)
+            if root == src_root:
+                own_root.append(c)
+    return own_root or package
+
+
 def _resolve_type_ref(
     *,
     candidates: list[tuple[int, str, int]],
@@ -957,6 +1026,7 @@ def _resolve_type_ref(
     allow_enclosing: bool = False,
     ts_modules: TsModules | None = None,
     ts_candidates: Callable[[str], list[tuple[int, str, int]]] | None = None,
+    java_package: Callable[[int], str | None] | None = None,
 ) -> tuple[list[tuple[int, str, int]], float]:
     """Targets and weight for one `inherit` / `type` ref. `candidates` are
     already the same-language, type-like symbols carrying the name.
@@ -1044,8 +1114,7 @@ def _resolve_type_ref(
         ambient = [c for c in candidates if file_paths.get(c[2], "").endswith(".d.ts")]
         return ambient, 1.0 if len(ambient) == 1 else 0.5
     if family == "java":
-        src_dir = file_paths.get(src_file_id, "").rpartition("/")[0]
-        package = [c for c in candidates if file_paths.get(c[2], "").rpartition("/")[0] == src_dir]
+        package = _java_same_package(candidates, src_file_id, file_paths, java_package)
         if package:
             return package, 1.0 if len(package) == 1 else 0.7
         if len(candidates) == 1:
@@ -1159,6 +1228,10 @@ def _resolve_refs(
     # `join`), and a call on an object can only reach a method.
     family_of: dict[int, str] = {}
     methods: set[int] = set()
+    # Methods the Java source never declares (record accessors, Lombok): a
+    # call on ANOTHER object (`model.getList()`) is not drawn to one just
+    # because the caller's own class has the same generated getter.
+    generated: set[int] = set()
     # Python class qname -> whether it declares a base (`class A(B)`).
     class_bases: dict[str, bool] = {}
     # What an `inherit` / `type` ref may resolve to, and where each file lives
@@ -1174,7 +1247,7 @@ def _resolve_refs(
 
     for r in conn.execute(
         """SELECT s.id, s.name, s.qualified_name, s.file_id, s.kind, s.signature, f.language,
-                  f.path, s.start_line, s.end_line
+                  f.path, s.start_line, s.end_line, s.decorators
            FROM symbol s JOIN file f ON f.id=s.file_id WHERE f.project_id=?""",
         (project_id,),
     ):
@@ -1187,6 +1260,8 @@ def _resolve_refs(
             type_like.add(sid)
         if r["kind"] == "method":
             methods.add(sid)
+            if r["decorators"] and JAVA_GENERATED_MARK in r["decorators"]:
+                generated.add(sid)
         elif r["kind"] == "class" and r["language"] == "python":
             class_bases[r["qualified_name"]] = _declares_base(r["signature"])
 
@@ -1217,6 +1292,14 @@ def _resolve_refs(
         )
     }
     ts_modules = TsModules(ts_files, _source_reader(conn, project_id, ts_files))
+
+    java_source = _source_reader(conn, project_id, file_paths)
+    java_packages: dict[int, str | None] = {}
+
+    def java_package(file_id: int) -> str | None:
+        if file_id not in java_packages:
+            java_packages[file_id] = _java_package_of(java_source(file_id))
+        return java_packages[file_id]
 
     def ts_type_candidates(name: str) -> list[tuple[int, str, int]]:
         return [
@@ -1303,6 +1386,7 @@ def _resolve_refs(
                 py_modules=py_modules,
                 ts_modules=ts_modules,
                 ts_candidates=ts_type_candidates,
+                java_package=java_package,
             )
             for tid, _qname, _fid in collapse(targets, int(u["line"] or 0), src_id):
                 type_key = (src_id, tid, edge_type)
@@ -1340,6 +1424,22 @@ def _resolve_refs(
             if found is not None:
                 emit_call(src_id_, found, 1.0)
             continue
+        if receiver == RECEIVER_SELF and src_family == "java" and span_of[src_id_][2] == "class":
+            # `this::m`, `m()` or `this.m()` in a constructor or initializer
+            # (the caller is the class): the method of the enclosing class or
+            # its nearest indexed ancestor, then of the class it is nested in.
+            hier = get_hierarchy()
+            name = str(u["target_name"])
+            cur = hier.owner_class(src_id_)
+            while cur is not None:
+                own = hier.own_method(cur, name)
+                inherited = None if own is not None else hier.find_in_bases(cur, name)
+                if own is not None or inherited is not None:
+                    emit_call(src_id_, own if own is not None else inherited, 1.0 if own else 0.9)
+                    break
+                cur = hier.enclosing_class(cur)
+            if cur is not None:
+                continue
         if receiver in (RECEIVER_OBJECT, RECEIVER_TYPE) and u["receiver_class"]:
             # `c = Child(); c.f()`: the receiver is evidently a `Child`, so the
             # call reaches the most-derived definition on Child's own MRO. A
@@ -1363,6 +1463,7 @@ def _resolve_refs(
                 target_name=rname,
                 py_modules=py_modules,
                 allow_enclosing=True,
+                java_package=java_package,
             )
             if len(hits) == 1:
                 hier = get_hierarchy()
@@ -1477,12 +1578,17 @@ def _resolve_refs(
         # the nearest ENCLOSING definition. Walk the caller's scope chain from
         # innermost outward and take the first scope that defines a candidate.
         lexical: list[tuple[int, str, int]] = []
+        # Where a Java call's receiver is unknown, only declared methods may
+        # win by proximity (lexical scope, same file); see `generated`.
+        near = candidates
+        if generated and src_family == "java" and receiver is None:
+            near = [c for c in candidates if c[0] not in generated] or candidates
         if not scoped and len(candidates) > 1:
             parts = str(u["src_qname"]).split(".")
             # Innermost first: the caller's own scope, then each parent. A
             # candidate defined *inside* the caller wins over a sibling's.
             by_scope: dict[str, list[tuple[int, str, int]]] = {}
-            for cand in candidates:
+            for cand in near:
                 owner = cand[1].rsplit(".", 1)[0] if "." in cand[1] else ""
                 by_scope.setdefault(owner, []).append(cand)
             for depth in range(len(parts), 0, -1):
@@ -1501,7 +1607,7 @@ def _resolve_refs(
         same_file: list[tuple[int, str, int]] = []
         if not scoped and not lexical and len(candidates) > 1:
             src_file_id = int(u["src_file_id"])
-            same_file = [c for c in candidates if c[2] == src_file_id]
+            same_file = [c for c in near if c[2] == src_file_id]
             if same_file:
                 candidates = same_file
 

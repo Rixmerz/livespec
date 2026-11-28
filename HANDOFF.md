@@ -46,6 +46,18 @@ Todo el stack es local-first: 0 servicios externos, 0 API keys obligatorias, 0 D
 
 ### Unreleased — evidencia de ejecución, aristas de herencia/tipo, acceso a datos, clones
 
+**Rama `fix/java-implicit-members` (local, sobre `5f5567b`): miembros Java implícitos.**
+Records = símbolo `class` + un método accesor por componente; Lombok (`@Getter`/
+`@Setter`/`@Data`/`@Value`, clase o campo) genera `getX`/`isX`/`setX` en la línea del
+campo, marcados `livespec:generated:*` en `decorators` (sin migración; `find_dead_code`
+los omite salvo `include_infrastructure`); `this::m`, `this.m()` y `m()` en constructor
+o inicializador resuelven por la jerarquía (clase, ancestros, clase contenedora);
+`src/main/java` y `src/test/java` son un solo paquete (se compara la declaración
+`package` dentro del módulo, gana la raíz del llamador). `@ToString`/`equals`/`@Builder`
+no se modelan. java-design-patterns: muestra de 40 referencias 29 aciertos / 3 destino
+erróneo / 8 sin arista -> 39 / 0 / 1; `calls` 102 336 -> 119 586 (+17 k, casi todo
+abanico 0.5 hacia accesores generados). Suite: **1527 passed**.
+
 **Rama `fix/super-overrides-barrels` (local, sin integrar).** Resolver/extractores:
 `super()` resuelve al método de la base más cercana (DFS izquierda-derecha);
 `analyze_impact`/`quick_orient` informan overrides (`overriding_methods`,

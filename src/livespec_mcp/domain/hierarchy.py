@@ -128,6 +128,11 @@ class Hierarchy:
             cur = self._parent.get(cur)
         return None
 
+    def enclosing_class(self, class_id: int) -> int | None:
+        """The class a nested class is declared in (None for a top-level one)."""
+        parent = self._parent.get(class_id)
+        return self.owner_class(parent) if parent is not None else None
+
     def method_owner(self, method_id: int) -> int | None:
         parent = self._parent.get(method_id)
         return parent if parent in self._class_ids else None

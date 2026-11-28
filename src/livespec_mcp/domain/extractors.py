@@ -1888,6 +1888,7 @@ _DEF_NODE_TYPES = {
     # class and interface above (kind "class", as Rust's `enum_item`).
     "enum_declaration",
     "annotation_type_declaration",
+    "record_declaration",
     # Rust
     "function_item",  # plain Rust functions
     "impl_item",  # walked specially to qualify methods as Type::method
@@ -2103,6 +2104,177 @@ _JAVA_MAPPING_VERB = {
     "Patch": "PATCH",
     "Delete": "DELETE",
 }
+
+
+#: Marks a symbol the source never declares (a record component's accessor, a
+#: Lombok getter/setter). Stored in `decorators`, so no migration is needed;
+#: `find_dead_code` reads it, since such a member is reached by name, by
+#: reflection or by a framework, never by a call it could be missing.
+JAVA_GENERATED_MARK = "livespec:generated"
+
+_LOMBOK_ACCESS_RE = _re_rs.compile(r"AccessLevel\.(\w+)")
+
+
+def _java_declared_methods(body) -> set[str]:
+    """Names of the methods a class/record/enum body declares itself."""
+    names: set[str] = set()
+    if body is None:
+        return names
+    members = list(body.children)
+    for c in body.children:
+        if c.type == "enum_body_declarations":
+            members.extend(c.children)
+    for m in members:
+        if m.type == "method_declaration":
+            n = m.child_by_field_name("name")
+            if n is not None:
+                names.add(n.text.decode("utf-8", errors="replace"))
+    return names
+
+
+def _java_lombok_annotations(node, src_bytes: bytes) -> dict[str, str | None]:
+    """Lombok annotations on a declaration: simple name -> the access level its
+    arguments name (`public`, `protected`, `private`, `none`; None = default)."""
+    found: dict[str, str | None] = {}
+    for c in node.children:
+        if c.type != "modifiers":
+            continue
+        for m in c.children:
+            if m.type not in ("annotation", "marker_annotation"):
+                continue
+            name_node = m.child_by_field_name("name")
+            if name_node is None:
+                continue
+            name = src_bytes[name_node.start_byte : name_node.end_byte].decode("utf-8", "replace")
+            name = name.rsplit(".", 1)[-1]
+            if name not in ("Getter", "Setter", "Data", "Value"):
+                continue
+            access = _LOMBOK_ACCESS_RE.search(
+                src_bytes[m.start_byte : m.end_byte].decode("utf-8", errors="replace")
+            )
+            level = access.group(1).lower() if access else None
+            found[name] = None if level == "package" else level
+    return found
+
+
+def _java_implicit_members(node, src_bytes: bytes, class_qname: str) -> list[ExtractedSymbol]:
+    """Members a Java type has without declaring them.
+
+    * `record Car(String make, int year)`: an accessor method per component
+      (`Car.year`, at the component's line) unless the body declares one.
+    * Lombok `@Getter` / `@Setter` / `@Data` / `@Value` on the class, or
+      `@Getter` / `@Setter` on a field: `getX` / `isX` (a primitive boolean) /
+      `setX`. A name the class already declares is skipped, a final field gets
+      no setter, `@Value` none at all, and `AccessLevel.NONE` suppresses one.
+      `@ToString` / `equals` / `hashCode` / `@Builder` are NOT modelled.
+    """
+
+    def text(n) -> str:
+        return src_bytes[n.start_byte : n.end_byte].decode("utf-8", errors="replace")
+
+    body = node.child_by_field_name("body")
+    declared = _java_declared_methods(body)
+    out: list[ExtractedSymbol] = []
+
+    def add(name: str, signature: str, line: int, visibility: str | None, why: str) -> None:
+        if name in declared:
+            return
+        declared.add(name)
+        out.append(
+            ExtractedSymbol(
+                name=name,
+                qualified_name=f"{class_qname}.{name}",
+                kind="method",
+                signature=signature,
+                docstring=None,
+                body_hash_seed=f"{JAVA_GENERATED_MARK}:{signature}",
+                start_line=line,
+                end_line=line,
+                parent_qname=class_qname,
+                decorators=[f"{JAVA_GENERATED_MARK}:{why}"],
+                visibility=visibility,
+            )
+        )
+
+    if node.type == "record_declaration":
+        params = node.child_by_field_name("parameters")
+        for p in params.children if params is not None else []:
+            if p.type == "formal_parameter":
+                n, t = p.child_by_field_name("name"), p.child_by_field_name("type")
+            elif p.type == "spread_parameter":
+                decl = next((c for c in p.children if c.type == "variable_declarator"), None)
+                n = decl.child_by_field_name("name") if decl is not None else None
+                t = next((c for c in p.children if c.is_named and c.type != "modifiers"), None)
+            else:
+                continue
+            if n is not None and t is not None:
+                suffix = "[]" if p.type == "spread_parameter" else ""
+                add(
+                    text(n),
+                    f"{text(t)}{suffix} {text(n)}()",
+                    p.start_point[0] + 1,
+                    "public",
+                    "record",
+                )
+        return out
+
+    if body is None or b"lombok" not in src_bytes:
+        return out
+    class_level = _java_lombok_annotations(node, src_bytes)
+    is_value = "Value" in class_level
+    members = list(body.children)
+    for c in body.children:
+        if c.type == "enum_body_declarations":
+            members.extend(c.children)
+    for f in members:
+        if f.type != "field_declaration":
+            continue
+        mods = next((c for c in f.children if c.type == "modifiers"), None)
+        mod_words = {c.type for c in mods.children} if mods is not None else set()
+        if "static" in mod_words:
+            continue
+        own = _java_lombok_annotations(f, src_bytes)
+        final = "final" in mod_words or is_value
+        type_node = f.child_by_field_name("type")
+        primitive_bool = type_node is not None and type_node.type == "boolean_type"
+        type_txt = text(type_node) if type_node is not None else "Object"
+
+        def level(kind: str, own=own, final=final) -> tuple[bool, str | None]:
+            """(wanted, visibility) of a getter/setter for this field."""
+            if kind in own:
+                lv = own[kind]
+            else:
+                owner = next((k for k in (kind, "Data", "Value") if k in class_level), None)
+                if owner is None or (kind == "Setter" and (owner == "Value" or is_value)):
+                    return False, None
+                lv = class_level[owner] if owner == kind else None
+            if lv == "none" or (kind == "Setter" and final):
+                return False, None
+            return True, lv or "public"
+
+        for d in f.children:
+            if d.type != "variable_declarator":
+                continue
+            ident = d.child_by_field_name("name")
+            if ident is None or text(ident).startswith("$"):
+                continue
+            fname = text(ident)
+            cap = fname[:1].upper() + fname[1:]
+            line = d.start_point[0] + 1
+            if primitive_bool:
+                bare = fname[2:] if _re_rs.match(r"is[A-Z]", fname) else cap
+                getter = fname if _re_rs.match(r"is[A-Z]", fname) else f"is{cap}"
+                alts = {getter, f"get{bare[:1].upper()}{bare[1:]}"}
+                setter = f"set{bare[:1].upper()}{bare[1:]}"
+            else:
+                getter, alts, setter = f"get{cap}", {f"get{cap}"}, f"set{cap}"
+            want, vis = level("Getter")
+            if want and not (alts & declared):
+                add(getter, f"{type_txt} {getter}()", line, vis, "lombok")
+            want, vis = level("Setter")
+            if want:
+                add(setter, f"void {setter}({type_txt} {fname})", line, vis, "lombok")
+    return out
 
 
 def _java_mapping_routes(node, src_bytes: bytes) -> list[tuple[str, str, int]]:
@@ -2645,6 +2817,7 @@ def _ts_extract(
                         "type_spec",
                         "enum_declaration",
                         "annotation_type_declaration",
+                        "record_declaration",
                     )
                 ):
                     kind = "class"
@@ -2663,6 +2836,8 @@ def _ts_extract(
                         base = parent_qname or module_name
                         override = f"{base}.{label}.{name}"
                 qname = emit_symbol(node, name, parent_qname, kind, qname=override)
+                if language == "java" and kind == "class":
+                    out.symbols.extend(_java_implicit_members(node, src_bytes, qname))
                 if is_ts and node.type == "interface_declaration":
                     body = node.child_by_field_name("body")
                     if body is not None:
@@ -3258,6 +3433,10 @@ def _js_receiver(call_node, text, imports: dict[str, str]) -> tuple[str | None, 
         jobj = call_node.child_by_field_name("object")
         if jobj is not None and jobj.type == "super":
             return RECEIVER_SUPER, None
+        # Java `m()` and `this.m()` reach a method of the enclosing class (or
+        # its ancestors); `x.m()` stays unclassified (receiver None).
+        if call_node.type == "method_invocation" and (jobj is None or jobj.type == "this"):
+            return RECEIVER_SELF, None
         return None, None
     if fn.type != "member_expression":
         return None, None
@@ -3329,6 +3508,7 @@ _TS_TYPE_DECL_NODES = frozenset(
         "interface_declaration",
         "type_alias_declaration",
         "enum_declaration",
+        "record_declaration",
     }
 )
 # Nodes that bind a type variable: the name they introduce (`T`, `infer U`,
