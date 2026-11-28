@@ -1211,3 +1211,76 @@ async def test_stdlib_module_decorators_do_not_protect(repo: Path):
         await _call(c, "index_project")
         dead = await _call(c, "find_dead_code", include_public=True)
     assert "pkg.wrapped.cached_unused" in {r["qualified_name"] for r in dead["dead_symbols"]}
+
+
+# --------------------------------------------------------------------------
+# remove=True with trace_path takes out only the sources named.
+# --------------------------------------------------------------------------
+
+
+def _refund_trace() -> _Trace:
+    """dispatch -> handle_pay (the edge the other trace also has) and run -> handle_refund."""
+    t = _Trace()
+    run = t.enter("run", module="pkg.main", file="pkg/main.py", line=4)
+    d = t.enter("dispatch", parent=run, module="pkg.registry", file="pkg/registry.py", line=4)
+    t.enter("handle_pay", parent=d, module="pkg.handlers", file="pkg/handlers.py", line=1)
+    t.enter("handle_refund", parent=run, module="pkg.handlers", file="pkg/handlers.py", line=5)
+    return t
+
+
+def _runtime_pairs(workspace: Path) -> set[tuple[str, str]]:
+    return {(a, b) for a, b, _t, _w, origin in _edge_rows(workspace) if origin == RUNTIME_ORIGIN}
+
+
+@pytest.mark.asyncio
+async def test_remove_with_paths_removes_only_those_sources(repo: Path):
+    pay = _dispatch_trace().write(repo / "traces" / "pay.jsonl")
+    refund = _refund_trace().write(repo / "traces" / "refund.jsonl")
+    async with Client(mcp) as c:
+        await _call(c, "index_project")
+        await _call(c, "ingest_traces", trace_path=[pay, refund], dry_run=False)
+        assert _count(repo, "runtime_source") == 2
+        both = _runtime_pairs(repo)
+
+        # refund goes (a relative spelling, plus a name that was never ingested):
+        # its own edge is retracted, the edge pay also observed stays
+        out = await _call(
+            c, "ingest_traces", remove=True, trace_path=["traces/refund.jsonl", "traces/nope.jsonl"]
+        )
+        after_refund = _runtime_pairs(repo)
+        hits_after_refund = _hits(repo)
+        sources_after_refund = _count(repo, "runtime_source")
+        mid = await _call(c, "find_dead_code")
+
+        # the file need not exist any more
+        Path(pay).unlink()
+        gone = await _call(c, "ingest_traces", remove=True, trace_path=pay)
+
+    assert both == {
+        ("pkg.registry.dispatch", "pkg.handlers.handle_pay"),
+        ("pkg.main.run", "pkg.handlers.handle_refund"),
+    }
+    assert out["scope"] == "named_sources"
+    assert out["trace_files_removed"] == 1 and out["removed"] == 1
+    assert out["not_ingested"] == ["traces/nope.jsonl"]
+    assert after_refund == {("pkg.registry.dispatch", "pkg.handlers.handle_pay")}
+    assert sources_after_refund == 1
+    assert "pkg.handlers.handle_refund" not in hits_after_refund
+    assert hits_after_refund["pkg.handlers.handle_pay"] == 3
+    assert "runtime" in mid
+    assert gone["trace_files_removed"] == 1 and "not_ingested" not in gone
+    assert _runtime_pairs(repo) == set()
+    assert _count(repo, "runtime_source") == 0
+
+
+@pytest.mark.asyncio
+async def test_remove_without_paths_still_removes_everything(repo: Path):
+    pay = _dispatch_trace().write(repo / "traces" / "pay.jsonl")
+    refund = _refund_trace().write(repo / "traces" / "refund.jsonl")
+    async with Client(mcp) as c:
+        await _call(c, "index_project")
+        await _call(c, "ingest_traces", trace_path=[pay, refund], dry_run=False)
+        out = await _call(c, "ingest_traces", remove=True)
+
+    assert out["scope"] == "all" and out["trace_files_removed"] == 2
+    assert _count(repo, "runtime_source") == 0 and _runtime_pairs(repo) == set()

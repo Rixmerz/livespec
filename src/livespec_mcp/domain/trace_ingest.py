@@ -845,15 +845,76 @@ def apply_plan(
     return {"edges_added": added, "edges_removed": removed, "sources_replaced": replaced}
 
 
-def remove_runtime(
-    conn: sqlite3.Connection, project_ids: Sequence[int], origin: str = RUNTIME_ORIGIN
-) -> dict[str, int]:
-    """Delete exactly this origin's edges, hits and provenance.
+def find_sources(
+    conn: sqlite3.Connection,
+    project_ids: Sequence[int],
+    workspace: Path,
+    trace_path: str | Sequence[str],
+    origin: str = RUNTIME_ORIGIN,
+) -> tuple[list[int], list[str]]:
+    """Ingested sources named by `trace_path` -> `(source ids, paths matching none)`.
 
-    Edges go first and by label, so a pair the static resolver has since
-    reclaimed to `livespec` stays — it is no longer ours to remove.
+    Same spelling rules as ingesting: relative paths resolve against the
+    workspace, a directory names the `*.jsonl` sources directly inside it. The
+    file need not exist any more — a trace deleted from disk is exactly the
+    one whose evidence someone wants out.
     """
     pids = tuple(project_ids)
+    rows = conn.execute(
+        f"SELECT id, path FROM runtime_source WHERE origin = ? AND project_id IN ({_in(pids)})",
+        (origin, *pids),
+    ).fetchall()
+    stored = [(int(r["id"]), Path(r["path"])) for r in rows]
+    raw = [trace_path] if isinstance(trace_path, str) else list(trace_path)
+    ids: list[int] = []
+    unmatched: list[str] = []
+    for item in raw:
+        p = Path(item).expanduser()
+        if not p.is_absolute():
+            p = workspace / p
+        want = p.resolve()
+        hit = [
+            sid
+            for sid, sp in stored
+            if sp.resolve() == want or (sp.suffix == ".jsonl" and sp.resolve().parent == want)
+        ]
+        if not hit:
+            unmatched.append(str(item))
+        ids.extend(i for i in hit if i not in ids)
+    return ids, unmatched
+
+
+def remove_runtime(
+    conn: sqlite3.Connection,
+    project_ids: Sequence[int],
+    origin: str = RUNTIME_ORIGIN,
+    source_ids: Sequence[int] | None = None,
+) -> dict[str, int]:
+    """Delete this origin's edges, hits and provenance, all of it or some sources.
+
+    Without `source_ids`: everything the origin owns. With them: only those
+    sources; the hits and `runtime_edge` rows cascade with each, and an edge
+    row in `symbol_edge` goes only when no remaining source supports the pair.
+
+    Edges go by label, so a pair the static resolver has since reclaimed to
+    `livespec` stays — it is no longer ours to remove.
+    """
+    pids = tuple(project_ids)
+    if source_ids is not None:
+        ids = tuple(source_ids)
+        if not ids:
+            return {"edges": 0, "symbols_with_hits": 0, "sources": 0}
+        hits = conn.execute(
+            f"SELECT COUNT(DISTINCT symbol_id) AS c FROM runtime_hit WHERE source_id IN ({_in(ids)})",
+            ids,
+        ).fetchone()["c"]
+        sources = conn.execute(f"DELETE FROM runtime_source WHERE id IN ({_in(ids)})", ids).rowcount
+        _added, edges = _materialise(conn, pids, origin)
+        return {
+            "edges": int(edges),
+            "symbols_with_hits": int(hits or 0),
+            "sources": int(sources or 0),
+        }
     edges = conn.execute(
         f"""DELETE FROM symbol_edge
             WHERE origin = ?

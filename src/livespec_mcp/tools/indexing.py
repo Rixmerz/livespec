@@ -943,9 +943,13 @@ def register(mcp: FastMCP) -> None:
         - **Idempotent per trace file.** Ingesting a file again (same path, or
           the same content elsewhere) replaces what it contributed: hits are
           not double-counted, and an edge only that file supported is
-          retracted. Different files accumulate. `remove=True` deletes exactly
-          this origin's edges, hits and provenance; an edge livespec's own
-          resolver derives is never touched.
+          retracted. Different files accumulate. `remove=True` with no
+          `trace_path` deletes all of this origin's edges, hits and
+          provenance; `remove=True` with `trace_path` (a file, a list, or a
+          directory) deletes only the sources named — the file may be gone
+          from disk — and keeps an edge another source still supports (paths
+          that match no ingested source come back under `not_ingested`). An
+          edge livespec's own resolver derives is never touched.
         - **Evidence follows the code.** Re-indexing a changed file drops the
           evidence for its symbols — the body that ran is gone. Trace again
           and re-ingest. A trace is evidence of what one run did: `not_seen`
@@ -955,6 +959,7 @@ def register(mcp: FastMCP) -> None:
         from livespec_mcp.domain.trace_ingest import (
             RUNTIME_ORIGIN,
             expand_trace_paths,
+            find_sources,
             remove_runtime,
         )
         from livespec_mcp.tools._errors import mcp_error
@@ -965,22 +970,36 @@ def register(mcp: FastMCP) -> None:
             group = st.group_project_ids()
             from livespec_mcp.storage.db import transaction
 
+            unmatched: list[str] = []
             with st.lock(), transaction(st.conn):
-                gone = remove_runtime(st.conn, group)
+                if trace_path in (None, "", []):
+                    gone = remove_runtime(st.conn, group)
+                else:
+                    ids, unmatched = find_sources(st.conn, group, st.settings.workspace, trace_path)
+                    gone = remove_runtime(st.conn, group, source_ids=ids)
             for project in group:
                 invalidate_graph_cache(project)
-            return {
+            partial = trace_path not in (None, "", [])
+            out: dict[str, Any] = {
                 "removed": gone["edges"],
                 "hits_removed": gone["symbols_with_hits"],
                 "trace_files_removed": gone["sources"],
                 "origin": RUNTIME_ORIGIN,
+                "scope": "named_sources" if partial else "all",
                 "hint": (
-                    "Runtime evidence is gone: the call graph and "
+                    "Only the named trace files were removed; evidence from "
+                    "other ingested files stays, and an edge goes only when no "
+                    "remaining file supports it."
+                    if partial
+                    else "Runtime evidence is gone: the call graph and "
                     "find_dead_code are static-only again. Edges from any "
                     "other origin were never touched — the delete is scoped "
                     "to rows carrying this origin."
                 ),
             }
+            if unmatched:
+                out["not_ingested"] = unmatched
+            return out
 
         paths, problem = expand_trace_paths(st.settings.workspace, trace_path)
         if problem is not None:

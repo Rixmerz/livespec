@@ -177,7 +177,7 @@ And what actually ran, from a FlowTrace trace (dynamic dispatch, DI, reflection)
 ingest_traces(trace_path="flowtrace.jsonl")                  # dry run first
 ingest_traces(trace_path=..., dry_run=False)                 # then apply
 find_dead_code()             # rows now carry runtime: not_seen | no_evidence
-ingest_traces(remove=True)                                   # undo, exactly
+ingest_traces(remove=True)                                   # undo all; add trace_path=[...] for only those
 ```
 
 ## 8.3 Reading and writing one unit
