@@ -96,12 +96,12 @@ it is not a background watcher you should lean on while editing.
 
 | Intent | Tool |
 |--------|------|
-| First contact on a symbol | `quick_orient(qname)` — replaces 3-4 older calls, includes `is_entry_point` |
+| First contact on a symbol | `quick_orient(qname)` — replaces 3-4 older calls, includes `is_entry_point`; on a method also `overridden_by` (count of subclasses that override it) and `overrides` (the base method it overrides) when non-empty |
 | Name lookup (separator-agnostic `::` `.` `#`) | `find_symbol(query, kind, limit)` |
 | Read a body only | `get_symbol_source(qname)` |
 | Who calls this? | `who_calls(qname, max_depth=1)` — `summary_only=True` on huge repos |
 | What does this call? | `who_does_this_call(qname, max_depth=1)` |
-| Blast radius + Spec rollup | `analyze_impact(target_type, target, max_depth)` — `symbol`\|`file`\|`spec` |
+| Blast radius + Spec rollup | `analyze_impact(target_type, target, max_depth)` — `symbol`\|`file`\|`spec`. On a method, `overriding_methods` lists the subclass methods that override it (`calls_super` says whether they call the parent via `super()`), `overrides` the base method — check them BEFORE changing a signature |
 | PR / diff scope | `git_diff_impact(base_ref, head_ref)` — git repos only; symbol-precise (an untouched function in a changed file is not listed); a `schema_impact` key appears when a `@schema:` declaration changed |
 | Keyword search over chunks | `search(query, scope)` — FTS5 over AST-aware symbol + Spec chunks |
 | Literal string search over indexed files | `grep_in_indexed_files(pattern)` — check `scope_fresh`, see the staleness trap below |

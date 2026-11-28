@@ -3767,6 +3767,81 @@ def _workspace_note(fn):
     return fn
 
 
+def _override_info(
+    st: Any, sid: int, *, limit: int
+) -> tuple[list[dict[str, Any]], int, dict[str, Any] | None]:
+    """Overriding methods of method `sid`, and the base method it overrides.
+
+    Derived from `inherits` edges + class membership (`domain/hierarchy.py`):
+    an overrider is a method of the same name on any class with an `inherits`
+    path to the method's class. `calls_super` is true when that method
+    contains a `super().name()` call (the ref exists whether or not a base
+    resolved). Returns (page of at most `limit` rows, exact total, base)."""
+    from livespec_mcp.domain.hierarchy import Hierarchy
+
+    hier = Hierarchy(st.conn, st.group_project_ids())
+    name = hier.name(sid)
+    if name is None or hier.method_owner(sid) is None:
+        return [], 0, None
+
+    def meta(ids: list[int]) -> dict[int, Any]:
+        out: dict[int, Any] = {}
+        for chunk in range(0, len(ids), 500):
+            part = ids[chunk : chunk + 500]
+            marks = ",".join("?" * len(part))
+            for r in st.conn.execute(
+                f"""SELECT s.id, s.qualified_name, s.start_line, f.path FROM symbol s
+                    JOIN file f ON f.id = s.file_id WHERE s.id IN ({marks})""",
+                part,
+            ):
+                out[int(r["id"])] = r
+        return out
+
+    over = hier.overriders(sid)
+    base_id = hier.overridden_method(sid)
+    rows_meta = meta([o.method_id for o in over] + ([base_id] if base_id is not None else []))
+    supers: set[int] = set()
+    ids = [o.method_id for o in over]
+    for chunk in range(0, len(ids), 500):
+        part = ids[chunk : chunk + 500]
+        marks = ",".join("?" * len(part))
+        supers.update(
+            int(r[0])
+            for r in st.conn.execute(
+                f"""SELECT DISTINCT src_symbol_id FROM symbol_ref
+                    WHERE receiver='super' AND target_name=? AND src_symbol_id IN ({marks})""",
+                [name, *part],
+            )
+        )
+    listed = sorted(
+        (o for o in over if o.method_id in rows_meta),
+        key=lambda o: (
+            o.depth,
+            rows_meta[o.method_id]["path"],
+            rows_meta[o.method_id]["start_line"],
+        ),
+    )
+    page = [
+        {
+            "qualified_name": rows_meta[o.method_id]["qualified_name"],
+            "file_path": rows_meta[o.method_id]["path"],
+            "start_line": rows_meta[o.method_id]["start_line"],
+            "calls_super": o.method_id in supers,
+            "depth": o.depth,
+        }
+        for o in listed[:limit]
+    ]
+    base = None
+    if base_id is not None and base_id in rows_meta:
+        b = rows_meta[base_id]
+        base = {
+            "qualified_name": b["qualified_name"],
+            "file_path": b["path"],
+            "start_line": b["start_line"],
+        }
+    return page, len(listed), base
+
+
 def register(mcp: FastMCP) -> None:
     @mcp.tool(annotations={"readOnlyHint": True, "idempotentHint": True})
     @_workspace_note
@@ -4378,7 +4453,12 @@ def register(mcp: FastMCP) -> None:
         the file. A **class** (any symbol with members) carries the same
         `outline` of its members next to the usual fields, so "what does this
         class offer?" is one call instead of one per method. Outlines stop at
-        150 lines (`outline_truncated` says how many were left out)."""
+        150 lines (`outline_truncated` says how many were left out).
+
+        A **method** that is overridden or overrides gains `overridden_by` (how
+        many subclass methods override it; list them with `analyze_impact`) and
+        `overrides` (`qualified_name`, `file_path`, `start_line` of its base
+        method); both are absent when there is no override."""
         from livespec_mcp.domain.outline import file_outline, members_outline
 
         st = get_state(workspace)
@@ -4482,6 +4562,12 @@ def register(mcp: FastMCP) -> None:
         runtime_calls = symbol_runtime_calls(st.conn, st.project_id, sid)
         if runtime_calls is not None:
             oriented["runtime_calls"] = runtime_calls
+        if sym["kind"] == "method":
+            _ov, ov_total, ov_base = _override_info(st, sid, limit=0)
+            if ov_total:
+                oriented["overridden_by"] = ov_total
+            if ov_base is not None:
+                oriented["overrides"] = ov_base
         if sym["kind"] != "function":
             # A class answers "what does it offer?" with its members; functions
             # with nested helpers are left alone — their body is the answer.
@@ -4504,7 +4590,12 @@ def register(mcp: FastMCP) -> None:
         """Topological impact analysis: what changes if `target` changes.
 
         - symbol: backward cone of callers + Specs that touch any reached symbol.
-          Set max_depth=1 to get the equivalent of a "find references".
+          Set max_depth=1 to get the equivalent of a "find references". On a
+          METHOD it also lists `overriding_methods` (subclass methods that
+          override it: `qualified_name`, `file_path`, `start_line`,
+          `calls_super`, `depth`; at most `limit`, exact `counts.overriding_methods`)
+          and `overrides` (the base method it overrides) — only when non-empty.
+          Read them before changing a signature.
         - file:   union of impacts from every symbol in the file.
         - spec: forward cone from every symbol implementing the Spec + their callers.
 
@@ -4587,6 +4678,12 @@ def register(mcp: FastMCP) -> None:
                 direct_by_type = _direct_dependents_by_edge_type(view, sid, min_weight)
                 if direct_by_type:
                     summary_payload["direct_dependents_by_edge_type"] = direct_by_type
+                if sym["kind"] == "method":
+                    _ov, ov_total, ov_base = _override_info(st, sid, limit=0)
+                    if ov_total:
+                        summary_payload["counts"]["overriding_methods"] = ov_total
+                    if ov_base is not None:
+                        summary_payload["overrides"] = ov_base
                 return _out(summary_payload, graph_pid)
             callers_page, callers_total, callers_next = _paginate_meta(impacted, view)
             calls_page, calls_total, calls_next = _paginate_meta(forward, view)
@@ -4612,6 +4709,13 @@ def register(mcp: FastMCP) -> None:
             direct_by_type = _direct_dependents_by_edge_type(view, sid, min_weight)
             if direct_by_type:
                 impact_payload["direct_dependents_by_edge_type"] = direct_by_type
+            if sym["kind"] == "method":
+                ov_page, ov_total, ov_base = _override_info(st, sid, limit=limit)
+                if ov_total:
+                    impact_payload["overriding_methods"] = ov_page
+                    impact_payload["counts"]["overriding_methods"] = ov_total
+                if ov_base is not None:
+                    impact_payload["overrides"] = ov_base
             return _out(_attach_payload_warning(impact_payload, warn), graph_pid)
         if target_type == "file":
             sids = [

@@ -110,7 +110,8 @@ def test_typescript_object_type_alias():
     assert _schema(r, "User").flavor == "ts_type"
     assert list(_fields(r, "User")) == ["id"]
     assert [s.src_qname for s in r.schemas] == ["u.User"]
-    assert not [s for s in r.symbols if s.name == "Id"]
+    # a non-object alias is a type_alias symbol now, but carries no schema
+    assert [s.kind for s in r.symbols if s.name == "Id"] == ["type_alias"]
 
 
 def test_zod_object():
@@ -342,7 +343,8 @@ def test_typescript_fixture_rules():
         "Address",
     }
     names = {s.name for s in r.symbols}
-    assert not names & {"Role", "Id", "Point"}
+    # enums and non-object aliases are type symbols now, but never schemas
+    assert {"Role", "Id", "Point"} <= names
     user = _fields(r, "User")
     assert "greet" not in user and "extra" not in user
     assert (user["email"].optional, user["email"].nullable) == (True, False)

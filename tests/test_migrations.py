@@ -563,3 +563,34 @@ def test_m031_data_access_forward_and_cascade(tmp_path: Path):
     conn.execute("DELETE FROM file WHERE id=1")
     assert conn.execute("SELECT COUNT(*) FROM data_model").fetchone()[0] == 0
     conn.close()
+
+
+def test_m034_receiver_class_column_and_reextract(tmp_path: Path):
+    """v34 adds `symbol_ref.receiver_class`; a DB that already holds symbols
+    queues a re-extract so existing refs learn `super` receivers and evident
+    classes, an empty one does not."""
+    from livespec_mcp.storage.db import clear_reextract_flag, peek_reextract_flag
+
+    assert dict((v, n) for v, n, _ in MIGRATIONS)[34] == "symbol_ref_receiver_class"
+    db = tmp_path / "existing.db"
+    conn = connect(db)
+    cols = {r["name"] for r in conn.execute("PRAGMA table_info(symbol_ref)")}
+    assert "receiver_class" in cols
+    conn.execute("INSERT INTO project(id, name, root) VALUES(1, 'p', '/p')")
+    conn.execute(
+        "INSERT INTO file(id, project_id, path, language, content_hash, line_count, mtime) "
+        "VALUES(1, 1, 'm.py', 'python', 'h', 2, 0)"
+    )
+    conn.execute(
+        "INSERT INTO symbol(id, file_id, name, qualified_name, kind, start_line, end_line) "
+        "VALUES(1, 1, 'f', 'm.f', 'function', 1, 2)"
+    )
+    clear_reextract_flag(conn)
+    conn.execute("ALTER TABLE symbol_ref DROP COLUMN receiver_class")
+    conn.execute("DELETE FROM schema_migrations WHERE version = 34")
+    conn.commit()
+    conn.close()
+    conn = connect(db)
+    assert "receiver_class" in {r["name"] for r in conn.execute("PRAGMA table_info(symbol_ref)")}
+    assert peek_reextract_flag(conn) is True
+    conn.close()

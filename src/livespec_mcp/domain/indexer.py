@@ -26,12 +26,15 @@ from livespec_mcp.domain.extractors import (
     RECEIVER_MODULE,
     RECEIVER_OBJECT,
     RECEIVER_SELF,
+    RECEIVER_SUPER,
+    RECEIVER_TYPE,
     REF_INHERIT,
     REF_TYPE,
     ExtractResult,
     extract,
     normalize_route_path,
 )
+from livespec_mcp.domain.hierarchy import Hierarchy
 from livespec_mcp.domain.languages import (
     EXTRACTOR_SUPPORTED,
     SCHEMA_ONLY_LANGUAGES,
@@ -39,6 +42,7 @@ from livespec_mcp.domain.languages import (
     reset_grammar_failures,
 )
 from livespec_mcp.domain.py_modules import PyModules
+from livespec_mcp.domain.ts_modules import TsModules
 from livespec_mcp.storage.db import (
     clear_reextract_flag,
     get_or_create_project,
@@ -512,6 +516,23 @@ def _upsert_file(
     return int(cur.lastrowid)
 
 
+def pick_by_span(rows: list[tuple[int, int, int]] | None, line: int) -> int | None:
+    """The symbol (id, start, end) of one qualified name that a reference at
+    *line* belongs to: the narrowest span containing it, else the nearest
+    definition above it, else the first. With a single row this is that row."""
+    if not rows:
+        return None
+    if len(rows) == 1:
+        return rows[0][0]
+    inside = [r for r in rows if r[1] <= line <= r[2]]
+    if inside:
+        return min(inside, key=lambda r: (r[2] - r[1], r[1]))[0]
+    below = [r for r in rows if r[1] > line]
+    if below:
+        return min(below, key=lambda r: r[1])[0]
+    return max(rows, key=lambda r: r[1])[0]
+
+
 def _replace_symbols(conn: sqlite3.Connection, *, file_id: int, result: ExtractResult) -> None:
     """Insert symbols for a file and persist their refs to symbol_ref.
 
@@ -567,32 +588,46 @@ def _replace_symbols(conn: sqlite3.Connection, *, file_id: int, result: ExtractR
            VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)""",
         rows,
     )
-    qname_to_id: dict[str, int] = {
-        r[0]: int(r[1])
-        for r in conn.execute(
-            "SELECT qualified_name, id FROM symbol WHERE file_id=? ORDER BY id", (file_id,)
-        )
-    }
+    qname_to_id: dict[str, int] = {}
+    # Every row a qualified name owns, with its span. Overloads, anonymous
+    # classes, enum-constant bodies, same-named local classes and a function
+    # defined in both branches of an `if` share ONE qualified name; a ref
+    # carries its line, so it binds to the symbol whose span contains it.
+    rows_by_qname: dict[str, list[tuple[int, int, int]]] = {}
+    for r in conn.execute(
+        "SELECT qualified_name, id, start_line, end_line FROM symbol WHERE file_id=? ORDER BY id",
+        (file_id,),
+    ):
+        qname_to_id[r[0]] = int(r[1])
+        rows_by_qname.setdefault(r[0], []).append((int(r[1]), int(r[2]), int(r[3])))
+
+    def owner(qname: str, line: int) -> int | None:
+        return pick_by_span(rows_by_qname.get(qname), line)
+
     conn.executemany(
         "UPDATE symbol SET parent_symbol_id=? WHERE id=?",
         [
-            (qname_to_id[s.parent_qname], qname_to_id[s.qualified_name])
+            (
+                owner(s.parent_qname, s.start_line),
+                owner(s.qualified_name, s.start_line),
+            )
             for s in result.symbols
             if s.parent_qname and s.parent_qname in qname_to_id
         ],
     )
     conn.executemany(
         """INSERT INTO symbol_ref(src_symbol_id, target_name, ref_type, line, scope_module,
-                                 receiver)
-           VALUES(?,?,?,?,?,?)""",
+                                 receiver, receiver_class)
+           VALUES(?,?,?,?,?,?,?)""",
         [
             (
-                qname_to_id[r.src_qname],
+                owner(r.src_qname, r.line),
                 r.target_name,
                 r.ref_type,
                 r.line,
                 r.scope_module,
                 r.receiver,
+                r.receiver_class,
             )
             for r in result.refs
             if r.src_qname in qname_to_id
@@ -606,7 +641,7 @@ def _replace_symbols(conn: sqlite3.Connection, *, file_id: int, result: ExtractR
            VALUES(?,?,?,?,?,?)""",
         [
             (
-                qname_to_id[rt.src_qname],
+                owner(rt.src_qname, rt.line),
                 rt.role,
                 rt.method,
                 rt.path,
@@ -849,6 +884,65 @@ _TYPE_LIKE_KINDS: frozenset[str] = frozenset(
 )
 
 
+def _java_scope_matches(scope: str, name: str, qname: str) -> bool:
+    """Does the Java import path *scope* (``a.Outer.Inner``, or ``a.Outer``
+    when the ref names ``Inner`` through it) denote the symbol *qname*?
+
+    A Java class's qualified name here is ``<package dirs>.<File>.<classes...>``
+    with the file's own top class repeated (``a.Outer.Outer.Inner``), which is
+    why neither the plain import path nor a prefix of it matches a NESTED type."""
+    q = qname.split(".")
+    for want in (scope.split("."), [*scope.split("."), name]):
+        for k in range(len(q) - 1):
+            if q[k] == q[k + 1] and [*q[: k + 1], *q[k + 2 :]] == want:
+                return True
+    return False
+
+
+def _collapse_same_qname(
+    targets: list[tuple[int, str, int]],
+    line: int,
+    span_of: dict[int, tuple[int, int, str]],
+    src_id: int = -1,
+) -> list[tuple[int, str, int]]:
+    """One target per (file, qualified name).
+
+    Symbols that share a qualified name are not different things a reference
+    could mean: overloads of one method, a class or function defined in both
+    branches of an `if`, same-named local or anonymous classes. A reference
+    gets ONE of them.
+
+    - overloads and other duplicate methods: the FIRST in the file, whichever
+      overload the call site really picks (the index cannot tell by argument
+      types) — consistent, so a re-index never flips the edge. A call from one
+      overload to its own name skips itself: `f(a)` delegating to `f(a, b)`
+      reaches the first OTHER overload, not nothing;
+    - a class / function defined more than once: the definition in scope at
+      the reference, i.e. the nearest one above its line (the first one when
+      the reference precedes them all).
+    Distinct qualified names are untouched."""
+    if len(targets) < 2:
+        return targets
+    groups: dict[tuple[int, str], list[tuple[int, str, int]]] = {}
+    for t in targets:
+        groups.setdefault((t[2], t[1]), []).append(t)
+    if all(len(g) == 1 for g in groups.values()):
+        return targets
+    keep: set[int] = set()
+    for g in groups.values():
+        if len(g) == 1:
+            keep.add(g[0][0])
+            continue
+        ordered = sorted(g, key=lambda t: span_of.get(t[0], (0, 0, ""))[0])
+        if span_of.get(ordered[0][0], (0, 0, ""))[2] == "method":
+            others = [t for t in ordered if t[0] != src_id]
+            keep.add((others or ordered)[0][0])
+            continue
+        above = [t for t in ordered if span_of.get(t[0], (0, 0, ""))[0] <= line]
+        keep.add((above[-1] if above else ordered[0])[0])
+    return [t for t in targets if t[0] in keep]
+
+
 def _resolve_type_ref(
     *,
     candidates: list[tuple[int, str, int]],
@@ -860,6 +954,9 @@ def _resolve_type_ref(
     file_paths: dict[int, str],
     target_name: str = "",
     py_modules: PyModules | None = None,
+    allow_enclosing: bool = False,
+    ts_modules: TsModules | None = None,
+    ts_candidates: Callable[[str], list[tuple[int, str, int]]] | None = None,
 ) -> tuple[list[tuple[int, str, int]], float]:
     """Targets and weight for one `inherit` / `type` ref. `candidates` are
     already the same-language, type-like symbols carrying the name.
@@ -886,12 +983,21 @@ def _resolve_type_ref(
     candidates = [
         c
         for c in candidates
-        if not (
+        if allow_enclosing
+        or not (
             src_qname == c[1]
             or src_qname.startswith(f"{c[1]}.")
             or src_qname.startswith(f"{c[1]}::")
         )
     ]
+    if scope is not None and family == "js" and ts_modules is not None and ts_candidates:
+        # An imported TS/JS name: the module the import names, then its
+        # `export ... from` chain (bounded, cycle-safe) to the ONE file that
+        # declares it (`export { A as B }` renames along the way). Whatever
+        # this cannot prove falls to the directory-prefix match below.
+        ts_hit = ts_modules.lookup(scope, target_name, ts_candidates)
+        if ts_hit is not None:
+            return [ts_hit[0]], 0.9 if ts_hit[1] else 1.0
     if not candidates:
         return [], 0.0
     if scope and family == "python" and py_modules is not None:
@@ -906,6 +1012,10 @@ def _resolve_type_ref(
         if hit is None:
             return [], 0.0
         return [hit[0]], 0.9 if hit[1] else 1.0
+    if scope and family == "java":
+        exact = [c for c in candidates if _java_scope_matches(scope, target_name, c[1])]
+        if len(exact) == 1:
+            return exact, 1.0
     if scope:
         scoped = _under_scope(candidates, scope)
         if scoped:
@@ -1006,6 +1116,7 @@ def _resolve_refs(
         params: list[Any] = [project_id, *changed_file_ids]
         sql = (
             f"SELECT u.src_symbol_id, u.target_name, u.scope_module, u.receiver, u.ref_type, "
+            f"       u.receiver_class, u.line, "
             f"       s.file_id AS src_file_id, f.language AS src_language, "
             f"       s.qualified_name AS src_qname, s.signature AS src_signature "
             f"FROM symbol_ref u "
@@ -1022,11 +1133,16 @@ def _resolve_refs(
         # (`pkg/__init__.py` gaining `from .core import Thing`), which a changed
         # file can alter without defining a symbol of that name. They are few,
         # and re-walking them keeps the typed edges a function of the tree.
-        sql += " OR (u.ref_type IN ('inherit', 'type') AND f.language = 'python'))"
+        # Same for a TS/JS type ref through a barrel (`export * from`).
+        sql += (
+            " OR (u.ref_type IN ('inherit', 'type') "
+            "AND f.language IN ('python','typescript','tsx','javascript')))"
+        )
         rows = conn.execute(sql, params).fetchall()
     else:
         rows = conn.execute(
             """SELECT u.src_symbol_id, u.target_name, u.scope_module, u.receiver, u.ref_type,
+                      u.receiver_class, u.line,
                       s.file_id AS src_file_id, f.language AS src_language,
                       s.qualified_name AS src_qname, s.signature AS src_signature
                FROM symbol_ref u
@@ -1049,9 +1165,16 @@ def _resolve_refs(
     # (same-package and ambient-declaration visibility are path questions).
     type_like: set[int] = set()
     file_paths: dict[int, str] = {}
+    span_of: dict[int, tuple[int, int, str]] = {}
+
+    def collapse(
+        targets: list[tuple[int, str, int]], line: int, src_id: int = -1
+    ) -> list[tuple[int, str, int]]:
+        return _collapse_same_qname(targets, line, span_of, src_id)
+
     for r in conn.execute(
         """SELECT s.id, s.name, s.qualified_name, s.file_id, s.kind, s.signature, f.language,
-                  f.path
+                  f.path, s.start_line, s.end_line
            FROM symbol s JOIN file f ON f.id=s.file_id WHERE f.project_id=?""",
         (project_id,),
     ):
@@ -1059,6 +1182,7 @@ def _resolve_refs(
         name_index.setdefault(r["name"], []).append((sid, r["qualified_name"], int(r["file_id"])))
         family_of[sid] = _language_family(r["language"])
         file_paths[int(r["file_id"])] = r["path"]
+        span_of[sid] = (int(r["start_line"] or 0), int(r["end_line"] or 0), str(r["kind"]))
         if r["kind"] in _TYPE_LIKE_KINDS:
             type_like.add(sid)
         if r["kind"] == "method":
@@ -1084,24 +1208,84 @@ def _resolve_refs(
         )
     }
     py_modules = PyModules(py_files, _source_reader(conn, project_id, py_files))
+    ts_files = {
+        int(r["id"]): r["path"]
+        for r in conn.execute(
+            "SELECT id, path FROM file WHERE project_id=? "
+            "AND language IN ('typescript','tsx','javascript')",
+            (project_id,),
+        )
+    }
+    ts_modules = TsModules(ts_files, _source_reader(conn, project_id, ts_files))
 
+    def ts_type_candidates(name: str) -> list[tuple[int, str, int]]:
+        return [
+            c for c in name_index.get(name, []) if family_of.get(c[0]) == "js" and c[0] in type_like
+        ]
+
+    def ts_any_candidates(name: str) -> list[tuple[int, str, int]]:
+        return [c for c in name_index.get(name, []) if family_of.get(c[0]) == "js"]
+
+    # Inheritance and type refs first, flushed before any call is resolved: a
+    # `super().f()` needs the `inherits` edges of this very walk.
+    rows = sorted(rows, key=lambda u: _REF_EDGE_TYPE.get(u["ref_type"]) is None)
+    hierarchy: Hierarchy | None = None
+
+    def get_hierarchy() -> Hierarchy:
+        nonlocal hierarchy
+        if hierarchy is None:
+            hierarchy = Hierarchy(conn, [project_id])
+        return hierarchy
+
+    def flush_edges() -> None:
+        conn.executemany(
+            """INSERT INTO symbol_edge(src_symbol_id, dst_symbol_id, edge_type, weight)
+               VALUES(?,?,?,?)
+               ON CONFLICT(src_symbol_id, dst_symbol_id, edge_type)
+               DO UPDATE SET weight = MAX(symbol_edge.weight, excluded.weight),
+                             origin = 'livespec'""",
+            pending_edges,
+        )
+        pending_edges.clear()
+
+    flushed_types = False
     edge_count = 0
     # (src, dst) -> best weight written this walk. Two refs of one caller can
     # reach the same callee with different evidence (`helper()` and
     # `obj.helper()`): the stronger one must win whatever the row order.
     seen_pairs: dict[tuple[int, int, str], float] = {}
     pending_edges: list[tuple[int, int, str, float]] = []
+
+    def emit_call(src_id: int, tid: int, weight: float) -> None:
+        nonlocal edge_count
+        if tid == src_id:
+            return
+        key = (src_id, tid, "calls")
+        previous = seen_pairs.get(key)
+        if previous is not None and previous >= weight:
+            return
+        seen_pairs[key] = weight
+        pending_edges.append((src_id, tid, "calls", weight))
+        if previous is None:
+            edge_count += 1
+
     for u in rows:
+        if not flushed_types and _REF_EDGE_TYPE.get(u["ref_type"]) is None:
+            flush_edges()
+            flushed_types = True
+        src_family = _language_family(u["src_language"])
+        # An imported TS/JS name may be re-exported under ANOTHER name
+        # (`export { A as B }`): the name-index lookup is not the last word.
+        js_scoped = src_family == "js" and u["scope_module"] is not None
         candidates = name_index.get(u["target_name"], [])
-        if not candidates:
+        if not candidates and not js_scoped:
             continue
 
         # Calls stay inside their language family: a JS/TS call site cannot
         # call a Python function. 2.7k of 29k call edges on a mixed
         # Python + TypeScript repo crossed languages by bare name.
-        src_family = _language_family(u["src_language"])
         candidates = [c for c in candidates if family_of.get(c[0]) == src_family]
-        if not candidates:
+        if not candidates and not js_scoped:
             continue
 
         edge_type = _REF_EDGE_TYPE.get(u["ref_type"], "calls")
@@ -1117,8 +1301,10 @@ def _resolve_refs(
                 file_paths=file_paths,
                 target_name=str(u["target_name"]),
                 py_modules=py_modules,
+                ts_modules=ts_modules,
+                ts_candidates=ts_type_candidates,
             )
-            for tid, _qname, _fid in targets:
+            for tid, _qname, _fid in collapse(targets, int(u["line"] or 0), src_id):
                 type_key = (src_id, tid, edge_type)
                 previous = seen_pairs.get(type_key)
                 if previous is not None and previous >= weight:
@@ -1137,6 +1323,61 @@ def _resolve_refs(
         # project function named `join`. Rows written before the column
         # existed carry NULL and resolve as they always did.
         receiver = u["receiver"]
+        src_id_ = int(u["src_symbol_id"])
+        if receiver == RECEIVER_SUPER:
+            # `super().f()` / `super.f()` / `super(...)`: the method of the
+            # nearest indexed base of the enclosing class that defines it, in
+            # left-to-right depth-first order. No such base, or an explicit
+            # `super(Other, self)` naming another class: no edge.
+            hier = get_hierarchy()
+            owner_cls = hier.owner_class(src_id_)
+            if owner_cls is None:
+                continue
+            named = u["receiver_class"]
+            if named and named != hier.name(owner_cls):
+                continue
+            found = hier.find_in_bases(owner_cls, str(u["target_name"]))
+            if found is not None:
+                emit_call(src_id_, found, 1.0)
+            continue
+        if receiver in (RECEIVER_OBJECT, RECEIVER_TYPE) and u["receiver_class"]:
+            # `c = Child(); c.f()`: the receiver is evidently a `Child`, so the
+            # call reaches the most-derived definition on Child's own MRO. A
+            # class that does not resolve to ONE project class (a factory
+            # function, a library type) leaves the call to the name-based path.
+            raw = str(u["receiver_class"])
+            rscope, _, rname = raw.rpartition("::")
+            cls_cands = [
+                c
+                for c in name_index.get(rname, [])
+                if c[0] in type_like and family_of.get(c[0]) == src_family
+            ]
+            hits, _w = _resolve_type_ref(
+                candidates=cls_cands,
+                scope=rscope or None,
+                src_qname=str(u["src_qname"]),
+                src_file_id=int(u["src_file_id"]),
+                family=src_family,
+                project_scopes=project_scopes,
+                file_paths=file_paths,
+                target_name=rname,
+                py_modules=py_modules,
+                allow_enclosing=True,
+            )
+            if len(hits) == 1:
+                hier = get_hierarchy()
+                if hier.is_class(hits[0][0]):
+                    found = hier.find_in_mro(hits[0][0], str(u["target_name"]))
+                    if found is not None:
+                        emit_call(src_id_, found, 0.9)
+                        continue
+                    # Not found: nobody defines it only when the WHOLE ancestry
+                    # is indexed; with a library or unresolved base the method
+                    # may live there, so the name-based path decides.
+                    if receiver == RECEIVER_TYPE or hier.is_complete(hits[0][0]):
+                        continue
+            if receiver == RECEIVER_TYPE:
+                continue  # a class name that is not ONE project class: no edge
         if receiver in (RECEIVER_SELF, RECEIVER_OBJECT):
             candidates = [c for c in candidates if c[0] in methods]
             if receiver == RECEIVER_SELF:
@@ -1186,6 +1427,13 @@ def _resolve_refs(
                 # fan out to the whole top package. A module that merely
                 # failed to match the symbol (a re-export) stays ambiguous.
                 continue
+        elif (
+            scope is not None
+            and src_family == "js"
+            and (ts_hit := ts_modules.lookup(scope, str(u["target_name"]), ts_any_candidates))
+        ):
+            scoped = [ts_hit[0]]
+            candidates = scoped
         elif scope:
             scoped = _under_scope(candidates, scope)
             if not scoped and receiver == RECEIVER_MODULE and scope not in project_scopes:
@@ -1274,7 +1522,7 @@ def _resolve_refs(
             # `min_weight=0.7` keeps only edges backed by an import, `self`
             # or a bare name in scope.
             weight = min(weight, 0.6)
-        for tid, _qname, _fid in candidates:
+        for tid, _qname, _fid in collapse(candidates, int(u["line"] or 0), int(u["src_symbol_id"])):
             src_id = int(u["src_symbol_id"])
             if tid == src_id:
                 continue
@@ -1293,12 +1541,5 @@ def _resolve_refs(
                 edge_count += 1
     # One statement for every edge, in the order they were decided: an upsert
     # per row, exactly as one execute() each.
-    conn.executemany(
-        """INSERT INTO symbol_edge(src_symbol_id, dst_symbol_id, edge_type, weight)
-           VALUES(?,?,?,?)
-           ON CONFLICT(src_symbol_id, dst_symbol_id, edge_type)
-           DO UPDATE SET weight = MAX(symbol_edge.weight, excluded.weight),
-                         origin = 'livespec'""",
-        pending_edges,
-    )
+    flush_edges()
     return edge_count

@@ -56,6 +56,10 @@ class ExtractedRef:
     # What `X` is in an attribute call `X.f()` (RECEIVER_* below); None for a
     # call by bare name, and for languages whose receivers are not classified.
     receiver: str | None = None
+    # The class a receiver evidently is: `super(Cls, self).f()` names `Cls`;
+    # `c = Child(); c.f()` names `Child` (written `scope::Name` when `Child` was
+    # imported). The resolver checks it against the project's classes.
+    receiver_class: str | None = None
 
 
 @dataclass
@@ -168,6 +172,9 @@ class ExtractResult:
     # P0.4: per-file imports map. local_name -> source_module (qualified name of
     # the module providing it). Used by the resolver to scope short-name lookups.
     imports: dict[str, str] = field(default_factory=dict)
+    # TS/JS only: `import { Widget as W }` -> {"W": "Widget"}. A ref to the
+    # alias is stored under the ORIGINAL name (scoped by `imports["W"]`).
+    import_aliases: dict[str, str] = field(default_factory=dict)
     # Python only: local_name -> the dotted path the name itself is bound to
     # (`from pkg import mod` binds `mod` to `pkg.mod`; `import a.b as m` binds
     # `m` to `a.b`; `import a.b` binds `a` to `a`). Scopes an attribute call's
@@ -960,6 +967,88 @@ _PY_STMT_FIELDS_OF: dict[type, tuple[str, ...]] = {}
 _PY_SCOPE_NODES = (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
 
 
+def _py_callee_class(call: ast.Call, out: ExtractResult) -> str | None:
+    """`Child(...)` / `mod.Child(...)` as the class name (`scope::Name` when the
+    name was imported), for `c = Child()` evidence. Whether it IS a class is the
+    resolver's question."""
+    fn = call.func
+    if isinstance(fn, ast.Name):
+        scope = out.imports.get(fn.id)
+        return f"{scope}::{fn.id}" if scope else fn.id
+    if isinstance(fn, ast.Attribute) and isinstance(fn.value, (ast.Name, ast.Attribute)):
+        receiver, scope = _py_receiver(fn, out.bindings)
+        if receiver == RECEIVER_MODULE and scope:
+            return f"{scope}::{fn.attr}"
+    return None
+
+
+def _py_annotation_class(ann: ast.AST | None, out: ExtractResult) -> str | None:
+    if isinstance(ann, ast.Constant) and isinstance(ann.value, str):
+        name = ann.value
+        return name if name.isidentifier() else None
+    if isinstance(ann, ast.Name):
+        scope = out.imports.get(ann.id)
+        return f"{scope}::{ann.id}" if scope else ann.id
+    return None
+
+
+def _py_local_classes(func_node: ast.AST, out: ExtractResult) -> dict[str, str]:
+    """Local names that are evidently an instance of one class in this function:
+    bound only by `x = Cls(...)` / `x: Cls = ...`, or a parameter annotated
+    `x: Cls` and never rebound. Any other binding of the name (a second class,
+    a loop target, `with ... as x`, a call result) drops it."""
+    evidence: dict[str, str] = {}
+    dropped: set[str] = set()
+
+    def note(name: str, cls: str | None) -> None:
+        if cls is None or (name in evidence and evidence[name] != cls):
+            dropped.add(name)
+        else:
+            evidence.setdefault(name, cls)
+
+    args = getattr(func_node, "args", None)
+    if args is not None:
+        for a in [*args.posonlyargs, *args.args, *args.kwonlyargs]:
+            if a.annotation is not None and a.arg not in ("self", "cls"):
+                note(a.arg, _py_annotation_class(a.annotation, out))
+        for a in (args.vararg, args.kwarg):
+            if a is not None:
+                dropped.add(a.arg)
+    stack: list[ast.AST] = _py_children(func_node)
+    while stack:
+        node = stack.pop()
+        if isinstance(node, _PY_SCOPE_NODES):
+            continue
+        stack.extend(_py_children(node))
+        if isinstance(node, ast.Assign):
+            for t in node.targets:
+                if isinstance(t, ast.Name):
+                    note(
+                        t.id,
+                        _py_callee_class(node.value, out)
+                        if isinstance(node.value, ast.Call)
+                        else None,
+                    )
+                else:
+                    for n in ast.walk(t):
+                        if isinstance(n, ast.Name):
+                            dropped.add(n.id)
+        elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+            cls = _py_annotation_class(node.annotation, out)
+            if node.value is not None and isinstance(node.value, ast.Call):
+                cls = _py_callee_class(node.value, out) or cls
+            note(node.target.id, cls)
+        elif isinstance(node, (ast.AugAssign, ast.For, ast.AsyncFor, ast.withitem, ast.NamedExpr)):
+            tgt = getattr(node, "target", None) or getattr(node, "optional_vars", None)
+            if tgt is not None:
+                for n in ast.walk(tgt):
+                    if isinstance(n, ast.Name):
+                        dropped.add(n.id)
+        elif isinstance(node, ast.ExceptHandler) and node.name:
+            dropped.add(node.name)
+    return {k: v for k, v in evidence.items() if k not in dropped}
+
+
 def _collect_calls(func_node: ast.AST, src_qname: str, out: ExtractResult) -> None:
     # Walk this symbol's body but STOP at nested def/class boundaries — their
     # call sites belong to the nested symbol (extracted separately), not to
@@ -973,6 +1062,7 @@ def _collect_calls(func_node: ast.AST, src_qname: str, out: ExtractResult) -> No
     # distinct name.
     seen_types: set[tuple[str, str, str | None]] = set()
     _py_emit_type_refs(getattr(func_node, "returns", None), src_qname, out, seen_types)
+    local_classes: dict[str, str] | None = None
     while stack:
         node = stack.pop()
         if isinstance(node, _PY_SCOPE_NODES):
@@ -1003,9 +1093,19 @@ def _collect_calls(func_node: ast.AST, src_qname: str, out: ExtractResult) -> No
                         line=getattr(node, "lineno", 0),
                     )
                 )
+            if (
+                type(node.func) is ast.Name
+                and node.func.id == "super"
+                and "super" not in out.imports
+            ):
+                # The builtin: it reaches no project symbol, whatever a project
+                # method or function happens to be called (Django's template
+                # tag `BlockNode.super`). `super().f()` is the attribute call.
+                continue
             target = _call_target_name(node.func)
             if target:
                 receiver: str | None = None
+                receiver_class: str | None = None
                 if isinstance(node.func, ast.Attribute):
                     # An attribute call is scoped by its RECEIVER only, never by
                     # its bare name: `"".join(x)` in a file that imported some
@@ -1014,6 +1114,18 @@ def _collect_calls(func_node: ast.AST, src_qname: str, out: ExtractResult) -> No
                     if receiver == RECEIVER_LITERAL:
                         # A method of a builtin value; no project symbol.
                         continue
+                    if receiver == RECEIVER_SUPER:
+                        sup = node.func.value
+                        if (
+                            isinstance(sup, ast.Call)
+                            and sup.args
+                            and isinstance(sup.args[0], ast.Name)
+                        ):
+                            receiver_class = sup.args[0].id  # super(Cls, self)
+                    elif receiver == RECEIVER_OBJECT and isinstance(node.func.value, ast.Name):
+                        if local_classes is None:
+                            local_classes = _py_local_classes(func_node, out)
+                        receiver_class = local_classes.get(node.func.value.id)
                 else:
                     # P0.4: if the target name was imported in this file, tag
                     # the ref with the originating module so the resolver can
@@ -1026,6 +1138,7 @@ def _collect_calls(func_node: ast.AST, src_qname: str, out: ExtractResult) -> No
                         line=getattr(node, "lineno", 0),
                         scope_module=scope,
                         receiver=receiver,
+                        receiver_class=receiver_class,
                     )
                 )
 
@@ -1381,8 +1494,12 @@ def _leftmost_name(node: ast.AST) -> str | None:
 # symbol_ref.receiver; the resolver reads it (indexer._resolve_refs). A call by
 # bare name (`f()`) has no receiver (None) and resolves as it always did.
 RECEIVER_MODULE = "module"  # X is a name this file imports: `mod.f()`, `os.path.join()`
-RECEIVER_SELF = "self"  # `self.f()`, `cls.f()`, `super().f()`: a method of a class
+RECEIVER_SELF = "self"  # `self.f()`, `cls.f()`: a method of a class
 RECEIVER_OBJECT = "object"  # anything else: a local, a parameter, `a.b.f()`, `g().f()`
+RECEIVER_SUPER = "super"  # `super().f()`, `super(Cls, self).f()`, `super.f()`: the BASE's method
+RECEIVER_TYPE = (
+    "type"  # Java `Type::method`: X is a class NAME (resolved strictly, never by method name)
+)
 RECEIVER_LITERAL = "literal"  # `"".join()`, `[].append()`: never emitted as a ref
 
 _PY_LITERAL_RECEIVERS = (
@@ -1422,7 +1539,7 @@ def _py_receiver(func: ast.Attribute, bindings: dict[str, str]) -> tuple[str, st
         and isinstance(value.func, ast.Name)
         and value.func.id == "super"
     ):
-        return RECEIVER_SELF, None
+        return RECEIVER_SUPER, None
     chain: list[str] = []
     cur: ast.AST = value
     while isinstance(cur, ast.Attribute):
@@ -1738,6 +1855,10 @@ _DEF_NODE_TYPES = {
     "class_declaration",
     "class_definition",
     "interface_declaration",
+    # Java / TypeScript enums, Java `@interface`: type declarations like the
+    # class and interface above (kind "class", as Rust's `enum_item`).
+    "enum_declaration",
+    "annotation_type_declaration",
     # Rust
     "function_item",  # plain Rust functions
     "impl_item",  # walked specially to qualify methods as Type::method
@@ -2179,7 +2300,9 @@ def _ts_extract(
 
     http_wrappers: frozenset[str] = frozenset()
     if language in ("javascript", "typescript", "tsx"):
-        out.imports.update(_ts_collect_imports(tree.root_node, src_bytes, current_dir))
+        out.imports.update(
+            _ts_collect_imports(tree.root_node, src_bytes, current_dir, out.import_aliases)
+        )
         http_wrappers = _ts_find_http_wrappers(tree.root_node, src_bytes)
     elif language == "go":
         out.imports.update(_go_collect_imports(tree.root_node, src_bytes))
@@ -2466,13 +2589,15 @@ def _ts_extract(
                 return
 
         # `type User = { id: number }`: a `type_alias` symbol with a schema.
-        # Other aliases (`type Id = string`) stay symbol-less, as before.
+        # Every other alias (`type Id = string | Foo`) is a `type_alias` symbol
+        # too, without one, so an import or a type use has something to point at.
         if is_ts and node.type == "type_alias_declaration":
             value = node.child_by_field_name("value")
             name = find_name(node)
-            if name and value is not None and value.type == "object_type":
+            if name and value is not None:
                 qname = emit_symbol(node, name, parent_qname, "type_alias")
-                ts_schema_decls.append((qname, name, node, value, "ts_type"))
+                if value.type == "object_type":
+                    ts_schema_decls.append((qname, name, node, value, "ts_type"))
                 # No calls live in a type, but the types it names do.
                 _ts_collect_calls(node, qname, src_bytes, out, http_wrappers, type_refs)
                 return
@@ -2484,7 +2609,14 @@ def _ts_extract(
                 if (
                     "class" in node.type
                     or "interface" in node.type
-                    or node.type in ("struct_item", "enum_item", "type_spec")
+                    or node.type
+                    in (
+                        "struct_item",
+                        "enum_item",
+                        "type_spec",
+                        "enum_declaration",
+                        "annotation_type_declaration",
+                    )
                 ):
                     kind = "class"
                 elif "method" in node.type:
@@ -3092,10 +3224,18 @@ def _js_receiver(call_node, text, imports: dict[str, str]) -> tuple[str | None, 
     if not hasattr(call_node, "child_by_field_name"):
         return None, None
     fn = call_node.child_by_field_name("function")
-    if fn is None or fn.type != "member_expression":
+    if fn is None:
+        # Java `super.f()`: a method_invocation with an `object` field.
+        jobj = call_node.child_by_field_name("object")
+        if jobj is not None and jobj.type == "super":
+            return RECEIVER_SUPER, None
+        return None, None
+    if fn.type != "member_expression":
         return None, None
     obj = fn.child_by_field_name("object")
-    if obj is not None and obj.type in ("this", "super"):
+    if obj is not None and obj.type == "super":
+        return RECEIVER_SUPER, None
+    if obj is not None and obj.type == "this":
         return RECEIVER_SELF, None
     # Only a chain of plain member accesses keeps the module evidence:
     # `m.sub.f()` is still in module `m`, `m.make().f()` is a value.
@@ -3210,19 +3350,31 @@ class _TypeRefCollector:
     def _text(self, n) -> str:
         return self._src[n.start_byte : n.end_byte].decode("utf-8", errors="replace")
 
+    def scope_of(self, raw: str) -> str | None:
+        """The import path a (possibly dotted) name in a value position stands
+        for: its leftmost name's import, else the dotted name itself when it
+        is written fully qualified."""
+        left = raw.split(".", 1)[0]
+        found = self._imports.get(left)
+        if found is not None and "." in raw:
+            return f"{found}.{raw.split('.', 1)[1]}"
+        if found is not None:
+            return found
+        return raw if "." in raw else None
+
     def begin(self, src_qname: str) -> None:
         self._src_qname = src_qname
         self._seen = set()
 
     def owns_symbol(self, node) -> bool:
-        """`type User = {...}` has its own symbol and its own collection pass,
-        so the module pass must not claim the types it names as well."""
+        """A `type X = ...` alias has its own symbol and its own collection
+        pass, so the module pass must not claim the types it names as well."""
         if node.type != "type_alias_declaration":
             return False
-        value = node.child_by_field_name("value")
-        return value is not None and value.type == "object_type"
+        return node.child_by_field_name("value") is not None
 
     def _emit(self, name: str, scope: str | None, line: int, ref_type: str) -> None:
+        name = self._out.import_aliases.get(name, name)
         key = (ref_type, name, scope)
         if not name or key in self._seen:
             return
@@ -3439,12 +3591,53 @@ def _ts_collect_calls(
             out.refs.append(
                 ExtractedRef(
                     src_qname=src_qname,
-                    target_name=name,
+                    target_name=out.import_aliases.get(name, name),
                     line=a.start_point[0] + 1,
                     ref_type="callback_arg",
                     scope_module=out.imports.get(name),
                 )
             )
+
+    def _java_method_reference(node) -> None:
+        """`Type::method` / `this::method` (Java): a call of `method`, deferred.
+        Only a receiver that can be pinned is emitted — a capitalised class
+        name (resolved against the project's classes by the indexer, no ref
+        effect when it is a library type) or `this`; `var::method` and
+        `Type::new` carry no usable target."""
+        named = [c for c in node.children if c.is_named]
+        if len(named) < 2 or named[-1].type != "identifier":
+            return
+        left, method = named[0], text(named[-1])
+        line = node.start_point[0] + 1
+        if left.type == "this":
+            out.refs.append(
+                ExtractedRef(
+                    src_qname=src_qname,
+                    target_name=method,
+                    line=line,
+                    ref_type="callback_arg",
+                    receiver=RECEIVER_SELF,
+                )
+            )
+            return
+        raw = text(left).strip()
+        cls = raw.rsplit(".", 1)[-1]
+        if (
+            left.type not in ("identifier", "field_access", "scoped_identifier")
+            or not cls[:1].isupper()
+        ):
+            return
+        scope = type_refs.scope_of(raw) if type_refs is not None else None
+        out.refs.append(
+            ExtractedRef(
+                src_qname=src_qname,
+                target_name=method,
+                line=line,
+                ref_type="callback_arg",
+                receiver=RECEIVER_TYPE,
+                receiver_class=f"{scope}::{cls}" if scope else cls,
+            )
+        )
 
     # JSX node types that carry a component name (v0.11 P2, bug #20)
     _JSX_OPEN_TYPES = {"jsx_opening_element", "jsx_self_closing_element"}
@@ -3662,6 +3855,23 @@ def _ts_collect_calls(
                         )
                     )
             tgt, leftmost = call_target_and_leftmost(node)
+            fn_node = (
+                node.child_by_field_name("function")
+                if hasattr(node, "child_by_field_name")
+                else None
+            )
+            if fn_node is not None and fn_node.type == "super":
+                # `super(...)` in a constructor: the base's `constructor`, never
+                # a project function that happens to be named `super`.
+                out.refs.append(
+                    ExtractedRef(
+                        src_qname=src_qname,
+                        target_name="constructor",
+                        line=node.start_point[0] + 1,
+                        receiver=RECEIVER_SUPER,
+                    )
+                )
+                tgt = None
             # A method of a literal (`[a, b].join(",")`) reaches no project
             # symbol; only the call's own ref is skipped, a handler passed to
             # it still counts.
@@ -3681,7 +3891,8 @@ def _ts_collect_calls(
                 out.refs.append(
                     ExtractedRef(
                         src_qname=src_qname,
-                        target_name=tgt,
+                        # `import { f as g }; g()` is a call of `f`.
+                        target_name=out.import_aliases.get(tgt, tgt) if receiver is None else tgt,
                         line=node.start_point[0] + 1,
                         scope_module=scope,
                         receiver=receiver,
@@ -3695,6 +3906,8 @@ def _ts_collect_calls(
         # are walked; jsx_closing_element is skipped (duplicate of opening tag).
         elif node.type in _JSX_OPEN_TYPES:
             _jsx_component_ref(node)
+        elif node.type == "method_reference":
+            _java_method_reference(node)
         for c in node.children:
             # Don't descend into a nested def/class/method — it is extracted and
             # collected as its OWN symbol, so recursing here would attribute its
@@ -3743,7 +3956,10 @@ def _resolve_module_path(source: str, current_dir: tuple[str, ...]) -> str:
 
 
 def _ts_collect_imports(
-    root_node, src_bytes: bytes, current_dir: tuple[str, ...]
+    root_node,
+    src_bytes: bytes,
+    current_dir: tuple[str, ...],
+    aliases: dict[str, str] | None = None,
 ) -> dict[str, str]:
     """Scan top-level ES6 imports + CommonJS requires in a JS/TS module.
 
@@ -3797,6 +4013,8 @@ def _ts_collect_imports(
                     )
                     if alias_n is not None:
                         imports[text(alias_n)] = module
+                        if aliases is not None and name_n is not None:
+                            aliases[text(alias_n)] = text(name_n)
                     elif name_n is not None:
                         imports[text(name_n)] = module
                     else:
