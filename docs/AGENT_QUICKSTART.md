@@ -112,7 +112,7 @@ candidates with humanized title + description + suggested_symbols.
 To accept a proposal you need the **`livespec-spec` plugin** visible in your
 tool list. After `index_project(workspace=...)`, mutation tools appear when the
 DB has Specs; on a **fresh** repo use `LIVESPEC_PLUGINS=spec` (or `=all`) or
-reconnect MCP if the host cached the 41 core tools only.
+reconnect MCP if the host cached the 44 core tools only.
 
 ```
 create_spec(title=..., description=..., spec_id=...)             # plugin
@@ -169,6 +169,15 @@ find_dead_code(corroborate_with="graphify-out/graph.json")   # writes nothing
 ingest_external_graph(graph_path="graphify-out/graph.json")  # dry run first
 ingest_external_graph(graph_path=..., dry_run=False)         # then apply
 ingest_external_graph(remove=True)                           # undo, exactly
+```
+
+And what actually ran, from a FlowTrace trace (dynamic dispatch, DI, reflection):
+
+```
+ingest_traces(trace_path="flowtrace.jsonl")                  # dry run first
+ingest_traces(trace_path=..., dry_run=False)                 # then apply
+find_dead_code()             # rows now carry runtime: not_seen | no_evidence
+ingest_traces(remove=True)                                   # undo all; add trace_path=[...] for only those
 ```
 
 ## 8.3 Reading and writing one unit

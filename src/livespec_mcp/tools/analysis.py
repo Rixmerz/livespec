@@ -22,12 +22,13 @@ from typing import Any, Literal
 from fastmcp import FastMCP
 
 from livespec_mcp.config import load_repo_config
+from livespec_mcp.domain.clones import normalise_path_prefix, under_path
 from livespec_mcp.domain.extractors import (
     HTTP_ROUTE_DECORATOR_LASTSEGS,
+    JAVA_GENERATED_MARK,
     _ts_collect_imports,
     get_parser,
-    infer_python_http_framework,
-    parse_python_http_route,
+    parse_python_http_route_details,
     scan_go_routes,
     scan_hono_routes,
     ts_registered_callback_names,
@@ -36,7 +37,9 @@ from livespec_mcp.domain.git_range import changed_paths as changed_paths_of
 from livespec_mcp.domain.git_range import diff_name_status
 from livespec_mcp.domain.graph import (
     GraphView,
+    ancestor_depths,
     ancestors_within,
+    descendant_depths,
     descendants_within,
     graph_pagerank,
     load_graph,
@@ -44,6 +47,7 @@ from livespec_mcp.domain.graph import (
 from livespec_mcp.domain.indexer import DEFAULT_IGNORES, _hash_bytes, _iter_files
 from livespec_mcp.domain.languages import detect_language
 from livespec_mcp.domain.legacy_flows import compute_legacy_flows
+from livespec_mcp.domain.py_routes import PythonRouteContext
 from livespec_mcp.domain.schema_impact import diff_schema_impact
 from livespec_mcp.domain.test_coverage_reports import discover_report_coverage
 from livespec_mcp.domain.tracks import changed_qnames_by_path, spec_definition_edits
@@ -598,6 +602,52 @@ def _has_entry_point_decorator(
         or _decorator_lastseg(n) in alias_lastsegs
         for n in names
     )
+
+
+# Modules whose attributes are decorators that wrap or annotate a function but
+# do not hand it to a framework (`@functools.wraps`, `@abc.abstractmethod`...).
+# Any OTHER `@receiver.attr` / `@receiver.attr(...)` registers the function on an
+# object (`@login.user_loader`, `@celery_app.on_after_configure`, `@signal.connect`)
+# and the framework calls it back.
+_NON_REGISTERING_DECORATOR_MODULES = frozenset(
+    {
+        "functools",
+        "abc",
+        "contextlib",
+        "typing",
+        "typing_extensions",
+        "dataclasses",
+        "enum",
+        "unittest",
+        "mock",
+        "pytest",
+        "warnings",
+        "asyncio",
+        "builtins",
+        "collections",
+        "click",
+    }
+)
+
+
+def _registered_by_decorator(decorators_json: str | None, file_path: str = "") -> bool:
+    """True when a Python symbol is registered on an object by a decorator.
+
+    ``@obj.something`` / ``@obj.something(...)`` hands the function to ``obj``,
+    which calls it later: the static graph shows zero callers and a trace that
+    never exercised the framework shows zero hits, yet the symbol is live.
+    """
+    if not decorators_json or not file_path.endswith(".py"):
+        return False
+    try:
+        names = json.loads(decorators_json)
+    except (json.JSONDecodeError, TypeError):
+        return False
+    for n in names or []:
+        parts = str(n).split(".")
+        if len(parts) >= 2 and parts[0].lower() not in _NON_REGISTERING_DECORATOR_MODULES:
+            return True
+    return False
 
 
 def _decorator_matches_any(name: str, patterns: tuple[str, ...]) -> bool:
@@ -1223,6 +1273,103 @@ _FRAMEWORK_INNER_CLASS_NAMES = frozenset(
 )
 
 
+# Spring Data base interfaces: a project interface that extends one is
+# implemented by a proxy the framework generates, so its methods have no
+# in-project implementation or caller by construction.
+_SPRING_DATA_REPOSITORY_BASES = frozenset(
+    {
+        "Repository",
+        "CrudRepository",
+        "ListCrudRepository",
+        "PagingAndSortingRepository",
+        "ListPagingAndSortingRepository",
+        "JpaRepository",
+        "ReactiveCrudRepository",
+        "ReactiveSortingRepository",
+        "RxJava3CrudRepository",
+        "CoroutineCrudRepository",
+        "MongoRepository",
+        "ReactiveMongoRepository",
+        "ElasticsearchRepository",
+        "R2dbcRepository",
+        "KeyValueRepository",
+    }
+)
+_JAVA_MAIN_SIGNATURE = re.compile(
+    r"\bstatic\b[^({]*\bmain\s*\(\s*(?:final\s+)?String\s*(?:\[\s*\]|\.\.\.)"
+)
+
+
+def _java_framework_implemented(st: Any, rows: list[Any]) -> set[int]:
+    """Ids of Java methods something other than project code calls or
+    implements, whatever the caller count says (never dead-code candidates,
+    not even with `include_infrastructure`):
+
+    * `public static void main(String[])`: the JVM launcher calls it;
+    * a method declared in an interface that extends a Spring Data repository
+      type (directly or through project interfaces): the framework builds the
+      implementation;
+    * an `@Override` method of a class with a base outside the project (an
+      `implements RuntimeHintsRegistrar`) that no indexed base declares: the
+      caller is the library's.
+    """
+    java = [r for r in rows if r["file_path"].endswith(".java") and r["kind"] == "method"]
+    if not java:
+        return set()
+    out = {
+        int(r["id"])
+        for r in java
+        if r["name"] == "main" and _JAVA_MAIN_SIGNATURE.search(r["signature"] or "")
+    }
+    pids = st.group_project_ids()
+    marks = ",".join("?" * len(pids))
+    repo_ifaces: set[int] = set()
+    for r in st.conn.execute(
+        f"""SELECT DISTINCT u.src_symbol_id, u.target_name FROM symbol_ref u
+            JOIN symbol s ON s.id = u.src_symbol_id JOIN file f ON f.id = s.file_id
+            WHERE u.ref_type = 'inherit'
+              AND f.project_id IN ({marks})""",
+        tuple(pids),
+    ):
+        if r["target_name"] in _SPRING_DATA_REPOSITORY_BASES:
+            repo_ifaces.add(int(r["src_symbol_id"]))
+    if repo_ifaces:
+        subs: dict[int, set[int]] = {}
+        for r in st.conn.execute(
+            f"""SELECT e.src_symbol_id, e.dst_symbol_id FROM symbol_edge e
+                JOIN symbol s ON s.id = e.src_symbol_id JOIN file f ON f.id = s.file_id
+                WHERE e.edge_type = 'inherits'
+                  AND f.project_id IN ({marks})""",
+            tuple(pids),
+        ):
+            subs.setdefault(int(r["dst_symbol_id"]), set()).add(int(r["src_symbol_id"]))
+        stack = list(repo_ifaces)
+        while stack:
+            for sub in subs.get(stack.pop(), ()):
+                if sub not in repo_ifaces:
+                    repo_ifaces.add(sub)
+                    stack.append(sub)
+        out |= {
+            int(r["id"])
+            for r in java
+            if r["parent_symbol_id"] is not None and int(r["parent_symbol_id"]) in repo_ifaces
+        }
+    overriding = [r for r in java if '"Override"' in (r["decorators"] or "")]
+    if overriding:
+        from livespec_mcp.domain.hierarchy import Hierarchy
+
+        hier = Hierarchy(st.conn, pids)
+        for r in overriding:
+            owner = hier.method_owner(int(r["id"]))
+            if (
+                owner is not None
+                and not hier.is_complete(owner)
+                and hier.overridden_method(int(r["id"])) is None
+            ):
+                out.add(int(r["id"]))
+    return out
+
+
 def _is_implicit_entry_point(meta: dict) -> bool:
     """Stricter subset of `_is_infrastructure`: only the cases where a symbol
     has invisible callers (Python protocol dunders, FastMCP `register`, DI
@@ -1452,6 +1599,10 @@ def _is_ts_framework_entry_point(meta: dict) -> bool:
     )
 
 
+#: Most structural-pattern names `get_project_overview` lists (the rest are counted).
+_STRUCTURAL_LISTED_MAX = 30
+
+
 def _structural_pattern_names(conn, project_id: int, threshold: int) -> set[str]:
     """Names appearing as a symbol in ≥`threshold` distinct files in the project.
 
@@ -1655,6 +1806,23 @@ def compute_endpoints(
                 py_source_cache[rel_path] = ""
         return py_source_cache[rel_path]
 
+    py_ctx: PythonRouteContext | None = None
+
+    def _py_route_context() -> PythonRouteContext:
+        nonlocal py_ctx
+        if py_ctx is None:
+            py_files = [
+                str(fr["path"])
+                for fr in st.conn.execute(
+                    "SELECT path FROM file WHERE project_id=? AND path LIKE '%.py'", (pid,)
+                )
+            ]
+            py_ctx = PythonRouteContext(py_files, _py_source_strict)
+        return py_ctx
+
+    def _py_source_strict(rel_path: str) -> str:
+        return (workspace_path / rel_path).read_text(encoding="utf-8", errors="replace")
+
     def _attach_python_http_route(entry: dict[str, Any], matching_decs: list[str]) -> None:
         if not any(_decorator_lastseg(d) in HTTP_ROUTE_DECORATOR_LASTSEGS for d in matching_decs):
             return
@@ -1664,19 +1832,28 @@ def compute_endpoints(
         source = _py_source(fp)
         if not source:
             return
-        route = parse_python_http_route(source, int(entry["start_line"]))
-        if route["http_method"] is not None:
-            entry["http_method"] = route["http_method"]
-        if route["http_path"] is not None:
-            entry["http_path"] = route["http_path"]
-            entry["http_framework"] = infer_python_http_framework(source)
+        route = parse_python_http_route_details(source, int(entry["start_line"]))
+        if route is None:
+            return
+        methods = route["methods"]
+        if methods:
+            entry["http_method"] = methods[0]
+            entry["http_methods"] = methods
+        ctx = _py_route_context()
+        path, prefix = ctx.prefixed_path(fp, route["receiver"], route["path"])
+        entry["http_path"] = path
+        if prefix is not None:
+            entry["http_path_prefix"] = prefix
+        framework_name = ctx.framework_of(fp, route["receiver"])
+        if framework_name is not None:
+            entry["http_framework"] = framework_name
 
     # Java annotations reach `decorators` as bare names (`GetMapping`) — the
     # argument holding the path is dropped there but the extractor already
     # persists it as a `route_ref` server row. Join it so Spring handlers carry
     # the same http_method/http_path contract as express/hono/python instead of
     # listing a handler with no route.
-    server_routes: dict[int, tuple[str | None, str]] = {}
+    server_routes: dict[int, list[tuple[str | None, str]]] = {}
     for rr in st.conn.execute(
         """SELECT rr.symbol_id, rr.method, rr.path
            FROM route_ref rr
@@ -1686,20 +1863,24 @@ def compute_endpoints(
            ORDER BY rr.line, rr.id""",
         (pid,),
     ):
-        server_routes.setdefault(int(rr["symbol_id"]), (rr["method"], rr["path"]))
+        server_routes.setdefault(int(rr["symbol_id"]), []).append((rr["method"], rr["path"]))
 
-    def _attach_indexed_http_route(entry: dict[str, Any], symbol_id: int) -> None:
-        if entry.get("http_path") is not None:
-            return
-        route = server_routes.get(symbol_id)
-        if route is None:
-            return
-        method, path = route
-        if method:
-            entry["http_method"] = method
-        entry["http_path"] = path
-        if entry["file_path"].endswith(".java"):
-            entry["http_framework"] = "spring"
+    def _attach_indexed_http_routes(entry: dict[str, Any], symbol_id: int) -> list[dict[str, Any]]:
+        """The entry once per indexed route: `@GetMapping({"/a", "/b"})` is two
+        endpoints of one handler."""
+        routes = [] if entry.get("http_path") is not None else server_routes.get(symbol_id, [])
+        if not routes:
+            return [entry]
+        out = []
+        for method, path in routes:
+            e = dict(entry)
+            if method:
+                e["http_method"] = method
+            e["http_path"] = path
+            if e["file_path"].endswith(".java"):
+                e["http_framework"] = "spring"
+            out.append(e)
+        return out
 
     for r in rows:
         try:
@@ -1718,8 +1899,7 @@ def compute_endpoints(
             "decorators": matching,
         }
         _attach_python_http_route(entry, matching)
-        _attach_indexed_http_route(entry, int(r["symbol_id"]))
-        endpoints.append(entry)
+        endpoints.extend(_attach_indexed_http_routes(entry, int(r["symbol_id"])))
         seen_qnames.add(r["qualified_name"])
 
     # v0.11 P1: TS framework filesystem-routing detection (bug #19).
@@ -2713,6 +2893,22 @@ def compute_project_overview(
         if include_structural_patterns
         else _structural_pattern_names(st.conn, pid, _STRUCTURAL_NAME_FILE_THRESHOLD)
     )
+    # The names are filtered from the ranking whatever file they live in, but
+    # only those some NON-test symbol carries are worth listing, and only the
+    # most widespread ones: the full list was 9-15 KB on Django (`__add__`,
+    # `Meta`, every test model name) in a response that is fixed-size by design.
+    files_by_name: dict[str, set[str]] = {}
+    if structural_names:
+        for r in st.conn.execute(
+            "SELECT DISTINCT s.name, f.path FROM symbol s JOIN file f ON f.id = s.file_id "
+            "WHERE f.project_id = ?",
+            (pid,),
+        ):
+            if r["name"] in structural_names and not _is_test_file_path(r["path"]):
+                files_by_name.setdefault(r["name"], set()).add(r["path"])
+    listed_structural = sorted(files_by_name, key=lambda n: (-len(files_by_name[n]), n))[
+        :_STRUCTURAL_LISTED_MAX
+    ]
     view = load_graph(st.conn, pid)
     ranks = graph_pagerank(view)
     ordered = sorted(ranks.items(), key=lambda x: x[1], reverse=True)
@@ -2753,7 +2949,18 @@ def compute_project_overview(
         **group_fields(st),
         "languages": langs,
         "top_symbols": top_syms,
-        "structural_patterns_filtered": sorted(structural_names),
+        "structural_patterns_filtered": sorted(listed_structural),
+        # The list is the most widespread non-test names; the rest are counts.
+        **(
+            {
+                "structural_patterns_filtered_total": len(structural_names),
+                "structural_patterns_filtered_test_only": len(
+                    structural_names - set(files_by_name)
+                ),
+            }
+            if len(structural_names) > len(listed_structural)
+            else {}
+        ),
         # Capped: when fewer than 20 symbols survive the filters the loop
         # never breaks and scans the whole PageRank ordering, so this would
         # otherwise carry EVERY test symbol in the project into a response
@@ -2950,6 +3157,22 @@ def group_fields(st: AppState) -> dict[str, Any]:
         "grouped": grouped,
         "group_db": str(st.settings.db_path) if grouped else None,
     }
+
+
+def _attach_clone_note(out: dict[str, Any], st: AppState, pids: list[int], sym: dict) -> None:
+    """Say so when the symbol being opened exists N more times.
+
+    An agent that lands on a pasted function through `search` or a stack trace
+    has no reason to suspect the next three hits are the same body. Level 0
+    only and only from the fingerprint cache (see
+    ``domain.clones.identical_copies``): absent until `find_clone_clusters` or
+    `search_similar` has run once, and never a cost on this read.
+    """
+    from livespec_mcp.domain.clones import identical_copies
+
+    note = identical_copies(st.conn, tuple(pids), int(sym["id"]), sym["body_hash"])
+    if note:
+        out["clones"] = note
 
 
 def _symbol_source_path(st: AppState, sym: dict) -> Path:
@@ -3304,20 +3527,180 @@ def _attach_external_edges(
     # ingest, believes the graph still carries it, and is now reading a payload
     # that mentions nothing.
     stale = ingest_freshness(st.conn, project_id, summary)
+    # Runtime evidence (ingest_traces) is a second non-livespec origin with its
+    # own provenance and its own way of going stale: a re-extract drops it on
+    # purpose, because the body that was observed is gone.
+    from livespec_mcp.domain.trace_ingest import RUNTIME_ORIGIN, runtime_freshness
+
+    stale.update(runtime_freshness(st.conn, project_id))
     if not summary and not stale:
         return payload
-    block: dict[str, Any] = {
-        "by_origin": summary,
-        "hint": (
+    origins = set(summary) | set(stale)
+    hints: list[str] = []
+    if origins - {RUNTIME_ORIGIN}:
+        hints.append(
             "Part of this answer rests on edges ingested from another "
             "extractor (ingest_external_graph). Re-run it after re-indexing, "
             "or ingest_external_graph(remove=True) for a livespec-only graph."
-        ),
+        )
+    if RUNTIME_ORIGIN in origins:
+        hints.append(
+            "Part of this answer rests on calls observed at runtime "
+            f"(ingest_traces, `{RUNTIME_ORIGIN}`). They describe the runs that "
+            "were traced, and the evidence for a symbol is dropped when its "
+            "file is re-extracted — trace again and re-run ingest_traces, or "
+            "ingest_traces(remove=True) for a static-only graph."
+        )
+    block: dict[str, Any] = {
+        "by_origin": summary,
+        "hint": " ".join(hints),
     }
     if stale:
         block["stale"] = stale
+    # A trace cannot tell a direct call from one through frames nobody traced
+    # (a test runner, a framework, a library): ingest attributes the call to the
+    # nearest TRACED ancestor. A row that rests only on such an edge says
+    # who was seen above the callee, not who called it.
+    runtime_rows = sum(
+        1
+        for key in ("callers", "impacted_callers", "calls_into")
+        for r in payload.get(key) or ()
+        if isinstance(r, dict) and r.get("via_external_edge") == RUNTIME_ORIGIN
+    )
+    if runtime_rows:
+        block["runtime_only_rows"] = runtime_rows
+        block["runtime_only_hint"] = (
+            f"Rows marked via_external_edge `{RUNTIME_ORIGIN}` were seen only in a "
+            "trace, which records the nearest traced ancestor: such a caller is not "
+            "necessarily the direct caller (untraced frames may sit between), and "
+            "a callee may be reached the same way."
+        )
     payload["external_edges"] = block
     return payload
+
+
+_RESCUED_LISTED = 50
+
+
+def _apply_runtime_tiers(
+    st: AppState, project_id: int, candidates: list[dict[str, Any]]
+) -> dict[str, Any] | None:
+    """Sort dead-code candidates by what ingested traces say. None = no traces.
+
+    Three outcomes per candidate, and they are not symmetric:
+
+    - it has hits, or something defined inside it has -> it ran, so it is not
+      dead. Dropped and counted (`rescued_by_runtime`). A zero-caller symbol
+      that executes is the dynamic-dispatch case the static graph cannot see.
+    - `not_seen`: traces resolved another symbol in the same file, so a traced
+      run reached this file and this symbol did not execute. The strongest
+      removal evidence the tool can offer.
+    - `no_evidence`: no trace touched its file. Says nothing either way.
+
+    Order is left alone: candidates stay sorted by file and line, which the
+    pagination cursor depends on.
+    """
+    from livespec_mcp.domain.trace_ingest import (
+        RUNTIME_ORIGIN,
+        hit_sources,
+        runtime_hits,
+        stale_runtime_sources,
+    )
+
+    hits = runtime_hits(st.conn, project_id)
+    if not hits:
+        return None
+    files_reached = {h["file_path"] for h in hits.values()}
+    hit_qnames_by_file: dict[str, list[tuple[str, int]]] = {}
+    for sid, h in hits.items():
+        hit_qnames_by_file.setdefault(h["file_path"], []).append((h["qualified_name"], sid))
+
+    kept: list[dict[str, Any]] = []
+    rescued = 0
+    rescued_names: list[dict[str, Any]] = []
+    rescued_ids: list[list[int]] = []  # per rescued row: the symbols whose hits rescued it
+    tiers = {"not_seen": 0, "no_evidence": 0, "registered_by_decorator": 0}
+    for meta in candidates:
+        if meta["id"] in hits:
+            rescued += 1
+            rescued_names.append(
+                {"qualified_name": meta["qualified_name"], "calls": hits[meta["id"]]["calls"]}
+            )
+            rescued_ids.append([meta["id"]])
+            continue
+        inside = meta["qualified_name"] + "."
+        inner = [
+            sid for q, sid in hit_qnames_by_file.get(meta["file_path"], ()) if q.startswith(inside)
+        ]
+        if inner:
+            rescued += 1
+            rescued_names.append({"qualified_name": meta["qualified_name"], "calls": 0})
+            rescued_ids.append(inner)
+            continue
+        if _registered_by_decorator(meta.get("decorators"), meta["file_path"]):
+            # Only reachable with include_infrastructure=True. Called back by
+            # the framework it registered with: a trace that did not drive
+            # that framework proves nothing, so it is not a removal signal.
+            tier = "registered_by_decorator"
+        else:
+            tier = "not_seen" if meta["file_path"] in files_reached else "no_evidence"
+        tiers[tier] += 1
+        kept.append({**meta, "runtime": tier})
+    # Stale evidence (migration 35): marked, never dropped. Checked for every
+    # rescued symbol, not just the listed page, so the count is exact.
+    stale_sources: set[str] = set()
+    stale_n = 0
+    stale = stale_runtime_sources(st.conn, project_id) if rescued_ids else {}
+    if stale:
+        by_symbol = hit_sources(st.conn, sorted({i for ids in rescued_ids for i in ids}))
+        for entry, ids in zip(rescued_names, rescued_ids, strict=True):
+            behind: set[int] = set()
+            for i in ids:
+                behind |= by_symbol.get(i, set())
+            if behind and behind <= set(stale):
+                entry["stale_evidence"] = True
+                entry["sources"] = sorted(stale[b] for b in behind)
+                stale_sources.update(entry["sources"])
+                stale_n += 1
+    out_tiers: dict[str, Any] = {
+        "candidates": kept,
+        "origin": RUNTIME_ORIGIN,
+        "rescued_by_runtime": rescued,
+        "rescued": rescued_names[:_RESCUED_LISTED],
+        "not_seen": tiers["not_seen"],
+        "no_evidence": tiers["no_evidence"],
+        "registered_by_decorator": tiers["registered_by_decorator"],
+        "hint": (
+            "From ingested traces (ingest_traces). rescued_by_runtime: "
+            "candidates that were seen running, removed from this list and "
+            "named in `rescued` (first "
+            f"{_RESCUED_LISTED}) — a symbol with no callers that is missing "
+            "from the candidates is usually here: hits recorded before its "
+            "callers moved still count, so trace again after changing callers. "
+            "not_seen: a traced run reached the file and never executed the "
+            "symbol — the strongest removal evidence here. no_evidence: no "
+            "trace touched the file, so the trace says nothing. "
+            "registered_by_decorator (include_infrastructure=True only): "
+            "registered on an object with `@obj.something`, so the framework "
+            "calls it — never a removal signal, whatever the trace saw. A "
+            "trace is what the traced runs did, not production."
+        ),
+    }
+    if stale_n:
+        out_tiers["rescued_stale_evidence"] = stale_n
+        out_tiers["stale_evidence_hint"] = (
+            f"{stale_n} rescued symbol(s) are marked `stale_evidence: true`: "
+            "every trace source with a hit on them was ingested before the "
+            "latest index run that changed files, so it may show code that no "
+            "longer runs that way (callers moved away, the rescue still "
+            "stands). Rule: a source is stale when any file changed in an "
+            "index run after the source was ingested — coarser than "
+            "'a former caller's file changed', which cannot be asked once the "
+            "caller's re-extract has dropped its runtime edges. The rescue is "
+            "kept, only marked. Re-trace or remove these sources: "
+            + ", ".join(sorted(stale_sources))
+        )
+    return out_tiers
 
 
 def _attach_unknown_relations(report: dict[str, Any], graph: Any) -> None:
@@ -3334,6 +3717,18 @@ def _resolve_edge_types(edge_types: list[str] | None) -> frozenset[str]:
     if edge_types is None:
         return INVOCATION_EDGE_TYPES
     return frozenset(edge_types)
+
+
+def _count_by_depth(depths: dict[int, int]) -> dict[str, int]:
+    """{"1": n, "2": m, ...}: how many symbols sit at each hop of a cone."""
+    out: dict[int, int] = {}
+    for d in depths.values():
+        out[d] = out.get(d, 0) + 1
+    return {str(k): out[k] for k in sorted(out)}
+
+
+def _at_depth_one(depths: dict[int, int]) -> set[int]:
+    return {n for n, d in depths.items() if d == 1}
 
 
 def _label_direct_edges(
@@ -3362,6 +3757,26 @@ def _label_direct_edges(
             row["via_external_edge"] = origin
         out.append(row)
     return out
+
+
+def _direct_dependents_by_edge_type(view: Any, sid: int, min_weight: float) -> dict[str, int]:
+    """Direct (depth-1) dependents of a symbol, counted per edge type.
+
+    Empty when every one of them is a plain call, so a payload on a symbol
+    nothing inherits from or names as a type is exactly what it was.
+    """
+    if sid not in view.g:
+        return {}
+    counts: dict[str, int] = {}
+    for n in view.g.predecessors(sid):
+        data = view.g[n][sid]
+        if min_weight > 0.0 and float(data.get("weight", 1.0)) < min_weight:
+            continue
+        et = data.get("edge_type", "calls")
+        counts[et] = counts.get(et, 0) + 1
+    if set(counts) <= {"calls"}:
+        return {}
+    return dict(sorted(counts.items()))
 
 
 def _note_excluded_edge_types(
@@ -3654,6 +4069,81 @@ def _workspace_note(fn):
     return fn
 
 
+def _override_info(
+    st: Any, sid: int, *, limit: int
+) -> tuple[list[dict[str, Any]], int, dict[str, Any] | None]:
+    """Overriding methods of method `sid`, and the base method it overrides.
+
+    Derived from `inherits` edges + class membership (`domain/hierarchy.py`):
+    an overrider is a method of the same name on any class with an `inherits`
+    path to the method's class. `calls_super` is true when that method
+    contains a `super().name()` call (the ref exists whether or not a base
+    resolved). Returns (page of at most `limit` rows, exact total, base)."""
+    from livespec_mcp.domain.hierarchy import Hierarchy
+
+    hier = Hierarchy(st.conn, st.group_project_ids())
+    name = hier.name(sid)
+    if name is None or hier.method_owner(sid) is None:
+        return [], 0, None
+
+    def meta(ids: list[int]) -> dict[int, Any]:
+        out: dict[int, Any] = {}
+        for chunk in range(0, len(ids), 500):
+            part = ids[chunk : chunk + 500]
+            marks = ",".join("?" * len(part))
+            for r in st.conn.execute(
+                f"""SELECT s.id, s.qualified_name, s.start_line, f.path FROM symbol s
+                    JOIN file f ON f.id = s.file_id WHERE s.id IN ({marks})""",
+                part,
+            ):
+                out[int(r["id"])] = r
+        return out
+
+    over = hier.overriders(sid)
+    base_id = hier.overridden_method(sid)
+    rows_meta = meta([o.method_id for o in over] + ([base_id] if base_id is not None else []))
+    supers: set[int] = set()
+    ids = [o.method_id for o in over]
+    for chunk in range(0, len(ids), 500):
+        part = ids[chunk : chunk + 500]
+        marks = ",".join("?" * len(part))
+        supers.update(
+            int(r[0])
+            for r in st.conn.execute(
+                f"""SELECT DISTINCT src_symbol_id FROM symbol_ref
+                    WHERE receiver='super' AND target_name=? AND src_symbol_id IN ({marks})""",
+                [name, *part],
+            )
+        )
+    listed = sorted(
+        (o for o in over if o.method_id in rows_meta),
+        key=lambda o: (
+            o.depth,
+            rows_meta[o.method_id]["path"],
+            rows_meta[o.method_id]["start_line"],
+        ),
+    )
+    page = [
+        {
+            "qualified_name": rows_meta[o.method_id]["qualified_name"],
+            "file_path": rows_meta[o.method_id]["path"],
+            "start_line": rows_meta[o.method_id]["start_line"],
+            "calls_super": o.method_id in supers,
+            "depth": o.depth,
+        }
+        for o in listed[:limit]
+    ]
+    base = None
+    if base_id is not None and base_id in rows_meta:
+        b = rows_meta[base_id]
+        base = {
+            "qualified_name": b["qualified_name"],
+            "file_path": b["path"],
+            "start_line": b["start_line"],
+        }
+    return page, len(listed), base
+
+
 def register(mcp: FastMCP) -> None:
     @mcp.tool(annotations={"readOnlyHint": True, "idempotentHint": True})
     @_workspace_note
@@ -3756,6 +4246,10 @@ def register(mcp: FastMCP) -> None:
         body text is needed. Returns `{qualified_name, file_path, start_line,
         end_line, source, body_hash}`. Resolution accepts either a fully-
         qualified name (preferred) or a short name when unambiguous.
+
+        `clones` appears when the same structure exists elsewhere in the index
+        (`identical_copies`, `also_at`): read this one, not the copies —
+        `find_clone_clusters` shows what they change.
         """
         st = get_state(workspace)
         pids = st.group_project_ids()
@@ -3783,6 +4277,7 @@ def register(mcp: FastMCP) -> None:
         }
         if st.settings.grouped and sym.get("project_root"):
             out["project_root"] = sym["project_root"]
+        _attach_clone_note(out, st, pids, sym)
         return out
 
     @mcp.tool(annotations={"readOnlyHint": True, "idempotentHint": True})
@@ -3814,6 +4309,10 @@ def register(mcp: FastMCP) -> None:
         have resolved and did not are listed in `unresolved_types` — read them
         before relying on their shape rather than assuming the closure is
         complete.
+
+        `clones` appears when the same structure exists elsewhere in the index
+        (`identical_copies`, `also_at`): this read covers the copies too —
+        `find_clone_clusters` shows what they change.
         """
         from livespec_mcp.domain.contract_closure import build_closure
 
@@ -3847,6 +4346,7 @@ def register(mcp: FastMCP) -> None:
         out = closure.as_dict()
         if st.settings.grouped and sym.get("project_root"):
             out["project_root"] = sym["project_root"]
+        _attach_clone_note(out, st, pids, sym)
         return _attach_external_edges(out, st, st.project_id)
 
     @mcp.tool(annotations={"idempotentHint": False})
@@ -4022,18 +4522,9 @@ def register(mcp: FastMCP) -> None:
         if line < 1:
             return mcp_error("line must be >= 1", hint="lines are 1-indexed")
 
-        needle = path.strip().lstrip("./")
-        placeholders = ",".join("?" * len(pids))
-        rows = st.conn.execute(
-            f"SELECT s.qualified_name, s.name, s.kind, s.signature, "
-            f"       s.start_line, s.end_line, f.path "
-            f"FROM symbol s JOIN file f ON f.id = s.file_id "
-            f"WHERE f.project_id IN ({placeholders}) "
-            f"  AND (f.path = ? OR f.path LIKE ?) "
-            f"  AND s.start_line <= ? AND s.end_line >= ? "
-            f"ORDER BY (s.end_line - s.start_line) ASC",
-            (*pids, needle, f"%{needle}", line, line),
-        ).fetchall()
+        from livespec_mcp.domain.location import symbols_spanning
+
+        rows = symbols_spanning(st.conn, pids, line, path=path)
 
         if not rows:
             return {
@@ -4255,11 +4746,31 @@ def register(mcp: FastMCP) -> None:
         so a `callers_count: 0` result is not misread as dead code.
         Designed for an agent's first contact with an unfamiliar symbol:
         instead of `find_symbol` -> `get_symbol_info` -> `analyze_impact`
-        -> `get_spec_implementation`, run this once."""
+        -> `get_spec_implementation`, run this once.
+
+        Pass an indexed **file path** instead of a symbol (`qname=
+        "src/pkg/mod.py"`) to get that file's `outline`: one line per symbol,
+        `start-end signature — docstring lead`, indented by nesting, no
+        bodies. That answers "what does this module do?" for about a tenth of
+        the file. A **class** (any symbol with members) carries the same
+        `outline` of its members next to the usual fields, so "what does this
+        class offer?" is one call instead of one per method. Outlines stop at
+        150 lines (`outline_truncated` says how many were left out).
+
+        A **method** that is overridden or overrides gains `overridden_by` (how
+        many subclass methods override it; list them with `analyze_impact`) and
+        `overrides` (`qualified_name`, `file_path`, `start_line` of its base
+        method); both are absent when there is no override."""
+        from livespec_mcp.domain.outline import file_outline, members_outline
+
         st = get_state(workspace)
         pids = st.group_project_ids()
         sym = _resolve_symbol(st.conn, pids, qname)
         if not sym:
+            module = file_outline(st.conn, pids, qname)
+            if module is not None:
+                module["next"] = "quick_orient / read_unit on the one symbol you need"
+                return module
             return symbol_not_found_error(st.conn, pids, qname)
         sid = int(sym["id"])
         graph_pid = _graph_project_id(sym, st.project_id)
@@ -4271,8 +4782,20 @@ def register(mcp: FastMCP) -> None:
         # by Django battle-test where two different `process_request`
         # methods reported identical top_callers because every callsite
         # matched both their short names.
-        callers_all = ancestors_within(view.g, sid, 1, min_weight=0.6) if sid in view.g else set()
-        callees_all = descendants_within(view.g, sid, 1, min_weight=0.6) if sid in view.g else set()
+        # Invocation edges only, like who_calls: a subclass or a function that
+        # names this symbol in an annotation depends on it but does not call
+        # it. Those are counted in `excluded_by_edge_type` below.
+        invocations = _resolve_edge_types(None)
+        callers_all = (
+            ancestors_within(view.g, sid, 1, min_weight=0.6, edge_types=invocations)
+            if sid in view.g
+            else set()
+        )
+        callees_all = (
+            descendants_within(view.g, sid, 1, min_weight=0.6, edge_types=invocations)
+            if sid in view.g
+            else set()
+        )
 
         def _topn(ids: set[int], n: int = 5) -> list[dict[str, Any]]:
             scored = sorted(
@@ -4314,26 +4837,63 @@ def register(mcp: FastMCP) -> None:
             except (json.JSONDecodeError, TypeError):
                 pass
 
-        return _attach_external_edges(
-            {
-                "qualified_name": sym["qualified_name"],
-                "kind": sym["kind"],
-                "signature": sym["signature"],
-                "file_path": sym["file_path"],
-                "start_line": sym["start_line"],
-                "end_line": sym["end_line"],
-                "docstring_lead": docstring_lead,
-                "is_entry_point": is_entry_point,
-                "framework_decorators": framework_decorators,
-                "callers_count": len(callers_all),
-                "callees_count": len(callees_all),
-                "top_callers": _topn(callers_all),
-                "top_callees": _topn(callees_all),
-                "specs": [dict(r) for r in specs],
-            },
-            st,
-            graph_pid,
+        oriented: dict[str, Any] = {
+            "qualified_name": sym["qualified_name"],
+            "kind": sym["kind"],
+            "signature": sym["signature"],
+            "file_path": sym["file_path"],
+            "start_line": sym["start_line"],
+            "end_line": sym["end_line"],
+            "docstring_lead": docstring_lead,
+            "is_entry_point": is_entry_point,
+            "framework_decorators": framework_decorators,
+            "callers_count": len(callers_all),
+            "callees_count": len(callees_all),
+            "top_callers": _topn(callers_all),
+            "top_callees": _topn(callees_all),
+            "specs": [dict(r) for r in specs],
+        }
+        _note_excluded_edge_types(
+            oriented, view, sid, incoming=True, edge_types=invocations, min_weight=0.6
         )
+        # Only on an index traces were ingested into (ingest_traces): how many
+        # times this symbol was seen entered. 0 there is information — the
+        # traced runs never executed it — which is why it is not omitted.
+        from livespec_mcp.domain.trace_ingest import symbol_runtime_calls
+
+        runtime_calls = symbol_runtime_calls(st.conn, st.project_id, sid)
+        if runtime_calls is not None:
+            oriented["runtime_calls"] = runtime_calls
+            # A rescued symbol: nothing calls it statically, yet traces saw it
+            # run. If every source behind that is older than the latest index
+            # run that changed files, the rescue may be a ghost of callers that
+            # have since moved (same rule as find_dead_code's `rescued`).
+            if runtime_calls > 0 and not callers_all:
+                from livespec_mcp.domain.trace_ingest import stale_evidence_for
+
+                behind = stale_evidence_for(st.conn, st.project_id, [sid])
+                if behind is not None:
+                    oriented["runtime_stale_evidence"] = True
+                    oriented["runtime_stale_sources"] = behind
+                    oriented["runtime_stale_hint"] = (
+                        "No static caller, and every trace source that saw it run was "
+                        "ingested before the latest index run that changed files: "
+                        "the callers may have moved since. Re-trace or remove these "
+                        "sources: " + ", ".join(behind)
+                    )
+        if sym["kind"] == "method":
+            _ov, ov_total, ov_base = _override_info(st, sid, limit=0)
+            if ov_total:
+                oriented["overridden_by"] = ov_total
+            if ov_base is not None:
+                oriented["overrides"] = ov_base
+        if sym["kind"] != "function":
+            # A class answers "what does it offer?" with its members; functions
+            # with nested helpers are left alone — their body is the answer.
+            members = members_outline(st.conn, sid)
+            if members is not None:
+                oriented.update(members)
+        return _attach_external_edges(oriented, st, graph_pid)
 
     @mcp.tool(annotations={"readOnlyHint": True, "idempotentHint": True})
     def analyze_impact(
@@ -4344,12 +4904,18 @@ def register(mcp: FastMCP) -> None:
         cursor: Cursor = 0,
         summary_only: SummaryOnly = False,
         min_weight: MinWeight = 0.6,
+        include_transitive: bool = False,
         workspace: Workspace | None = None,
     ) -> dict[str, Any]:
         """Topological impact analysis: what changes if `target` changes.
 
         - symbol: backward cone of callers + Specs that touch any reached symbol.
-          Set max_depth=1 to get the equivalent of a "find references".
+          Set max_depth=1 to get the equivalent of a "find references". On a
+          METHOD it also lists `overriding_methods` (subclass methods that
+          override it: `qualified_name`, `file_path`, `start_line`,
+          `calls_super`, `depth`; at most `limit`, exact `counts.overriding_methods`)
+          and `overrides` (the base method it overrides) — only when non-empty.
+          Read them before changing a signature.
         - file:   union of impacts from every symbol in the file.
         - spec: forward cone from every symbol implementing the Spec + their callers.
 
@@ -4365,6 +4931,16 @@ def register(mcp: FastMCP) -> None:
         scope match). Surfaced by Django battle-test where
         ``calls_into`` reported ~70 symbols vs ~10 actual. Pass
         ``min_weight=0.0`` for legacy unfiltered behavior.
+
+        Unreleased: for a ``symbol`` target the lists hold the DIRECT neighbours
+        only (depth 1: callers in ``impacted_callers``, callees in
+        ``calls_into``); what lies beyond is counted per depth in
+        ``counts.impacted_callers_by_depth`` / ``counts.calls_into_by_depth``
+        (``counts.impacted_callers`` / ``calls_into`` stay the exact size of
+        the whole cone to ``max_depth``, and ``affected_specs`` still covers
+        it). Pass ``include_transitive=True`` to list the whole cone — on
+        Django a function with 4 real callers listed 44 symbols (40 of them
+        transitive test machinery) and 288 callees, 67 KB.
         """
         st = get_state(workspace)
         pid = st.project_id
@@ -4410,52 +4986,85 @@ def register(mcp: FastMCP) -> None:
             sid = int(sym["id"])
             graph_pid = _graph_project_id(sym, pid)
             view = load_graph(st.conn, graph_pid)
-            impacted = (
-                ancestors_within(view.g, sid, max_depth, min_weight=min_weight)
+            impacted_d = (
+                ancestor_depths(view.g, sid, max_depth, min_weight=min_weight)
                 if sid in view.g
-                else set()
+                else {}
             )
-            forward = (
-                descendants_within(view.g, sid, max_depth, min_weight=min_weight)
+            forward_d = (
+                descendant_depths(view.g, sid, max_depth, min_weight=min_weight)
                 if sid in view.g
-                else set()
+                else {}
             )
+            impacted, forward = set(impacted_d), set(forward_d)
+            by_depth = {
+                "impacted_callers_by_depth": _count_by_depth(impacted_d),
+                "calls_into_by_depth": _count_by_depth(forward_d),
+            }
             if summary_only:
-                return _out(
-                    {
-                        "root": sym["qualified_name"],
-                        "counts": {
-                            "impacted_callers": len(impacted),
-                            "calls_into": len(forward),
-                            "affected_specs": len(specs_for_symbols(impacted | {sid})),
-                        },
+                summary_payload: dict[str, Any] = {
+                    "root": sym["qualified_name"],
+                    "counts": {
+                        "impacted_callers": len(impacted),
+                        "calls_into": len(forward),
+                        "affected_specs": len(specs_for_symbols(impacted | {sid})),
+                        **by_depth,
                     },
-                    graph_pid,
-                )
-            callers_page, callers_total, callers_next = _paginate_meta(impacted, view)
-            calls_page, calls_total, calls_next = _paginate_meta(forward, view)
+                }
+                direct_by_type = _direct_dependents_by_edge_type(view, sid, min_weight)
+                if direct_by_type:
+                    summary_payload["direct_dependents_by_edge_type"] = direct_by_type
+                if sym["kind"] == "method":
+                    _ov, ov_total, ov_base = _override_info(st, sid, limit=0)
+                    if ov_total:
+                        summary_payload["counts"]["overriding_methods"] = ov_total
+                    if ov_base is not None:
+                        summary_payload["overrides"] = ov_base
+                return _out(summary_payload, graph_pid)
+            listed_callers = impacted if include_transitive else _at_depth_one(impacted_d)
+            listed_calls = forward if include_transitive else _at_depth_one(forward_d)
+            callers_page, callers_total, callers_next = _paginate_meta(listed_callers, view)
+            calls_page, calls_total, calls_next = _paginate_meta(listed_calls, view)
             warn = _payload_warning(
                 max(callers_total, calls_total),
                 limit=limit,
                 summary_only=summary_only,
             )
-            return _out(
-                _attach_payload_warning(
-                    {
-                        "root": sym["qualified_name"],
-                        "impacted_callers": callers_page,
-                        "calls_into": calls_page,
-                        "affected_specs": specs_for_symbols(impacted | {sid}),
-                        "counts": {
-                            "impacted_callers": callers_total,
-                            "calls_into": calls_total,
-                        },
-                        "next_cursor": callers_next if callers_next is not None else calls_next,
-                    },
-                    warn,
-                ),
-                graph_pid,
-            )
+            impact_payload: dict[str, Any] = {
+                "root": sym["qualified_name"],
+                # Depth-1 rows say which edge put them here: a subclass
+                # (`inherits`) and a function that takes this as a parameter
+                # type (`references`) break differently from a caller.
+                "impacted_callers": _label_direct_edges(callers_page, view, sid, incoming=True),
+                "calls_into": _label_direct_edges(calls_page, view, sid, incoming=False),
+                "affected_specs": specs_for_symbols(impacted | {sid}),
+                "counts": {
+                    "impacted_callers": len(impacted),
+                    "calls_into": len(forward),
+                    **by_depth,
+                },
+                "next_cursor": callers_next if callers_next is not None else calls_next,
+            }
+            if not include_transitive and (
+                len(impacted) > len(listed_callers) or len(forward) > len(listed_calls)
+            ):
+                impact_payload["transitive_hint"] = (
+                    f"Lists hold depth-1 neighbours only; {len(impacted) - len(listed_callers)} "
+                    f"more callers and {len(forward) - len(listed_calls)} more callees lie "
+                    "within max_depth (counts per depth in `counts`). "
+                    "include_transitive=True lists them."
+                )
+            direct_by_type = _direct_dependents_by_edge_type(view, sid, min_weight)
+            if direct_by_type:
+                impact_payload["direct_dependents_by_edge_type"] = direct_by_type
+            if sym["kind"] == "method":
+                ov_page, ov_total, ov_base = _override_info(st, sid, limit=limit)
+                if ov_total:
+                    impact_payload["overriding_methods"] = ov_page
+                    impact_payload["counts"]["overriding_methods"] = ov_total
+                if ov_base is not None:
+                    impact_payload["overrides"] = ov_base
+            return _out(_attach_payload_warning(impact_payload, warn), graph_pid)
         if target_type == "file":
             sids = [
                 int(r["id"])
@@ -4648,19 +5257,31 @@ def register(mcp: FastMCP) -> None:
           files: `.get`, `add_parser`, `run`, `__init__`, `from_dict`,
           etc.). PageRank correctly identifies them as central but they
           carry near-zero "what is this codebase about" signal. Pass
-          `include_structural_patterns=True` to keep them. The names
-          actually filtered come back in `structural_patterns_filtered`.
+          `include_structural_patterns=True` to keep them. The 30 most
+          widespread names (by number of non-test files) come back in
+          `structural_patterns_filtered`; `structural_patterns_filtered_total`
+          is how many were filtered and `..._test_only` how many of those only
+          test files define (test model classes, `test_*`): counts, not names.
         - test-file symbols (`createMockDb`, `signTestToken`,
           `fakeAuthMiddleware`, …). Test scaffolding ranks high by PageRank
           but is the opposite of "what is this repo's core". No opt-out;
           the ones that outranked the returned top-N are listed by
-          qualified name in `test_symbols_filtered`."""
+          qualified name in `test_symbols_filtered`.
+
+        `runtime_evidence` (only once `ingest_traces` ran) carries the numbers
+        for stating runtime coverage: `symbols_with_hits_non_test` over
+        `symbols_non_test` — functions and methods outside test paths (the
+        same detector as the ranking filter above), and how many of them a
+        trace saw entered. `symbols_with_hits` counts every kind, tests
+        included; use the non-test pair for a ratio."""
         st = get_state(workspace)
-        return _attach_external_edges(
-            compute_project_overview(st, include_infrastructure, include_structural_patterns),
-            st,
-            st.project_id,
-        )
+        overview = compute_project_overview(st, include_infrastructure, include_structural_patterns)
+        from livespec_mcp.domain.trace_ingest import public_runtime_state
+
+        runtime = public_runtime_state(st.conn, st.project_id, _is_test_file_path)
+        if runtime is not None:
+            overview["runtime_evidence"] = runtime
+        return _attach_external_edges(overview, st, st.project_id)
 
     @mcp.tool(annotations={"readOnlyHint": True, "idempotentHint": True})
     @_workspace_note
@@ -4672,6 +5293,7 @@ def register(mcp: FastMCP) -> None:
         include_tests: bool = False,
         min_weight: float = 0.0,
         corroborate_with: str | None = None,
+        path: str | None = None,
         limit: int = 200,
         cursor: int = 0,
         summary_only: bool = False,
@@ -4715,10 +5337,26 @@ def register(mcp: FastMCP) -> None:
         `min_weight` (default 0.0): when >0, an inbound edge below this weight
         does not count as a caller (aligns with graph impact filters; try 0.6).
 
+        Unreleased: `path` (workspace-relative, POSIX; a file or a directory
+        prefix, as in `find_clone_clusters`) restricts the candidates — and with
+        them the runtime tiers, `filtered_out`, `by_kind`/`by_top_dir`, `count`
+        and the `not_swept` hints — to symbols defined under it. Callers may
+        live anywhere: a symbol under `path` that something outside it calls is
+        still not dead. A path that matches no indexed file is an error naming
+        the form to use. Use it to look at one directory without a scripts or
+        driver directory's symbols in the list.
+
         v0.7 (B3): paginated. `limit` (default 200) caps `dead_symbols` per
         call; `cursor` resumes from a previous call's `next_cursor`;
         `summary_only=True` returns just the count + breakdown without the
         list. The total count is always exact, regardless of pagination.
+
+        Unreleased: with `path` and runtime evidence (`ingest_traces`),
+        `runtime_coverage` gives the coverage of THAT path, with the
+        definitions `get_project_overview.runtime_evidence` uses repo-wide:
+        `symbols_non_test` (functions and methods under `path`, outside test
+        paths) and `symbols_with_hits_non_test` (how many of them were seen
+        running). It is in `summary_only` too.
 
         Unreleased: `filtered_out` reports how many candidates each default
         filter excluded, keyed by the flag that would include them
@@ -4739,6 +5377,21 @@ def register(mcp: FastMCP) -> None:
         """
         st = get_state(workspace)
         pid = st.project_id
+        prefix = normalise_path_prefix(path) if path else ""
+        if prefix:
+            known = st.conn.execute(
+                "SELECT 1 FROM file WHERE project_id=? AND (path=? OR substr(path, 1, ?)=?) LIMIT 1",
+                (pid, prefix, len(prefix) + 1, prefix + "/"),
+            ).fetchone()
+            if known is None:
+                return mcp_error(
+                    f"path {path!r} matches no indexed file or directory",
+                    hint=(
+                        "pass a workspace-relative POSIX path of an indexed file or "
+                        "directory, e.g. 'src/app' or 'src/app/models.py'; "
+                        "index_project first if it is new"
+                    ),
+                )
         auto_enabled: list[str] = []
         # TS/JS-only repos: Python-only default is a silent false zero. Auto-
         # enable non-Python sweep (audit: Composer reported count=0 + not_swept).
@@ -4753,18 +5406,40 @@ def register(mcp: FastMCP) -> None:
                 include_non_python = True
                 auto_enabled.append("include_non_python")
         edge_extra = ""
-        edge_params: list[Any] = [pid]
+        weight_param: list[Any] = []
         if min_weight > 0.0:
             edge_extra = " AND e.weight >= ?"
-            edge_params = [pid, float(min_weight)]
+            weight_param = [float(min_weight)]
+        # A file's module symbol (`lib.detect`) is the file, not a removable
+        # definition: it is never a candidate, so it never reaches the runtime
+        # tiers either (it used to be listed, or `rescued` by any hit inside
+        # the file). Deleting a dead file is a conclusion drawn from its
+        # symbols, not a symbol of its own.
+        # A symbol with ANY inbound edge is not a candidate, whatever the edge
+        # type: being inherited from or named in a type position is use. The
+        # rows kept alive by one of those two alone are still selected (and
+        # run through the same filters below) so the payload can say how many
+        # there were, the way `corroboration` does for a second extractor.
+        edge_params: list[Any] = [*weight_param, *weight_param, pid, *weight_param]
         rows = st.conn.execute(
             f"""SELECT s.id, s.qualified_name, s.name, s.kind, s.decorators,
-                      s.visibility, s.start_line, s.end_line, f.path AS file_path
+                      s.signature, s.parent_symbol_id,
+                      s.visibility, s.start_line, s.end_line, f.path AS file_path,
+                      EXISTS (
+                        SELECT 1 FROM symbol_edge e
+                        WHERE e.dst_symbol_id=s.id AND e.edge_type='inherits'{edge_extra}
+                      ) AS kept_inherits,
+                      EXISTS (
+                        SELECT 1 FROM symbol_edge e
+                        WHERE e.dst_symbol_id=s.id AND e.edge_type='references'{edge_extra}
+                      ) AS kept_references
                FROM symbol s JOIN file f ON f.id=s.file_id
                WHERE f.project_id=?
+                 AND s.kind != 'module'
                  AND NOT EXISTS (
                    SELECT 1 FROM symbol_edge e
                    WHERE e.dst_symbol_id=s.id{edge_extra}
+                     AND e.edge_type NOT IN ('inherits', 'references')
                  )
                  AND NOT EXISTS (
                    SELECT 1 FROM spec_symbol rs WHERE rs.symbol_id=s.id
@@ -4776,6 +5451,8 @@ def register(mcp: FastMCP) -> None:
                ORDER BY f.path, s.start_line""",
             tuple(edge_params),
         ).fetchall()
+        if prefix:
+            rows = [r for r in rows if under_path(r["file_path"], prefix)]
 
         def is_entry_point_path(p: str) -> bool:
             if not include_tests and _is_test_file_path(p):
@@ -4930,12 +5607,22 @@ def register(mcp: FastMCP) -> None:
         # tell which number it is looking at. Counts only (never name lists) so
         # the payload stays bounded.
         filtered_out: dict[str, int] = {}
+        # Would-be candidates whose only inbound edges are `inherits` /
+        # `references`, per edge type (a symbol with both counts in each).
+        kept_alive: dict[str, int] = {}
+        kept_alive_symbols = 0
 
         def _drop(reason: str) -> None:
             filtered_out[reason] = filtered_out.get(reason, 0) + 1
 
+        framework_implemented = _java_framework_implemented(st, rows)
         for r in rows:
             meta = dict(r)
+            kept_inherits = bool(meta.pop("kept_inherits"))
+            if int(meta["id"]) in framework_implemented:
+                _drop("framework_implemented")
+                continue
+            kept_references = bool(meta.pop("kept_references"))
             # Pulled ahead of is_entry_point_path (which also returns True for
             # test paths when include_tests is False) purely to attribute the
             # skip; the set of skipped symbols is unchanged.
@@ -4957,8 +5644,18 @@ def register(mcp: FastMCP) -> None:
             if not include_infrastructure and _is_implicit_entry_point(meta):
                 _drop("infrastructure")
                 continue
+            # A record accessor / Lombok getter the source never declares: used
+            # by name, reflection or a framework, so no caller proves nothing.
+            if not include_infrastructure and JAVA_GENERATED_MARK in (meta.get("decorators") or ""):
+                _drop("infrastructure")
+                continue
             if not include_infrastructure and _has_entry_point_decorator(
                 meta.get("decorators"), alias_lastsegs
+            ):
+                _drop("infrastructure")
+                continue
+            if not include_infrastructure and _registered_by_decorator(
+                meta.get("decorators"), meta["file_path"]
             ):
                 _drop("infrastructure")
                 continue
@@ -5018,6 +5715,13 @@ def register(mcp: FastMCP) -> None:
                         _drop("infrastructure")
                         continue
 
+            if kept_inherits or kept_references:
+                kept_alive_symbols += 1
+                if kept_inherits:
+                    kept_alive["inherits"] = kept_alive.get("inherits", 0) + 1
+                if kept_references:
+                    kept_alive["references"] = kept_alive.get("references", 0) + 1
+                continue
             filtered.append(meta)
 
         corroboration: dict[str, Any] | None = None
@@ -5026,6 +5730,12 @@ def register(mcp: FastMCP) -> None:
             filtered, corroboration = _corroborate_dead_code(filtered, st=st, graph_path=graph_path)
             if corroboration.get("isError"):
                 return corroboration
+
+        # Runtime evidence (ingest_traces). Absent on an index nobody ingested
+        # traces into, and then nothing below changes: no key, no reordering.
+        runtime_tiers = _apply_runtime_tiers(st, pid, filtered)
+        if runtime_tiers is not None:
+            filtered = runtime_tiers.pop("candidates")
 
         total = len(filtered)
         # by_kind / by_dir breakdowns (cheap; useful for summary mode)
@@ -5041,12 +5751,39 @@ def register(mcp: FastMCP) -> None:
             "by_kind": by_kind,
             "by_top_dir": by_dir,
         }
+        if prefix:
+            payload["path"] = path
         if auto_enabled:
             payload["auto_enabled"] = auto_enabled
         if corroboration is not None:
             payload["corroboration"] = corroboration
         elif corroboration_hint:
             payload["corroboration_available"] = corroboration_hint
+        if runtime_tiers is not None:
+            payload["runtime"] = runtime_tiers
+            if prefix:
+                from livespec_mcp.domain.trace_ingest import public_runtime_state
+
+                scoped = public_runtime_state(st.conn, pid, _is_test_file_path, path=prefix)
+                if scoped is not None:
+                    payload["runtime_coverage"] = {
+                        "path": prefix,
+                        "symbols_non_test": scoped["symbols_non_test"],
+                        "symbols_with_hits_non_test": scoped["symbols_with_hits_non_test"],
+                    }
+        if kept_alive:
+            payload["kept_alive_by_edge_type"] = {
+                **dict(sorted(kept_alive.items())),
+                "symbols": kept_alive_symbols,
+            }
+            payload["kept_alive_by_edge_type_hint"] = (
+                "Symbols nothing calls that are NOT listed because something "
+                "inherits from them (`inherits`) or names them in a type "
+                "position (`references`: annotation, generic argument, "
+                "isinstance/instanceof, except/catch). Counted after the same "
+                "filters as the candidates; `symbols` counts each once. "
+                "analyze_impact on one of them lists what depends on it."
+            )
         # Ingested edges silence dead candidates through the base query's
         # NOT EXISTS, before any of this code runs. A count that a `graph.json`
         # helped produce must not read as a purely livespec finding.
@@ -5061,7 +5798,9 @@ def register(mcp: FastMCP) -> None:
                 "include them: tests=include_tests, non_python="
                 "include_non_python, public=include_public, infrastructure="
                 "include_infrastructure, fs_routing="
-                "include_ts_framework_routes. Counts are not mutually "
+                "include_ts_framework_routes; framework_implemented has no "
+                "flag (Java `main`, Spring Data repository methods, overrides "
+                "of a base outside the project). Counts are not mutually "
                 "exclusive across runs — a symbol is attributed to the first "
                 "filter that excluded it."
             )
@@ -5087,6 +5826,7 @@ def register(mcp: FastMCP) -> None:
                 "file_path": m["file_path"],
                 "start_line": m["start_line"],
                 "end_line": m["end_line"],
+                **({"runtime": m["runtime"]} if "runtime" in m else {}),
             }
             for m in page
         ]

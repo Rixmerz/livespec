@@ -56,6 +56,7 @@ Call tools from **any** member workspace (usually the hub/composer). Then:
 | Do the repos' schemas of one entity agree? | `schema_drift(entity?)` — every `@schema: <entity>` declaration of the group, field by field; `project://schemas` |
 | What breaks in the other repos if I change this field? | `schema_impact(entity, change, field)` — BEFORE the edit: each declaration's action + readers per repo (route callers included) |
 | Make that field change in every repo | `plan_schema_change(entity, change, field)` — AFTER `schema_impact`: exact line edits per declaration; plan first, `apply=True` only once the person agreed |
+| Which code touches a database table? Before changing a table or a function that persists; first call on an unknown repo to see its tables | `find_data_access()` (inventory: read/write/ddl per table, declared in `.sql` or in code vs accessed; `unresolved_models` with `file:line`) · `find_data_access(table="users")` (who reads/writes/defines it, `file:line`, mechanism; an ORM model name works too) · `find_data_access(qname=..., include_callees=True)` (tables a symbol reaches through its callees; `include_callers` is the deprecated alias) — SQL in strings, constants and local variables + SQLAlchemy (incl. Flask-SQLAlchemy 2.0 style)/Django/Prisma/Knex/TypeORM/JPA; a table is never guessed (`confidence: unresolved`); catalogue tables only with `include_system=True` · `find_data_access(path="app/billing")` (only the tables code under that directory touches; test files left out unless `include_tests=True`; `summary_only=True` keeps counts, no `unresolved_models` list) |
 | Human view of the group | `/livespec-ui` (or `livespec ui`) — group page lists repos, cross-repo Specs, route hops; read-only, writes nothing into any repo |
 
 **Cross-repo Specs (`xrepo-*`):** livespec does not invent one global Spec row.
@@ -88,6 +89,7 @@ list_specs(workspace="REPO")
 Then report: file/symbol/edge counts, languages, top symbols, Spec totals.
 `index_project` is content-hash incremental — re-run it on demand (after pulls/edits),
 it is not a background watcher you should lean on while editing.
+Vendored/generated code (vendor, third_party, dist, build, out, coverage, `*.min.js`, `*.bundle.js`/`.mjs`, JS with a >2000-char line in its first 2 KB) is skipped; the payload's `generated_skipped` reports the count and up to 10 paths. `index_project(include_generated=True)` or `!vendor/` in `.livespec.toml` `[index].ignore` brings it back.
 
 ## Tool map — what to call when
 
@@ -95,16 +97,16 @@ it is not a background watcher you should lean on while editing.
 
 | Intent | Tool |
 |--------|------|
-| First contact on a symbol | `quick_orient(qname)` — replaces 3-4 older calls, includes `is_entry_point` |
+| First contact on a symbol | `quick_orient(qname)` — replaces 3-4 older calls, includes `is_entry_point`; on a method also `overridden_by` (count of subclasses that override it) and `overrides` (the base method it overrides) when non-empty |
 | Name lookup (separator-agnostic `::` `.` `#`) | `find_symbol(query, kind, limit)` |
 | Read a body only | `get_symbol_source(qname)` |
 | Who calls this? | `who_calls(qname, max_depth=1)` — `summary_only=True` on huge repos |
 | What does this call? | `who_does_this_call(qname, max_depth=1)` |
-| Blast radius + Spec rollup | `analyze_impact(target_type, target, max_depth)` — `symbol`\|`file`\|`spec` |
+| Blast radius + Spec rollup | `analyze_impact(target_type, target, max_depth, include_transitive?)` — `symbol`\|`file`\|`spec`. A symbol lists its depth-1 callers and callees; the rest is counted per depth (`counts.impacted_callers_by_depth`, `calls_into_by_depth`), `include_transitive=True` lists the whole cone. On a method, `overriding_methods` lists the subclass methods that override it (`calls_super` says whether they call the parent via `super()`), `overrides` the base method — check them BEFORE changing a signature |
 | PR / diff scope | `git_diff_impact(base_ref, head_ref)` — git repos only; symbol-precise (an untouched function in a changed file is not listed); a `schema_impact` key appears when a `@schema:` declaration changed |
 | Keyword search over chunks | `search(query, scope)` — FTS5 over AST-aware symbol + Spec chunks |
 | Literal string search over indexed files | `grep_in_indexed_files(pattern)` — check `scope_fresh`, see the staleness trap below |
-| Dead-code candidates | `find_dead_code()` — respects entry points / `pub` / frameworks; TS-only auto-enables `include_non_python` |
+| Dead-code candidates | `find_dead_code(path=None)` — respects entry points / `pub` / frameworks; TS-only auto-enables `include_non_python`; `path="src/app"` (file or directory prefix, workspace-relative) keeps only symbols defined there, callers anywhere; unknown path → error with a hint |
 | Likely-unused HTTP flows | `find_legacy_flows()` — see polyrepo section; graph ≠ traffic |
 | Orphan tests | `find_orphan_tests()` — tests only (helpers counted in `test_helper_symbols_skipped`); check `test_files_count` / `test_function_symbols` + `hint` (Jest anonymous `test()` → honest zero) |
 | HTTP/CLI entry points | `find_endpoints(framework=None)` — see the Hono trap below; prefer `summary_only=True` if JSON is huge |
@@ -112,6 +114,7 @@ it is not a background watcher you should lean on while editing.
 | Everything needed to change one symbol | `read_unit(qname, depth=1, token_budget=2000)` — body + callee signatures + the types in them + what it raises + covering tests, in one payload |
 | Stack trace / file:line → symbol | `resolve_location(path, line)` — the inverse of `read_unit` |
 | "Did I just write this twice?" | `search_similar(code or qname)` — before a write; normalised-AST hash + k-gram winnowing, no embeddings |
+| First contact with a legacy repo: which bodies are pasted N times? | `find_clone_clusters(min_size=2, path=None, summary_only=False)` — one `representative` to read per cluster (`read_unit`), every other copy as `identical` or a bounded diff; skim the diffs, do not open the copies. Ordered by `lines_saved`; `totals` exact across pages |
 | Frozen duplication debt | `debt_baseline_capture()` / `debt_baseline_status()` — accepted duplication stays quiet, new copies do not |
 | A human wants to *see* the index | Not a tool: tell them to run `/livespec-ui` (Claude Code) or `livespec ui` — one read-only page over every indexed project. Never generate HTML into the repo |
 
@@ -216,10 +219,16 @@ the group, or its declaration is not annotated.
 
 ### A second extractor (Graphify) — optional, zero LLM
 
-livespec's blind spots are known and specific: **type-position use**
-(`def f(x: Base)`), **inheritance** (`class A extends B`), and cross-file calls
-the resolver could not disambiguate. None of them produce an edge, so a base
-class or an interface used only as a type reads as referenced by nothing.
+For **Python, TypeScript/TSX and Java**, livespec itself now extracts
+**inheritance** (`inherits` edges: `class A(B)`, `extends`, `implements`) and
+**type-position use** (`references` edges: annotations, generic arguments,
+`isinstance`/`instanceof`, `except`/`catch`, `throws`, `as`/`satisfies`), so a
+base class or an interface used only that way is no longer reported dead and
+`analyze_impact` on it lists the subclasses and users. You do not need Graphify
+for those two gaps in those languages. `find_dead_code` says how many symbols
+that kept alive under `kept_alive_by_edge_type`. What remains blind: other
+languages, and cross-file calls the resolver could not disambiguate. A symbol
+used only as a type still reads as referenced by nothing there.
 
 A second AST extractor has *different* blind spots, which is what makes it
 worth reading. [Graphify](https://github.com/Graphify-Labs/graphify)'s code
@@ -250,6 +259,52 @@ Rules that matter when you use it:
   `external_edges.stale`; `[graph] auto_ingest = true` refreshes automatically.
 - **Never treat it as traffic.** Two extractors agreeing is still static
   analysis.
+
+### What actually ran (FlowTrace traces) — optional
+
+Static analysis cannot see `getattr(obj, name)()`, a registry of callables, DI
+or reflection: the callee reads as called by nobody. A
+[FlowTrace](https://github.com/Rixmerz/flowtrace-debugger) trace
+(`flowtrace.jsonl`, schema v2) of the program running can.
+
+| Intent | Tool |
+|--------|------|
+| Before trusting dead-code candidates, when a trace exists | `ingest_traces(trace_path=..., dry_run=True)` then `dry_run=False`, then `find_dead_code()` |
+| `who_calls` returns nothing for something obviously used dynamically | same — the observed caller appears, marked `via_external_edge: "runtime:flowtrace"` |
+| Payload shows `skipped.parent_not_yet_entered` / `parent_already_exited`, `discarded_spans` | spans from an older FlowTrace that no program produces (tracer-run `__repr__`, generator frames): they add no edge and no hit and cannot rescue a symbol; re-record the trace |
+| Take it back out | `ingest_traces(remove=True)` removes all runtime evidence; `ingest_traces(remove=True, trace_path=[...])` only the named trace files |
+
+- **Never a substitute for `index_project`.** Events resolve only to symbols
+  livespec already indexed; index first, and re-ingest after re-indexing
+  changed files (their evidence is dropped with the old body — the payload
+  says so under `external_edges.stale`).
+- **Read the dry run.** `edges_to_add` = calls the static graph lacks,
+  `already_known` = calls the trace confirms, `unresolved` = events it refused
+  to place (by reason — it never guesses between two same-named functions).
+- **`find_dead_code` tiers** (only once traces are ingested): candidates that
+  ran are gone and counted in `runtime.rescued_by_runtime`; each remaining row
+  has `runtime: "not_seen"` (a traced run reached its file and never executed
+  it — the strongest removal evidence) or `"no_evidence"` (no trace touched
+  the file; the trace says nothing).
+- **Stale rescues.** A `runtime.rescued` entry (and `quick_orient` on a symbol
+  nothing calls, as `runtime_stale_evidence`) is marked `stale_evidence: true`
+  with its `sources` when every trace file that saw it run predates the latest
+  index run that changed files — callers may have moved since. Marked, not
+  dropped: re-trace or `ingest_traces(remove=True, trace_path=[...])` those
+  sources, re-index, ingest the new run. The rule is coarse: any changed file.
+- **Coverage.** `get_project_overview` → `runtime_evidence`:
+  `symbols_with_hits_non_test` over `symbols_non_test` (functions and methods
+  outside test paths). That is repo-wide; for one capability read
+  `find_dead_code(path=..., summary_only=True)` → `runtime_coverage` (same two
+  numbers, counted under `path`).
+- **A runtime-only caller is the nearest traced ancestor.** A caller carrying
+  only `via_external_edge: runtime:flowtrace` was seen above the callee in a
+  trace; untraced frames (test runner, framework) may sit between, so it is not
+  necessarily the direct caller (`external_edges.runtime_only_hint`).
+- **A trace is the runs that were traced, not production.** `not_seen` on a
+  thin test run is weak; say which run it came from.
+- Pass every process's file of a distributed trace together (a list, or the
+  directory) so callers resolve across files.
 
 **`find_endpoints` — Hono / Express.** Call-style `router.get/post` routes
 are included in the **default** sweep (`framework=None`). Pass
@@ -372,7 +427,7 @@ Unlock with doc rows or `LIVESPEC_PLUGINS=docs|all`. (The old `export_explorer` 
 ## Pagination contract
 
 Aggregators (`find_dead_code`, `audit_coverage`, `find_orphan_tests`, `find_endpoints`,
-`find_legacy_flows`, `git_diff_impact`, `schema_drift`, `schema_impact`, `plan_schema_change`) accept `limit` (default 200) + `cursor` +
+`find_legacy_flows`, `git_diff_impact`, `schema_drift`, `schema_impact`, `plan_schema_change`, `find_data_access`) accept `limit` (default 200) + `cursor` +
 `summary_only=False`. Counts are always exact regardless of pagination. If a
 payload comes back with `payload_warning`, switch to `summary_only=True` and paginate.
 
@@ -427,4 +482,7 @@ For the full annotation grammar and examples, fetch the MCP prompt `agent_playbo
   `excluded_by_edge_type` without saying what was excluded.
 - Do not run `ingest_external_graph(dry_run=False)` on someone's index without
   telling them: it writes rows into `symbol_edge`. `remove=True` undoes it
-  exactly.
+  exactly. Same for `ingest_traces(dry_run=False)`.
+- Do not call `ingest_traces` instead of `index_project`, and do not read
+  `runtime: "no_evidence"` as "safe to delete" — it means the trace never
+  reached that file.

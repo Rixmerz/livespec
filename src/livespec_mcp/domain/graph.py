@@ -117,11 +117,27 @@ def load_graph(conn: sqlite3.Connection, project_id: int) -> GraphView:
         # is. Carried as an attribute rather than filtered here: an ingested
         # edge is an ordinary edge for traversal, and the tools that report it
         # are the ones that should say where it came from.
+        src_id, dst_id = int(r["src_symbol_id"]), int(r["dst_symbol_id"])
+        weight = float(r["weight"])
+        # The graph holds one edge per (src, dst) pair, but `symbol_edge` can
+        # hold several: a function that calls a class AND names it in an
+        # annotation has a `calls` and a `references` row. The invocation edge
+        # must survive whatever the row order, or `who_calls` would lose a real
+        # caller to a type annotation; between two non-invocation edges the
+        # stronger one is kept.
+        if g.has_edge(src_id, dst_id):
+            kept = g[src_id][dst_id]
+            kept_inv = kept["edge_type"] in INVOCATION_EDGE_TYPES
+            new_inv = r["edge_type"] in INVOCATION_EDGE_TYPES
+            if kept_inv and not new_inv:
+                continue
+            if kept_inv == new_inv and kept["weight"] >= weight:
+                continue
         g.add_edge(
-            int(r["src_symbol_id"]),
-            int(r["dst_symbol_id"]),
+            src_id,
+            dst_id,
             edge_type=r["edge_type"],
-            weight=float(r["weight"]),
+            weight=weight,
             origin=r["origin"] or "livespec",
         )
 
@@ -183,6 +199,19 @@ def descendants_within(
 ) -> set[int]:
     """BFS up to max_depth, collect descendants (forward slicing).
 
+    See `descendant_depths` for the walk; this is its keys."""
+    return set(descendant_depths(g, source, max_depth, min_weight, edge_types))
+
+
+def descendant_depths(
+    g: nx.DiGraph,
+    source: int,
+    max_depth: int,
+    min_weight: float = 0.0,
+    edge_types: frozenset[str] | set[str] | None = None,
+) -> dict[int, int]:
+    """BFS up to max_depth: descendant -> hops on its SHORTEST path.
+
     v0.9 P3: ``min_weight`` skips edges below the threshold. Resolver
     fan-out (multiple short-name candidates that the static analyzer
     can't disambiguate) lands at weight 0.5; pass ``min_weight=0.6`` to
@@ -203,7 +232,7 @@ def descendants_within(
     # blast radius of who_calls / analyze_impact / coverage.
     from collections import deque
 
-    seen: set[int] = set()
+    seen: dict[int, int] = {}
     frontier: deque[tuple[int, int]] = deque([(source, 0)])
     while frontier:
         node, d = frontier.popleft()
@@ -218,9 +247,19 @@ def descendants_within(
                     continue
                 if edge_types is not None and ed.get("edge_type") not in edge_types:
                     continue
-            seen.add(succ)
+            seen[succ] = d + 1
             frontier.append((succ, d + 1))
     return seen
+
+
+def ancestor_depths(
+    g: nx.DiGraph,
+    source: int,
+    max_depth: int,
+    min_weight: float = 0.0,
+    edge_types: frozenset[str] | set[str] | None = None,
+) -> dict[int, int]:
+    return descendant_depths(g.reverse(copy=False), source, max_depth, min_weight, edge_types)
 
 
 def ancestors_within(

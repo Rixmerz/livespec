@@ -39,7 +39,7 @@ from typing import Any
 
 from fastmcp.server.middleware import Middleware
 
-from livespec_mcp.config import load_repo_config
+from livespec_mcp.config import load_repo_config, write_state_gitignore
 from livespec_mcp.state import _resolve_workspace
 from livespec_mcp.workspace_param import WorkspaceRequiredError
 
@@ -166,6 +166,7 @@ class AgentLogMiddleware(Middleware):
             }
             try:
                 log_path.parent.mkdir(parents=True, exist_ok=True)
+                write_state_gitignore(log_path.parent)
                 with log_path.open("a", encoding="utf-8") as f:
                     f.write(json.dumps(entry, default=str) + "\n")
             except OSError:

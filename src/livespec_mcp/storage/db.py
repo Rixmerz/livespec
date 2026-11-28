@@ -844,7 +844,280 @@ def _m028_symbol_ref_receiver(conn: sqlite3.Connection) -> None:
         _flag_reextract(conn)
 
 
+def _m035_runtime_source_index_run(conn: sqlite3.Connection) -> None:
+    """Unreleased: `runtime_source.index_run_id` — what code a trace saw.
+
+    A trace describes the code that ran when it was recorded. The id of the
+    latest finished index run that changed files, taken when the source was
+    ingested, is what lets `find_dead_code` / `quick_orient` say "this evidence
+    predates a later change to the code" (`stale_evidence`) without comparing
+    wall clocks to the one-second `index_run` timestamps. Rows that already
+    exist are backfilled from their `ingested_at`; 0 = no changing run before
+    it. Idempotent.
+    """
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(runtime_source)")}
+    if "index_run_id" not in cols:
+        conn.execute("ALTER TABLE runtime_source ADD COLUMN index_run_id INTEGER")
+    conn.execute(
+        """UPDATE runtime_source SET index_run_id = COALESCE((
+               SELECT MAX(r.id) FROM index_run r
+               WHERE r.project_id = runtime_source.project_id
+                 AND r.finished_at IS NOT NULL AND r.files_changed > 0
+                 AND r.finished_at <= datetime(runtime_source.ingested_at, 'unixepoch')
+           ), 0)
+           WHERE index_run_id IS NULL"""
+    )
+
+
 # Ordered registry. Append-only — never reuse a version number.
+def _m029_runtime_evidence(conn: sqlite3.Connection) -> None:
+    """Unreleased: runtime evidence from FlowTrace traces (`ingest_traces`).
+
+    Three tables, because a trace says two things `symbol_edge` cannot hold and
+    both have to come back out exactly:
+
+    - `runtime_source` — one row per ingested trace FILE (not per ingest):
+      path, content hash and what it contributed. `external_ingest` (migration
+      23) was not reused: it is one row per (project, origin) with one path,
+      and runtime evidence is the sum of several files — two test runs, one
+      file per process of a distributed trace. Keying evidence by source is
+      also what makes a re-ingest replace instead of double-count.
+    - `runtime_hit` — how many times each symbol was entered, per source. This
+      is what lets `find_dead_code` tell "no static caller but it runs" from
+      "the run reached this file and never executed it".
+    - `runtime_edge` — observed caller -> callee pairs, per source. The row in
+      `symbol_edge` (origin `runtime:flowtrace`) is derived from these, so an
+      edge is retracted exactly when the last trace supporting it is replaced
+      or removed, and never while another still does.
+
+    Everything cascades from `symbol`: a re-extracted file takes its evidence
+    with it, which is right — the body that was observed is gone. New empty
+    tables, nothing to backfill, no re-extract.
+    """
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS runtime_source (
+            id INTEGER PRIMARY KEY,
+            project_id INTEGER NOT NULL REFERENCES project(id) ON DELETE CASCADE,
+            origin TEXT NOT NULL,
+            path TEXT NOT NULL,
+            content_hash TEXT,
+            size INTEGER,
+            mtime REAL,
+            events INTEGER NOT NULL,
+            resolved_events INTEGER NOT NULL,
+            symbols_hit INTEGER NOT NULL,
+            edges_observed INTEGER NOT NULL,
+            ingested_at REAL NOT NULL,
+            UNIQUE(project_id, origin, path)
+        )"""
+    )
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS runtime_hit (
+            symbol_id INTEGER NOT NULL REFERENCES symbol(id) ON DELETE CASCADE,
+            source_id INTEGER NOT NULL REFERENCES runtime_source(id) ON DELETE CASCADE,
+            origin TEXT NOT NULL,
+            calls INTEGER NOT NULL,
+            first_ingested_at REAL NOT NULL,
+            last_ingested_at REAL NOT NULL,
+            PRIMARY KEY (symbol_id, source_id)
+        )"""
+    )
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_runtime_hit_source ON runtime_hit(source_id)")
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS runtime_edge (
+            src_symbol_id INTEGER NOT NULL REFERENCES symbol(id) ON DELETE CASCADE,
+            dst_symbol_id INTEGER NOT NULL REFERENCES symbol(id) ON DELETE CASCADE,
+            source_id INTEGER NOT NULL REFERENCES runtime_source(id) ON DELETE CASCADE,
+            calls INTEGER NOT NULL,
+            PRIMARY KEY (src_symbol_id, dst_symbol_id, source_id)
+        )"""
+    )
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_runtime_edge_source ON runtime_edge(source_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_runtime_edge_dst ON runtime_edge(dst_symbol_id)")
+
+
+def _m030_inherit_reference_refs(conn: sqlite3.Connection) -> None:
+    """Unreleased: native `inherits` / `references` edges (Python, TS/TSX, Java).
+
+    No column: `symbol_ref.ref_type` has existed since the table did and now
+    carries two more values (`inherit`, `type`), which the resolver writes as
+    `inherits` / `references` rows in `symbol_edge`. This migration exists
+    only to queue the one-time re-extract, the way the decorator migration
+    (v8) did: refs are stored per file at extraction, so the files of an
+    existing index hold none of the new ones until they are read again, and an
+    unchanged file is otherwise never re-read. Skipped on an empty DB.
+
+    Downgrade caveat: code older than this version never reads `ref_type` and
+    would resolve the new refs as calls, so re-index with `force=True` after
+    going back to it."""
+    if conn.execute("SELECT 1 FROM symbol LIMIT 1").fetchone() is not None:
+        _flag_reextract(conn)
+
+
+def _m031_data_access(conn: sqlite3.Connection) -> None:
+    """Unreleased: the data-access map (`find_data_access`).
+
+    - `data_access` — one row per place a symbol reads, writes or defines a
+      table. `table_name` / `table_schema` are lower-case. A row either carries
+      the table as written at the site (`confidence='literal'`: SQL text, a
+      query builder's string argument) or a `ref_name` (model / entity class,
+      or a repository type when `ref_kind='repository'`) from which the
+      resolver fills `model`, `table_name` and `confidence` (`model`,
+      `convention` or `unresolved`) after every index run. Rows hang off the
+      symbol, so re-extracting a file replaces them through the cascade.
+    - `data_model` — model class -> table and repository -> entity
+      declarations, the resolver's input. Keyed by file (a module-level
+      SQLAlchemy `Table` has no symbol); the indexer deletes a file's rows
+      before re-inserting them.
+
+    Both are derived from source, so rolling back is dropping them. Re-extract
+    is queued only on a DB that already holds symbols, as in v27: existing
+    files must be read again to fill the map."""
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS data_access (
+            id INTEGER PRIMARY KEY,
+            symbol_id INTEGER NOT NULL REFERENCES symbol(id) ON DELETE CASCADE,
+            table_name TEXT,
+            table_schema TEXT,
+            model TEXT,
+            ref_name TEXT,
+            ref_kind TEXT CHECK (ref_kind IN ('model', 'repository')),
+            access TEXT NOT NULL CHECK (access IN ('read', 'write', 'ddl')),
+            mechanism TEXT NOT NULL,
+            line INTEGER NOT NULL,
+            confidence TEXT NOT NULL
+                CHECK (confidence IN ('literal', 'model', 'convention', 'unresolved'))
+        )"""
+    )
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_data_access_symbol ON data_access(symbol_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_data_access_table ON data_access(table_name)")
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS data_model (
+            id INTEGER PRIMARY KEY,
+            file_id INTEGER NOT NULL REFERENCES file(id) ON DELETE CASCADE,
+            symbol_id INTEGER REFERENCES symbol(id) ON DELETE SET NULL,
+            name TEXT NOT NULL,
+            role TEXT NOT NULL CHECK (role IN ('model', 'repository')),
+            mechanism TEXT NOT NULL,
+            table_name TEXT,
+            table_schema TEXT,
+            entity TEXT,
+            table_source TEXT CHECK (table_source IN ('declared', 'convention')),
+            line INTEGER NOT NULL
+        )"""
+    )
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_data_model_file ON data_model(file_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_data_model_name ON data_model(name)")
+    if conn.execute("SELECT 1 FROM symbol LIMIT 1").fetchone() is not None:
+        _flag_reextract(conn)
+
+
+def _m032_python_import_scopes(conn: sqlite3.Connection) -> None:
+    """Unreleased: Python relative imports keep their leading dots.
+
+    No column. `symbol_ref.scope_module` of a Python `from .x import Y` used to
+    hold the bare `x`, which the resolver matched against every module of that
+    name; it now holds `.x` so the import resolves to the one module it names.
+    Refs are stored per file at extraction, so unchanged files keep the old
+    text until they are read again: queue the one-time re-extract. Skipped on
+    an empty DB."""
+
+
+def _m033_data_access_shapes(conn: sqlite3.Connection) -> None:
+    """Unreleased: wider shapes for the data-access map.
+
+    Recreates `data_access` and `data_model` (both derived from source, so
+    nothing is lost) with relaxed CHECKs and three new `data_model` columns:
+
+    - `data_access.ref_kind` also takes `relationship` (a write-only or dynamic
+      SQLAlchemy collection: `owner.attr:op`, resolved to its target model or
+      association table) and `const` (an SQL constant imported from another
+      module). Both kinds of row are DERIVED after every index run from
+      `data_model` placeholders (`relref` / `constref`), never extracted.
+    - `data_model.role` also takes `table` (a CREATE TABLE written in code: a
+      declaration), `sqlconst` (the tables of a module-level SQL constant),
+      `constref` (a use of an imported constant), `relationship`, `relref` (a
+      call on a collection attribute), `flask_db` (a Flask-SQLAlchemy instance)
+      and `skip` (a statement whose table is interpolated). `table_source` also takes `flask_candidate`: the
+      CamelCase -> snake_case name, valid only if the base `db` is a
+      Flask-SQLAlchemy instance, which the resolver checks.
+    - `owner`, `secondary`, `detail`: the class owning a relationship, its
+      association table, and the role-specific extra (collection mode, the
+      access kind of an `sqlconst` row).
+
+    Re-extract is queued only on a DB that already holds symbols, as in v31:
+    existing files must be read again to fill the new rows."""
+    conn.execute("DROP TABLE IF EXISTS data_access")
+    conn.execute("DROP TABLE IF EXISTS data_model")
+    conn.execute(
+        """CREATE TABLE data_access (
+            id INTEGER PRIMARY KEY,
+            symbol_id INTEGER NOT NULL REFERENCES symbol(id) ON DELETE CASCADE,
+            table_name TEXT,
+            table_schema TEXT,
+            model TEXT,
+            ref_name TEXT,
+            ref_kind TEXT CHECK (ref_kind IN
+                ('model', 'repository', 'relationship', 'const')),
+            access TEXT NOT NULL CHECK (access IN ('read', 'write', 'ddl')),
+            mechanism TEXT NOT NULL,
+            line INTEGER NOT NULL,
+            confidence TEXT NOT NULL
+                CHECK (confidence IN ('literal', 'model', 'convention', 'unresolved'))
+        )"""
+    )
+    conn.execute("CREATE INDEX idx_data_access_symbol ON data_access(symbol_id)")
+    conn.execute("CREATE INDEX idx_data_access_table ON data_access(table_name)")
+    conn.execute(
+        """CREATE TABLE data_model (
+            id INTEGER PRIMARY KEY,
+            file_id INTEGER NOT NULL REFERENCES file(id) ON DELETE CASCADE,
+            symbol_id INTEGER REFERENCES symbol(id) ON DELETE SET NULL,
+            name TEXT NOT NULL,
+            role TEXT NOT NULL CHECK (role IN ('model', 'repository', 'table', 'sqlconst',
+                'constref', 'relationship', 'relref', 'flask_db', 'skip')),
+            mechanism TEXT NOT NULL,
+            table_name TEXT,
+            table_schema TEXT,
+            entity TEXT,
+            table_source TEXT CHECK (table_source IN
+                ('declared', 'convention', 'flask_candidate')),
+            line INTEGER NOT NULL,
+            owner TEXT,
+            secondary TEXT,
+            detail TEXT
+        )"""
+    )
+    conn.execute("CREATE INDEX idx_data_model_file ON data_model(file_id)")
+    conn.execute("CREATE INDEX idx_data_model_name ON data_model(name)")
+    if conn.execute("SELECT 1 FROM symbol LIMIT 1").fetchone() is not None:
+        _flag_reextract(conn)
+
+
+def _m036_reextract_scale_extraction(conn: sqlite3.Connection) -> None:
+    """Unreleased: no schema change, only the re-extract flag. The extractors
+    changed what they store (Java typed-receiver / Spring route refs, Python
+    class-body calls, class names passed as arguments, aliased-import call
+    names); an unchanged file is skipped by content hash, so an index built
+    before would keep the old refs and edges until a forced re-index. Queued
+    only on a DB that already holds symbols."""
+    if conn.execute("SELECT 1 FROM symbol LIMIT 1").fetchone() is not None:
+        _flag_reextract(conn)
+
+
+def _m034_symbol_ref_receiver_class(conn: sqlite3.Connection) -> None:
+    """Unreleased: ``symbol_ref.receiver_class`` — the class a call's receiver
+    evidently is (``super(Cls, self).f()``, ``c = Child(); c.f()``), so the
+    resolver can pick the most-derived definition and the right base for
+    ``super()``. A ``super().f()`` / ``super.f()`` ref also gets receiver
+    ``super``. Re-extract is queued only on a DB that already holds symbols;
+    until then a NULL column resolves as before. Rolling back is ignoring the
+    column, which v33 code never reads."""
+    _try_add_column(conn, "symbol_ref", "receiver_class", "TEXT")
+    if conn.execute("SELECT 1 FROM symbol LIMIT 1").fetchone() is not None:
+        _flag_reextract(conn)
+
+
 MIGRATIONS: list[Migration] = [
     (1, "drop_dead_tables", _m001_drop_dead_tables),
     (2, "drop_dead_columns", _m002_drop_dead_columns),
@@ -874,7 +1147,28 @@ MIGRATIONS: list[Migration] = [
     (26, "track_spec_tier", _m026_track_spec_tier),
     (27, "schema_symbols", _m027_schema_symbols),
     (28, "symbol_ref_receiver", _m028_symbol_ref_receiver),
+    (29, "runtime_evidence", _m029_runtime_evidence),
+    (30, "inherit_reference_refs", _m030_inherit_reference_refs),
+    (31, "data_access", _m031_data_access),
+    (32, "python_import_scopes", _m032_python_import_scopes),
+    (33, "data_access_shapes", _m033_data_access_shapes),
+    (34, "symbol_ref_receiver_class", _m034_symbol_ref_receiver_class),
+    (35, "runtime_source_index_run", _m035_runtime_source_index_run),
+    (36, "reextract_scale_extraction", _m036_reextract_scale_extraction),
 ]
+
+
+def _m034_symbol_ref_receiver_class(conn: sqlite3.Connection) -> None:
+    """Unreleased: ``symbol_ref.receiver_class`` — the class a call's receiver
+    evidently is (``super(Cls, self).f()``, ``c = Child(); c.f()``), so the
+    resolver can pick the most-derived definition and the right base for
+    ``super()``. A ``super().f()`` / ``super.f()`` ref also gets receiver
+    ``super``. Re-extract is queued only on a DB that already holds symbols;
+    until then a NULL column resolves as before. Rolling back is ignoring the
+    column, which v33 code never reads."""
+    _try_add_column(conn, "symbol_ref", "receiver_class", "TEXT")
+    if conn.execute("SELECT 1 FROM symbol LIMIT 1").fetchone() is not None:
+        _flag_reextract(conn)
 
 
 def _run_migrations(conn: sqlite3.Connection) -> None:

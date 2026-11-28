@@ -20,6 +20,7 @@ from livespec_mcp.domain.extractors import (
     RECEIVER_MODULE,
     RECEIVER_OBJECT,
     RECEIVER_SELF,
+    RECEIVER_SUPER,
     extract,
 )
 from livespec_mcp.server import mcp
@@ -180,7 +181,7 @@ def test_python_receivers_are_classified(tmp_path: Path):
     assert refs[("d", "go")].receiver == RECEIVER_OBJECT
     assert refs[("e", "plain")].receiver is None
     assert refs[("f", "g")].receiver == RECEIVER_SELF
-    assert refs[("f", "h")].receiver == RECEIVER_SELF
+    assert refs[("f", "h")].receiver == RECEIVER_SUPER  # super() reaches the BASE
 
 
 def test_typescript_literal_receiver_emits_no_call_ref(tmp_path: Path):

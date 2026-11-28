@@ -80,6 +80,320 @@ automatic regression gate yet — the suite is meant to surface deltas, not
 fail builds. A simple eyeball check is enough until we have month-over-month
 trend data.
 
+## Ecosystem benchmark (`ecosystem.py`)
+
+livespec + FlowTrace (+ delta-cube) on two pinned real repositories: what the
+index sees statically, what a traced test run adds, and how much an agent would
+have to read with and without the tools.
+
+```bash
+uv run python bench/ecosystem.py --json bench/results-ecosystem.json   # both repos, ~6 min
+uv run python bench/ecosystem.py --repo flask                          # one repo
+uv run python bench/ecosystem.py --quick                               # click only, trimmed
+```
+
+Prerequisites (a missing one ends the run with a message): `git`, `uv`, a
+`flowtrace-debugger` checkout (`--flowtrace` / `FLOWTRACE_DIR`, default
+`/home/user/flowtrace-debugger`), network for the clones and the pinned test
+requirements. delta-cube (`--delta-cube` / `DELTA_CUBE_DIR`, needs its `.venv`)
+is optional; without it the block is recorded as skipped. Each repo gets a fresh
+venv in a scratch directory (`--keep` / `--workdir` to inspect it); traces live
+outside the checkout; `LIVESPEC_HOME` and `DCC_DATA_DIR` point into the scratch
+directory so no machine-wide state is written. Proxy and TLS variables are
+removed from the test runs (httpx and requests fail tests otherwise).
+`--quick` = click only, one plain run instead of two, no cleaned-trace
+comparison, no delta-cube. Deterministic apart from timings (two full runs
+differ only in timings and in delta-cube's `payload_chars`, by the length of the
+scratch path).
+
+### Why click and flask
+
+Probed on the same machine with the same flags. rich: one traced suite run had
+written >5 GB in under two minutes and was stopped. httpx: 5 tests fail before
+any tracing, 163 MB trace. requests: 72 s plain, 8 environment-sensitive
+failures. click (8.1.8) and flask (3.1.0) run offline in ~1-2 s, trace to
+84 / 46 MB at `FLOWTRACE_MAX_ARG_LENGTH=64`, and are full of dynamic dispatch:
+`ParamType.convert` polymorphism, `callback=` hooks and `super()` chains in
+click; decorators that replace methods, properties, `current_app` proxies and
+view registries in flask. Both are pinned by tag and commit sha (the clone is
+verified); flask's unpinned runtime dependencies are pinned in the script.
+
+### Results (committed in `results-ecosystem.json`, one machine, single runs)
+
+| | click | flask |
+|---|---|---|
+| files / symbols / call edges | 70 / 1,389 / 5,618 | 85 / 1,598 / 20,714 |
+| index (cold) | 0.74 s | 0.85 s |
+| `find_dead_code` default, static -> after traces | 5 -> 4 (3 `not_seen`, 1 `no_evidence`) | 16 -> 7 (3 `not_seen`, 4 `no_evidence`; 7 rescued) |
+| `include_public=True` | same as default (no effect on Python) | same as default |
+| `include_infrastructure=True` (extra) | 250 -> 125 (30 rescued, 39 `not_seen`) | 170 -> 38 (33 rescued, 19 `not_seen`) |
+| tests plain / traced / factor | 0.90 s / 4.29 s / 4.8x (2.8x vs the first, cold, plain run) | 1.48 s / 3.74 s / 2.5x (1.8x) |
+| pass/fail set under tracing | identical (628 passed) | identical (489 passed, 1 fails with and without tracing) |
+| trace | 62.2 MB, 79,197 spans | 39.3 MB, 52,455 spans |
+| events resolved | 100 % (all by `file`+`line`) | 100 % (all by `file`+`line`) |
+| runtime edges observed / new / already static | 590 / 254 / 336 | 458 / 284 / 174 |
+| spans that are tracer artifacts (enter-time) / parent already exited | 0 / 0 | 0 / 0 |
+| ingest dry-run / apply, peak RSS | 0.8 s / 0.8 s, 105 MB | 0.6 s / 0.5 s, 102 MB |
+
+The static candidate counts (`include_infrastructure` 250 / 170) differ from the
+earlier committed run (262 / 204) because livespec itself moved between the two
+runs, not because of tracing; compare the three columns below only within one
+row of one table.
+
+#### Before -> after the tracer fix (same livespec build, same pinned repos)
+
+"before" = FlowTrace without the serializer guard / generator pause
+(`8b1bbf1`) ingested by the current livespec; "after" = this branch. Single runs.
+
+| | click before -> after | flask before -> after |
+|---|---|---|
+| spans that are serializer artifacts, enter-time (share of all spans) | 20,732 (27.8 % incl. exit-time heuristic) -> 0 (0.9 %, all `Parameter.__repr__` called by C-level `list.index` inside click's `sort_key`: a real call) | 9,037 (16.8 %) -> 0 |
+| spans whose parent had already exited | 0 -> 0 | 1,116 -> 0 |
+| spans in the trace | 112,888 -> 79,197 | 63,071 -> 52,455 |
+| runtime edges observed / new | 722 / 398 -> 590 / 254 | 482 / 308 -> 458 / 284 |
+| `include_infrastructure` after traces (rescued / `not_seen`) | 111 (25 / 25) -> 125 (30 / 39) | 40 (27 / 21) -> 38 (33 / 19) |
+| known-wrong `augment_usage_errors -> Parameter.process_value` | present -> gone | |
+| known-wrong `dispatch_request -> SecureCookieSession.__init__.on_update` | | present -> present (werkzeug `CallbackDict` callback; not the tracer) |
+| overhead factor | 6.1x -> 4.8x | 3.0x -> 2.5x |
+| tests pass/fail identical under tracing | yes -> yes | yes -> yes |
+
+The consumer guard alone (current livespec, old FlowTrace traces): 20,732
+(click) and 9,037 + 1,116 (flask) spans are reported as `skipped.
+parent_not_yet_entered` / `parent_already_exited` and add no edge or hit, which
+matches the script's own count of those orders exactly. What it cannot see
+stays: exit-time artifacts (`repr(result)`, `str(exc)`; by order they are
+indistinguishable from a call made as the function's last statement) and spans
+nested under a discarded one, so with the old tracer click still has 139 runtime
+edges into `__repr__`/`__str__`-style methods and 75 from generator functions.
+Only the tracer fix removes those at the source.
+
+Flask's one baseline failure (`test_bad_environ_raises_bad_request`: expects 400,
+gets 404) is werkzeug 3.1.9 against flask 3.1.0, not tracing.
+
+### What the numbers do not say (read before quoting them)
+
+- **Tracer artifacts, fixed.** An earlier run of this benchmark found 27.8 %
+  (click) and 16.8 % (flask) of spans were produced by FlowTrace's own
+  serialisation (`repr()` / `str()` of traced classes while rendering args,
+  results and errors) and 1,116 flask spans were parented to an already-exited
+  generator span. FlowTrace now suppresses spans created by its own
+  serialisation and no longer leaves a generator's span current after a `yield`;
+  livespec additionally refuses order-impossible spans from older traces
+  (`skipped`, `discarded_spans`). The script still measures all of this
+  (`analyse_trace`) so a regression shows up as a non-zero count; its exit-time
+  heuristic flags 751 click spans that are real (`list.index` calling `__repr__`).
+- Even clean, an edge links the nearest **traced** ancestor, so a callback run
+  by an untraced library (werkzeug's `CallbackDict`, Jinja) is attributed to
+  whatever traced function was on the stack. Both are reviewed in the JSON (`source_review`,
+  `wrong_edges_confirmed_in_source` = `known_wrong_edges`, each checked against
+  the index: the generator one is gone, the `CallbackDict` one remains).
+  `yield from sub()` still attributes `sub`'s body to whoever drives the outer
+  generator.
+- Rescue is real where the static graph is blind: click `_get_windows_console_stream`
+  and flask `sansio.app._make_timedelta` (passed as `get_converter=`) are static
+  dead-code candidates that are used; the trace removes them.
+- `not_seen` means "this run did not execute it". Only the tests of the repo ran.
+
+### Payload proxy
+
+An agent session cannot run inside a script, so the script measures what an
+agent would have to **read**: 7 tasks per repo ("who calls X", "what breaks if I
+change Y", "is Z unused", "entry point", "what does V do"; 4 per repo need a
+runtime-only edge). *By file*: every `.py` file under `src/` and `tests/` that
+contains the identifier(s) a careful reader would grep, read whole, plus files
+grep cannot find (the dispatcher of a runtime edge). *By tool*: the characters
+returned by the minimal livespec call sequence, every call counted (here one call
+per task). Tokens are chars/4, approximate. The tool answer is checked against
+the source (`truth` in the JSON); the check is recall of the named true
+callers/callees, plus a list of known-wrong edges that appear in the answer.
+
+| | click | flask |
+|---|---|---|
+| by file (whole files) | 939,856 chars (~235k tok) | 751,272 chars (~188k tok) |
+| by file, `src/` hits only | 874,409 | 603,961 |
+| grep output only (cannot answer alone) | 5,875 | 7,662 |
+| by tool, 7 calls | 10,266 chars (~2.6k tok) | 9,776 chars (~2.4k tok) |
+| tool answer correct, with traces / static only | 7 / 7, 3 / 7 | 7 / 7, 3 / 7 |
+
+This is a proxy, not an agent run. It leaves out: reasoning and wrong turns,
+partial reads (offset/limit), whether an agent picks the right call, the cost of
+the index and of producing a trace, tool-call overhead, and precision (two of
+the 14 correct answers contained one known-wrong runtime edge before the fix
+(click-3 `augment_usage_errors`, flask-6 `DebugFilesKeyError.__str__`); none does
+now, and the two answers are 2,904 -> 2,511 and 920 -> 677 characters). Whole-file reads
+are a pessimistic baseline; the grep-only row is the optimistic one.
+
+delta-cube `hotspots` top 10 is recorded per repo (index ~1.1-1.3 s, hotspots
+~0.5 s, ~1.9k-char payload) without interpretation.
+
+### Two real agent sessions (2026-11-28) — the proxy overstates the saving
+
+The payload proxy compares one tool call against reading *whole files*. A real
+agent does not read whole files: it greps and reads ranges. To see what that
+does to the numbers, the same six click questions (answers verified by hand
+against the source; three depend on dynamic dispatch) were given to two
+sessions of the same model at the same effort — one with only file search and
+read on a clean checkout, one with livespec (index plus ingested traces)
+through a one-line shell wrapper. One run each; this is a check, not a
+benchmark.
+
+| | files only | with livespec |
+|---|---|---|
+| correct answers | 6/6 | 6/6 |
+| tool calls (excluding the final report) | 6 | 4 |
+| characters of tool results read | 20,581 | 14,151 |
+| model turns | 11 | 8 |
+| output tokens | 4,739 | 2,540 |
+| input tokens summed over turns | 1,374,104 | 989,696 |
+
+What it says:
+
+- The saving in what was actually read is **about 31%**, not the ~90x the
+  proxy's whole-file baseline suggests. The realistic baseline for click was
+  20k characters, not 940k.
+- Summed input tokens fell 28%, and almost all of that is **fewer turns**: each
+  turn re-sends about 117k tokens of fixed session context, which dwarfs any
+  tool payload. On a small repository the lever is turns, not payload size.
+- Both sessions got everything right. click is 70 files, and each question
+  named the mechanism it turned on ("the call goes through
+  `ParamType.__call__`"), so a text search could find the answer. The proxy's
+  3/7 static-only score is about a *tool* without runtime edges, not about an
+  agent that can read.
+
+What it does not say: anything about a large repository, about questions that
+do not name the mechanism, or about variance — it is one run per arm.
+
+### Four real agent sessions on Django 5.1.4 (2026-11-28)
+
+The same comparison on a large repository (2,898 files, 40,263 symbols,
+400,953 edges; index built in 41.5 s, 188 MiB). Eight questions with a key
+checked by reading the code: callers of three methods, callers plus
+overriders of two, the subclasses of one class, the public methods of one
+class, and which of six helpers nothing uses. Two sessions per arm, same
+model and effort, no traces.
+
+| Session | Fully right | Tool calls | Tool-result chars | Turns | Input tokens | Output tokens |
+| --- | --- | --- | --- | --- | --- | --- |
+| files only, run 1 | 7 / 8 | 15 | 25,662 | 19 | 2,371,163 | 18,292 |
+| files only, run 2 | 8 / 8 | 27 | 54,829 | 35 | 4,678,463 | 34,243 |
+| livespec, run 1 | 8 / 8 | 9 | 23,094 | 17 | 2,149,813 | 10,393 |
+| livespec, run 2 | 8 / 8 | 10 | 19,626 | 16 | 2,023,095 | 8,598 |
+
+What it shows:
+
+- **The saving is again in turns, and it is steadier than it is large.**
+  The livespec arm took 16 and 17 turns; the files arm took 19 and 35. Against
+  the cheaper files run the saving is 9-15% of input tokens; against the
+  dearer one it is over half. Two runs per arm do not make a mean.
+- **The one wrong answer was in the files arm**: a caller that does not
+  exist, written next to two real ones.
+- **The livespec arm did not get its answers from the graph alone.** Both
+  sessions asked the graph first, saw too few callers, and finished with
+  `grep` on the indexed copy. Asked on its own, the graph returns 4 of 5, 1 of
+  8 and 1 of 3 callers for the three caller questions and no overriders at
+  all: calls through `super()`, calls on an instance of a subclass, and
+  overrides are not edges. The subclass and class-outline questions were
+  answered by one call each, with nothing wrong.
+
+So on a large Python repository with deep inheritance the index is a faster
+first step, not a replacement for searching, until those edges exist. The
+sessions above ran before the resolver fix that followed them (migration 34).
+With it, asked on its own, the graph gives: callers of `Collector.collect` 1
+of 8 -> 7 of 8 (five direct, two through the override it now lists);
+`_alter_field` callers and overriders 1 of 3 -> 3 of 3; `add_fields` 2 of 4 ->
+4 of 4. Two caller questions did not move (4 of 5 and 1 of 3): a call on a
+receiver with no evident type is still resolved by name or not at all. Index
+time on Django rose about 4%.
+
+Two more livespec sessions were run after the fix, same questions and model:
+
+| Session | Fully right | Tool calls | Tool-result chars | Turns | Input tokens | Output tokens |
+| --- | --- | --- | --- | --- | --- | --- |
+| livespec after the fix, run 1 | 8 / 8 | 8 | 15,607 | 15 | 1,882,470 | 7,854 |
+| livespec after the fix, run 2 | 8 / 8 | 5 | 21,697 | 11 | 1,401,133 | 7,897 |
+
+Fewer turns than before the fix (17 and 16) and than either files session
+(19 and 35). Both still ran a text search to confirm the callers on untyped
+receivers; their brief told them the graph can miss those.
+
+**Audit of what the fix removed.** The fix removed 27,792 `calls` edges on
+Django and added 1,209. Of the removed, 1,652 pointed at a method named
+`super` and 23,861 had their source under `tests/`; the 2,279 left, with a
+source under `django/`, were sampled and each judged by reading the calling
+function:
+
+| Stratum (source under `django/`) | Population | Read | Wrong | Correct | Unclear |
+| --- | --- | --- | --- | --- | --- |
+| removed, replaced by another target, weight < 0.6 | 2,224 | 60 | 60 | 0 | 0 |
+| removed, replaced, weight >= 0.6 | 26 | 26 | 25 | 1 | 0 |
+| removed, no replacement | 29 | 29 | 26 | 0 | 3 |
+| added | 849 | 60 | 0 | 60 | 0 |
+
+The one correct edge lost: `setup_databases` calls `time_keeper.timed()`
+where the parameter defaults to `NullTimeKeeper()`; the graph now links only
+that default class, though a caller may pass a `TimeKeeper`. A parameter
+whose only visible class is its default value is treated as that class. The
+three unclear ones reach `QuerySet.using` through a manager method generated
+at runtime. The removed edges under `tests/` were not read.
+
+Follow-up, same day:
+
+- The removed edges with a source under `tests/` (23,859) were sampled too: 80
+  read, 79 wrong, 0 correct, 1 unclear.
+- The lost `setup_databases` edge is back. An unannotated parameter is now of
+  evident class only when a direct statement of the function body rebinds it
+  to one class before any other use; a rebinding inside a condition leaves it
+  to name resolution. Against the index above: 0 edges removed, 66 added, one
+  under `django/` (the lost edge) and 65 under `tests/` from one helper whose
+  rebinding sits inside `if isinstance(...)`; of those 65 only one target is
+  plausible, which is what name resolution gives there.
+- Java method references on real code (`iluwatar/java-design-patterns`, 2,042
+  files, 94 `Type::method` / `this::method` references to project types, 40
+  sampled): 29 have the right edge, 8 have none, and 3 sit in a method whose
+  edges fan out to same-named methods. The 8 are members with no symbol
+  (record accessors, Lombok-generated getters and `toString`) and one class
+  name that exists in both `src/main` and `src/test`. The 3 are a `this::add`
+  in a constructor, where the inherited method is not looked up, and two
+  lambdas whose plain `.getName()` calls on Lombok classes resolve by name.
+  A reference to a member that has no symbol, on a fully indexed class, gives
+  no edge.
+
+### One capability migrated inside Django 5.1.4, and a Spring application (2026-11-28)
+
+Two end-to-end runs of the Tracer `orient` and `migrate` procedures, one
+agent each, single runs. They measure whether the tools hold at scale and in
+Java, not token cost.
+
+| | Django 5.1.4 (`django/forms`, one rule) | Spring PetClinic (one rule) |
+|---|---|---|
+| Index | 2,832 files, 39,763 symbols, 62 s; reindex 4 s | 87 non-test symbols |
+| Trace of the capability's tests | 98 s against 1.8 s untraced, 1.43 GB, 3.45 M lines | four runs, 9,254 enter events |
+| `ingest_traces` | 23 s, 1,724,664 of 1,724,664 events resolved | 8,709 of 9,254 resolved (the rest are generated mock classes) |
+| Tool calls, orient / migrate | 44 / 168 | 28 / 71 |
+| Source files opened whole | 0 | 0 |
+| Comparisons old against new | 8 inputs equal, both controls different | driver and controller flow equal; driver control different, entry-point control equal (not detected) |
+
+What the runs found and what changed afterwards, measured on the same copies:
+
+- Java calls on a typed receiver were fanned out by name and hidden:
+  `Owner.addVisit` showed 0 callers and has 2 in the original code. After the
+  fix it shows those 2 plus the trial's own driver.
+- Four of PetClinic's seven tables were reported unaccessed (reached only
+  through JPA relationships); after the fix none is.
+- After a Python function moved behind a re-export, its callers through the
+  re-exporting module were not listed. Following re-exports changed the
+  Django edge count from 373,252 to 346,076: of the 113 removed edges outside
+  tests, 25 were sampled and all were name fan-out; the callers of the three
+  symbols benchmarked above did not change.
+- Payloads on Django: `find_data_access(summary_only=True)` 175 KB to 808
+  bytes, `get_project_overview` 20,783 to 5,610 bytes, `analyze_impact` on a
+  symbol with 226 callers 63,028 to 18,981 bytes.
+- Repository-wide runtime coverage (20%) said nothing about the capability
+  (55%); `find_dead_code(path=)` now returns the scoped number.
+
+Not fixed: a call on a value whose type is not visible still resolves by
+name; a caller that only a trace shows is the nearest traced ancestor.
+
 ## Not yet covered
 
 - TS/Go/Rust real repos (need a fixture beyond Python)

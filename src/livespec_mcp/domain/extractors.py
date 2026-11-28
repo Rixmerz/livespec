@@ -13,6 +13,7 @@ from collections import deque
 from collections.abc import Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 from livespec_mcp.domain.languages import (
     SCHEMA_ONLY_LANGUAGES,
@@ -56,6 +57,10 @@ class ExtractedRef:
     # What `X` is in an attribute call `X.f()` (RECEIVER_* below); None for a
     # call by bare name, and for languages whose receivers are not classified.
     receiver: str | None = None
+    # The class a receiver evidently is: `super(Cls, self).f()` names `Cls`;
+    # `c = Child(); c.f()` names `Child` (written `scope::Name` when `Child` was
+    # imported). The resolver checks it against the project's classes.
+    receiver_class: str | None = None
 
 
 @dataclass
@@ -104,19 +109,82 @@ class ExtractedSchema:
 
 
 @dataclass
+class ExtractedAccess:
+    """One place a symbol reads, writes or defines a table (domain/data_access.py).
+
+    Either `table` is set (the name is written at the site: SQL text, a query
+    builder's string argument) or `ref_name` is (a model / entity class, or a
+    Spring Data repository type) and the table is resolved after indexing from
+    the project's model declarations. `src_qname` is the innermost symbol
+    spanning `line`.
+    """
+
+    src_qname: str
+    access: str  # read | write | ddl
+    mechanism: str  # sql | sqlalchemy | django | prisma | knex | typeorm | jpa | ...
+    line: int
+    table: str | None = None
+    schema: str | None = None
+    ref_name: str | None = None
+    ref_kind: str | None = None  # model | repository
+
+
+@dataclass
+class ExtractedModel:
+    """A class that maps to a table (`role='model'`) or a repository interface
+    that maps to an entity (`role='repository'`). `table` stays None when the
+    source does not state it; `table_source` says whether it was declared or
+    follows the framework's naming convention (`flask_candidate`: the
+    Flask-SQLAlchemy convention, valid only once the resolver has seen that its
+    base `db` is a Flask-SQLAlchemy instance). `src_qname` is empty for a
+    declaration outside every symbol (a module-level SQLAlchemy `Table`).
+
+    Other roles feed the resolver and the inventory: `table` (a CREATE TABLE
+    written in code), `sqlconst` / `constref` (tables of a module-level SQL
+    constant / a use of one imported from another module), `relationship` (a
+    write-only or dynamic collection: `name`=attribute, `entity`=target model,
+    `owner`=declaring class, `secondary`=association table, `detail`=mode),
+    `flask_db` and `skip` (a statement whose table is interpolated)."""
+
+    src_qname: str
+    name: str
+    role: str  # model | repository | table | sqlconst | constref | relationship | flask_db | skip
+    mechanism: str
+    line: int
+    table: str | None = None
+    schema: str | None = None
+    entity: str | None = None
+    table_source: str | None = None  # declared | convention | flask_candidate
+    owner: str | None = None
+    secondary: str | None = None
+    detail: str | None = None
+
+
+@dataclass
 class ExtractResult:
     symbols: list[ExtractedSymbol] = field(default_factory=list)
     refs: list[ExtractedRef] = field(default_factory=list)
     routes: list[ExtractedRoute] = field(default_factory=list)
     schemas: list[ExtractedSchema] = field(default_factory=list)
+    # Data access map: where symbols touch tables, and the model -> table
+    # declarations that resolve the ORM ones.
+    accesses: list[ExtractedAccess] = field(default_factory=list)
+    models: list[ExtractedModel] = field(default_factory=list)
     # P0.4: per-file imports map. local_name -> source_module (qualified name of
     # the module providing it). Used by the resolver to scope short-name lookups.
     imports: dict[str, str] = field(default_factory=dict)
+    # TS/JS only: `import { Widget as W }` -> {"W": "Widget"}. A ref to the
+    # alias is stored under the ORIGINAL name (scoped by `imports["W"]`).
+    import_aliases: dict[str, str] = field(default_factory=dict)
     # Python only: local_name -> the dotted path the name itself is bound to
     # (`from pkg import mod` binds `mod` to `pkg.mod`; `import a.b as m` binds
     # `m` to `a.b`; `import a.b` binds `a` to `a`). Scopes an attribute call's
     # receiver to the module it names, not the package it came from.
     bindings: dict[str, str] = field(default_factory=dict)
+    # Python only: the names this file itself defines as a class or binds at
+    # module level. A bare name in a type position that is neither imported
+    # nor in here cannot name a project symbol, so no ref is stored for it.
+    local_type_names: set[str] = field(default_factory=set)
     # True when the source could not be parsed (Python ast.parse SyntaxError).
     # The indexer uses this to PRESERVE the file's existing symbols instead of
     # wiping them (and their spec_symbol links) on a transient parse failure —
@@ -152,7 +220,135 @@ if hasattr(ast, "TryStar"):  # py3.11+
     _COMPOUND_STMTS = (*_COMPOUND_STMTS, ast.TryStar)
 
 
+# ---------- Inheritance and type-position refs ----------
+
+# `symbol_ref.ref_type` values the resolver turns into something other than a
+# `calls` edge (indexer._resolve_refs). A class naming its base emits
+# REF_INHERIT (-> `inherits`); a name used in a type position (annotation,
+# generic argument, isinstance/instanceof, except/catch, throws, as/satisfies)
+# emits REF_TYPE (-> `references`). Both resolve only to an indexed symbol of
+# a type-like kind, so a builtin or a stdlib name produces no edge.
+REF_INHERIT = "inherit"
+REF_TYPE = "type"
+
+# Subscripts whose arguments are values, not types: `Literal["users"]` must not
+# read as a forward reference to something named `users`.
+_PY_VALUE_SUBSCRIPTS = frozenset({"Literal"})
+
+
+def _py_type_names(node: ast.AST | None) -> Iterator[tuple[str, str | None, int]]:
+    """Names in a type expression: ``(name, dotted receiver or None, line)``.
+
+    Walks only the shapes a type is written in (name, attribute, subscript,
+    `X | Y`, tuple/list of types, a quoted forward reference); a call or any
+    other value expression inside an annotation (`Annotated[int, Field(...)]`)
+    names no type and is skipped.
+    """
+    stack: list[tuple[ast.AST, int]] = [(node, getattr(node, "lineno", 0))] if node else []
+    while stack:
+        cur, line = stack.pop()
+        line = getattr(cur, "lineno", line) or line
+        if isinstance(cur, ast.Name):
+            yield cur.id, None, line
+        elif isinstance(cur, ast.Attribute):
+            chain: list[str] = []
+            base: ast.AST = cur.value
+            while isinstance(base, ast.Attribute):
+                chain.append(base.attr)
+                base = base.value
+            if isinstance(base, ast.Name):
+                yield cur.attr, ".".join([base.id, *reversed(chain)]), line
+        elif isinstance(cur, ast.Subscript):
+            stack.append((cur.value, line))
+            head = cur.value
+            head_name = (
+                head.id
+                if isinstance(head, ast.Name)
+                else head.attr
+                if isinstance(head, ast.Attribute)
+                else None
+            )
+            if head_name not in _PY_VALUE_SUBSCRIPTS:
+                stack.append((cur.slice, line))
+        elif isinstance(cur, ast.BinOp):
+            stack.append((cur.left, line))
+            stack.append((cur.right, line))
+        elif isinstance(cur, (ast.Tuple, ast.List)):
+            stack.extend((e, line) for e in cur.elts)
+        elif isinstance(cur, ast.Starred):
+            stack.append((cur.value, line))
+        elif isinstance(cur, ast.Constant) and isinstance(cur.value, str):
+            # A quoted forward reference: `def f() -> "Node"`.
+            text = cur.value.strip()
+            if text and len(text) <= 200:
+                try:
+                    stack.append((ast.parse(text, mode="eval").body, line))
+                except (SyntaxError, ValueError):
+                    pass
+
+
+def _py_emit_type_refs(
+    expr: ast.AST | None,
+    src_qname: str,
+    out: ExtractResult,
+    seen: set[tuple[str, str, str | None]],
+    ref_type: str = REF_TYPE,
+) -> None:
+    """Emit one ref per distinct type name in `expr`, scoped by the file's
+    imports the way a call is. A bare name that this file neither imports nor
+    defines cannot be a project symbol (it is a builtin, or a type variable),
+    so no ref is stored for it."""
+    if expr is None:
+        return
+    for name, receiver, line in _py_type_names(expr):
+        scope: str | None
+        if receiver is None:
+            scope = out.imports.get(name)
+            if scope is None:
+                if name not in out.local_type_names:
+                    continue
+            else:
+                # `from m import Foo as F`: the symbol is named `Foo`.
+                bound = out.bindings.get(name, "")
+                real = bound.rsplit(".", 1)[-1]
+                if real and real != name and bound.endswith(f".{real}"):
+                    name = real
+        else:
+            first, _, rest = receiver.partition(".")
+            base = out.bindings.get(first)
+            if base is not None:
+                scope = f"{base}.{rest}" if rest else base
+            elif first in out.local_type_names:
+                scope = None  # `Outer.Inner`, both in this file
+            else:
+                continue  # `self.x`, a local object: no type named here
+        key = (ref_type, name, scope)
+        if key in seen:
+            continue
+        seen.add(key)
+        out.refs.append(
+            ExtractedRef(
+                src_qname=src_qname,
+                target_name=name,
+                line=line,
+                ref_type=ref_type,
+                scope_module=scope,
+            )
+        )
+
+
 # ---------- Python via ast ----------
+
+
+def _py_unalias(name: str, out: ExtractResult) -> str:
+    """`from m import Foo as F`: a bare call `F()` names the symbol `Foo`. Any
+    other name (not imported, or a module bound with `import a.b as m`) stays."""
+    scope = out.imports.get(name)
+    bound = out.bindings.get(name, "")
+    if scope is None or bound == scope:
+        return name
+    real = bound.rsplit(".", 1)[-1]
+    return real if real and real != name and bound.endswith(f".{real}") else name
 
 
 def _py_annotation(node: ast.AST | None) -> str:
@@ -246,11 +442,17 @@ def _py_extract(source: str, module_name: str) -> ExtractResult:
                     (alias.asname or top, alias.name, alias.name if alias.asname else top)
                 )
         else:
-            mod = node.module or ""
+            # A relative import keeps its leading dots (`.blueprints`, `..`):
+            # the resolver counts them from the importing file's package. The
+            # bare module name it used to store matched every module of that
+            # name in the tree.
+            mod = "." * node.level + (node.module or "")
             for alias in node.names:
                 if alias.name == "*":
                     continue
-                bound = f"{mod}.{alias.name}" if mod else alias.name
+                bound = (
+                    f"{mod}{alias.name}" if not mod or mod.endswith(".") else f"{mod}.{alias.name}"
+                )
                 triples.append((alias.asname or alias.name, mod, bound))
         for local, mod, bound in triples:
             if nested:
@@ -273,6 +475,16 @@ def _py_extract(source: str, module_name: str) -> ExtractResult:
                 _bind(node, nested=True)
         elif isinstance(node, ast.ClassDef):
             classes.append(node)
+
+    out.local_type_names = {c.name for c in classes}
+    for node in tree.body:
+        if isinstance(node, ast.Assign):
+            out.local_type_names.update(t.id for t in node.targets if isinstance(t, ast.Name))
+        elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+            out.local_type_names.add(node.target.id)
+        elif hasattr(ast, "TypeAlias") and isinstance(node, ast.TypeAlias):
+            if isinstance(node.name, ast.Name):
+                out.local_type_names.add(node.name.id)
 
     enum_names = _py_enum_names(classes)
     # Same-file schema classes by name, in source order: a base declared
@@ -341,6 +553,24 @@ def _py_extract(source: str, module_name: str) -> ExtractResult:
                 decorators=_py_decorator_names(node),
             )
         )
+        # Bases -> `inherits`; generic arguments of a base and the class
+        # body's own annotated fields -> `references`, all from the class.
+        seen_types: set[tuple[str, str, str | None]] = set()
+        for base in node.bases:
+            while isinstance(base, ast.Subscript):
+                _py_emit_type_refs(base.slice, qname, out, seen_types)
+                base = base.value
+            if isinstance(base, ast.Name) and base.id == "object":
+                continue
+            if isinstance(base, (ast.Name, ast.Attribute)):
+                _py_emit_type_refs(base, qname, out, seen_types, REF_INHERIT)
+        for stmt in node.body:
+            if isinstance(stmt, ast.AnnAssign):
+                _py_emit_type_refs(stmt.annotation, qname, out, seen_types)
+        # The class body RUNS when the class is defined: `input_formats =
+        # Formats()`, `objects = Manager()`, `@register(Cls)` are calls the
+        # class makes. Nested defs keep their own calls.
+        _collect_calls(node, qname, out, seen_types)
         flavor = _py_schema_flavor(node, schema_classes)
         if flavor is not None:
             fields = _py_class_fields(node, enum_names, schema_classes)
@@ -412,6 +642,8 @@ def _py_extract(source: str, module_name: str) -> ExtractResult:
                     parent_qname=parent_qname,
                 )
             )
+            # The types an alias is built from: `Rows = list[Row]` uses `Row`.
+            _py_emit_type_refs(value, qname, out, set())
 
     def visit(node: ast.AST, parent_qname: str | None, in_class: bool) -> None:
         for child in ast.iter_child_nodes(node):
@@ -751,7 +983,123 @@ _PY_STMT_FIELDS_OF: dict[type, tuple[str, ...]] = {}
 _PY_SCOPE_NODES = (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
 
 
-def _collect_calls(func_node: ast.AST, src_qname: str, out: ExtractResult) -> None:
+def _py_callee_class(call: ast.Call, out: ExtractResult) -> str | None:
+    """`Child(...)` / `mod.Child(...)` as the class name (`scope::Name` when the
+    name was imported), for `c = Child()` evidence. Whether it IS a class is the
+    resolver's question."""
+    fn = call.func
+    if isinstance(fn, ast.Name):
+        scope = out.imports.get(fn.id)
+        return f"{scope}::{fn.id}" if scope else fn.id
+    if isinstance(fn, ast.Attribute) and isinstance(fn.value, (ast.Name, ast.Attribute)):
+        receiver, scope = _py_receiver(fn, out.bindings)
+        if receiver == RECEIVER_MODULE and scope:
+            return f"{scope}::{fn.attr}"
+    return None
+
+
+def _py_annotation_class(ann: ast.AST | None, out: ExtractResult) -> str | None:
+    if isinstance(ann, ast.Constant) and isinstance(ann.value, str):
+        name = ann.value
+        return name if name.isidentifier() else None
+    if isinstance(ann, ast.Name):
+        scope = out.imports.get(ann.id)
+        return f"{scope}::{ann.id}" if scope else ann.id
+    return None
+
+
+def _py_local_classes(func_node: ast.AST, out: ExtractResult) -> dict[str, str]:
+    """Local names that are evidently an instance of one class in this function:
+    bound only by `x = Cls(...)` / `x: Cls = ...` (a parameter without an annotation only
+    once a direct body statement rebinds it before any other mention), or a parameter annotated `x: Cls` and
+    never rebound to another class. Any other binding of the name (a second class,
+    a loop target, `with ... as x`, a call result) drops it."""
+    evidence: dict[str, str] = {}
+    dropped: set[str] = set()
+    unannotated: set[str] = set()
+
+    def note(name: str, cls: str | None) -> None:
+        if cls is None or (name in evidence and evidence[name] != cls):
+            dropped.add(name)
+        else:
+            evidence.setdefault(name, cls)
+
+    args = getattr(func_node, "args", None)
+    if args is not None:
+        for a in [*args.posonlyargs, *args.args, *args.kwonlyargs]:
+            if a.annotation is not None and a.arg not in ("self", "cls"):
+                note(a.arg, _py_annotation_class(a.annotation, out))
+            else:
+                unannotated.add(a.arg)
+        for a in (args.vararg, args.kwarg):
+            if a is not None:
+                dropped.add(a.arg)
+    stack: list[ast.AST] = _py_children(func_node)
+    while stack:
+        node = stack.pop()
+        if isinstance(node, _PY_SCOPE_NODES):
+            continue
+        stack.extend(_py_children(node))
+        if isinstance(node, ast.Assign):
+            for t in node.targets:
+                if isinstance(t, ast.Name):
+                    note(
+                        t.id,
+                        _py_callee_class(node.value, out)
+                        if isinstance(node.value, ast.Call)
+                        else None,
+                    )
+                else:
+                    for n in ast.walk(t):
+                        if isinstance(n, ast.Name):
+                            dropped.add(n.id)
+        elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+            cls = _py_annotation_class(node.annotation, out)
+            if node.value is not None and isinstance(node.value, ast.Call):
+                cls = _py_callee_class(node.value, out) or cls
+            note(node.target.id, cls)
+        elif isinstance(node, (ast.AugAssign, ast.For, ast.AsyncFor, ast.withitem, ast.NamedExpr)):
+            tgt = getattr(node, "target", None) or getattr(node, "optional_vars", None)
+            if tgt is not None:
+                for n in ast.walk(tgt):
+                    if isinstance(n, ast.Name):
+                        dropped.add(n.id)
+        elif isinstance(node, ast.ExceptHandler) and node.name:
+            dropped.add(node.name)
+    if unannotated:
+        # An unannotated parameter holds what the caller passed, until a direct
+        # statement of the body rebinds it (`t = Template(t)`) before any other
+        # mention of it: from then on it is that class. A rebinding inside an
+        # if/try/loop/with leaves the caller's value possibly intact.
+        body = getattr(func_node, "body", None)
+        pinned: set[str] = set()
+        if isinstance(body, list):
+            for i, stmt in enumerate(body):
+                if (
+                    isinstance(stmt, ast.Assign)
+                    and len(stmt.targets) == 1
+                    and isinstance(stmt.targets[0], ast.Name)
+                    and stmt.targets[0].id in unannotated
+                    and stmt.targets[0].id not in pinned
+                    and isinstance(stmt.value, ast.Call)
+                ):
+                    name = stmt.targets[0].id
+                    if not any(
+                        isinstance(n, ast.Name) and n.id == name
+                        for prev in body[:i]
+                        for n in ast.walk(prev)
+                    ):
+                        pinned.add(name)
+        dropped |= unannotated - pinned
+    return {k: v for k, v in evidence.items() if k not in dropped}
+
+
+def _collect_calls(
+    func_node: ast.AST,
+    src_qname: str,
+    out: ExtractResult,
+    seen_types: set[tuple[str, str, str | None]] | None = None,
+) -> None:
     # Walk this symbol's body but STOP at nested def/class boundaries — their
     # call sites belong to the nested symbol (extracted separately), not to
     # every enclosing def. ast.walk() would descend into them and attribute an
@@ -759,13 +1107,38 @@ def _collect_calls(func_node: ast.AST, src_qname: str, out: ExtractResult) -> No
     # who_calls report a class/outer that never issues the call.
     stack: list[ast.AST] = _py_children(func_node)
     call_type = ast.Call
+    # Type-position names of this symbol (parameter, return and variable
+    # annotations, isinstance/issubclass targets, except types), one ref per
+    # distinct name.
+    if seen_types is None:
+        seen_types = set()
+    _py_emit_type_refs(getattr(func_node, "returns", None), src_qname, out, seen_types)
+    local_classes: dict[str, str] | None = None
     while stack:
         node = stack.pop()
         if isinstance(node, _PY_SCOPE_NODES):
             continue
         stack.extend(_py_children(node))
-        if type(node) is call_type:
+        node_type = type(node)
+        if node_type is ast.arg or node_type is ast.AnnAssign:
+            _py_emit_type_refs(node.annotation, src_qname, out, seen_types)
+        elif node_type is ast.ExceptHandler:
+            _py_emit_type_refs(node.type, src_qname, out, seen_types)
+        if node_type is call_type:
+            if (
+                type(node.func) is ast.Name
+                and node.func.id in ("isinstance", "issubclass")
+                and len(node.args) == 2
+            ):
+                _py_emit_type_refs(node.args[1], src_qname, out, seen_types)
             _emit_py_callback_refs(node, src_qname, out)
+            # A class handed over as a value (`warnings.warn(msg, Warn)`,
+            # `Thread(target=..., cls=Foo)`) is used by the callee. Only names
+            # this file imports or defines become refs, and the resolver keeps
+            # the ones that name a class.
+            for arg in (*node.args, *(k.value for k in node.keywords)):
+                if isinstance(arg, (ast.Name, ast.Attribute)):
+                    _py_emit_type_refs(arg, src_qname, out, seen_types)
             client = _py_client_route(node)
             if client is not None:
                 method, path = client
@@ -778,9 +1151,19 @@ def _collect_calls(func_node: ast.AST, src_qname: str, out: ExtractResult) -> No
                         line=getattr(node, "lineno", 0),
                     )
                 )
+            if (
+                type(node.func) is ast.Name
+                and node.func.id == "super"
+                and "super" not in out.imports
+            ):
+                # The builtin: it reaches no project symbol, whatever a project
+                # method or function happens to be called (Django's template
+                # tag `BlockNode.super`). `super().f()` is the attribute call.
+                continue
             target = _call_target_name(node.func)
             if target:
                 receiver: str | None = None
+                receiver_class: str | None = None
                 if isinstance(node.func, ast.Attribute):
                     # An attribute call is scoped by its RECEIVER only, never by
                     # its bare name: `"".join(x)` in a file that imported some
@@ -789,11 +1172,24 @@ def _collect_calls(func_node: ast.AST, src_qname: str, out: ExtractResult) -> No
                     if receiver == RECEIVER_LITERAL:
                         # A method of a builtin value; no project symbol.
                         continue
+                    if receiver == RECEIVER_SUPER:
+                        sup = node.func.value
+                        if (
+                            isinstance(sup, ast.Call)
+                            and sup.args
+                            and isinstance(sup.args[0], ast.Name)
+                        ):
+                            receiver_class = sup.args[0].id  # super(Cls, self)
+                    elif receiver == RECEIVER_OBJECT and isinstance(node.func.value, ast.Name):
+                        if local_classes is None:
+                            local_classes = _py_local_classes(func_node, out)
+                        receiver_class = local_classes.get(node.func.value.id)
                 else:
                     # P0.4: if the target name was imported in this file, tag
                     # the ref with the originating module so the resolver can
                     # scope.
                     scope = out.imports.get(target)
+                    target = _py_unalias(target, out)
                 out.refs.append(
                     ExtractedRef(
                         src_qname=src_qname,
@@ -801,6 +1197,7 @@ def _collect_calls(func_node: ast.AST, src_qname: str, out: ExtractResult) -> No
                         line=getattr(node, "lineno", 0),
                         scope_module=scope,
                         receiver=receiver,
+                        receiver_class=receiver_class,
                     )
                 )
 
@@ -861,7 +1258,7 @@ def _emit_py_callback_refs(node: ast.Call, src_qname: str, out: ExtractResult) -
             out.refs.append(
                 ExtractedRef(
                     src_qname=src_qname,
-                    target_name=name_node.id,
+                    target_name=_py_unalias(name_node.id, out),
                     line=getattr(name_node, "lineno", getattr(node, "lineno", 0)),
                     ref_type="callback_arg",
                     scope_module=out.imports.get(name_node.id),
@@ -1156,8 +1553,12 @@ def _leftmost_name(node: ast.AST) -> str | None:
 # symbol_ref.receiver; the resolver reads it (indexer._resolve_refs). A call by
 # bare name (`f()`) has no receiver (None) and resolves as it always did.
 RECEIVER_MODULE = "module"  # X is a name this file imports: `mod.f()`, `os.path.join()`
-RECEIVER_SELF = "self"  # `self.f()`, `cls.f()`, `super().f()`: a method of a class
+RECEIVER_SELF = "self"  # `self.f()`, `cls.f()`: a method of a class
 RECEIVER_OBJECT = "object"  # anything else: a local, a parameter, `a.b.f()`, `g().f()`
+RECEIVER_SUPER = "super"  # `super().f()`, `super(Cls, self).f()`, `super.f()`: the BASE's method
+RECEIVER_TYPE = (
+    "type"  # Java `Type::method`: X is a class NAME (resolved strictly, never by method name)
+)
 RECEIVER_LITERAL = "literal"  # `"".join()`, `[].append()`: never emitted as a ref
 
 _PY_LITERAL_RECEIVERS = (
@@ -1197,7 +1598,7 @@ def _py_receiver(func: ast.Attribute, bindings: dict[str, str]) -> tuple[str, st
         and isinstance(value.func, ast.Name)
         and value.func.id == "super"
     ):
-        return RECEIVER_SELF, None
+        return RECEIVER_SUPER, None
     chain: list[str] = []
     cur: ast.AST = value
     while isinstance(cur, ast.Attribute):
@@ -1334,33 +1735,69 @@ def _ast_http_methods(node: ast.AST) -> list[str]:
     return [s.upper()] if s else []
 
 
-def _http_route_from_decorator_call(dec: ast.AST) -> tuple[str | None, str | None]:
-    """Parse one ``@app.get('/x')`` / ``@app.route('/x', methods=[...])`` call."""
+def _http_route_parts(dec: ast.AST) -> tuple[list[str], str | None, str | None]:
+    """Parse one route decorator call into ``(methods, path, receiver)``.
+
+    ``methods`` keeps every verb of ``methods=[...]`` in source order (Flask
+    defaults to ``["GET"]``); ``receiver`` is the object the decorator hangs off
+    (``bp`` in ``@bp.route``) when it is a plain name, else ``None``.
+    """
     if not isinstance(dec, ast.Call):
-        return None, None
+        return [], None, None
     name = _decorator_dotted(dec.func)
     if not name:
-        return None, None
+        return [], None, None
     last = name.rsplit(".", 1)[-1].lower()
     if last not in HTTP_ROUTE_DECORATOR_LASTSEGS:
-        return None, None
+        return [], None, None
     path = _ast_str_constant(dec.args[0]) if dec.args else None
-    method: str | None
+    methods: list[str]
     if last in _HTTP_VERB_DECORATOR_LASTSEGS:
-        method = last.upper()
+        methods = [last.upper()]
     elif last == "websocket":
-        method = "WEBSOCKET"
+        methods = ["WEBSOCKET"]
     else:
-        method = None
+        methods = []
         for kw in dec.keywords:
             if kw.arg == "methods" and kw.value is not None:
-                methods = _ast_http_methods(kw.value)
+                methods = list(dict.fromkeys(_ast_http_methods(kw.value)))
                 if methods:
-                    method = methods[0]
                     break
-        if method is None:
-            method = "GET"
-    return method, path
+        if not methods:
+            methods = ["GET"]
+    parts = name.split(".")
+    receiver = parts[0] if len(parts) == 2 else None
+    return methods, path, receiver
+
+
+def _http_route_from_decorator_call(dec: ast.AST) -> tuple[str | None, str | None]:
+    """Parse one ``@app.get('/x')`` / ``@app.route('/x', methods=[...])`` call."""
+    methods, path, _receiver = _http_route_parts(dec)
+    return (methods[0] if methods else None), path
+
+
+def parse_python_http_route_details(source: str, start_line: int) -> dict[str, Any] | None:
+    """Like :func:`parse_python_http_route` but keeps every method and the receiver.
+
+    Returns ``{"methods": [...], "path": str, "receiver": str | None}`` for the
+    handler at ``start_line`` (first stacked decorator with a string path), or
+    ``None`` when there is none.
+    """
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return None
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        if node.lineno != start_line:
+            continue
+        for dec in node.decorator_list:
+            methods, path, receiver = _http_route_parts(dec)
+            if path is not None:
+                return {"methods": methods, "path": path, "receiver": receiver}
+        return None
+    return None
 
 
 def parse_python_http_route(source: str, start_line: int) -> dict[str, str | None]:
@@ -1370,22 +1807,11 @@ def parse_python_http_route(source: str, start_line: int) -> dict[str, str | Non
     async function whose ``lineno`` equals ``start_line``. When several HTTP
     decorators are stacked, the first with a string path wins.
     """
-    empty: dict[str, str | None] = {"http_method": None, "http_path": None}
-    try:
-        tree = ast.parse(source)
-    except SyntaxError:
-        return empty
-    for node in ast.walk(tree):
-        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            continue
-        if node.lineno != start_line:
-            continue
-        for dec in node.decorator_list:
-            method, path = _http_route_from_decorator_call(dec)
-            if path is not None:
-                return {"http_method": method, "http_path": path}
-        return empty
-    return empty
+    details = parse_python_http_route_details(source, start_line)
+    if details is None:
+        return {"http_method": None, "http_path": None}
+    methods = details["methods"]
+    return {"http_method": methods[0] if methods else None, "http_path": details["path"]}
 
 
 def infer_python_http_framework(source: str) -> str:
@@ -1513,6 +1939,11 @@ _DEF_NODE_TYPES = {
     "class_declaration",
     "class_definition",
     "interface_declaration",
+    # Java / TypeScript enums, Java `@interface`: type declarations like the
+    # class and interface above (kind "class", as Rust's `enum_item`).
+    "enum_declaration",
+    "annotation_type_declaration",
+    "record_declaration",
     # Rust
     "function_item",  # plain Rust functions
     "impl_item",  # walked specially to qualify methods as Type::method
@@ -1716,37 +2147,291 @@ def _ts_object_method_label(method_node, src_bytes: bytes) -> str | None:
     return None
 
 
-_JAVA_MAPPING_PATH = _re_rs.compile(
-    r"@(Get|Post|Put|Patch|Delete)Mapping\s*\(\s*"
-    r"(?:value\s*=\s*|path\s*=\s*)?"
-    r"[\"'](/[^\"']{0,200})[\"']"
-)
 _JAVA_MAPPING_VERB = {
-    "Get": "GET",
-    "Post": "POST",
-    "Put": "PUT",
-    "Patch": "PATCH",
-    "Delete": "DELETE",
+    "GetMapping": "GET",
+    "PostMapping": "POST",
+    "PutMapping": "PUT",
+    "PatchMapping": "PATCH",
+    "DeleteMapping": "DELETE",
 }
 
 
-def _java_mapping_routes(node, src_bytes: bytes) -> list[tuple[str, str, int]]:
-    """``@GetMapping("/x")`` on a Java method → server route triples."""
-    out: list[tuple[str, str, int]] = []
-    for child in node.children:
-        if child.type != "modifiers":
+#: Marks a symbol the source never declares (a record component's accessor, a
+#: Lombok getter/setter). Stored in `decorators`, so no migration is needed;
+#: `find_dead_code` reads it, since such a member is reached by name, by
+#: reflection or by a framework, never by a call it could be missing.
+JAVA_GENERATED_MARK = "livespec:generated"
+
+_LOMBOK_ACCESS_RE = _re_rs.compile(r"AccessLevel\.(\w+)")
+
+
+def _java_declared_methods(body) -> set[str]:
+    """Names of the methods a class/record/enum body declares itself."""
+    names: set[str] = set()
+    if body is None:
+        return names
+    members = list(body.children)
+    for c in body.children:
+        if c.type == "enum_body_declarations":
+            members.extend(c.children)
+    for m in members:
+        if m.type == "method_declaration":
+            n = m.child_by_field_name("name")
+            if n is not None:
+                names.add(n.text.decode("utf-8", errors="replace"))
+    return names
+
+
+def _java_lombok_annotations(node, src_bytes: bytes) -> dict[str, str | None]:
+    """Lombok annotations on a declaration: simple name -> the access level its
+    arguments name (`public`, `protected`, `private`, `none`; None = default)."""
+    found: dict[str, str | None] = {}
+    for c in node.children:
+        if c.type != "modifiers":
             continue
-        for mod in child.children:
-            if mod.type not in ("annotation", "marker_annotation"):
+        for m in c.children:
+            if m.type not in ("annotation", "marker_annotation"):
                 continue
-            raw = src_bytes[mod.start_byte : mod.end_byte].decode("utf-8", errors="replace")
-            m = _JAVA_MAPPING_PATH.search(raw[:400])
-            if m is None:
+            name_node = m.child_by_field_name("name")
+            if name_node is None:
                 continue
-            verb = _JAVA_MAPPING_VERB.get(m.group(1))
-            if verb is None:
+            name = src_bytes[name_node.start_byte : name_node.end_byte].decode("utf-8", "replace")
+            name = name.rsplit(".", 1)[-1]
+            if name not in ("Getter", "Setter", "Data", "Value"):
                 continue
-            out.append((verb, m.group(2), mod.start_point[0] + 1))
+            access = _LOMBOK_ACCESS_RE.search(
+                src_bytes[m.start_byte : m.end_byte].decode("utf-8", errors="replace")
+            )
+            level = access.group(1).lower() if access else None
+            found[name] = None if level == "package" else level
+    return found
+
+
+def _java_implicit_members(node, src_bytes: bytes, class_qname: str) -> list[ExtractedSymbol]:
+    """Members a Java type has without declaring them.
+
+    * `record Car(String make, int year)`: an accessor method per component
+      (`Car.year`, at the component's line) unless the body declares one.
+    * Lombok `@Getter` / `@Setter` / `@Data` / `@Value` on the class, or
+      `@Getter` / `@Setter` on a field: `getX` / `isX` (a primitive boolean) /
+      `setX`. A name the class already declares is skipped, a final field gets
+      no setter, `@Value` none at all, and `AccessLevel.NONE` suppresses one.
+      `@ToString` / `equals` / `hashCode` / `@Builder` are NOT modelled.
+    """
+
+    def text(n) -> str:
+        return src_bytes[n.start_byte : n.end_byte].decode("utf-8", errors="replace")
+
+    body = node.child_by_field_name("body")
+    declared = _java_declared_methods(body)
+    out: list[ExtractedSymbol] = []
+
+    def add(name: str, signature: str, line: int, visibility: str | None, why: str) -> None:
+        if name in declared:
+            return
+        declared.add(name)
+        out.append(
+            ExtractedSymbol(
+                name=name,
+                qualified_name=f"{class_qname}.{name}",
+                kind="method",
+                signature=signature,
+                docstring=None,
+                body_hash_seed=f"{JAVA_GENERATED_MARK}:{signature}",
+                start_line=line,
+                end_line=line,
+                parent_qname=class_qname,
+                decorators=[f"{JAVA_GENERATED_MARK}:{why}"],
+                visibility=visibility,
+            )
+        )
+
+    if node.type == "record_declaration":
+        params = node.child_by_field_name("parameters")
+        for p in params.children if params is not None else []:
+            if p.type == "formal_parameter":
+                n, t = p.child_by_field_name("name"), p.child_by_field_name("type")
+            elif p.type == "spread_parameter":
+                decl = next((c for c in p.children if c.type == "variable_declarator"), None)
+                n = decl.child_by_field_name("name") if decl is not None else None
+                t = next((c for c in p.children if c.is_named and c.type != "modifiers"), None)
+            else:
+                continue
+            if n is not None and t is not None:
+                suffix = "[]" if p.type == "spread_parameter" else ""
+                add(
+                    text(n),
+                    f"{text(t)}{suffix} {text(n)}()",
+                    p.start_point[0] + 1,
+                    "public",
+                    "record",
+                )
+        return out
+
+    if body is None or b"lombok" not in src_bytes:
+        return out
+    class_level = _java_lombok_annotations(node, src_bytes)
+    is_value = "Value" in class_level
+    members = list(body.children)
+    for c in body.children:
+        if c.type == "enum_body_declarations":
+            members.extend(c.children)
+    for f in members:
+        if f.type != "field_declaration":
+            continue
+        mods = next((c for c in f.children if c.type == "modifiers"), None)
+        mod_words = {c.type for c in mods.children} if mods is not None else set()
+        if "static" in mod_words:
+            continue
+        own = _java_lombok_annotations(f, src_bytes)
+        final = "final" in mod_words or is_value
+        type_node = f.child_by_field_name("type")
+        primitive_bool = type_node is not None and type_node.type == "boolean_type"
+        type_txt = text(type_node) if type_node is not None else "Object"
+
+        def level(kind: str, own=own, final=final) -> tuple[bool, str | None]:
+            """(wanted, visibility) of a getter/setter for this field."""
+            if kind in own:
+                lv = own[kind]
+            else:
+                owner = next((k for k in (kind, "Data", "Value") if k in class_level), None)
+                if owner is None or (kind == "Setter" and (owner == "Value" or is_value)):
+                    return False, None
+                lv = class_level[owner] if owner == kind else None
+            if lv == "none" or (kind == "Setter" and final):
+                return False, None
+            return True, lv or "public"
+
+        for d in f.children:
+            if d.type != "variable_declarator":
+                continue
+            ident = d.child_by_field_name("name")
+            if ident is None or text(ident).startswith("$"):
+                continue
+            fname = text(ident)
+            cap = fname[:1].upper() + fname[1:]
+            line = d.start_point[0] + 1
+            if primitive_bool:
+                bare = fname[2:] if _re_rs.match(r"is[A-Z]", fname) else cap
+                getter = fname if _re_rs.match(r"is[A-Z]", fname) else f"is{cap}"
+                alts = {getter, f"get{bare[:1].upper()}{bare[1:]}"}
+                setter = f"set{bare[:1].upper()}{bare[1:]}"
+            else:
+                getter, alts, setter = f"get{cap}", {f"get{cap}"}, f"set{cap}"
+            want, vis = level("Getter")
+            if want and not (alts & declared):
+                add(getter, f"{type_txt} {getter}()", line, vis, "lombok")
+            want, vis = level("Setter")
+            if want:
+                add(setter, f"void {setter}({type_txt} {fname})", line, vis, "lombok")
+    return out
+
+
+def _java_string_values(node, text) -> list[str] | None:
+    """The literal strings a Java annotation value holds: ``"/x"`` or
+    ``{"/x", "/y"}``. None when any part is not a plain literal (a constant,
+    a concatenation): a path built from it would be a guess."""
+    if node.type == "string_literal":
+        raw = text(node)
+        return (
+            [raw[1:-1]] if len(raw) >= 2 and raw[0] == '"' and not raw.startswith('"""') else None
+        )
+    if node.type == "element_value_array_initializer":
+        out: list[str] = []
+        for c in node.children:
+            if c.is_named:
+                got = _java_string_values(c, text)
+                if got is None:
+                    return None
+                out.extend(got)
+        return out
+    return None
+
+
+def _java_request_methods(node, text) -> list[str]:
+    """`RequestMethod.GET` / `{RequestMethod.GET, POST}` -> ["GET", ...]."""
+    if node.type == "element_value_array_initializer":
+        return [m for c in node.children if c.is_named for m in _java_request_methods(c, text)]
+    name = text(node).rsplit(".", 1)[-1].strip().upper()
+    return [name] if name.isalpha() else []
+
+
+def _java_mapping_annotation(ann, text) -> tuple[list[str], list[str]] | None:
+    """``(paths, request methods)`` of one Spring mapping annotation; paths is
+    ``[""]`` when it names none. None when a path is not a plain literal."""
+    args = ann.child_by_field_name("arguments")
+    paths: list[str] = []
+    methods: list[str] = []
+    named_path = False
+    for c in args.children if args is not None else ():
+        if not c.is_named:
+            continue
+        key, value = "value", c
+        if c.type == "element_value_pair":
+            k, v = c.child_by_field_name("key"), c.child_by_field_name("value")
+            if k is None or v is None:
+                continue
+            key, value = text(k).strip(), v
+        if key in ("value", "path"):
+            named_path = True
+            got = _java_string_values(value, text)
+            if got is None:
+                return None
+            paths.extend(got)
+        elif key == "method":
+            methods.extend(_java_request_methods(value, text))
+    return (paths if named_path else [""]), methods
+
+
+def _java_join_route(prefix: str, path: str) -> str:
+    joined = "/" + "/".join(p for p in (prefix + "/" + path).split("/") if p)
+    return joined
+
+
+def _java_mapping_routes(node, src_bytes: bytes) -> list[tuple[str | None, str, int]]:
+    """Spring mapping annotations on a Java method -> server route triples,
+    one per path (``@GetMapping({"/a", "/b"})``) with the enclosing class's
+    ``@RequestMapping`` prefix applied. ``@RequestMapping`` on a method names
+    its verbs in ``method=`` (none: any, ``None``)."""
+
+    def text(n) -> str:
+        return src_bytes[n.start_byte : n.end_byte].decode("utf-8", errors="replace")
+
+    def mappings(decl):
+        for child in decl.children:
+            if child.type != "modifiers":
+                continue
+            for mod in child.children:
+                if mod.type not in ("annotation", "marker_annotation"):
+                    continue
+                name = mod.child_by_field_name("name")
+                if name is not None:
+                    yield text(name).rsplit(".", 1)[-1], mod
+
+    prefixes = [""]
+    cls = node.parent
+    while cls is not None and cls.type not in _JAVA_CLASS_LIKE:
+        cls = cls.parent
+    if cls is not None:
+        for name, ann in mappings(cls):
+            parsed = _java_mapping_annotation(ann, text) if name == "RequestMapping" else None
+            if parsed is not None and parsed[0]:
+                prefixes = parsed[0]
+    out: list[tuple[str | None, str, int]] = []
+    for name, ann in mappings(node):
+        if name != "RequestMapping" and name not in _JAVA_MAPPING_VERB:
+            continue
+        parsed = _java_mapping_annotation(ann, text)
+        if parsed is None:
+            continue
+        paths, methods = parsed
+        verbs: list[str | None] = (
+            [_JAVA_MAPPING_VERB[name]] if name in _JAVA_MAPPING_VERB else (methods or [None])
+        )
+        for verb in verbs:
+            for prefix in prefixes:
+                for path in paths:
+                    out.append((verb, _java_join_route(prefix, path), ann.start_point[0] + 1))
     return out
 
 
@@ -1954,7 +2639,9 @@ def _ts_extract(
 
     http_wrappers: frozenset[str] = frozenset()
     if language in ("javascript", "typescript", "tsx"):
-        out.imports.update(_ts_collect_imports(tree.root_node, src_bytes, current_dir))
+        out.imports.update(
+            _ts_collect_imports(tree.root_node, src_bytes, current_dir, out.import_aliases)
+        )
         http_wrappers = _ts_find_http_wrappers(tree.root_node, src_bytes)
     elif language == "go":
         out.imports.update(_go_collect_imports(tree.root_node, src_bytes))
@@ -1967,6 +2654,15 @@ def _ts_extract(
 
     def text(n) -> str:
         return src_bytes[n.start_byte : n.end_byte].decode("utf-8", errors="replace")
+
+    # Inheritance + type-position refs (TypeScript/TSX and Java only).
+    type_refs: _TypeRefCollector | None = None
+    if language in ("typescript", "tsx"):
+        type_refs = _TypeRefCollector(src_bytes, out, language, out.imports)
+    elif language == "java":
+        type_refs = _TypeRefCollector(
+            src_bytes, out, language, _java_collect_imports(tree.root_node, src_bytes)
+        )
 
     # Schema declarations. TS interfaces and object type aliases are resolved
     # after the walk (an interface may extend one declared below it); Zod
@@ -2117,7 +2813,7 @@ def _ts_extract(
                         decl_node=decl,
                         doc_node=_ts_declaration_anchor(node) or node,
                     )
-                    _ts_collect_calls(value, qname, src_bytes, out, http_wrappers)
+                    _ts_collect_calls(value, qname, src_bytes, out, http_wrappers, type_refs)
                     return  # do not double-walk
             # `export const session = define.middleware(async (ctx) => {…})`
             # / `export const handler = define.handlers({ GET() {…} })`: the
@@ -2140,7 +2836,7 @@ def _ts_extract(
                         doc_node=_ts_declaration_anchor(node) or node,
                         wrapper_call=True,
                     )
-                    _ts_collect_calls(value, qname, src_bytes, out, http_wrappers)
+                    _ts_collect_calls(value, qname, src_bytes, out, http_wrappers, type_refs)
                     # A Zod object holding a callback (`.refine(v => …)`,
                     # `.transform(…)`) is already this function symbol, which
                     # owns its calls; its fields hang off it rather than off
@@ -2208,7 +2904,7 @@ def _ts_extract(
                     name = module_name.rsplit(".", 1)[-1] or "default"
                 kind = "class" if "class" in value.type else "function"
                 qname = emit_symbol(value, name, parent_qname, kind)
-                _ts_collect_calls(value, qname, src_bytes, out, http_wrappers)
+                _ts_collect_calls(value, qname, src_bytes, out, http_wrappers, type_refs)
                 for c in value.children:
                     walk(c, qname)
                 return
@@ -2226,19 +2922,23 @@ def _ts_extract(
                 qname = emit_symbol(
                     call, name, parent_qname, "function", doc_node=node, wrapper_call=True
                 )
-                _ts_collect_calls(call, qname, src_bytes, out, http_wrappers)
+                _ts_collect_calls(call, qname, src_bytes, out, http_wrappers, type_refs)
                 for c in call.children:
                     walk(c, parent_qname)
                 return
 
         # `type User = { id: number }`: a `type_alias` symbol with a schema.
-        # Other aliases (`type Id = string`) stay symbol-less, as before.
+        # Every other alias (`type Id = string | Foo`) is a `type_alias` symbol
+        # too, without one, so an import or a type use has something to point at.
         if is_ts and node.type == "type_alias_declaration":
             value = node.child_by_field_name("value")
             name = find_name(node)
-            if name and value is not None and value.type == "object_type":
+            if name and value is not None:
                 qname = emit_symbol(node, name, parent_qname, "type_alias")
-                ts_schema_decls.append((qname, name, node, value, "ts_type"))
+                if value.type == "object_type":
+                    ts_schema_decls.append((qname, name, node, value, "ts_type"))
+                # No calls live in a type, but the types it names do.
+                _ts_collect_calls(node, qname, src_bytes, out, http_wrappers, type_refs)
                 return
 
         # ----- Standard def nodes -----
@@ -2248,7 +2948,15 @@ def _ts_extract(
                 if (
                     "class" in node.type
                     or "interface" in node.type
-                    or node.type in ("struct_item", "enum_item", "type_spec")
+                    or node.type
+                    in (
+                        "struct_item",
+                        "enum_item",
+                        "type_spec",
+                        "enum_declaration",
+                        "annotation_type_declaration",
+                        "record_declaration",
+                    )
                 ):
                     kind = "class"
                 elif "method" in node.type:
@@ -2266,11 +2974,13 @@ def _ts_extract(
                         base = parent_qname or module_name
                         override = f"{base}.{label}.{name}"
                 qname = emit_symbol(node, name, parent_qname, kind, qname=override)
+                if language == "java" and kind == "class":
+                    out.symbols.extend(_java_implicit_members(node, src_bytes, qname))
                 if is_ts and node.type == "interface_declaration":
                     body = node.child_by_field_name("body")
                     if body is not None:
                         ts_schema_decls.append((qname, name, node, body, "ts_interface"))
-                _ts_collect_calls(node, qname, src_bytes, out, http_wrappers)
+                _ts_collect_calls(node, qname, src_bytes, out, http_wrappers, type_refs)
                 for c in node.children:
                     walk(c, qname)
                 return
@@ -2284,7 +2994,7 @@ def _ts_extract(
             name = find_name(node)
             if name:
                 qname = emit_symbol(node, name, parent_qname, "method", qname_sep="::")
-                _ts_collect_calls(node, qname, src_bytes, out, http_wrappers)
+                _ts_collect_calls(node, qname, src_bytes, out, http_wrappers, type_refs)
                 return
         for c in node.children:
             walk_rust_method(c, parent_qname)
@@ -2337,7 +3047,7 @@ def _ts_extract(
                 parent_qname=None,
             )
         )
-        _ts_collect_calls(tree.root_node, module_qname, src_bytes, out, http_wrappers)
+        _ts_collect_calls(tree.root_node, module_qname, src_bytes, out, http_wrappers, type_refs)
 
     return out
 
@@ -2856,10 +3566,22 @@ def _js_receiver(call_node, text, imports: dict[str, str]) -> tuple[str | None, 
     if not hasattr(call_node, "child_by_field_name"):
         return None, None
     fn = call_node.child_by_field_name("function")
-    if fn is None or fn.type != "member_expression":
+    if fn is None:
+        # Java `super.f()`: a method_invocation with an `object` field.
+        jobj = call_node.child_by_field_name("object")
+        if jobj is not None and jobj.type == "super":
+            return RECEIVER_SUPER, None
+        # Java `m()` and `this.m()` reach a method of the enclosing class (or
+        # its ancestors); `x.m()` stays unclassified (receiver None).
+        if call_node.type == "method_invocation" and (jobj is None or jobj.type == "this"):
+            return RECEIVER_SELF, None
+        return None, None
+    if fn.type != "member_expression":
         return None, None
     obj = fn.child_by_field_name("object")
-    if obj is not None and obj.type in ("this", "super"):
+    if obj is not None and obj.type == "super":
+        return RECEIVER_SUPER, None
+    if obj is not None and obj.type == "this":
         return RECEIVER_SELF, None
     # Only a chain of plain member accesses keeps the module evidence:
     # `m.sub.f()` is still in module `m`, `m.make().f()` is a value.
@@ -2914,15 +3636,309 @@ def _is_named_scope_boundary(node) -> bool:
     return False
 
 
+# Declarations whose `name` child is a `type_identifier` naming the thing being
+# declared, not a use of it.
+_TS_TYPE_DECL_NODES = frozenset(
+    {
+        "class_declaration",
+        "abstract_class_declaration",
+        "class",
+        "interface_declaration",
+        "type_alias_declaration",
+        "enum_declaration",
+        "record_declaration",
+    }
+)
+# Nodes that bind a type variable: the name they introduce (`T`, `infer U`,
+# `[K in keyof T]`) is not a project type, here or anywhere it is used.
+_TYPE_PARAM_BINDERS = frozenset({"type_parameter", "infer_type", "mapped_type_clause"})
+# Clauses naming what a class or interface inherits from. `extends_clause` (a
+# TS class's `extends`) holds an expression and is handled on its own.
+_HERITAGE_CLAUSES = frozenset(
+    {
+        "implements_clause",  # TS class implements
+        "extends_type_clause",  # TS interface extends
+        "superclass",  # Java class extends
+        "super_interfaces",  # Java class/enum/record implements
+        "extends_interfaces",  # Java interface extends
+    }
+)
+_QUALIFIED_TYPE_NODES = frozenset({"nested_type_identifier", "scoped_type_identifier"})
+_TYPE_NAME_WRAPPERS = frozenset(
+    {"generic_type", "nested_type_identifier", "scoped_type_identifier", "type_list"}
+)
+
+
+class _TypeRefCollector:
+    """Inheritance and type-position refs for TypeScript/TSX and Java.
+
+    Rides the `_ts_collect_calls` walk (same node order, same "stop at a named
+    scope" boundaries), so a type named in a method belongs to the method and
+    a field's type to its class, exactly like their calls.
+
+    Both grammars spell a name in a type position as a `type_identifier`
+    node, which is what makes this exact rather than heuristic: an identifier
+    in a value position is a different node type. Type variables are skipped
+    by remembering every name a `type_parameter` binds in the file; a
+    declaration always precedes its uses in walk order.
+    """
+
+    def __init__(
+        self, src_bytes: bytes, out: ExtractResult, language: str, imports: dict[str, str]
+    ) -> None:
+        self._src = src_bytes
+        self._out = out
+        self._java = language == "java"
+        self._imports = imports
+        self._type_params: set[str] = set()
+        self._src_qname = ""
+        self._seen: set[tuple[str, str, str | None]] = set()
+
+    def _text(self, n) -> str:
+        return self._src[n.start_byte : n.end_byte].decode("utf-8", errors="replace")
+
+    def scope_of(self, raw: str) -> str | None:
+        """The import path a (possibly dotted) name in a value position stands
+        for: its leftmost name's import, else the dotted name itself when it
+        is written fully qualified."""
+        left = raw.split(".", 1)[0]
+        found = self._imports.get(left)
+        if found is not None and "." in raw:
+            return f"{found}.{raw.split('.', 1)[1]}"
+        if found is not None:
+            return found
+        return raw if "." in raw else None
+
+    def begin(self, src_qname: str) -> None:
+        self._src_qname = src_qname
+        self._seen = set()
+
+    def owns_symbol(self, node) -> bool:
+        """A `type X = ...` alias has its own symbol and its own collection
+        pass, so the module pass must not claim the types it names as well."""
+        if node.type != "type_alias_declaration":
+            return False
+        return node.child_by_field_name("value") is not None
+
+    def _emit(self, name: str, scope: str | None, line: int, ref_type: str) -> None:
+        name = self._out.import_aliases.get(name, name)
+        key = (ref_type, name, scope)
+        if not name or key in self._seen:
+            return
+        self._seen.add(key)
+        self._out.refs.append(
+            ExtractedRef(
+                src_qname=self._src_qname,
+                target_name=name,
+                line=line,
+                ref_type=ref_type,
+                scope_module=scope,
+            )
+        )
+
+    def visit(self, node) -> None:
+        kind = node.type
+        if kind == "type_identifier":
+            self._type_identifier(node)
+        elif kind == "extends_clause":
+            # TS `class A extends B` / `extends ns.B<T>`: B is an expression.
+            for c in node.children:
+                if c.type == "identifier":
+                    name = self._text(c)
+                    self._emit(name, self._imports.get(name), c.start_point[0] + 1, REF_INHERIT)
+                elif c.type == "member_expression":
+                    prop = c.child_by_field_name("property")
+                    left = c
+                    while left is not None and left.type == "member_expression":
+                        left = left.child_by_field_name("object")
+                    if prop is not None and left is not None and left.type == "identifier":
+                        self._emit(
+                            self._text(prop),
+                            self._imports.get(self._text(left)),
+                            c.start_point[0] + 1,
+                            REF_INHERIT,
+                        )
+        elif kind == "binary_expression" and not self._java:
+            # `x instanceof Foo`: Foo is a value-position identifier in TS.
+            op = node.child_by_field_name("operator")
+            right = node.child_by_field_name("right")
+            if (
+                op is not None
+                and op.type == "instanceof"
+                and right is not None
+                and right.type == "identifier"
+            ):
+                name = self._text(right)
+                self._emit(name, self._imports.get(name), right.start_point[0] + 1, REF_TYPE)
+
+    def _type_identifier(self, node) -> None:
+        parent = node.parent
+        if parent is None:
+            return
+        name = self._text(node)
+        ptype = parent.type
+        if ptype in _TYPE_PARAM_BINDERS:
+            # The variable being bound is the `name` field where the grammar
+            # has one, else the first type name (`infer U extends X`; Java's
+            # `T extends Base` keeps the bound under its own `type_bound`).
+            bound = parent.child_by_field_name("name") or next(
+                (c for c in parent.children if c.type == "type_identifier"), None
+            )
+            if bound == node:
+                self._type_params.add(name)
+                return
+        if ptype in _TS_TYPE_DECL_NODES and parent.child_by_field_name("name") == node:
+            return
+        if name in self._type_params:
+            return
+        scope: str | None = self._imports.get(name)
+        if ptype in _QUALIFIED_TYPE_NODES:
+            # `ns.Foo` / `Outer.Inner` / `com.acme.Foo`: only the last name is
+            # the type, scoped by what the leftmost name was imported as.
+            grand = parent.parent
+            if (parent.children and parent.children[-1] != node) or (
+                grand is not None and grand.type in _QUALIFIED_TYPE_NODES
+            ):
+                return  # a qualifier, not the type
+            left = parent
+            while left is not None and left.type in _QUALIFIED_TYPE_NODES:
+                left = left.children[0] if left.children else None
+            scope = self._imports.get(self._text(left)) if left is not None else None
+            if scope is None and self._java:
+                # A fully qualified name is its own import.
+                scope = self._text(parent)
+        # Inheritance when the name sits directly in a heritage clause, i.e.
+        # not inside the type arguments of something that does.
+        ref_type = REF_TYPE
+        cur, up = node, parent
+        while up is not None and up.type in _TYPE_NAME_WRAPPERS:
+            if up.type == "generic_type" and up.children and up.children[0] != cur:
+                break
+            cur, up = up, up.parent
+        if up is not None and up.type in _HERITAGE_CLAUSES:
+            ref_type = REF_INHERIT
+        self._emit(name, scope, node.start_point[0] + 1, ref_type)
+
+
+def _java_collect_imports(root_node, src_bytes: bytes) -> dict[str, str]:
+    """`import com.acme.model.User;` -> {"User": "com.acme.model.User"}.
+
+    Used only to scope type-position refs. A wildcard import names no single
+    type and is skipped: the resolver falls back to the same package, then to
+    a name that is unique in the project.
+    """
+    imports: dict[str, str] = {}
+    for child in root_node.children:
+        if child.type != "import_declaration":
+            continue
+        raw = src_bytes[child.start_byte : child.end_byte].decode("utf-8", errors="replace")
+        dotted = raw.removeprefix("import").strip().rstrip(";").strip()
+        dotted = dotted.removeprefix("static").strip()
+        if not dotted or dotted.endswith("*"):
+            continue
+        imports[dotted.rsplit(".", 1)[-1]] = dotted
+    return imports
+
+
+_JAVA_CLASS_LIKE = frozenset(
+    {"class_declaration", "enum_declaration", "record_declaration", "interface_declaration"}
+)
+
+
+def _java_type_name(node, text) -> str | None:
+    """The class a Java type node names, generics dropped: `List<Pet>` -> `List`,
+    `a.b.Owner` -> `a.b.Owner`. Arrays, primitives and `var` name no class."""
+    if node is None:
+        return None
+    if node.type in ("type_identifier", "scoped_type_identifier"):
+        name = text(node).strip()
+        return name if name and name != "var" else None
+    if node.type == "generic_type":
+        first = next((c for c in node.children if c.is_named), None)
+        return _java_type_name(first, text)
+    return None
+
+
+def _java_declared_types(def_node, text) -> tuple[dict, dict]:
+    """Declared types visible to a Java member body: ``(locals, fields)``, each
+    ``{name: class name | None}``. ``None`` marks a name that is declared but
+    whose class cannot be told (`var`, or two declarations that disagree), so
+    it shadows an outer name instead of falling through to it."""
+    fields: dict[str, str | None] = {}
+    locs: dict[str, str | None] = {}
+
+    def put(target: dict, name_node, type_node) -> None:
+        if name_node is None:
+            return
+        name = text(name_node).strip()
+        typ = _java_type_name(type_node, text)
+        if name in target and target[name] != typ:
+            typ = None
+        target[name] = typ
+
+    def declarators(target: dict, decl) -> None:
+        type_node = decl.child_by_field_name("type")
+        for d in decl.children:
+            if d.type == "variable_declarator":
+                put(target, d.child_by_field_name("name"), type_node)
+
+    # Enclosing classes, outermost first so an inner field shadows an outer one.
+    chain = []
+    cur = def_node
+    while cur is not None:
+        if cur.type in _JAVA_CLASS_LIKE:
+            chain.append(cur)
+        cur = cur.parent
+    for cls in reversed(chain):
+        body = cls.child_by_field_name("body")
+        for c in body.children if body is not None else ():
+            if c.type == "field_declaration":
+                declarators(fields, c)
+        params = cls.child_by_field_name("parameters")  # record components
+        for c in params.children if params is not None else ():
+            if c.type == "formal_parameter":
+                put(fields, c.child_by_field_name("name"), c.child_by_field_name("type"))
+
+    def walk(n) -> None:
+        if n.type == "local_variable_declaration":
+            declarators(locs, n)
+        elif n.type in ("formal_parameter", "enhanced_for_statement", "resource"):
+            put(locs, n.child_by_field_name("name"), n.child_by_field_name("type"))
+        elif n.type in ("inferred_parameters", "catch_formal_parameter", "pattern"):
+            for c in n.children:
+                if c.type == "identifier":
+                    put(locs, c, None)
+        elif n.type == "lambda_expression":
+            lam = n.child_by_field_name("parameters")
+            if lam is not None and lam.type == "identifier":
+                put(locs, lam, None)
+        elif n.type == "spread_parameter":
+            for c in n.children:
+                if c.type == "variable_declarator":
+                    put(locs, c.child_by_field_name("name"), None)
+        for c in n.children:
+            if c is not def_node and c.type in _JAVA_CLASS_LIKE:
+                continue
+            walk(c)
+
+    if def_node.type not in _JAVA_CLASS_LIKE:
+        walk(def_node)
+    return locs, fields
+
+
 def _ts_collect_calls(
     def_node,
     src_qname: str,
     src_bytes: bytes,
     out: ExtractResult,
     http_wrappers: frozenset[str] = frozenset(),
+    type_refs: _TypeRefCollector | None = None,
 ) -> None:
     def text(n) -> str:
         return src_bytes[n.start_byte : n.end_byte].decode("utf-8", errors="replace")
+
+    if type_refs is not None:
+        type_refs.begin(src_qname)
 
     import re as _re_local
 
@@ -2980,6 +3996,48 @@ def _ts_collect_calls(
                 return t, receiver_text or t
         return None, None
 
+    def _js_new_ref(new_node) -> None:
+        """JS/TS `new X(...)` / `new ns.X(...)`: an instantiation is a call of
+        the class, the edge `X(...)` already is in Python. Without it a class
+        built only with `new` (an error type thrown at every call site) had no
+        inbound edge and read as dead. Resolved by the same import scope as a
+        call; `new this.K()` / `new obj.K()` / `new (f())()` name no class the
+        file's imports can place, so they make no ref."""
+        ctor = new_node.child_by_field_name("constructor")
+        if ctor is None:
+            return
+        scope = None
+        receiver = None
+        if ctor.type == "identifier":
+            tgt = text(ctor).strip()
+            scope = out.imports.get(tgt)
+        elif ctor.type == "member_expression":
+            prop = ctor.child_by_field_name("property")
+            base = ctor.child_by_field_name("object")
+            while base is not None and base.type == "member_expression":
+                base = base.child_by_field_name("object")
+            if prop is None or base is None or base.type != "identifier":
+                return
+            tgt = text(prop).strip()
+            root = text(base).strip()
+            if root not in out.imports:
+                return
+            receiver = RECEIVER_MODULE
+            scope = out.imports[root]
+        else:
+            return
+        if not tgt:
+            return
+        out.refs.append(
+            ExtractedRef(
+                src_qname=src_qname,
+                target_name=out.import_aliases.get(tgt, tgt) if receiver is None else tgt,
+                line=new_node.start_point[0] + 1,
+                scope_module=scope,
+                receiver=receiver,
+            )
+        )
+
     def _callback_arg_refs(call_node, tgt: str) -> None:
         """v0.13 P3: named handlers passed to registration-style calls.
 
@@ -3008,12 +4066,53 @@ def _ts_collect_calls(
             out.refs.append(
                 ExtractedRef(
                     src_qname=src_qname,
-                    target_name=name,
+                    target_name=out.import_aliases.get(name, name),
                     line=a.start_point[0] + 1,
                     ref_type="callback_arg",
                     scope_module=out.imports.get(name),
                 )
             )
+
+    def _java_method_reference(node) -> None:
+        """`Type::method` / `this::method` (Java): a call of `method`, deferred.
+        Only a receiver that can be pinned is emitted — a capitalised class
+        name (resolved against the project's classes by the indexer, no ref
+        effect when it is a library type) or `this`; `var::method` and
+        `Type::new` carry no usable target."""
+        named = [c for c in node.children if c.is_named]
+        if len(named) < 2 or named[-1].type != "identifier":
+            return
+        left, method = named[0], text(named[-1])
+        line = node.start_point[0] + 1
+        if left.type == "this":
+            out.refs.append(
+                ExtractedRef(
+                    src_qname=src_qname,
+                    target_name=method,
+                    line=line,
+                    ref_type="callback_arg",
+                    receiver=RECEIVER_SELF,
+                )
+            )
+            return
+        raw = text(left).strip()
+        cls = raw.rsplit(".", 1)[-1]
+        if (
+            left.type not in ("identifier", "field_access", "scoped_identifier")
+            or not cls[:1].isupper()
+        ):
+            return
+        scope = type_refs.scope_of(raw) if type_refs is not None else None
+        out.refs.append(
+            ExtractedRef(
+                src_qname=src_qname,
+                target_name=method,
+                line=line,
+                ref_type="callback_arg",
+                receiver=RECEIVER_TYPE,
+                receiver_class=f"{scope}::{cls}" if scope else cls,
+            )
+        )
 
     # JSX node types that carry a component name (v0.11 P2, bug #20)
     _JSX_OPEN_TYPES = {"jsx_opening_element", "jsx_self_closing_element"}
@@ -3201,7 +4300,42 @@ def _ts_collect_calls(
             return None
         return method, path
 
+    java_types: list = []
+
+    def _java_receiver_class(call_node) -> str | None:
+        """`x.m()` / `this.x.m()` where `x` is a local, parameter or field with
+        a declared class: that class (`scope::Name` when its import is known).
+        Java declares its types, so the receiver's class needs no inference;
+        anything else (`a.b.m()`, `f().m()`, `var x`) stays unclassified."""
+        obj = call_node.child_by_field_name("object")
+        if obj is None:
+            return None
+        this_field = False
+        if obj.type == "field_access":
+            inner = obj.child_by_field_name("object")
+            fld = obj.child_by_field_name("field")
+            if inner is None or inner.type != "this" or fld is None:
+                return None
+            name, this_field = text(fld).strip(), True
+        elif obj.type == "identifier":
+            name = text(obj).strip()
+        else:
+            return None
+        if not java_types:
+            java_types.append(_java_declared_types(def_node, text))
+        locs, fields = java_types[0]
+        if this_field or name not in locs:
+            raw = fields.get(name)
+        else:
+            raw = locs[name]
+        if not raw:
+            return None
+        scope = type_refs.scope_of(raw) if type_refs is not None else None
+        return f"{scope}::{raw.rsplit('.', 1)[-1]}" if scope else raw
+
     def walk(node):
+        if type_refs is not None:
+            type_refs.visit(node)
         if node.type in _CALL_NODE_TYPES:
             route = _server_route(node)
             if route is not None:
@@ -3229,11 +4363,33 @@ def _ts_collect_calls(
                         )
                     )
             tgt, leftmost = call_target_and_leftmost(node)
+            fn_node = (
+                node.child_by_field_name("function")
+                if hasattr(node, "child_by_field_name")
+                else None
+            )
+            if fn_node is not None and fn_node.type == "super":
+                # `super(...)` in a constructor: the base's `constructor`, never
+                # a project function that happens to be named `super`.
+                out.refs.append(
+                    ExtractedRef(
+                        src_qname=src_qname,
+                        target_name="constructor",
+                        line=node.start_point[0] + 1,
+                        receiver=RECEIVER_SUPER,
+                    )
+                )
+                tgt = None
             # A method of a literal (`[a, b].join(",")`) reaches no project
             # symbol; only the call's own ref is skipped, a handler passed to
             # it still counts.
             if tgt and not _ts_receiver_is_literal(node):
                 receiver, base = _js_receiver(node, text, out.imports)
+                receiver_class: str | None = None
+                if receiver is None and node.type == "method_invocation":
+                    receiver_class = _java_receiver_class(node)
+                    if receiver_class is not None:
+                        receiver = RECEIVER_OBJECT
                 if receiver is not None:
                     # JS/TS member call: scoped by its receiver only. A named
                     # import of `join` says nothing about `parts.join(",")`.
@@ -3248,20 +4404,26 @@ def _ts_collect_calls(
                 out.refs.append(
                     ExtractedRef(
                         src_qname=src_qname,
-                        target_name=tgt,
+                        # `import { f as g }; g()` is a call of `f`.
+                        target_name=out.import_aliases.get(tgt, tgt) if receiver is None else tgt,
                         line=node.start_point[0] + 1,
                         scope_module=scope,
                         receiver=receiver,
+                        receiver_class=receiver_class,
                     )
                 )
             if tgt:
                 # v0.13 P3: named handlers passed to registration calls.
                 _callback_arg_refs(node, tgt)
+        elif node.type == "new_expression":
+            _js_new_ref(node)
         # v0.11 P2: JSX element references as call-graph edges (bug #20).
         # Only jsx_opening_element (paired tags) and jsx_self_closing_element
         # are walked; jsx_closing_element is skipped (duplicate of opening tag).
         elif node.type in _JSX_OPEN_TYPES:
             _jsx_component_ref(node)
+        elif node.type == "method_reference":
+            _java_method_reference(node)
         for c in node.children:
             # Don't descend into a nested def/class/method — it is extracted and
             # collected as its OWN symbol, so recursing here would attribute its
@@ -3270,6 +4432,8 @@ def _ts_collect_calls(
             # anonymous arrows/callbacks (not def-typed) are still walked, so
             # their calls correctly belong to the enclosing symbol.
             if c is not def_node and _is_named_scope_boundary(c):
+                continue
+            if type_refs is not None and type_refs.owns_symbol(c):
                 continue
             walk(c)
 
@@ -3308,7 +4472,10 @@ def _resolve_module_path(source: str, current_dir: tuple[str, ...]) -> str:
 
 
 def _ts_collect_imports(
-    root_node, src_bytes: bytes, current_dir: tuple[str, ...]
+    root_node,
+    src_bytes: bytes,
+    current_dir: tuple[str, ...],
+    aliases: dict[str, str] | None = None,
 ) -> dict[str, str]:
     """Scan top-level ES6 imports + CommonJS requires in a JS/TS module.
 
@@ -3362,6 +4529,8 @@ def _ts_collect_imports(
                     )
                     if alias_n is not None:
                         imports[text(alias_n)] = module
+                        if aliases is not None and name_n is not None:
+                            aliases[text(alias_n)] = text(name_n)
                     elif name_n is not None:
                         imports[text(name_n)] = module
                     else:
@@ -3743,7 +4912,7 @@ def extract(path: Path, source: str, project_root: Path) -> tuple[str, ExtractRe
     )
     module_name = ".".join(rel.with_suffix("").parts)
     if lang == "python":
-        return lang, _py_extract(source, module_name)
+        return lang, _with_data_access(source, lang, module_name, _py_extract(source, module_name))
     if lang in SCHEMA_ONLY_LANGUAGES:
         # Imported here: sql_schema builds this module's dataclasses, so a
         # top-level import would be circular.
@@ -3751,4 +4920,16 @@ def extract(path: Path, source: str, project_root: Path) -> tuple[str, ExtractRe
 
         return lang, extract_sql_schemas(source, module_name)
     current_dir = rel.parent.parts
-    return lang, _ts_extract(source, lang, module_name, current_dir)
+    result = _ts_extract(source, lang, module_name, current_dir)
+    return lang, _with_data_access(source, lang, module_name, result)
+
+
+def _with_data_access(
+    source: str, lang: str, module_name: str, result: ExtractResult
+) -> ExtractResult:
+    # Imported here: data_access builds this module's dataclasses, so a
+    # top-level import would be circular.
+    from livespec_mcp.domain.data_access import collect_data_access
+
+    collect_data_access(source, lang, module_name, result)
+    return result

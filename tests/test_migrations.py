@@ -505,3 +505,128 @@ def test_m027_schema_symbols_forward_and_rollback(tmp_path: Path):
     assert conn.execute("SELECT COUNT(*) FROM schema_binding").fetchone()[0] == 0
     conn.close()
     assert dict((v, n) for v, n, _ in MIGRATIONS)[27] == "schema_symbols"
+
+
+def test_m031_data_access_forward_and_cascade(tmp_path: Path):
+    """v31 (the data-access map) creates its two
+    tables; a v29 DB that already holds symbols gains them and queues a
+    re-extract so existing files fill the map, a v29 DB without symbols gains
+    them with no re-extract, and an access dies with its symbol."""
+    from livespec_mcp.storage.db import clear_reextract_flag, peek_reextract_flag
+
+    assert dict((v, n) for v, n, _ in MIGRATIONS)[31] == "data_access"
+    db = tmp_path / "existing.db"
+    conn = connect(db)
+    assert {"data_access", "data_model"} <= _table_names(conn)
+    clear_reextract_flag(conn)
+    conn.commit()
+
+    def rollback() -> None:
+        conn.execute("DROP TABLE data_access")
+        conn.execute("DROP TABLE data_model")
+        conn.execute("DELETE FROM schema_migrations WHERE version IN (31, 33)")
+        conn.commit()
+
+    rollback()
+    conn.close()
+    conn = connect(db)
+    assert {"data_access", "data_model"} <= _table_names(conn)
+    assert peek_reextract_flag(conn) is False
+
+    rollback()
+    conn.execute("INSERT INTO project(id, name, root) VALUES(1, 'p', '/p')")
+    conn.execute(
+        "INSERT INTO file(id, project_id, path, language, content_hash, line_count, mtime) "
+        "VALUES(1, 1, 'm.py', 'python', 'h', 2, 0)"
+    )
+    conn.execute(
+        "INSERT INTO symbol(id, file_id, name, qualified_name, kind, start_line, end_line) "
+        "VALUES(1, 1, 'f', 'm.f', 'function', 1, 2)"
+    )
+    conn.commit()
+    conn.close()
+    conn = connect(db)
+    assert peek_reextract_flag(conn) is True
+
+    conn.execute(
+        "INSERT INTO data_access(symbol_id, table_name, access, mechanism, line, confidence) "
+        "VALUES(1, 'users', 'read', 'sql', 1, 'literal')"
+    )
+    conn.execute(
+        "INSERT INTO data_model(file_id, symbol_id, name, role, mechanism, line) "
+        "VALUES(1, 1, 'User', 'model', 'django', 1)"
+    )
+    conn.execute("DELETE FROM symbol WHERE id=1")
+    assert conn.execute("SELECT COUNT(*) FROM data_access").fetchone()[0] == 0
+    # a model declaration hangs off its file, and survives its symbol
+    assert conn.execute("SELECT symbol_id FROM data_model").fetchone()[0] is None
+    conn.execute("DELETE FROM file WHERE id=1")
+    assert conn.execute("SELECT COUNT(*) FROM data_model").fetchone()[0] == 0
+    conn.close()
+
+
+def test_m034_receiver_class_column_and_reextract(tmp_path: Path):
+    """v34 adds `symbol_ref.receiver_class`; a DB that already holds symbols
+    queues a re-extract so existing refs learn `super` receivers and evident
+    classes, an empty one does not."""
+    from livespec_mcp.storage.db import clear_reextract_flag, peek_reextract_flag
+
+    assert dict((v, n) for v, n, _ in MIGRATIONS)[34] == "symbol_ref_receiver_class"
+    db = tmp_path / "existing.db"
+    conn = connect(db)
+    cols = {r["name"] for r in conn.execute("PRAGMA table_info(symbol_ref)")}
+    assert "receiver_class" in cols
+    conn.execute("INSERT INTO project(id, name, root) VALUES(1, 'p', '/p')")
+    conn.execute(
+        "INSERT INTO file(id, project_id, path, language, content_hash, line_count, mtime) "
+        "VALUES(1, 1, 'm.py', 'python', 'h', 2, 0)"
+    )
+    conn.execute(
+        "INSERT INTO symbol(id, file_id, name, qualified_name, kind, start_line, end_line) "
+        "VALUES(1, 1, 'f', 'm.f', 'function', 1, 2)"
+    )
+    clear_reextract_flag(conn)
+    conn.execute("ALTER TABLE symbol_ref DROP COLUMN receiver_class")
+    conn.execute("DELETE FROM schema_migrations WHERE version = 34")
+    conn.commit()
+    conn.close()
+    conn = connect(db)
+    assert "receiver_class" in {r["name"] for r in conn.execute("PRAGMA table_info(symbol_ref)")}
+    assert peek_reextract_flag(conn) is True
+    conn.close()
+
+
+def test_m036_flags_reextract_only_on_a_populated_db(tmp_path: Path):
+    """v36 changes no schema: it queues a re-extract so an index built before the
+    extractor changes picks them up on a plain `index_project`."""
+    from livespec_mcp.storage.db import clear_reextract_flag, peek_reextract_flag
+
+    assert dict((v, n) for v, n, _ in MIGRATIONS)[36] == "reextract_scale_extraction"
+    db = tmp_path / "empty.db"
+    conn = connect(db)
+    clear_reextract_flag(conn)
+    conn.execute("DELETE FROM schema_migrations WHERE version = 36")
+    conn.commit()
+    conn.close()
+    conn = connect(db)
+    assert peek_reextract_flag(conn) is False  # nothing indexed: nothing to redo
+    conn.close()
+
+    db = tmp_path / "existing.db"
+    conn = connect(db)
+    conn.execute("INSERT INTO project(id, name, root) VALUES(1, 'p', '/p')")
+    conn.execute(
+        "INSERT INTO file(id, project_id, path, language, content_hash, line_count, mtime) "
+        "VALUES(1, 1, 'm.py', 'python', 'h', 2, 0)"
+    )
+    conn.execute(
+        "INSERT INTO symbol(id, file_id, name, qualified_name, kind, start_line, end_line) "
+        "VALUES(1, 1, 'f', 'm.f', 'function', 1, 2)"
+    )
+    clear_reextract_flag(conn)
+    conn.execute("DELETE FROM schema_migrations WHERE version = 36")
+    conn.commit()
+    conn.close()
+    conn = connect(db)
+    assert peek_reextract_flag(conn) is True
+    conn.close()

@@ -34,6 +34,10 @@ PARAM_DESCRIPTIONS: dict[str, str] = {
         "If true, start a filesystem watcher after indexing (debounce ~2s) so "
         "edits trigger automatic re-index."
     ),
+    "include_generated": (
+        "If true, also index vendor/third_party/dist/build/out/coverage "
+        "directories and bundle or minified JS (skipped by default)."
+    ),
     "include_infrastructure": (
         "Include infrastructure / generated / migration-style *symbols* that are "
         "normally filtered out. For HTTP routes see ``include_infra_routes``."
@@ -151,6 +155,29 @@ PARAM_DESCRIPTIONS: dict[str, str] = {
         "Optional entity name from a ``@schema: <entity>`` annotation; any spelling "
         "matches (``user-profile`` = ``UserProfile``). Omit for every bound entity."
     ),
+    "table": (
+        "Database table name, any case, with or without schema (``public.users`` = "
+        "``users``); a name that is no table but an ORM model is answered with that "
+        "model's accesses. Omit, with no ``qname``, for the table inventory."
+    ),
+    "access": "Only this kind of access: ``read``, ``write`` or ``ddl``. Omit for all three.",
+    "include_callees": (
+        "Also list the tables reached through this symbol's callees (up to 3 hops, "
+        "call edges of weight 0.6 or more); each such row names the callee in ``via``."
+    ),
+    "include_callers": (
+        "Deprecated alias of ``include_callees`` (it follows the symbol's callees, "
+        "not its callers); the payload then carries a ``deprecated`` note."
+    ),
+    "include_transitive": (
+        "analyze_impact (symbol): also list callers/callees beyond depth 1 "
+        "(default: depth-1 lists, counts per depth for the rest)."
+    ),
+    "include_system": (
+        "Inventory: also list catalogue tables (``sqlite_master``, "
+        "``information_schema.*``, ``pg_catalog.*``), marked ``system: true``; "
+        "by default they are only counted in ``system_tables_hidden``."
+    ),
 }
 
 # Disambiguate params whose meaning depends on the tool.
@@ -173,10 +200,45 @@ TOOL_PARAM_DESCRIPTIONS: dict[tuple[str, str], str] = {
         "available but off by default — ``who_calls`` does not distinguish "
         "edge types, so ingesting them makes importers read as callers."
     ),
+    ("ingest_traces", "trace_path"): (
+        "FlowTrace schema v2 trace to ingest: one ``flowtrace.jsonl``, a list "
+        "of them (pass every process's file of a distributed trace together "
+        "so callers resolve across files), or a directory (every ``*.jsonl`` "
+        "in it). Relative paths resolve against the workspace root."
+    ),
+    ("ingest_traces", "dry_run"): (
+        "If true (default), report what the traces would add — hit counts, "
+        "new vs already-known edges, unresolved events by reason — and write "
+        "nothing. Pass false to write."
+    ),
+    ("ingest_traces", "remove"): (
+        "Delete every edge, hit count and provenance row a trace ingest wrote "
+        "(``origin='runtime:flowtrace'``) and write nothing. livespec's own "
+        "edges and other origins are never touched."
+    ),
     ("debt_baseline_capture", "reset"): (
         "Drop the previous snapshot before capturing. Say it deliberately — "
         "re-capturing without it quietly accepts whatever duplication landed "
         "since the last capture."
+    ),
+    ("quick_orient", "qname"): (
+        "Fully-qualified symbol name, or an indexed file path "
+        "(``src/pkg/mod.py``) to get that file's outline instead."
+    ),
+    ("find_clone_clusters", "min_size"): (
+        "Smallest cluster to report, in copies. Default 2 (any body that exists twice)."
+    ),
+    ("find_clone_clusters", "threshold"): (
+        "Minimum winnowed-fingerprint overlap for two bodies to be near-copies "
+        "(level 1). Default 0.80, the same bar ``search_similar`` uses."
+    ),
+    ("find_clone_clusters", "path"): (
+        "File or directory (workspace-relative). Keeps clusters with at least "
+        "one copy under it; the other copies may be anywhere."
+    ),
+    ("find_clone_clusters", "include_tests"): (
+        "Also cluster functions in test files and fixtures. Off by default: "
+        "test bodies are repetitive by design and bury the production clones."
     ),
     ("search_similar", "touched_files"): (
         "Files this session already edited. Only meaningful with ``boy_scout``; ignored otherwise."

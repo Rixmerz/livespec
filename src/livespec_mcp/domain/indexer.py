@@ -12,7 +12,9 @@ unchanged files are always preserved."""
 from __future__ import annotations
 
 import os
+import re
 import sqlite3
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -22,19 +24,27 @@ from pathspec import GitIgnoreSpec
 
 from livespec_mcp.config import RepoConfig, Settings, load_repo_config
 from livespec_mcp.domain.extractors import (
+    JAVA_GENERATED_MARK,
     RECEIVER_MODULE,
     RECEIVER_OBJECT,
     RECEIVER_SELF,
+    RECEIVER_SUPER,
+    RECEIVER_TYPE,
+    REF_INHERIT,
+    REF_TYPE,
     ExtractResult,
     extract,
     normalize_route_path,
 )
+from livespec_mcp.domain.hierarchy import Hierarchy
 from livespec_mcp.domain.languages import (
     EXTRACTOR_SUPPORTED,
     SCHEMA_ONLY_LANGUAGES,
     detect_language,
     reset_grammar_failures,
 )
+from livespec_mcp.domain.py_modules import PyModules
+from livespec_mcp.domain.ts_modules import TsModules
 from livespec_mcp.storage.db import (
     clear_reextract_flag,
     get_or_create_project,
@@ -50,8 +60,6 @@ DEFAULT_IGNORES = {
     "__pycache__",
     ".venv",
     "venv",
-    "dist",
-    "build",
     ".tox",
     ".mypy_cache",
     ".pytest_cache",
@@ -65,6 +73,18 @@ DEFAULT_IGNORES = {
     ".cache",
     ".mcp-docs",
 }
+
+# Generated / vendored output: skipped by default and REPORTED (unlike the
+# silent ignores above), because 2,743 of 2,971 symbols in one trial repo were
+# `vendor/` bundles — they drowned the overview, the spec proposals, the
+# runtime-coverage denominator and the state db. `index_project(
+# include_generated=True)` or a `!vendor/` line in `.livespec.toml`
+# `[index].ignore` brings them back.
+GENERATED_DIRS = frozenset({"vendor", "third_party", "dist", "build", "out", "coverage"})
+_GENERATED_FILE_SUFFIXES = (".min.js", ".bundle.js", ".bundle.mjs")
+_MINIFIED_PROBE_BYTES = 2048
+_MINIFIED_LINE_CHARS = 2000
+_GENERATED_PATHS_REPORTED = 10
 
 # Languages a file is read for: full extractors, plus `.sql`, which yields only
 # schema tables and needs no tree-sitter grammar.
@@ -93,6 +113,11 @@ class IndexStats:
     # payload can say WHY, not just how many files were skipped.
     parser_errors: dict[str, str] = None  # type: ignore
     repo_config: dict[str, Any] | None = None  # echo of .livespec.toml, if present
+    # Generated / vendored code left out of this run (see GENERATED_DIRS):
+    # indexable files under skipped directories + skipped bundle files, and up
+    # to 10 of the directories / files that were skipped.
+    generated_files: int = 0
+    generated_paths: list[str] = None  # type: ignore
 
     def __post_init__(self) -> None:
         if self.languages is None:
@@ -103,6 +128,8 @@ class IndexStats:
             self.languages_failed = {}
         if self.parser_errors is None:
             self.parser_errors = {}
+        if self.generated_paths is None:
+            self.generated_paths = []
 
 
 def _hash_bytes(b: bytes) -> str:
@@ -142,19 +169,74 @@ def _iter_files(
     cfg: RepoConfig | None = None,
     *,
     unsupported: dict[str, int] | None = None,
+    include_generated: bool = False,
+    generated: IndexStats | None = None,
 ) -> list[Path]:
     cfg = cfg or RepoConfig()
     # .livespec.toml [index].ignore outranks every .gitignore: when the
     # config has an opinion (ignore or !re-include), that decision is final.
     cfg_spec = GitIgnoreSpec.from_lines(cfg.ignore) if cfg.ignore else None
 
+    def _cfg_verdict(path: Path, *, is_dir: bool) -> bool | None:
+        """True = config ignores it, False = config re-includes it (`!x`)."""
+        if cfg_spec is None:
+            return None
+        rel = path.relative_to(root).as_posix()
+        return cfg_spec.check_file(rel + "/" if is_dir else rel).include
+
     def _decide(path: Path, *, is_dir: bool, specs: list[tuple[Path, GitIgnoreSpec]]) -> bool:
-        if cfg_spec is not None:
-            rel = path.relative_to(root).as_posix()
-            verdict = cfg_spec.check_file(rel + "/" if is_dir else rel).include
-            if verdict is not None:
-                return verdict
+        verdict = _cfg_verdict(path, is_dir=is_dir)
+        if verdict is not None:
+            return verdict
         return bool(specs) and _gitignored(path, specs, is_dir=is_dir)
+
+    def _note_generated(rel: str, files: int) -> None:
+        if generated is None:
+            return
+        generated.generated_files += files
+        if len(generated.generated_paths) < _GENERATED_PATHS_REPORTED:
+            generated.generated_paths.append(rel)
+
+    def _generated_dir(path: Path, name: str, specs: list[tuple[Path, GitIgnoreSpec]]) -> bool:
+        """A vendored/build-output directory to leave out (and count)."""
+        if include_generated or name not in GENERATED_DIRS:
+            return False
+        if _cfg_verdict(path, is_dir=True) is False:  # `!vendor/` in .livespec.toml
+            return False
+        # A .gitignore that speaks about the directory's CONTENTS (`vendor/*`
+        # with `!vendor/keep.py`) is the project's own opinion: honour it.
+        probe = path / "_"
+        if any(
+            sp.check_file(probe.relative_to(base).as_posix()).include is not None
+            for base, sp in specs
+        ):
+            return False
+        n = 0
+        for _dp, _dn, fns in os.walk(path):
+            n += sum(
+                1
+                for f in fns
+                if not f.startswith(".") and detect_language(Path(f)) in _INDEXED_LANGUAGES
+            )
+        _note_generated(path.relative_to(root).as_posix() + "/", n)
+        return True
+
+    def _generated_file(path: Path, lang: str) -> bool:
+        """A bundle / minified file: by name, or a JS file whose first 2 KB
+        holds a line over 2,000 characters."""
+        if include_generated or _cfg_verdict(path, is_dir=False) is False:
+            return False
+        hit = path.name.endswith(_GENERATED_FILE_SUFFIXES)
+        if not hit and lang == "javascript":
+            try:
+                with path.open("rb") as fh:
+                    head = fh.read(_MINIFIED_PROBE_BYTES)
+            except OSError:
+                return False
+            hit = any(len(line) > _MINIFIED_LINE_CHARS for line in head.split(b"\n"))
+        if hit:
+            _note_generated(path.relative_to(root).as_posix(), 1)
+        return hit
 
     out: list[Path] = []
     # Each walked dir inherits the .gitignore specs of its ancestors;
@@ -173,6 +255,7 @@ def _iter_files(
             if d not in ignores
             and not d.startswith(".")
             and not _decide(dp / d, is_dir=True, specs=specs)
+            and not _generated_dir(dp / d, d, specs)
         ]
         for d in dirnames:
             inherited[os.path.join(dirpath, d)] = specs
@@ -186,6 +269,8 @@ def _iter_files(
             if cfg.languages is not None and lang not in cfg.languages:
                 continue
             if _decide(p, is_dir=False, specs=specs):
+                continue
+            if lang in _INDEXED_LANGUAGES and _generated_file(p, lang):
                 continue
             if lang not in _INDEXED_LANGUAGES:
                 if unsupported is not None:
@@ -206,6 +291,7 @@ def index_project(
     *,
     project_name: str | None = None,
     force: bool = False,
+    include_generated: bool = False,
 ) -> IndexStats:
     """@spec:indexing-indexing-workspace-walk"""
     settings.ensure_dirs()
@@ -231,7 +317,12 @@ def index_project(
     if (settings.workspace / ".livespec.toml").is_file():
         stats.repo_config = repo_cfg.as_payload()
     files = _iter_files(
-        settings.workspace, DEFAULT_IGNORES, repo_cfg, unsupported=stats.languages_unsupported
+        settings.workspace,
+        DEFAULT_IGNORES,
+        repo_cfg,
+        unsupported=stats.languages_unsupported,
+        include_generated=include_generated,
+        generated=stats,
     )
 
     # Build a snapshot of existing files for delta detection
@@ -396,6 +487,12 @@ def index_project(
 
             scan_schema_annotations(conn, project_id=project_id)
             _resolve_schema_links(conn)
+            # Data-access map: ORM accesses name a model; the model's table
+            # comes from declarations that may sit in another file, so every
+            # ORM row is re-resolved on each run that changed anything.
+            from livespec_mcp.domain.data_access_store import resolve_data_access
+
+            resolve_data_access(conn)
 
             # Restore manual spec_symbol links wiped by the symbol cascade. We
             # re-resolve symbol qname → new symbol_id and INSERT OR IGNORE,
@@ -502,6 +599,23 @@ def _upsert_file(
     return int(cur.lastrowid)
 
 
+def pick_by_span(rows: list[tuple[int, int, int]] | None, line: int) -> int | None:
+    """The symbol (id, start, end) of one qualified name that a reference at
+    *line* belongs to: the narrowest span containing it, else the nearest
+    definition above it, else the first. With a single row this is that row."""
+    if not rows:
+        return None
+    if len(rows) == 1:
+        return rows[0][0]
+    inside = [r for r in rows if r[1] <= line <= r[2]]
+    if inside:
+        return min(inside, key=lambda r: (r[2] - r[1], r[1]))[0]
+    below = [r for r in rows if r[1] > line]
+    if below:
+        return min(below, key=lambda r: r[1])[0]
+    return max(rows, key=lambda r: r[1])[0]
+
+
 def _replace_symbols(conn: sqlite3.Connection, *, file_id: int, result: ExtractResult) -> None:
     """Insert symbols for a file and persist their refs to symbol_ref.
 
@@ -557,32 +671,46 @@ def _replace_symbols(conn: sqlite3.Connection, *, file_id: int, result: ExtractR
            VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)""",
         rows,
     )
-    qname_to_id: dict[str, int] = {
-        r[0]: int(r[1])
-        for r in conn.execute(
-            "SELECT qualified_name, id FROM symbol WHERE file_id=? ORDER BY id", (file_id,)
-        )
-    }
+    qname_to_id: dict[str, int] = {}
+    # Every row a qualified name owns, with its span. Overloads, anonymous
+    # classes, enum-constant bodies, same-named local classes and a function
+    # defined in both branches of an `if` share ONE qualified name; a ref
+    # carries its line, so it binds to the symbol whose span contains it.
+    rows_by_qname: dict[str, list[tuple[int, int, int]]] = {}
+    for r in conn.execute(
+        "SELECT qualified_name, id, start_line, end_line FROM symbol WHERE file_id=? ORDER BY id",
+        (file_id,),
+    ):
+        qname_to_id[r[0]] = int(r[1])
+        rows_by_qname.setdefault(r[0], []).append((int(r[1]), int(r[2]), int(r[3])))
+
+    def owner(qname: str, line: int) -> int | None:
+        return pick_by_span(rows_by_qname.get(qname), line)
+
     conn.executemany(
         "UPDATE symbol SET parent_symbol_id=? WHERE id=?",
         [
-            (qname_to_id[s.parent_qname], qname_to_id[s.qualified_name])
+            (
+                owner(s.parent_qname, s.start_line),
+                owner(s.qualified_name, s.start_line),
+            )
             for s in result.symbols
             if s.parent_qname and s.parent_qname in qname_to_id
         ],
     )
     conn.executemany(
         """INSERT INTO symbol_ref(src_symbol_id, target_name, ref_type, line, scope_module,
-                                 receiver)
-           VALUES(?,?,?,?,?,?)""",
+                                 receiver, receiver_class)
+           VALUES(?,?,?,?,?,?,?)""",
         [
             (
-                qname_to_id[r.src_qname],
+                owner(r.src_qname, r.line),
                 r.target_name,
                 r.ref_type,
                 r.line,
                 r.scope_module,
                 r.receiver,
+                r.receiver_class,
             )
             for r in result.refs
             if r.src_qname in qname_to_id
@@ -596,7 +724,7 @@ def _replace_symbols(conn: sqlite3.Connection, *, file_id: int, result: ExtractR
            VALUES(?,?,?,?,?,?)""",
         [
             (
-                qname_to_id[rt.src_qname],
+                owner(rt.src_qname, rt.line),
                 rt.role,
                 rt.method,
                 rt.path,
@@ -608,6 +736,9 @@ def _replace_symbols(conn: sqlite3.Connection, *, file_id: int, result: ExtractR
         ],
     )
     _insert_schemas(conn, result=result, qname_to_id=qname_to_id)
+    from livespec_mcp.domain.data_access_store import persist_data_access
+
+    persist_data_access(conn, file_id=file_id, result=result, qname_to_id=qname_to_id)
 
 
 def _insert_schemas(
@@ -779,6 +910,25 @@ def _language_family(language: str | None) -> str:
     return _LANGUAGE_FAMILIES.get(language or "", language or "")
 
 
+def _source_reader(
+    conn: sqlite3.Connection, project_id: int, paths: dict[int, str]
+) -> Callable[[int], str | None]:
+    """Reads a Python file of the project from disk, for the re-export lookup
+    (the indexed tables do not keep a module's import bindings)."""
+    row = conn.execute("SELECT root FROM project WHERE id=?", (project_id,)).fetchone()
+    root = Path(row["root"]) if row else None
+
+    def read(file_id: int) -> str | None:
+        if root is None or file_id not in paths:
+            return None
+        try:
+            return (root / paths[file_id]).read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            return None
+
+    return read
+
+
 def _under_scope(candidates: list[tuple[int, str, int]], scope: str) -> list[tuple[int, str, int]]:
     # Match either the exact module prefix or its tail (because the extractor
     # may emit module names without the package prefix that the indexer
@@ -804,6 +954,253 @@ def _enclosing_class(src_qname: str, class_bases: dict[str, bool]) -> str | None
         if prefix in class_bases:
             return prefix
     return None
+
+
+#: `symbol_ref.ref_type` -> `symbol_edge.edge_type`. Every other ref type
+#: (`call`, `callback_arg`, `jsx`) is an invocation and resolves to `calls`.
+_REF_EDGE_TYPE: dict[str, str] = {REF_INHERIT: "inherits", REF_TYPE: "references"}
+
+#: Symbol kinds a base class or a type-position name can resolve to. A function
+#: that happens to share the name is never the target of an annotation.
+_TYPE_LIKE_KINDS: frozenset[str] = frozenset(
+    {"class", "interface", "type_alias", "enum", "struct", "trait"}
+)
+
+
+def _java_scope_matches(scope: str, name: str, qname: str) -> bool:
+    """Does the Java import path *scope* (``a.Outer.Inner``, or ``a.Outer``
+    when the ref names ``Inner`` through it) denote the symbol *qname*?
+
+    A Java class's qualified name here is ``<package dirs>.<File>.<classes...>``
+    with the file's own top class repeated (``a.Outer.Outer.Inner``), which is
+    why neither the plain import path nor a prefix of it matches a NESTED type."""
+    q = qname.split(".")
+    for want in (scope.split("."), [*scope.split("."), name]):
+        for k in range(len(q) - 1):
+            if q[k] == q[k + 1] and [*q[: k + 1], *q[k + 2 :]] == want:
+                return True
+    return False
+
+
+def _collapse_same_qname(
+    targets: list[tuple[int, str, int]],
+    line: int,
+    span_of: dict[int, tuple[int, int, str]],
+    src_id: int = -1,
+) -> list[tuple[int, str, int]]:
+    """One target per (file, qualified name).
+
+    Symbols that share a qualified name are not different things a reference
+    could mean: overloads of one method, a class or function defined in both
+    branches of an `if`, same-named local or anonymous classes. A reference
+    gets ONE of them.
+
+    - overloads and other duplicate methods: the FIRST in the file, whichever
+      overload the call site really picks (the index cannot tell by argument
+      types) — consistent, so a re-index never flips the edge. A call from one
+      overload to its own name skips itself: `f(a)` delegating to `f(a, b)`
+      reaches the first OTHER overload, not nothing;
+    - a class / function defined more than once: the definition in scope at
+      the reference, i.e. the nearest one above its line (the first one when
+      the reference precedes them all).
+    Distinct qualified names are untouched."""
+    if len(targets) < 2:
+        return targets
+    groups: dict[tuple[int, str], list[tuple[int, str, int]]] = {}
+    for t in targets:
+        groups.setdefault((t[2], t[1]), []).append(t)
+    if all(len(g) == 1 for g in groups.values()):
+        return targets
+    keep: set[int] = set()
+    for g in groups.values():
+        if len(g) == 1:
+            keep.add(g[0][0])
+            continue
+        ordered = sorted(g, key=lambda t: span_of.get(t[0], (0, 0, ""))[0])
+        if span_of.get(ordered[0][0], (0, 0, ""))[2] == "method":
+            others = [t for t in ordered if t[0] != src_id]
+            keep.add((others or ordered)[0][0])
+            continue
+        above = [t for t in ordered if span_of.get(t[0], (0, 0, ""))[0] <= line]
+        keep.add((above[-1] if above else ordered[0])[0])
+    return [t for t in targets if t[0] in keep]
+
+
+_JAVA_PACKAGE_RE = re.compile(r"^\s*package\s+([\w.]+)\s*;", re.MULTILINE)
+_JAVA_SRC_SET_RE = re.compile(r"^(.*?)/?src/[^/]+/")
+
+
+def _java_package_of(source: str | None) -> str | None:
+    """The `package a.b;` a Java source declares ('' for the default package),
+    None when the source could not be read."""
+    if source is None:
+        return None
+    m = _JAVA_PACKAGE_RE.search(source)
+    return m.group(1) if m else ""
+
+
+def _java_root(path: str, package: str) -> str:
+    """The source root of a file: its directory less the package's own."""
+    directory = path.rpartition("/")[0]
+    tail = package.replace(".", "/")
+    if tail and (directory == tail or directory.endswith(f"/{tail}")):
+        return directory[: len(directory) - len(tail)].rstrip("/")
+    return directory
+
+
+def _java_module_of(root: str) -> str:
+    """The build module a source root belongs to: what precedes `src/<set>/`
+    (`mod/src/main/java` and `mod/src/test/java` are one module)."""
+    m = _JAVA_SRC_SET_RE.match(f"{root}/")
+    return m.group(1) if m else root
+
+
+def _java_same_package(
+    candidates: list[tuple[int, str, int]],
+    src_file_id: int,
+    file_paths: dict[int, str],
+    java_package: Callable[[int], str | None] | None,
+) -> list[tuple[int, str, int]]:
+    """Candidates visible without an import from the caller's file.
+
+    Same package means the same `package` declaration within one build module,
+    so `src/main/java/p` and `src/test/java/p` are ONE package (a test sees the
+    class it tests, and the test's helpers). When both roots define the name
+    the caller's own root wins. Where a declaration cannot be read it falls
+    back to the directory."""
+    src_path = file_paths.get(src_file_id, "")
+    src_pkg = java_package(src_file_id) if java_package is not None else None
+    if src_pkg is None:
+        src_dir = src_path.rpartition("/")[0]
+        return [c for c in candidates if file_paths.get(c[2], "").rpartition("/")[0] == src_dir]
+    src_root = _java_root(src_path, src_pkg)
+    src_module = _java_module_of(src_root)
+    package: list[tuple[int, str, int]] = []
+    own_root: list[tuple[int, str, int]] = []
+    for c in candidates:
+        path = file_paths.get(c[2], "")
+        pkg = java_package(c[2]) if java_package is not None else None
+        if pkg is None:
+            same = path.rpartition("/")[0] == src_path.rpartition("/")[0]
+            root = None
+        else:
+            root = _java_root(path, pkg)
+            same = pkg == src_pkg and _java_module_of(root) == src_module
+        if same:
+            package.append(c)
+            if root == src_root:
+                own_root.append(c)
+    return own_root or package
+
+
+def _resolve_type_ref(
+    *,
+    candidates: list[tuple[int, str, int]],
+    scope: str | None,
+    src_qname: str,
+    src_file_id: int,
+    family: str,
+    project_scopes: set[str],
+    file_paths: dict[int, str],
+    target_name: str = "",
+    py_modules: PyModules | None = None,
+    allow_enclosing: bool = False,
+    ts_modules: TsModules | None = None,
+    ts_candidates: Callable[[str], list[tuple[int, str, int]]] | None = None,
+    java_package: Callable[[int], str | None] | None = None,
+) -> tuple[list[tuple[int, str, int]], float]:
+    """Targets and weight for one `inherit` / `type` ref. `candidates` are
+    already the same-language, type-like symbols carrying the name.
+
+    Stricter than a call on purpose. A call by a bare name nobody imported
+    still fans out to every same-named function (weight 0.5), because a missed
+    import is the likelier explanation. A TYPE name the file neither imports
+    nor declares is far more often a builtin or a library type (`Path`,
+    `Request`, `List`) that merely shares its name with a project class, and
+    an edge to that class would keep it alive in `find_dead_code` for no
+    reason. So:
+
+    1. an import that names a project module scopes the match (1.0 / 0.9);
+       one that names anything else means "not ours" and yields nothing;
+    2. else a declaration in the same file, nearest enclosing scope first;
+    3. else whatever the language makes visible without an import: nothing in
+       Python, ambient `.d.ts` declarations in TypeScript, the same package
+       (directory) in Java and, failing that, a name unique in the project
+       (a wildcard import), capped at 0.6 like any unconfirmed match.
+
+    The declaration enclosing the ref is never a target: a method returning
+    its own class does not make that class used.
+    """
+    candidates = [
+        c
+        for c in candidates
+        if allow_enclosing
+        or not (
+            src_qname == c[1]
+            or src_qname.startswith(f"{c[1]}.")
+            or src_qname.startswith(f"{c[1]}::")
+        )
+    ]
+    if scope is not None and family == "js" and ts_modules is not None and ts_candidates:
+        # An imported TS/JS name: the module the import names, then its
+        # `export ... from` chain (bounded, cycle-safe) to the ONE file that
+        # declares it (`export { A as B }` renames along the way). Whatever
+        # this cannot prove falls to the directory-prefix match below.
+        ts_hit = ts_modules.lookup(scope, target_name, ts_candidates)
+        if ts_hit is not None:
+            return [ts_hit[0]], 0.9 if ts_hit[1] else 1.0
+    if not candidates:
+        return [], 0.0
+    if scope and family == "python" and py_modules is not None:
+        # An imported Python name: the file's own import says which module it
+        # came from, resolved to ONE indexed file (relative dots counted from
+        # the importer, whole dotted segments, re-exports followed to the
+        # single symbol they bind). An import that names no indexed module
+        # (`typing`, a third-party package) or one that does not yield exactly
+        # one symbol links nothing: precision over recall. The answer depends
+        # only on the files, never on which scopes happen to exist.
+        hit = py_modules.lookup_type(scope, target_name, src_file_id, candidates)
+        if hit is None:
+            return [], 0.0
+        return [hit[0]], 0.9 if hit[1] else 1.0
+    if scope and family == "java":
+        exact = [c for c in candidates if _java_scope_matches(scope, target_name, c[1])]
+        if len(exact) == 1:
+            return exact, 1.0
+    if scope:
+        scoped = _under_scope(candidates, scope)
+        if scoped:
+            return scoped, 1.0 if len(scoped) == 1 else 0.9
+        if scope not in project_scopes:
+            return [], 0.0
+    local = [c for c in candidates if c[2] == src_file_id]
+    if local:
+        if len(local) == 1:
+            return local, 1.0
+        by_scope: dict[str, list[tuple[int, str, int]]] = {}
+        for cand in local:
+            owner = cand[1].rsplit(".", 1)[0] if "." in cand[1] else ""
+            by_scope.setdefault(owner, []).append(cand)
+        parts = src_qname.split(".")
+        for depth in range(len(parts), 0, -1):
+            enclosing = ".".join(parts[:depth])
+            if enclosing in by_scope:
+                return by_scope[enclosing], 0.8
+        return local, 0.7
+    if scope:
+        # The import names a project module and the symbol was not found under
+        # it (a re-export): ambiguous, exactly as for a call.
+        return candidates, 1.0 if len(candidates) == 1 else 0.5
+    if family == "js":
+        ambient = [c for c in candidates if file_paths.get(c[2], "").endswith(".d.ts")]
+        return ambient, 1.0 if len(ambient) == 1 else 0.5
+    if family == "java":
+        package = _java_same_package(candidates, src_file_id, file_paths, java_package)
+        if package:
+            return package, 1.0 if len(package) == 1 else 0.7
+        if len(candidates) == 1:
+            return candidates, 0.6
+    return [], 0.0
 
 
 def _resolve_refs(
@@ -851,6 +1248,11 @@ def _resolve_refs(
     a module-level function only when ``X`` is an imported name (receiver
     ``module``); ``self.f()`` and a call on any other object reach methods
     only, and ``self.f()`` in a class with no declared base only its own.
+
+    Refs of type ``inherit`` / ``type`` (Python, TypeScript/TSX, Java) take
+    their own, stricter path (``_resolve_type_ref``) and are written as
+    ``inherits`` / ``references`` edges through the same upsert, so the
+    never-DELETE and reclaim-to-``livespec`` rules hold for them unchanged.
     """
     if changed_file_ids:
         placeholders = ",".join("?" * len(changed_file_ids))
@@ -863,7 +1265,8 @@ def _resolve_refs(
         }
         params: list[Any] = [project_id, *changed_file_ids]
         sql = (
-            f"SELECT u.src_symbol_id, u.target_name, u.scope_module, u.receiver, "
+            f"SELECT u.src_symbol_id, u.target_name, u.scope_module, u.receiver, u.ref_type, "
+            f"       u.receiver_class, u.line, "
             f"       s.file_id AS src_file_id, f.language AS src_language, "
             f"       s.qualified_name AS src_qname, s.signature AS src_signature "
             f"FROM symbol_ref u "
@@ -876,11 +1279,20 @@ def _resolve_refs(
             name_placeholders = ",".join("?" * len(names_in_changed))
             sql += f" OR u.target_name IN ({name_placeholders})"
             params.extend(names_in_changed)
-        sql += ")"
+        # A Python type ref resolves through module structure and re-exports
+        # (`pkg/__init__.py` gaining `from .core import Thing`), which a changed
+        # file can alter without defining a symbol of that name. They are few,
+        # and re-walking them keeps the typed edges a function of the tree.
+        # Same for a TS/JS type ref through a barrel (`export * from`).
+        sql += (
+            " OR (u.ref_type IN ('inherit', 'type') "
+            "AND f.language IN ('python','typescript','tsx','javascript')))"
+        )
         rows = conn.execute(sql, params).fetchall()
     else:
         rows = conn.execute(
-            """SELECT u.src_symbol_id, u.target_name, u.scope_module, u.receiver,
+            """SELECT u.src_symbol_id, u.target_name, u.scope_module, u.receiver, u.ref_type,
+                      u.receiver_class, u.line,
                       s.file_id AS src_file_id, f.language AS src_language,
                       s.qualified_name AS src_qname, s.signature AS src_signature
                FROM symbol_ref u
@@ -897,18 +1309,40 @@ def _resolve_refs(
     # `join`), and a call on an object can only reach a method.
     family_of: dict[int, str] = {}
     methods: set[int] = set()
+    # Methods the Java source never declares (record accessors, Lombok): a
+    # call on ANOTHER object (`model.getList()`) is not drawn to one just
+    # because the caller's own class has the same generated getter.
+    generated: set[int] = set()
     # Python class qname -> whether it declares a base (`class A(B)`).
     class_bases: dict[str, bool] = {}
+    # What an `inherit` / `type` ref may resolve to, and where each file lives
+    # (same-package and ambient-declaration visibility are path questions).
+    type_like: set[int] = set()
+    file_paths: dict[int, str] = {}
+    span_of: dict[int, tuple[int, int, str]] = {}
+
+    def collapse(
+        targets: list[tuple[int, str, int]], line: int, src_id: int = -1
+    ) -> list[tuple[int, str, int]]:
+        return _collapse_same_qname(targets, line, span_of, src_id)
+
     for r in conn.execute(
-        """SELECT s.id, s.name, s.qualified_name, s.file_id, s.kind, s.signature, f.language
+        """SELECT s.id, s.name, s.qualified_name, s.file_id, s.kind, s.signature, f.language,
+                  f.path, s.start_line, s.end_line, s.decorators
            FROM symbol s JOIN file f ON f.id=s.file_id WHERE f.project_id=?""",
         (project_id,),
     ):
         sid = int(r["id"])
         name_index.setdefault(r["name"], []).append((sid, r["qualified_name"], int(r["file_id"])))
         family_of[sid] = _language_family(r["language"])
+        file_paths[int(r["file_id"])] = r["path"]
+        span_of[sid] = (int(r["start_line"] or 0), int(r["end_line"] or 0), str(r["kind"]))
+        if r["kind"] in _TYPE_LIKE_KINDS:
+            type_like.add(sid)
         if r["kind"] == "method":
             methods.add(sid)
+            if r["decorators"] and JAVA_GENERATED_MARK in r["decorators"]:
+                generated.add(sid)
         elif r["kind"] == "class" and r["language"] == "python":
             class_bases[r["qualified_name"]] = _declares_base(r["signature"])
 
@@ -923,23 +1357,131 @@ def _resolve_refs(
             project_scopes.add(".".join(parts[:i]))
             project_scopes.add(parts[i - 1])
 
+    py_files = {
+        int(r["id"]): r["path"]
+        for r in conn.execute(
+            "SELECT id, path FROM file WHERE project_id=? AND language='python'", (project_id,)
+        )
+    }
+    py_modules = PyModules(py_files, _source_reader(conn, project_id, py_files))
+    ts_files = {
+        int(r["id"]): r["path"]
+        for r in conn.execute(
+            "SELECT id, path FROM file WHERE project_id=? "
+            "AND language IN ('typescript','tsx','javascript')",
+            (project_id,),
+        )
+    }
+    ts_modules = TsModules(ts_files, _source_reader(conn, project_id, ts_files))
+
+    java_source = _source_reader(conn, project_id, file_paths)
+    java_packages: dict[int, str | None] = {}
+
+    def java_package(file_id: int) -> str | None:
+        if file_id not in java_packages:
+            java_packages[file_id] = _java_package_of(java_source(file_id))
+        return java_packages[file_id]
+
+    def ts_type_candidates(name: str) -> list[tuple[int, str, int]]:
+        return [
+            c for c in name_index.get(name, []) if family_of.get(c[0]) == "js" and c[0] in type_like
+        ]
+
+    def ts_any_candidates(name: str) -> list[tuple[int, str, int]]:
+        return [c for c in name_index.get(name, []) if family_of.get(c[0]) == "js"]
+
+    # Inheritance and type refs first, flushed before any call is resolved: a
+    # `super().f()` needs the `inherits` edges of this very walk.
+    rows = sorted(rows, key=lambda u: _REF_EDGE_TYPE.get(u["ref_type"]) is None)
+    hierarchy: Hierarchy | None = None
+
+    def get_hierarchy() -> Hierarchy:
+        nonlocal hierarchy
+        if hierarchy is None:
+            hierarchy = Hierarchy(conn, [project_id])
+        return hierarchy
+
+    def flush_edges() -> None:
+        conn.executemany(
+            """INSERT INTO symbol_edge(src_symbol_id, dst_symbol_id, edge_type, weight)
+               VALUES(?,?,?,?)
+               ON CONFLICT(src_symbol_id, dst_symbol_id, edge_type)
+               DO UPDATE SET weight = MAX(symbol_edge.weight, excluded.weight),
+                             origin = 'livespec'""",
+            pending_edges,
+        )
+        pending_edges.clear()
+
+    flushed_types = False
     edge_count = 0
     # (src, dst) -> best weight written this walk. Two refs of one caller can
     # reach the same callee with different evidence (`helper()` and
     # `obj.helper()`): the stronger one must win whatever the row order.
-    seen_pairs: dict[tuple[int, int], float] = {}
+    seen_pairs: dict[tuple[int, int, str], float] = {}
     pending_edges: list[tuple[int, int, str, float]] = []
+
+    def emit_call(src_id: int, tid: int, weight: float) -> None:
+        nonlocal edge_count
+        if tid == src_id:
+            return
+        key = (src_id, tid, "calls")
+        previous = seen_pairs.get(key)
+        if previous is not None and previous >= weight:
+            return
+        seen_pairs[key] = weight
+        pending_edges.append((src_id, tid, "calls", weight))
+        if previous is None:
+            edge_count += 1
+
     for u in rows:
+        if not flushed_types and _REF_EDGE_TYPE.get(u["ref_type"]) is None:
+            flush_edges()
+            flushed_types = True
+        src_family = _language_family(u["src_language"])
+        # An imported TS/JS name may be re-exported under ANOTHER name
+        # (`export { A as B }`): the name-index lookup is not the last word.
+        js_scoped = src_family == "js" and u["scope_module"] is not None
+        # A Python name imported through a re-export that RENAMES it
+        # (`from .rules import hidden as renamed`) is found under the original
+        # name, which the ref does not carry.
+        py_scoped = src_family == "python" and bool(u["scope_module"])
         candidates = name_index.get(u["target_name"], [])
-        if not candidates:
+        if not candidates and not js_scoped and not py_scoped:
             continue
 
         # Calls stay inside their language family: a JS/TS call site cannot
         # call a Python function. 2.7k of 29k call edges on a mixed
         # Python + TypeScript repo crossed languages by bare name.
-        src_family = _language_family(u["src_language"])
         candidates = [c for c in candidates if family_of.get(c[0]) == src_family]
-        if not candidates:
+        if not candidates and not js_scoped and not py_scoped:
+            continue
+
+        edge_type = _REF_EDGE_TYPE.get(u["ref_type"], "calls")
+        if edge_type != "calls":
+            src_id = int(u["src_symbol_id"])
+            targets, weight = _resolve_type_ref(
+                candidates=[c for c in candidates if c[0] in type_like],
+                scope=u["scope_module"],
+                src_qname=str(u["src_qname"]),
+                src_file_id=int(u["src_file_id"]),
+                family=src_family,
+                project_scopes=project_scopes,
+                file_paths=file_paths,
+                target_name=str(u["target_name"]),
+                py_modules=py_modules,
+                ts_modules=ts_modules,
+                ts_candidates=ts_type_candidates,
+                java_package=java_package,
+            )
+            for tid, _qname, _fid in collapse(targets, int(u["line"] or 0), src_id):
+                type_key = (src_id, tid, edge_type)
+                previous = seen_pairs.get(type_key)
+                if previous is not None and previous >= weight:
+                    continue
+                seen_pairs[type_key] = weight
+                pending_edges.append((src_id, tid, edge_type, weight))
+                if previous is None:
+                    edge_count += 1
             continue
 
         # The receiver of an attribute call (`X.f()`). Only an imported
@@ -950,6 +1492,112 @@ def _resolve_refs(
         # project function named `join`. Rows written before the column
         # existed carry NULL and resolve as they always did.
         receiver = u["receiver"]
+        src_id_ = int(u["src_symbol_id"])
+        if receiver == RECEIVER_SUPER:
+            # `super().f()` / `super.f()` / `super(...)`: the method of the
+            # nearest indexed base of the enclosing class that defines it, in
+            # left-to-right depth-first order. No such base, or an explicit
+            # `super(Other, self)` naming another class: no edge.
+            hier = get_hierarchy()
+            owner_cls = hier.owner_class(src_id_)
+            if owner_cls is None:
+                continue
+            named = u["receiver_class"]
+            if named and named != hier.name(owner_cls):
+                continue
+            found = hier.find_in_bases(owner_cls, str(u["target_name"]))
+            if found is not None:
+                emit_call(src_id_, found, 1.0)
+            continue
+        if receiver == RECEIVER_SELF and src_family == "java" and span_of[src_id_][2] == "class":
+            # `this::m`, `m()` or `this.m()` in a constructor or initializer
+            # (the caller is the class): the method of the enclosing class or
+            # its nearest indexed ancestor, then of the class it is nested in.
+            hier = get_hierarchy()
+            name = str(u["target_name"])
+            cur = hier.owner_class(src_id_)
+            while cur is not None:
+                own = hier.own_method(cur, name)
+                inherited = None if own is not None else hier.find_in_bases(cur, name)
+                if own is not None or inherited is not None:
+                    emit_call(src_id_, own if own is not None else inherited, 1.0 if own else 0.9)
+                    break
+                cur = hier.enclosing_class(cur)
+            if cur is not None:
+                continue
+        if receiver in (RECEIVER_OBJECT, RECEIVER_TYPE) and u["receiver_class"]:
+            # `c = Child(); c.f()`: the receiver is evidently a `Child`, so the
+            # call reaches the most-derived definition on Child's own MRO. A
+            # class that does not resolve to ONE project class (a factory
+            # function, a library type) leaves the call to the name-based path.
+            raw = str(u["receiver_class"])
+            rscope, _, rname = raw.rpartition("::")
+            cls_cands = [
+                c
+                for c in name_index.get(rname, [])
+                if c[0] in type_like and family_of.get(c[0]) == src_family
+            ]
+            hits, _w = _resolve_type_ref(
+                candidates=cls_cands,
+                scope=rscope or None,
+                src_qname=str(u["src_qname"]),
+                src_file_id=int(u["src_file_id"]),
+                family=src_family,
+                project_scopes=project_scopes,
+                file_paths=file_paths,
+                target_name=rname,
+                py_modules=py_modules,
+                allow_enclosing=True,
+                java_package=java_package,
+            )
+            if len(hits) == 1:
+                hier = get_hierarchy()
+                if hier.is_class(hits[0][0]):
+                    found = hier.find_in_mro(hits[0][0], str(u["target_name"]))
+                    if found is not None:
+                        # Java declares the receiver's type: not an inference.
+                        emit_call(src_id_, found, 1.0 if src_family == "java" else 0.9)
+                        continue
+                    # Not found: nobody defines it only when the WHOLE ancestry
+                    # is indexed; with a library or unresolved base the method
+                    # may live there, so the name-based path decides.
+                    if hier.is_complete(hits[0][0]):
+                        continue
+            if receiver == RECEIVER_TYPE and not (
+                len(hits) == 1 and get_hierarchy().is_class(hits[0][0])
+            ):
+                continue  # a class name that is not ONE project class: no edge
+            if (
+                receiver == RECEIVER_OBJECT
+                and src_family == "java"
+                and not (len(hits) == 1 and get_hierarchy().is_class(hits[0][0]))
+            ):
+                # A declared type that is no project class (a library type, a
+                # type parameter): same evidence as no declaration at all.
+                receiver = None
+        if (
+            receiver is None
+            and src_family == "python"
+            and span_of[src_id_][2] == "class"
+            and u["ref_type"] == "call"
+        ):
+            # A bare name called in a CLASS BODY (`x = set()`, `list(...)`, the
+            # class's own class attributes) sees what the scope sees: a module
+            # level def or class, an import, or a name bound earlier in this
+            # body. It never reaches a method of some other class, and a
+            # builtin the module does not shadow reaches nothing.
+            own_prefix = f"{u['src_qname']}."
+            candidates = [
+                c
+                for c in candidates
+                if c[1].startswith(own_prefix)
+                or (
+                    c[0] not in methods
+                    and (u["scope_module"] is not None or c[2] == u["src_file_id"])
+                )
+            ]
+            if not candidates:
+                continue
         if receiver in (RECEIVER_SELF, RECEIVER_OBJECT):
             candidates = [c for c in candidates if c[0] in methods]
             if receiver == RECEIVER_SELF:
@@ -975,7 +1623,55 @@ def _resolve_refs(
         # one matches, drop the rest — that's a confident, scoped resolution.
         scope = u["scope_module"]
         scoped: list[tuple[int, str, int]] = []
-        if scope:
+        if scope and src_family == "python":
+            # Resolved like a type ref's import: to an indexed module by whole
+            # dotted segments, not by the module's name appearing somewhere in
+            # a qualified name. `import typing as t; t.cast()` stays outside
+            # the project even when a directory is called `typing`.
+            found = py_modules.module_scope_prefix(scope, int(u["src_file_id"]))
+            if found is None:
+                continue
+            prefix, past_module, module_file = found
+            scoped = [c for c in candidates if c[1].startswith(f"{prefix}.")]
+            # A package's own definition beats a same-named method or function
+            # of one of its submodules (`from .json import dumps`).
+            own = [c for c in scoped if c[2] == module_file]
+            if own and not past_module:
+                scoped = own
+            elif not past_module:
+                # The module does not define the name itself: follow its
+                # re-exports (`from .rules import f`, `from .rules import *`)
+                # to the ONE symbol it binds, so a call through `forms.f()` /
+                # `from pkg.forms import f` reaches `pkg.forms.rules.f`.
+                via = py_modules.lookup_type(
+                    scope,
+                    str(u["target_name"]),
+                    int(u["src_file_id"]),
+                    lambda n, src_family=src_family: [
+                        c for c in name_index.get(n, []) if family_of.get(c[0]) == src_family
+                    ],
+                )
+                if via is not None:
+                    scoped = [via[0]]
+            if scoped:
+                candidates = scoped
+            elif past_module:
+                # `request_ctx.pop()`, `_shells.clear()`: a VALUE the module
+                # holds, whose methods live somewhere unknown. Dropped, as a
+                # relative import always was; only an absolute one used to
+                # fan out to the whole top package. A module that merely
+                # failed to match the symbol (a re-export) stays ambiguous.
+                continue
+            if not candidates:
+                continue  # only a renaming re-export could name it, and none did
+        elif (
+            scope is not None
+            and src_family == "js"
+            and (ts_hit := ts_modules.lookup(scope, str(u["target_name"]), ts_any_candidates))
+        ):
+            scoped = [ts_hit[0]]
+            candidates = scoped
+        elif scope:
             scoped = _under_scope(candidates, scope)
             if not scoped and receiver == RECEIVER_MODULE and scope not in project_scopes:
                 # `from pkg import client; client.get()`: the receiver scope is
@@ -1016,12 +1712,17 @@ def _resolve_refs(
         # the nearest ENCLOSING definition. Walk the caller's scope chain from
         # innermost outward and take the first scope that defines a candidate.
         lexical: list[tuple[int, str, int]] = []
+        # Where a Java call's receiver is unknown, only declared methods may
+        # win by proximity (lexical scope, same file); see `generated`.
+        near = candidates
+        if generated and src_family == "java" and receiver is None:
+            near = [c for c in candidates if c[0] not in generated] or candidates
         if not scoped and len(candidates) > 1:
             parts = str(u["src_qname"]).split(".")
             # Innermost first: the caller's own scope, then each parent. A
             # candidate defined *inside* the caller wins over a sibling's.
             by_scope: dict[str, list[tuple[int, str, int]]] = {}
-            for cand in candidates:
+            for cand in near:
                 owner = cand[1].rsplit(".", 1)[0] if "." in cand[1] else ""
                 by_scope.setdefault(owner, []).append(cand)
             for depth in range(len(parts), 0, -1):
@@ -1040,7 +1741,7 @@ def _resolve_refs(
         same_file: list[tuple[int, str, int]] = []
         if not scoped and not lexical and len(candidates) > 1:
             src_file_id = int(u["src_file_id"])
-            same_file = [c for c in candidates if c[2] == src_file_id]
+            same_file = [c for c in near if c[2] == src_file_id]
             if same_file:
                 candidates = same_file
 
@@ -1063,11 +1764,11 @@ def _resolve_refs(
             # `min_weight=0.7` keeps only edges backed by an import, `self`
             # or a bare name in scope.
             weight = min(weight, 0.6)
-        for tid, _qname, _fid in candidates:
+        for tid, _qname, _fid in collapse(candidates, int(u["line"] or 0), int(u["src_symbol_id"])):
             src_id = int(u["src_symbol_id"])
             if tid == src_id:
                 continue
-            key = (src_id, tid)
+            key = (src_id, tid, "calls")
             previous = seen_pairs.get(key)
             if previous is not None and previous >= weight:
                 continue
@@ -1082,12 +1783,5 @@ def _resolve_refs(
                 edge_count += 1
     # One statement for every edge, in the order they were decided: an upsert
     # per row, exactly as one execute() each.
-    conn.executemany(
-        """INSERT INTO symbol_edge(src_symbol_id, dst_symbol_id, edge_type, weight)
-           VALUES(?,?,?,?)
-           ON CONFLICT(src_symbol_id, dst_symbol_id, edge_type)
-           DO UPDATE SET weight = MAX(symbol_edge.weight, excluded.weight),
-                         origin = 'livespec'""",
-        pending_edges,
-    )
+    flush_edges()
     return edge_count

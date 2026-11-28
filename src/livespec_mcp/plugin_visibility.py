@@ -25,6 +25,7 @@ from typing import Any
 
 from fastmcp.server.middleware import Middleware
 from fastmcp.tools.base import Tool, ToolResult
+from mcp.types import TextContent
 
 from livespec_mcp.state import get_state
 from livespec_mcp.tools._errors import mcp_error
@@ -145,11 +146,6 @@ class PluginVisibilityMiddleware(Middleware):
 
         payload = _plugin_blocked_payload(tool_name, workspace)
         return ToolResult(
-            content=[
-                {
-                    "type": "text",
-                    "text": json.dumps(payload, default=str),
-                }
-            ],
+            content=[TextContent(type="text", text=json.dumps(payload, default=str))],
             structured_content=payload,
         )

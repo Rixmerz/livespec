@@ -44,6 +44,197 @@ Todo el stack es local-first: 0 servicios externos, 0 API keys obligatorias, 0 D
 
 ## 3. Estado actual
 
+### Unreleased — trial Django a escala (rama `ls-scale`, local sobre `95a5334`)
+
+**1586 tests (1575 + 11 nuevos; uno de `test_type_ref_precision.py` cambió de expectativa:
+un `from .core import *` ahora se sigue).** Sin migración (la última sigue en v35).
+Defectos de la prueba orient + migrate de una regla en Django 5.1.4 (2832 archivos,
+39,8k símbolos):
+
+1. Re-exports de Python: `py_modules.PyModules._lookup_star` (star import, `__all__`
+   literal, ciclos y saltos acotados) + `indexer._resolve_refs` (la llamada resuelve por
+   la cadena cuando el módulo no define el nombre; también con renombre
+   `from m import f as g`, el extractor guarda el nombre original). Tests:
+   `test_python_reexport_calls.py`.
+2. Clases usadas: el extractor Python escaneaba solo cuerpos de función; ahora
+   `_collect_calls` también corre sobre el cuerpo de clase (las llamadas son de la clase) y
+   un nombre pasado como argumento de llamada es un ref `type` (solo se conserva si nombra
+   una clase del proyecto). Tests: `test_class_body_and_argument_refs.py`. El código a
+   nivel de módulo sigue sin símbolo emisor (lo cubre el escáner por nombre de dead code).
+3. `find_data_access`: `summary_only` ya no trae `unresolved_models` (solo el conteo),
+   `path` y `include_tests` (FileScope en `data_access_store.py`). Tests:
+   `test_data_access_scope.py`.
+4. `find_dead_code(path=)` -> `runtime_coverage` (`public_runtime_state(path=)`).
+5. `analyze_impact(symbol)` lista profundidad 1 y cuenta el resto por profundidad
+   (`include_transitive=True` lista todo); overview con 30 nombres estructurales.
+   Tests: `test_payload_trim.py`.
+6. Aristas runtime: ya estaban etiquetadas (`via_external_edge`); se añadió
+   `external_edges.runtime_only_hint`.
+
+Cifras Django (copia en `/tmp/claude-0/ls-scale-fixture`): overview 20,8 -> 5,6 KB;
+`analyze_impact(formset_factory)` 63 -> 19 KB; `find_data_access(summary_only)` 175 -> 0,8 KB;
+aristas totales 374k -> 347k (menos fan-out por re-exports resueltos).
+**Proyectos ya indexados:** el próximo `index_project` re-extrae Python.
+
+### Unreleased — trial Java (Spring PetClinic)
+
+**Rama `ls-java` (local, sobre `c8510ce`): hallazgos del trial Java, 1570 tests + 5 nuevos
+(`tests/test_java_petclinic_trial.py`; un test de `test_spring_angular.py` cambió de expectativa).**
+(1) Receptor tipado en Java: `x.m()` con `x` local/parámetro/campo/`this.campo` de tipo declarado
+-> `symbol_ref.receiver='object'` + `receiver_class`, el resolver (`indexer._resolve_refs`, rama
+`RECEIVER_OBJECT`) ata al método de esa clase o su ancestro indexado a peso 1.0 y no hace
+fan-out; tipo que no es clase del proyecto, `var`, lambda, nombre declarado dos veces con tipos
+distintos o cadena -> resolución previa. PetClinic: `Owner.addVisit` 0 -> 3 callers.
+(2) Spring: prefijo de `@RequestMapping` de clase, formas array/`value=`/`path=` y
+`@RequestMapping(method=)` de método, una ruta por path (`_java_mapping_routes`); PetController era
+el único con prefijo de clase y la feature nunca existió. (3) `find_dead_code`: `main`, métodos de
+interfaces Spring Data y `@Override` de bases externas, siempre fuera (`framework_implemented`).
+(4) JPA: `_Java._relationships` + `_derive_jpa_relationship_rows`; pets/visits/specialties/
+vet_specialties dejan de ser `unaccessed`. (5) `propose_specs_from_codebase`: sin cambio, ya tiene
+`max_proposals`. Pendiente: su agrupación por prefijo de qname da un solo spec "Java"
+(`src.main.java`) con `module_depth=3`.
+
+### Unreleased — evidencia de ejecución, aristas de herencia/tipo, acceso a datos, clones
+
+**Rama `fix/trial3-js` (local): tercer trial (CLI JavaScript), 1570 tests + 14 nuevos
+(`tests/test_trial3_js.py`).** `new X()` en JS/TS crea arista `calls`; los símbolos `module` ya no son
+candidatos de `find_dead_code`; vendor/bundles (`vendor`, `third_party`, `dist`, `build`, `out`,
+`coverage`, `*.min.js`, `*.bundle.js|mjs`, línea >2000 chars en 2 KB) se omiten por defecto con
+`generated_skipped` en `index_project` (`include_generated=True` o `!vendor/` en `.livespec.toml`);
+los errores de middleware ya no vienen en sobre de lista. Export JS sin callers: no reproducido.
+
+**Rama `fix/trial2-findings` (local, sobre `4a9240c`): segundo trial.** `find_dead_code(path=)`
+(archivo o directorio relativo, mismo prefijo que `find_clone_clusters`; candidatos, tiers
+runtime y todos los conteos solo de lo definido ahí; ruta desconocida -> `mcp_error` con hint);
+`get_project_overview.runtime_evidence` suma `symbols_non_test` y `symbols_with_hits_non_test`
+(denominador de cobertura); migración 35 `runtime_source.index_run_id` (último run que cambió
+archivos al ingerir, backfill desde `ingested_at`) y `stale_evidence: true` + `sources` en
+`runtime.rescued` y `runtime_stale_*` en `quick_orient` cuando toda fuente con hit es anterior
+al último run que cambió algo (regla gruesa: no se puede preguntar por "archivo de un llamador
+previo" porque su re-extract ya borró las aristas runtime). Se marca, no se descarta. Además
+se restauró el cuerpo de `_m030` (solo tenía docstring, no encolaba el re-extract) y
+`test_migration_30` ya no usa `MIGRATIONS[-1]`. Suite: **1556 passed**.
+
+**Merge previo `fix/trial-findings` (`4a9240c`): hallazgos del primer trial.** Endpoints Flask,
+tier `registered_by_decorator` en `find_dead_code`, lecturas por relaciones many-to-many en
+`find_data_access`, `ingest_traces(remove=True, trace_path=[...])` selectivo, parámetros
+desconocidos -> `mcp_error` con los nombres válidos, y `.mcp-docs/` con `.gitignore`
+autoexcluyente.
+
+**Rama `fix/java-implicit-members` (local, sobre `5f5567b`): miembros Java implícitos.**
+Records = símbolo `class` + un método accesor por componente; Lombok (`@Getter`/
+`@Setter`/`@Data`/`@Value`, clase o campo) genera `getX`/`isX`/`setX` en la línea del
+campo, marcados `livespec:generated:*` en `decorators` (sin migración; `find_dead_code`
+los omite salvo `include_infrastructure`); `this::m`, `this.m()` y `m()` en constructor
+o inicializador resuelven por la jerarquía (clase, ancestros, clase contenedora);
+`src/main/java` y `src/test/java` son un solo paquete (se compara la declaración
+`package` dentro del módulo, gana la raíz del llamador). `@ToString`/`equals`/`@Builder`
+no se modelan. java-design-patterns: muestra de 40 referencias 29 aciertos / 3 destino
+erróneo / 8 sin arista -> 39 / 0 / 1; `calls` 102 336 -> 119 586 (+17 k, casi todo
+abanico 0.5 hacia accesores generados). Suite: **1527 passed**.
+
+**Rama `fix/super-overrides-barrels` (local, sin integrar).** Resolver/extractores:
+`super()` resuelve al método de la base más cercana (DFS izquierda-derecha);
+`analyze_impact`/`quick_orient` informan overrides (`overriding_methods`,
+`overridden_by`, `overrides`); aristas atadas por span (símbolos con el mismo
+qname); enum/`@interface` Java y enum/alias TS son símbolos; barrels TS (5 saltos)
+y alias de import; `Type::method` y tipos anidados en Java. Migración **34**
+(`symbol_ref.receiver_class`, re-extract). Suite: **1514 passed**.
+
+**Rama `fix/evident-class-param`:** un parámetro sin anotación es de clase evidente
+solo si una sentencia directa del cuerpo lo reasigna (`t = Template(t)`) antes de
+cualquier otro uso; si no, resolución por nombre. `Type::miembro` en Java sin símbolo
+(Lombok, record) y clase con ancestros todos indexados: sin arista. Django: +1 en
+`django/` (`setup_databases -> TimeKeeper.timed`), +65 en `tests/` (`render_template`,
+reasignación condicional), 0 quitadas. Suite: **1517 passed**.
+
+**Rama `fix/trace-noise`: `ingest_traces` ignora spans de orden imposible.**
+`parent_not_yet_entered` / `parent_already_exited` (misma traza, mismo hilo; Node
+exento) no crean arista ni hit y se cuentan en `skipped` y `discarded_spans`.
+Suite: **1457 passed**. `bench/results-ecosystem.json` re-medido con el FlowTrace
+corregido (artefactos del serializador 27.8 % -> 0 en click). El helper `_Trace`
+de `tests/test_trace_ingest.py` ahora deja los spans abiertos hasta `close()`/`write()`
+(el orden real); los exits inmediatos que escribía antes eran órdenes imposibles.
+
+**Rama `ccr-e8c6f0df-fdpwls` (PR #31, borrador), sobre `c9b7afd` (v0.37.0).**
+`pyproject.toml` sigue en 0.37.0. Suite medida en este árbol: **1490 passed**
+(`uv sync --all-extras && uv run pytest -q`; antes del lote, 1326).
+**44 core / 59 tools**, migraciones 29–33. Cuatro piezas, cada una con su
+commit y su entrada en CHANGELOG `[Unreleased]`:
+
+- `ingest_traces` (mig. 29): detalle abajo.
+- Aristas nativas `inherits` / `references` para Python, TS/TSX y Java
+  (mig. 30, solo marca re-extract). Una clase base usada solo por herencia o
+  un tipo usado solo en anotaciones ya no figura como código muerto;
+  `analyze_impact` muestra subclases y usuarios del tipo. `who_calls` sigue
+  mostrando solo invocaciones por defecto. Enum y alias de tipo no-objeto de
+  TS no son símbolos, así que no reciben aristas.
+- `find_data_access` (mig. 31, `tools/data_access.py`): qué símbolo lee o
+  escribe qué tabla, desde SQL en strings y ORM (SQLAlchemy, Django, Prisma,
+  Knex, JPA). Los modelos Prisma y las entidades JPA sin `@Table` quedan como
+  no resueltos. Rama `fix/data-access-recall` (mig. 33): SQL en constantes y
+  variables locales, constantes importadas (un salto), `CREATE TABLE` en código
+  como declaración, convención Flask-SQLAlchemy, SQLAlchemy 2.0 y colecciones
+  write-only; validado en delta-cube, livespec y microblog (ver CHANGELOG).
+- `find_clone_clusters` (`tools/clones.py`, sin migración) y modo esquema en
+  `quick_orient` (acepta una ruta de archivo; en clases agrega sus miembros).
+
+Pendiente del owner: abrir el cambio OpenSpec de estos requisitos, y decidir
+versión y tag.
+
+#### Detalle de `ingest_traces`
+
+Qué aterrizó (CHANGELOG `[Unreleased]`):
+
+- **Tool core nueva `ingest_traces(trace_path=None, dry_run=True, remove=False)`**
+  → 42 core / 57 tools en ese commit. Lee JSONL FlowTrace schema v2 (un archivo, una
+  lista, o un directorio de `*.jsonl`), en streaming, y resuelve cada `enter` a
+  un símbolo ya indexado: por `file`+`line` (path exacto, si no sufijo único; el
+  nombre del método tiene que coincidir con el símbolo de esa línea) o por
+  nombre único (method + class + module según el runtime). Nunca adivina; lo
+  demás va a `unresolved` por razón.
+- **Dominio:** `domain/trace_ingest.py` (lector, `SymbolResolver`, `TracePlan`,
+  persistencia, lectura de evidencia) y `domain/location.py` (la query de
+  `resolve_location`, ahora compartida; payload de esa tool sin cambios).
+- **Migración 29 `runtime_evidence`:** `runtime_source` (una fila por ARCHIVO
+  de traza: path + content hash), `runtime_hit` (conteos por símbolo y
+  source), `runtime_edge` (pares caller→callee por source). Las filas
+  `symbol_edge` con `origin='runtime:flowtrace'` se derivan de `runtime_edge`.
+  No se reutilizó `external_ingest` (mig 23): es una fila por (project, origin)
+  con un solo path, y la evidencia runtime es la suma de varios archivos.
+- **Idempotencia = por archivo fuente.** Re-ingerir un archivo (mismo path, o
+  mismo contenido en otro path) reemplaza lo que aportó: no duplica hits y
+  retira la arista que sólo ese archivo sostenía. Archivos distintos acumulan.
+  `remove=True` borra exactamente aristas + hits + provenance de este origen.
+- **Consumidores:** `who_calls` / `who_does_this_call` marcan
+  `via_external_edge: "runtime:flowtrace"`; el bloque `external_edges` nombra
+  el origen y reporta `stale.evidence_lost` tras un re-extract;
+  `find_dead_code` gana `runtime` (`rescued_by_runtime`, `not_seen`,
+  `no_evidence`) y `runtime` por candidato — sólo si hay hits; sin trazas el
+  payload es idéntico byte a byte (test). `quick_orient.runtime_calls`,
+  `get_project_overview.runtime_evidence` y `project://index/status` idem.
+- `ingest_external_graph(remove=True)` ya no se lleva una arista que una traza
+  también observó (se re-afirma bajo el origen runtime).
+- **Tests:** `tests/test_trace_ingest.py` (21) + un caso en
+  `tests/test_error_shape.py`.
+
+Pendiente / a decidir por el owner:
+
+- OpenSpec: `openspec/specs/graph/spec.md` no tiene todavía un requirement
+  para evidencia runtime (no se abrió un change en `openspec/changes/`).
+- Un `index_project(force=True)` re-inserta todos los símbolos y por lo tanto
+  borra toda la evidencia runtime (igual que hace con las aristas Graphify);
+  no hay auto-re-ingesta equivalente a `[graph] auto_ingest`.
+- Los golden fixtures de FlowTrace todavía no traen `file`/`line`; la
+  resolución por ubicación está probada con trazas escritas a mano, no con
+  salida real de las capas de captura.
+
+**Rama `fix/trial-findings` (local, sin integrar; commits dc1dd65..b1d7f2e).** Siete hallazgos del primer
+ensayo en una app Flask: métodos/prefijo/framework en `find_endpoints`, tier `registered_by_decorator` y
+`runtime.rescued` en `find_dead_code`, lecturas de la tabla de asociación en `find_data_access`,
+`ingest_traces(remove=True, trace_path=...)` parcial, error de parámetro desconocido con hint, y
+`.mcp-docs/.gitignore`. Detalle en CHANGELOG `[Unreleased]`.
+
 ### v0.36.0 (released 2026-11-01)
 
 Release of three fixes found running livespec on a mid-size Python + TypeScript repository:

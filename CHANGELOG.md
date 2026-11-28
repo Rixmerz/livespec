@@ -6,6 +6,457 @@ follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed — Django trial (scale)
+
+- **A bare call in a class body sees only what the scope sees.** `x = set()` /
+  `list(...)` in a class body no longer binds to a same-named method of another
+  class (`Field -> DummyCache.set`): only a module-level def/class, an import or a
+  name of that same class body resolves, and an unshadowed builtin resolves to
+  nothing. Class-sourced `calls` edges onto another class's method on Django:
+  511 -> 336, of which 14 are at weight >= 0.6 (attribute calls such as
+  `Manager.from_queryset`); the rest are 0.5 fan-out below the default filter.
+- **Migration 36 queues a re-extract** (no schema change) so an index built
+  before the Python class-body / re-export / alias extraction and the Java
+  receiver / route extraction picks them up on a plain `index_project`
+  (`files_changed` was 0 and the old edges stayed).
+- **Python calls through a re-export reach the defining symbol.** `from pkg.forms
+  import f`, `forms.f()`, `formsets.f()` and `from m import f as g` now resolve
+  through the re-export chain (`from .x import f`, `from .x import f as g`,
+  `from .x import *` honouring a literal `__all__`; bounded hops, cycle-safe) to
+  the ONE symbol that defines `f`, so `who_calls` on a moved function lists the
+  callers that still import it from the old module. A call to an aliased import
+  is stored under the original name. A star import of a module without
+  `__all__` brings its public names (also for `inherits` / `references`, which
+  used to ignore star imports). Fewer 0.9-weight fan-out edges for names a
+  package re-exports from several submodules. **Existing indexed projects:** the
+  next `index_project` re-extracts Python.
+- **A class used from a class body, or passed to a call, is used.** The Python
+  extractor never scanned class-body statements (`input_formats = Formats()`,
+  `@register(Cls)`), so a class instantiated there had no incoming edge, and a
+  class handed to a call as a value (`warnings.warn(msg, MyWarning)`) left no
+  ref at all. Class bodies are now scanned like a function body (the calls are
+  the class's, nested defs keep their own) and a bare or dotted name given as a
+  call argument becomes a `references` ref when it names a project class.
+  `find_dead_code(path=django/forms)` no longer lists `DateTimeFormatsIterator`
+  and `MediaOrderConflictWarning`. Module-level code still has no caller symbol.
+- **`find_data_access`: `summary_only` is a summary, and a capability can be
+  listed alone.** `summary_only=True` on the inventory no longer carries
+  `unresolved_models` (175 KB on Django); `counts.unresolved_models` stays.
+  New `path` (directory prefix or one file): only the accesses made by symbols
+  under it, so the tables one capability touches are listed without the rest.
+  New `include_tests` (default False, as in `find_dead_code` and
+  `find_clone_clusters`): accesses from test files are left out of the
+  inventory, `table=` and model modes and counted in `tests_excluded` /
+  `counts.filtered_out` (a table only tests touch is not listed, or flagged
+  `test_only` when declared). `qname` mode is never filtered.
+- **`find_dead_code(path=...)` reports the runtime coverage of that path.** With
+  runtime evidence ingested, `runtime_coverage` (also in `summary_only`) has
+  `symbols_non_test` and `symbols_with_hits_non_test`, defined as in
+  `get_project_overview.runtime_evidence` but counted under `path`, so one
+  capability's coverage (54.8% for `django/forms`) is no longer hidden by the
+  repo-wide figure (20%).
+- **Smaller `analyze_impact` and `get_project_overview` payloads.**
+  `analyze_impact` on a symbol now lists its depth-1 callers and callees; what
+  lies beyond is counted per depth (`counts.impacted_callers_by_depth`,
+  `calls_into_by_depth`; the totals and `affected_specs` still cover the whole
+  cone) and `include_transitive=True` lists it all, as before. A Django function
+  with 226 transitive callers: 63 KB -> 19 KB. `get_project_overview` names the
+  30 most widespread structural-pattern names (non-test) and counts the rest
+  (`structural_patterns_filtered_total`, `_test_only`): 20.8 KB -> 5.6 KB on
+  Django. Test symbols were already out of `top_symbols`.
+- **A runtime-only caller says what it is.** `ingest_traces` attributes a call to
+  the nearest TRACED ancestor, so a test runner frame showed up as a direct
+  caller of `all_valid`. Rows were already labelled `via_external_edge:
+  runtime:flowtrace`; `who_calls` / `analyze_impact` (and `who_does_this_call`)
+  now add `external_edges.runtime_only_rows` and `runtime_only_hint` (a
+  runtime-only caller is the nearest traced ancestor, not necessarily the direct
+  caller). Nothing was guessed away: the edges stay, labelled.
+### Fixed — Java trial on Spring PetClinic
+
+- **Java calls on a typed receiver bind to the receiver's class.** `x.m()` where
+  `x` is a local, a parameter, a field or `this.field` with a declared class
+  (generics stripped, import-scoped) now resolves to `m` on that class or its
+  nearest indexed ancestor, at weight 1.0, and no longer fans out at 0.5 to every
+  same-named method (which `who_calls` / `analyze_impact` / `quick_orient` hid:
+  `Owner.addVisit` showed 0 callers while 3 existed). `symbol_ref` now carries
+  `receiver='object'` and `receiver_class` for these calls. `var`, lambda
+  parameters, names declared twice with different types, chains (`a.b.m()`),
+  and declared types that are not project classes (library types, type
+  parameters) keep the previous resolution. **Existing indexed projects:** the
+  next `index_project` re-extracts Java.
+- **`find_endpoints` (Spring) applies the class-level `@RequestMapping` prefix**
+  (`/owners/{ownerId}` + `/pets/new`), accepts the array and named forms
+  (`@GetMapping({"/vets"})`, `value = {...}`, `path = {...}`, one endpoint per
+  path) and method-level `@RequestMapping(method = ...)`. A bare `@GetMapping`
+  is the prefix itself. A path that is not a plain literal is not guessed.
+- **`find_dead_code` (Java):** `public static void main(String[])`, methods of an
+  interface that extends a Spring Data repository type (also through project
+  interfaces) and `@Override` methods of a class whose base lies outside the
+  project (and that no indexed base declares) are never candidates, even with
+  `include_infrastructure`; counted in `filtered_out.framework_implemented`.
+- **`find_data_access` (JPA):** an access to an entity also reaches the tables of
+  the entities its `@OneToMany` / `@ManyToOne` / `@OneToOne` / `@ManyToMany`
+  fields point to (`ref_kind` relationship, `through: "Owner.pets:jpa"`): one hop
+  for reads, cascade (`ALL`/`PERSIST`/`MERGE`/`REMOVE`) transitively for writes,
+  and the `@JoinTable` with the access to its owning side. Tables only reachable
+  that way (pets, visits, specialties, vet_specialties) are no longer
+  `unaccessed`.
+- Unchanged on purpose: `propose_specs_from_codebase` already caps its list with
+  `max_proposals`; no `limit` alias was added.
+
+### Fixed — third trial findings (JavaScript CLI)
+
+- **`new X(...)` is a call of `X`** in JS/TS/TSX: a `calls` edge from the
+  enclosing symbol to the class, resolved by the same import scope as a call
+  (named import, `ns.X` through a module namespace). A class built only with
+  `new` (an error type thrown at every site) is no longer `not_seen` dead code.
+  `who_calls`, `analyze_impact` and `find_dead_code` all see it. Python `X()`
+  already made a `calls` edge; Java `new X()` makes a `references` edge (dead
+  code sees it, `who_calls` does not) and is unchanged.
+- **`find_dead_code` never lists module symbols** (`lib.detect`) as candidates,
+  so they no longer appear in the runtime tiers or `rescued`.
+- **Generated / vendored code is skipped by default**: directories named
+  `vendor`, `third_party`, `dist`, `build`, `out`, `coverage`, and JS bundles
+  (`*.min.js`, `*.bundle.js`, `*.bundle.mjs`, or a JS file with a line over
+  2000 chars in its first 2 KB). `index_project` reports `generated_skipped`
+  `{files, paths (max 10), hint}`. Opt out with `index_project(
+  include_generated=True)`, or re-include one path with `!vendor/` in
+  `.livespec.toml` `[index].ignore` (a `.gitignore` that speaks about the
+  directory's contents is honoured too). **Existing indexed projects:** the
+  next `index_project` drops those files and their symbols, edges and runtime
+  hits (the state db shrinks); runtime-coverage ratios change accordingly.
+- **Middleware errors are the standard object.** The unknown-parameter and
+  plugin-blocked errors were returned as a list of raw dicts that FastMCP
+  serialised into one text block (`[{"type":"text","text":"{...}"}]`); the text
+  is now the `{error, isError, hint}` object itself.
+- Not reproduced: an exported JS function with no callers missing from
+  `find_dead_code`. With the trial's exact steps it is listed (ESM `export`
+  needs `include_public=True`; CommonJS exports carry no visibility mark and
+  are listed by default). Locked by a test.
+
+### Added — second trial findings: `find_dead_code(path=)`, coverage denominator, stale evidence
+
+- **`find_dead_code(path=<file or directory>)`** — workspace-relative, POSIX,
+  same prefix semantics as `find_clone_clusters(path=)`. Candidates, the runtime
+  tiers, `filtered_out`, `by_kind` / `by_top_dir`, `count` and the `not_swept`
+  hints cover only symbols defined under it; callers outside it still count. A
+  path matching no indexed file is an `mcp_error` with a hint. The payload
+  echoes `path`.
+- **Coverage denominator.** `get_project_overview`'s `runtime_evidence` gains
+  `symbols_non_test` (functions and methods outside test paths) and
+  `symbols_with_hits_non_test`, so coverage is one number over the other.
+- **Stale runtime evidence.** Migration 35 adds `runtime_source.index_run_id`
+  (the latest index run that changed files when the trace was ingested;
+  existing rows are backfilled from `ingested_at`). A `find_dead_code`
+  `runtime.rescued` entry gets `stale_evidence: true` and `sources` when every
+  source with a hit on it predates the latest run that changed any file, with a
+  `stale_evidence_hint` ("re-trace or remove these sources: …");
+  `quick_orient` adds `runtime_stale_evidence` / `runtime_stale_sources` on a
+  symbol nothing calls. The rescue is kept, only marked. The rule is coarse by
+  necessity: the finer one ("a former caller's file changed") cannot be asked
+  once the caller's re-extract has dropped its runtime edges.
+
+### Fixed — Java members the source never spells out
+
+- **Records are classes with accessors.** `record Car(String make, int year)` is
+  a `class` symbol and each component gets a method symbol (`Car.year`, on the
+  component's line, `public`) unless the body declares one. A record's own
+  methods used to hang off the file, and calls made in it had no caller.
+  `Car::year` and `car.year()` now resolve.
+- **Lombok accessors.** `@Getter` / `@Setter` / `@Data` / `@Value` on a class or
+  `@Getter` / `@Setter` on a field (file imports `lombok`) yield `getX` / `isX`
+  (primitive `boolean`) / `setX` at the field's line: no setter for a final field
+  or under `@Value`, none for a name the class declares, `AccessLevel.NONE` and
+  static fields skipped. `@ToString` / `equals` / `hashCode` / `@Builder` are NOT
+  modelled. Generated members carry `livespec:generated:<record|lombok>` in
+  `decorators` (no migration); `find_dead_code` skips them unless
+  `include_infrastructure=true`, and a call on another object
+  (`model.getList()`) is never drawn to the caller's own generated getter by the
+  same-file/lexical preference.
+- **`this::m`, `this.m()` and a bare `m()` in a constructor or initializer** (the
+  source symbol is the class) resolve on the enclosing class, then its indexed
+  ancestors (`domain/hierarchy.py`), then the class it is nested in (1.0 own,
+  0.9 inherited), before any name fallback. Java `m()` / `this.m()` now carry
+  receiver `self`, so they reach methods only.
+- **`src/main/java/<pkg>` and `src/test/java/<pkg>` are one package.** Same-package
+  type resolution compares the `package` declaration inside one build module
+  (not the directory) and prefers the definition under the caller's own source
+  root when both exist.
+
+### Fixed — `super()`, overrides, same-name symbols, barrels (resolver and extractors)
+
+- **`super().m()` / `super(Cls, self).m()` / `super.m()` / `super(...)`** (Python,
+  TS/JS, Java `super.m()`) resolve to `m` on the nearest indexed base of the
+  enclosing class, left-to-right depth-first over the `inherits` edges (not C3:
+  it can differ from Python's MRO only for a diamond whose shared ancestor also
+  defines `m`). No indexed base defining it, or `super(Other, self)` naming
+  another class: no edge. The builtin `super()` call itself no longer resolves
+  to a project symbol named `super` (Django's `BlockNode.super`); `x.super()`
+  still resolves normally.
+- **Overrides are reported.** `analyze_impact` on a method adds
+  `overriding_methods` (bounded by `limit`; each `qualified_name`, `file_path`,
+  `start_line`, `calls_super`, `depth`), exact `counts.overriding_methods` and
+  `overrides` (the base method); `quick_orient` adds `overridden_by` (count) and
+  `overrides`. Derived from `inherits` edges + class membership
+  (`domain/hierarchy.py`); with no overrides the payloads are unchanged.
+- **Instance dispatch.** `c = Child(); c.m()` (also `c: Child` parameters) resolves
+  to the most-derived `m` on `Child`'s own MRO (weight 0.9) instead of every
+  same-named method; a name bound twice, or a class that is not one project
+  class, keeps the name-based path.
+- **Edges bind by span.** A ref belongs to the symbol whose line span contains
+  it, not to "the" symbol of its qualified name: overloads, anonymous classes,
+  enum-constant bodies, same-named local classes and a function defined in both
+  branches of an `if` no longer pile their edges on one row (gson: 19 of 565
+  `references` edges sat on a symbol that never mentions the target; 55 type uses
+  on the wrong overload). A reference to a name defined more than once gets ONE
+  target: the first overload of a method, the definition in scope at the line for
+  a class/function.
+- **Java `enum` and `@interface`** are indexed (kind `class`, like Rust's enums;
+  enum methods are `method`s) and `enum X implements Y` yields `inherits`. TS
+  `enum` and non-object `type` aliases are symbols too (`class` / `type_alias`;
+  they carry no schema).
+- **TS imports.** Barrel chains (`export * from`, `export { X } from`,
+  `export { X as Y } from`) are followed up to 5 hops with cycle protection to
+  the single defining symbol (`domain/ts_modules.py`); `import { A as B }` binds
+  `A` for type refs and calls. Java `Type::method` references and a nested type
+  imported directly (`import a.Outer.Inner`) or through its outer class resolve.
+- Migration 34 adds `symbol_ref.receiver_class` and queues a re-extract.
+
+### Fixed — a rebound parameter is not an evident class
+
+- `def f(tk=None): if tk is None: tk = NullTimeKeeper(); tk.timed()` no longer
+  resolves only to `NullTimeKeeper.timed`: an unannotated parameter holds what the
+  caller passed, so it is of evident class only once a direct statement of the body
+  (not inside if/try/loop/with) rebinds it, before any other mention
+  (`def f(t): t = Template(t); t.render()`). Otherwise the call falls back to
+  name-based resolution (Django `setup_databases -> TimeKeeper.timed` is back).
+  Annotated parameters and plain locals are unchanged.
+- Java `Type::member` naming one project class that, with every ancestor indexed,
+  defines no `member` (Lombok getter, record accessor) adds no edge; a class with
+  an unindexed or library ancestor keeps the name-based fallback.
+
+### Changed — `ingest_traces` ignores order-impossible spans
+
+- A span whose `enter` is read before its parent's `enter` in the same trace
+  file (`skipped.parent_not_yet_entered`), or that enters after its parent had
+  exited on the same thread (`skipped.parent_already_exited`; not applied to
+  Node, whose continuations outlive their parent), no longer creates a
+  caller → callee edge and no longer counts as a hit, so it cannot rescue a
+  symbol from `find_dead_code`. New payload keys `discarded_spans` (exact) and
+  `discarded_note` (only when non-zero). Older FlowTrace versions wrote such
+  spans for a `__repr__` they ran themselves and for generator frames. A parent
+  in another file (`caller_not_in_traces`, multi-process) is unchanged; a missing
+  `exit` never makes a parent "exited". Spans nested under a discarded span keep
+  their evidence. Exit-time artifacts (`repr(result)`, `str(exc)`) are
+  indistinguishable from a real call by order and are not filtered.
+
+### Added — clone clusters (`find_clone_clusters`)
+
+- `find_clone_clusters(min_size=2, threshold=0.80, path=None,
+  include_tests=False, limit=50, cursor=0, summary_only=False)` — new core
+  tool (42 → 43 core, 57 → 58 total). Clusters of functions/methods whose
+  bodies are identical after identifier normalisation (level 0) or similar
+  above `threshold` (level 1, winnowed fingerprints), built from the
+  fingerprints `search_similar` already caches: bucket by structural hash,
+  candidate pairs by shared winnowed hashes, then verify — never all pairs.
+  Each cluster names a `representative` (most callers, then non-test /
+  shortest path, then lexical) with span, and every other copy is `identical`
+  or a bounded diff summary (counts + capped excerpt); no body is returned.
+  Ordered by `lines_saved`; `totals` are exact across pages and
+  `summary_only`. Trivial bodies, build/vendored/generated paths and tests are
+  excluded (tests via `include_tests=True`), counted in `filtered_out`.
+- `get_symbol_source` / `read_unit` add a `clones` note when the symbol has
+  identical copies in the fingerprint cache.
+- `quick_orient` accepts an indexed file path and returns that file's
+  `outline`; classes carry an `outline` of their members.
+### Added — data-access map: which code touches which table
+
+- `find_data_access(table=None, qname=None, access=None, include_callees=False,
+  include_callers=False, limit=200, cursor=0, summary_only=False,
+  include_system=False, unresolved_cursor=0)` — new core tool (42 → 43 core,
+  57 → 58 total), in its own module `tools/data_access.py`. Three modes:
+  `table=` (any case, schema optional) lists who reads, writes or defines it,
+  grouped by kind with `file:line` and mechanism; `qname=` lists the tables a
+  symbol touches (every row with `file:line`), and `include_callees=True` also
+  those reached through its callees (3 hops, call edges of weight >= 0.6), each
+  row naming the callee in `via` (`include_callers` is the deprecated old
+  spelling of the same thing, which never followed callers; it still works and
+  the payload says `deprecated`); with neither, the table inventory with exact
+  read / write / ddl counts, joined with tables declared in indexed `.sql`
+  files **and in code** (`ok` / `undeclared` / `unaccessed`; `declared_in` +
+  `declared_source`: `sql_file` | `code`). Unknown table or access kind:
+  `did_you_mean`; a `table=` that is no table but an ORM model name is answered
+  with that model's accesses (`mode: model`, `matched: model`).
+- Read at index time, no annotation, for Python, TypeScript/JavaScript and
+  Java. SQL and JPQL in string literals (multi-line, f-string / template holes,
+  `+` concatenation, module / class SQL constants counted where used) through a
+  purpose-built lexer (`domain/sql_access.py`, on the `sql_schema.py` tokenizer):
+  SELECT / JOIN read, INSERT / UPDATE / DELETE / MERGE / REPLACE write,
+  CREATE / ALTER / DROP TABLE ddl; CTE names are not tables, subqueries and
+  `INSERT ... SELECT` are followed, and prose that merely contains "from" or
+  "update" yields nothing (a statement shape is required). ORM shapes:
+  SQLAlchemy (`session.query`, `select/insert/update/delete`, `session.add`,
+  `__tablename__`, `Table(...)`), Django (`Model.objects`, `Meta.db_table`,
+  `<app>_<model>` convention marked `convention`), Prisma, Knex, Supabase,
+  TypeORM, Sequelize, JPA / Spring Data (`@Entity` / `@Table`,
+  `EntityManager`, `@Query`, repository method prefixes). A table is never
+  invented: an access whose model has no statable table is `confidence:
+  unresolved` and listed under `unresolved_models`, each with the `file:line`
+  of its accesses (up to 20 per model, `accesses_more` counts the rest; paged
+  by `limit` / `unresolved_cursor`).
+- Recall (validated on real repositories; precision kept): SQL held in a
+  module / class constant is attributed to each function of the file that uses
+  it (an execute-like call, an f-string, a `+`), at the line of the use, and
+  a multi-statement script gives one access per statement; a constant imported
+  with `from .schema import NAME` / `from pkg.schema import NAME` is followed
+  one hop (Python; resolved after indexing from the defining file, so editing
+  only that file updates the rows); a string variable assigned once in a
+  function (`+=` appends) is read through in a later `execute(base + where)` or
+  as a subquery in another variable — one assigned twice, in a loop, or from a
+  parameter yields nothing. A `CREATE TABLE` in code (Python, TS/JS, Java, a
+  Knex `createTable`) declares the table, at the line of the statement or
+  constant, even when no code runs it. Flask-SQLAlchemy `db.Model` classes
+  without `__tablename__` get the CamelCase → snake_case name
+  (`confidence: convention`), only where `db = SQLAlchemy()` from
+  `flask_sqlalchemy` is seen in the project; plain declarative models stay
+  unresolved; a subclass without a key of its own shares its parent's table.
+  SQLAlchemy 2.0: `select(...).select_from(Model)`, `db.get_or_404(Model, id)`,
+  `session.get_one`, `session.add(self)` in a model, and write-only / dynamic
+  collections (`self.tasks.select()`, `user.posts.select()`,
+  `self.following.add(x)` → the association table) when the relationship
+  declares its target class (`so.WriteOnlyMapped['Task']`,
+  `relationship('Task', lazy='dynamic')`), on `self` inside the declaring
+  class or on any receiver when exactly one class declares that attribute.
+  Catalogue tables (`sqlite_master`, `information_schema.*`, `pg_catalog.*`)
+  carry `system: true` and are left out of the inventory unless
+  `include_system=True` (`counts.system_tables_hidden`). Not seen, counted where
+  cheap: table names built at run time (`counts.skipped.dynamic_table`); never
+  seen: SQL passed through a parameter, ORM calls on an untyped receiver,
+  `select(cls)`, a constant re-exported through a package `__init__`.
+- Storage: migration 31 adds `data_access`
+  (symbol-bound, cascades on re-extract) and `data_model`; migration 33
+  recreates both (derived data) with the wider shapes above (new `data_model`
+  roles and columns; `data_access` rows derived after indexing for imported
+  constants and collections); existing indexes re-extract on their next
+  `index_project`. ORM rows are re-resolved against model declarations, and the
+  derived rows rebuilt, on every run that changed a file.
+### Added — native `inherits` / `references` edges (Python, TypeScript/TSX, Java)
+
+- livespec's own extractors now emit `inherits` edges (class -> each base
+  class / implemented or extended interface: Python bases incl. dotted names
+  and `Generic[T]`-style subscripts, skipping `object` and keyword arguments;
+  TS `extends` / `implements` / interface `extends`; Java `extends` /
+  `implements`) and `references` edges (enclosing function, method or class ->
+  a class / interface / object-type alias named in a parameter, return,
+  variable or field annotation, a generic argument, an `isinstance` /
+  `instanceof` target, an `except` / `catch` type, Java `throws`, TS `as` /
+  `satisfies`). They ride the existing pipeline: refs go into `symbol_ref`
+  (`ref_type` `inherit` / `type`), `_resolve_refs` resolves them and writes
+  edges with the same upsert, so an `external:graphify` or `runtime:flowtrace`
+  row for the same (src, dst, type) is reclaimed by `livespec`. Resolution is
+  stricter than for calls: a type name the file neither imports nor declares
+  produces no edge (a builtin or a library type that shares a project class's
+  name must not keep that class alive). Only names that resolve to an indexed
+  type-like symbol produce an edge; enums and non-object type aliases are not
+  indexed symbols in TS, so they get none.
+- Migration 30 (`inherit_reference_refs`, no schema change) queues the one-time
+  re-extract so existing indexes pick the edges up on their next
+  `index_project`. Downgrading: re-index with `force=True`.
+- Python type refs and scoped calls resolve an import to the ONE indexed module
+  it names (relative dots counted from the importing file, whole dotted
+  segments, a re-export followed to the single symbol it binds), instead of
+  matching the module's name anywhere in a qualified name. `import typing as t`
+  no longer reaches a project `Tuple` because a directory is called `typing`;
+  `from .blueprints import Blueprint` no longer reaches every `Blueprint`; and
+  the typed edges no longer depend on indexing order. An ambiguous import emits
+  no edge. Migration 32 (`python_import_scopes`, no schema change) queues a
+  re-extract so `symbol_ref.scope_module` keeps relative imports' leading dots.
+- `find_dead_code`: a symbol with an inbound `inherits` or `references` edge is
+  no longer a candidate (as `corroborate_with` already did for ingested ones).
+  The payload gains `kept_alive_by_edge_type` (+ `_hint`) counting what they
+  kept alive; absent when none. Measured on livespec itself: 448 `references`
+  edges, 0 `inherits` (every base class in the repo is external), and 219 -> 206
+  candidates with every filter off.
+- `analyze_impact` (symbol): depth-1 rows carry `edge_type`
+  (`inherits` / `references` / `calls`), and `direct_dependents_by_edge_type`
+  appears when any direct dependent is not a plain call. Subclasses,
+  implementors and users-as-a-type are in `impacted_callers` as before. The
+  existing keys are unchanged.
+- `who_calls` / `who_does_this_call` keep counting invocation edges only; the
+  new edges are reported under `excluded_by_edge_type`, and `edge_types=` widens
+  them. `quick_orient`'s top callers/callees likewise count invocations only and
+  report the rest under `excluded_by_edge_type`.
+- Graph: when `symbol_edge` holds several rows for one (src, dst) pair (a
+  function that calls a class and also names it in an annotation), the graph
+  keeps the invocation edge instead of whichever row loaded last.
+- PageRank and every other whole-graph metric now see these edges, so rankings
+  shift on indexes that have them (no test pinned a ranking; `bench/` baselines
+  are untouched and predate the edges).
+- Graphify corroboration is no longer needed for these two gaps in Python,
+  TS/TSX and Java; SKILL.md and both AGENT_PLAYBOOK copies say so.
+
+### Added — runtime evidence from FlowTrace traces
+
+- `ingest_traces(trace_path=None, dry_run=True, remove=False)` — new core tool
+  (41 → 42 core, 56 → 57 total). Reads a FlowTrace schema v2 trace
+  (`flowtrace.jsonl`; one file, a list, or a directory of `*.jsonl`), streamed
+  line by line, and resolves each `enter` event to a symbol livespec already
+  indexed: by `file` + `line` when the trace carries them (exact path, else a
+  unique path-suffix match; the method name must agree with the symbol at
+  that line), otherwise by method + class + module, only when that names
+  exactly one symbol. Nothing is guessed and no symbol is created; everything
+  else is counted under `unresolved` by reason, with samples.
+- Observed caller → callee pairs are written to `symbol_edge` as `calls`
+  edges with `origin='runtime:flowtrace'` (INSERT OR IGNORE — an edge the
+  resolver derived is never re-tagged, and the resolver reclaims a runtime row
+  it later derives). `who_calls` / `who_does_this_call` mark them with
+  `via_external_edge: "runtime:flowtrace"`; the `external_edges` block names
+  the origin and, after a re-extract dropped evidence, reports it under
+  `stale` (`evidence_lost`). The payload separates `edges_to_add` (calls the
+  static graph lacks: dynamic dispatch, DI, reflection) from `already_known`.
+- `find_dead_code`: once traces are ingested, a candidate that was seen
+  running is dropped and counted in `runtime.rescued_by_runtime`, and every
+  remaining candidate carries `runtime: "not_seen"` (a traced run reached its
+  file and never executed it) or `"no_evidence"` (no trace touched its file),
+  with exact per-tier counts in `runtime` independent of pagination. With no
+  traces ingested the payload is byte-for-byte what it was. Candidate order is
+  unchanged.
+- `quick_orient` gains `runtime_calls`, and `get_project_overview` and the
+  `project://index/status` resource gain `runtime_evidence`
+  (`trace_files`, `symbols_with_hits`, `last_ingested_at`) — all only on an
+  index traces were ingested into.
+- Migration 29 (`runtime_evidence`): `runtime_source` (one row per ingested
+  trace file: path, content hash, what it contributed), `runtime_hit`
+  (per-symbol call counts per source, first/last ingest time) and
+  `runtime_edge` (observed pairs per source). Evidence is keyed by source
+  file, so re-ingesting a file (same path, or same content under another
+  path) replaces what it contributed instead of double-counting, an edge only
+  that file supported is retracted, and `remove=True` deletes exactly this
+  origin's edges, hits and provenance. Everything cascades from `symbol`:
+  re-indexing a changed file drops the evidence for its symbols, by design.
+  New empty tables; no re-extract.
+- `ingest_external_graph(remove=True)` no longer takes an edge out of the
+  graph when a trace also observed it: the pair is re-asserted under the
+  runtime origin.
+- `index_project`'s `external_edges_stale.hint` names `ingest_traces` when the
+  run dropped runtime edges.
+- `bench/ecosystem.py`, `bench/results-ecosystem.json`: reproducible benchmark of index + FlowTrace
+  runtime evidence + payload proxy on pinned click and flask (see `bench/README.md`).
+
+### Changed
+
+- `resolve_location`'s query moved to `domain/location.py` (shared with the
+  trace resolver). Payload unchanged.
+
+### Fixed — first end-to-end trial on a Flask app
+
+- `find_endpoints`: Flask routes list every method (`http_methods`; `http_method` stays the first), the blueprint prefix from a literal `url_prefix` (registration wins over the `Blueprint(...)` one; ambiguous or non-literal leaves the path as written; `http_path_prefix` when applied), and `http_framework` from the router's constructor or the imports, no longer a `fastapi` guess.
+- `find_dead_code`: `@obj.something` registrations (e.g. `@login.user_loader`) count as infrastructure; with `include_infrastructure` they get runtime tier `registered_by_decorator`, never `not_seen`. `runtime.rescued` names the symbols the traces rescued.
+- `find_data_access`: a `select()` / `.join(Owner.coll)` through a many-to-many collection reads its association table too.
+- `ingest_traces(remove=True, trace_path=...)` removes only the named sources (no `trace_path`: all, as before).
+- An unknown tool parameter is an `mcp_error` with `hint` (accepted/required names) and `did_you_mean`.
+- `.mcp-docs/.gitignore` (`*`) is written when absent.
+
 ## [0.37.0] - 2026-11-26
 
 ### Added — spec verification and staleness
