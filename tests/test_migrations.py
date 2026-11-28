@@ -594,3 +594,39 @@ def test_m034_receiver_class_column_and_reextract(tmp_path: Path):
     assert "receiver_class" in {r["name"] for r in conn.execute("PRAGMA table_info(symbol_ref)")}
     assert peek_reextract_flag(conn) is True
     conn.close()
+
+
+def test_m036_flags_reextract_only_on_a_populated_db(tmp_path: Path):
+    """v36 changes no schema: it queues a re-extract so an index built before the
+    extractor changes picks them up on a plain `index_project`."""
+    from livespec_mcp.storage.db import clear_reextract_flag, peek_reextract_flag
+
+    assert dict((v, n) for v, n, _ in MIGRATIONS)[36] == "reextract_scale_extraction"
+    db = tmp_path / "empty.db"
+    conn = connect(db)
+    clear_reextract_flag(conn)
+    conn.execute("DELETE FROM schema_migrations WHERE version = 36")
+    conn.commit()
+    conn.close()
+    conn = connect(db)
+    assert peek_reextract_flag(conn) is False  # nothing indexed: nothing to redo
+    conn.close()
+
+    db = tmp_path / "existing.db"
+    conn = connect(db)
+    conn.execute("INSERT INTO project(id, name, root) VALUES(1, 'p', '/p')")
+    conn.execute(
+        "INSERT INTO file(id, project_id, path, language, content_hash, line_count, mtime) "
+        "VALUES(1, 1, 'm.py', 'python', 'h', 2, 0)"
+    )
+    conn.execute(
+        "INSERT INTO symbol(id, file_id, name, qualified_name, kind, start_line, end_line) "
+        "VALUES(1, 1, 'f', 'm.f', 'function', 1, 2)"
+    )
+    clear_reextract_flag(conn)
+    conn.execute("DELETE FROM schema_migrations WHERE version = 36")
+    conn.commit()
+    conn.close()
+    conn = connect(db)
+    assert peek_reextract_flag(conn) is True
+    conn.close()
