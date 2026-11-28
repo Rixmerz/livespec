@@ -226,6 +226,43 @@ are a pessimistic baseline; the grep-only row is the optimistic one.
 delta-cube `hotspots` top 10 is recorded per repo (index ~1.1-1.3 s, hotspots
 ~0.5 s, ~1.9k-char payload) without interpretation.
 
+### Two real agent sessions (2026-11-28) — the proxy overstates the saving
+
+The payload proxy compares one tool call against reading *whole files*. A real
+agent does not read whole files: it greps and reads ranges. To see what that
+does to the numbers, the same six click questions (answers verified by hand
+against the source; three depend on dynamic dispatch) were given to two
+sessions of the same model at the same effort — one with only file search and
+read on a clean checkout, one with livespec (index plus ingested traces)
+through a one-line shell wrapper. One run each; this is a check, not a
+benchmark.
+
+| | files only | with livespec |
+|---|---|---|
+| correct answers | 6/6 | 6/6 |
+| tool calls (excluding the final report) | 6 | 4 |
+| characters of tool results read | 20,581 | 14,151 |
+| model turns | 11 | 8 |
+| output tokens | 4,739 | 2,540 |
+| input tokens summed over turns | 1,374,104 | 989,696 |
+
+What it says:
+
+- The saving in what was actually read is **about 31%**, not the ~90x the
+  proxy's whole-file baseline suggests. The realistic baseline for click was
+  20k characters, not 940k.
+- Summed input tokens fell 28%, and almost all of that is **fewer turns**: each
+  turn re-sends about 117k tokens of fixed session context, which dwarfs any
+  tool payload. On a small repository the lever is turns, not payload size.
+- Both sessions got everything right. click is 70 files, and each question
+  named the mechanism it turned on ("the call goes through
+  `ParamType.__call__`"), so a text search could find the answer. The proxy's
+  3/7 static-only score is about a *tool* without runtime edges, not about an
+  agent that can read.
+
+What it does not say: anything about a large repository, about questions that
+do not name the mechanism, or about variance — it is one run per arm.
+
 ## Not yet covered
 
 - TS/Go/Rust real repos (need a fixture beyond Python)
