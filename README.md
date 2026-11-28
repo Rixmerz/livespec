@@ -394,7 +394,7 @@ gates it, you build with live links; *brownfield* → `/livespec-onboard` orient
 `propose_specs_from_codebase` reconstructs intent, **author OpenSpec first**
 (export only as a bootstrap dump).
 
-## Tools (58 total: 43 core + 12 Spec plugin + 3 docs plugin)
+## Tools (59 total: 44 core + 12 Spec plugin + 3 docs plugin)
 
 Every tool requires `workspace` (absolute project root). Pass it on each call;
 omitting it is an error (no env fallback). LRU cache (8 workspaces) — one MCP
@@ -503,6 +503,18 @@ Always registered (including markdown Spec import + OpenSpec sync).
   never map to a livespec symbol. Re-run after any `index_project` that changed
   files — it reports `external_edges_stale` when a re-extract invalidated
   ingested rows.
+
+- `find_data_access(table=None, qname=None, access=None, include_callers=False, limit=200, cursor=0, summary_only=False)` — **which code touches which
+  database table** (Unreleased). Read at index time with no annotation, for
+  Python, TypeScript/JavaScript and Java: SQL / JPQL in string literals
+  (multi-line, interpolation holes, concatenation; SELECT/JOIN = read,
+  INSERT/UPDATE/DELETE/MERGE/REPLACE = write, CREATE/ALTER/DROP TABLE = ddl)
+  and unambiguous ORM / query-builder shapes (SQLAlchemy, Django, Prisma,
+  Knex, Supabase, TypeORM, Sequelize, JPA / Spring Data). `table=` lists who
+  reads, writes or defines it; `qname=` lists the tables a symbol touches
+  (`include_callers=True` follows its callees, 3 hops); with neither, the table
+  inventory joined with `.sql` CREATE TABLE files. A table is never guessed: an
+  ORM model whose table the source does not state is listed as unresolved.
 
 - `ingest_traces(trace_path=None, dry_run=True, remove=False)` — **add what
   actually ran to the call graph** (Unreleased). Reads a

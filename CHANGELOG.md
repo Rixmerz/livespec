@@ -25,6 +25,37 @@ follows [SemVer](https://semver.org/).
   identical copies in the fingerprint cache.
 - `quick_orient` accepts an indexed file path and returns that file's
   `outline`; classes carry an `outline` of their members.
+### Added — data-access map: which code touches which table
+
+- `find_data_access(table=None, qname=None, access=None, include_callers=False,
+  limit=200, cursor=0, summary_only=False)` — new core tool (42 → 43 core,
+  57 → 58 total), in its own module `tools/data_access.py`. Three modes:
+  `table=` (any case, schema optional) lists who reads, writes or defines it,
+  grouped by kind with `file:line` and mechanism; `qname=` lists the tables a
+  symbol touches, and `include_callers=True` also those reached through its
+  callees (3 hops, call edges of weight >= 0.6), each row naming the callee in
+  `via`; with neither, the table inventory with exact read / write / ddl
+  counts, joined with tables declared in indexed `.sql` files (`ok` /
+  `undeclared` / `unaccessed`). Unknown table or access kind: `did_you_mean`.
+- Read at index time, no annotation, for Python, TypeScript/JavaScript and
+  Java. SQL and JPQL in string literals (multi-line, f-string / template holes,
+  `+` concatenation, module / class SQL constants counted where used) through a
+  purpose-built lexer (`domain/sql_access.py`, on the `sql_schema.py` tokenizer):
+  SELECT / JOIN read, INSERT / UPDATE / DELETE / MERGE / REPLACE write,
+  CREATE / ALTER / DROP TABLE ddl; CTE names are not tables, subqueries and
+  `INSERT ... SELECT` are followed, and prose that merely contains "from" or
+  "update" yields nothing (a statement shape is required). ORM shapes:
+  SQLAlchemy (`session.query`, `select/insert/update/delete`, `session.add`,
+  `__tablename__`, `Table(...)`), Django (`Model.objects`, `Meta.db_table`,
+  `<app>_<model>` convention marked `convention`), Prisma, Knex, Supabase,
+  TypeORM, Sequelize, JPA / Spring Data (`@Entity` / `@Table`,
+  `EntityManager`, `@Query`, repository method prefixes). A table is never
+  invented: an access whose model has no statable table is `confidence:
+  unresolved` and listed under `unresolved_models`.
+- Storage: migration 31 (30 is intentionally unused) adds `data_access`
+  (symbol-bound, cascades on re-extract) and `data_model`; existing indexes
+  re-extract on their next `index_project`. ORM rows are re-resolved against
+  model declarations on every run that changed a file.
 
 ### Added — runtime evidence from FlowTrace traces
 

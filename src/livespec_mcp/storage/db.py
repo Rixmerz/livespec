@@ -911,6 +911,64 @@ def _m029_runtime_evidence(conn: sqlite3.Connection) -> None:
     conn.execute("CREATE INDEX IF NOT EXISTS idx_runtime_edge_dst ON runtime_edge(dst_symbol_id)")
 
 
+def _m031_data_access(conn: sqlite3.Connection) -> None:
+    """Unreleased: the data-access map (`find_data_access`).
+
+    - `data_access` — one row per place a symbol reads, writes or defines a
+      table. `table_name` / `table_schema` are lower-case. A row either carries
+      the table as written at the site (`confidence='literal'`: SQL text, a
+      query builder's string argument) or a `ref_name` (model / entity class,
+      or a repository type when `ref_kind='repository'`) from which the
+      resolver fills `model`, `table_name` and `confidence` (`model`,
+      `convention` or `unresolved`) after every index run. Rows hang off the
+      symbol, so re-extracting a file replaces them through the cascade.
+    - `data_model` — model class -> table and repository -> entity
+      declarations, the resolver's input. Keyed by file (a module-level
+      SQLAlchemy `Table` has no symbol); the indexer deletes a file's rows
+      before re-inserting them.
+
+    Both are derived from source, so rolling back is dropping them. Re-extract
+    is queued only on a DB that already holds symbols, as in v27: existing
+    files must be read again to fill the map."""
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS data_access (
+            id INTEGER PRIMARY KEY,
+            symbol_id INTEGER NOT NULL REFERENCES symbol(id) ON DELETE CASCADE,
+            table_name TEXT,
+            table_schema TEXT,
+            model TEXT,
+            ref_name TEXT,
+            ref_kind TEXT CHECK (ref_kind IN ('model', 'repository')),
+            access TEXT NOT NULL CHECK (access IN ('read', 'write', 'ddl')),
+            mechanism TEXT NOT NULL,
+            line INTEGER NOT NULL,
+            confidence TEXT NOT NULL
+                CHECK (confidence IN ('literal', 'model', 'convention', 'unresolved'))
+        )"""
+    )
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_data_access_symbol ON data_access(symbol_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_data_access_table ON data_access(table_name)")
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS data_model (
+            id INTEGER PRIMARY KEY,
+            file_id INTEGER NOT NULL REFERENCES file(id) ON DELETE CASCADE,
+            symbol_id INTEGER REFERENCES symbol(id) ON DELETE SET NULL,
+            name TEXT NOT NULL,
+            role TEXT NOT NULL CHECK (role IN ('model', 'repository')),
+            mechanism TEXT NOT NULL,
+            table_name TEXT,
+            table_schema TEXT,
+            entity TEXT,
+            table_source TEXT CHECK (table_source IN ('declared', 'convention')),
+            line INTEGER NOT NULL
+        )"""
+    )
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_data_model_file ON data_model(file_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_data_model_name ON data_model(name)")
+    if conn.execute("SELECT 1 FROM symbol LIMIT 1").fetchone() is not None:
+        _flag_reextract(conn)
+
+
 MIGRATIONS: list[Migration] = [
     (1, "drop_dead_tables", _m001_drop_dead_tables),
     (2, "drop_dead_columns", _m002_drop_dead_columns),
@@ -941,6 +999,7 @@ MIGRATIONS: list[Migration] = [
     (27, "schema_symbols", _m027_schema_symbols),
     (28, "symbol_ref_receiver", _m028_symbol_ref_receiver),
     (29, "runtime_evidence", _m029_runtime_evidence),
+    (31, "data_access", _m031_data_access),
 ]
 
 

@@ -56,6 +56,7 @@ Call tools from **any** member workspace (usually the hub/composer). Then:
 | Do the repos' schemas of one entity agree? | `schema_drift(entity?)` — every `@schema: <entity>` declaration of the group, field by field; `project://schemas` |
 | What breaks in the other repos if I change this field? | `schema_impact(entity, change, field)` — BEFORE the edit: each declaration's action + readers per repo (route callers included) |
 | Make that field change in every repo | `plan_schema_change(entity, change, field)` — AFTER `schema_impact`: exact line edits per declaration; plan first, `apply=True` only once the person agreed |
+| Which code touches a database table? Before changing a table or a function that persists; first call on an unknown repo to see its tables | `find_data_access()` (inventory: read/write/ddl per table, `.sql`-declared vs accessed) · `find_data_access(table="users")` (who reads/writes/defines it, `file:line`, mechanism) · `find_data_access(qname=..., include_callers=True)` (tables a symbol reaches through its callees) — SQL in strings + SQLAlchemy/Django/Prisma/Knex/TypeORM/JPA; a table is never guessed (`confidence: unresolved`) |
 | Human view of the group | `/livespec-ui` (or `livespec ui`) — group page lists repos, cross-repo Specs, route hops; read-only, writes nothing into any repo |
 
 **Cross-repo Specs (`xrepo-*`):** livespec does not invent one global Spec row.
@@ -403,7 +404,7 @@ Unlock with doc rows or `LIVESPEC_PLUGINS=docs|all`. (The old `export_explorer` 
 ## Pagination contract
 
 Aggregators (`find_dead_code`, `audit_coverage`, `find_orphan_tests`, `find_endpoints`,
-`find_legacy_flows`, `git_diff_impact`, `schema_drift`, `schema_impact`, `plan_schema_change`) accept `limit` (default 200) + `cursor` +
+`find_legacy_flows`, `git_diff_impact`, `schema_drift`, `schema_impact`, `plan_schema_change`, `find_data_access`) accept `limit` (default 200) + `cursor` +
 `summary_only=False`. Counts are always exact regardless of pagination. If a
 payload comes back with `payload_warning`, switch to `summary_only=True` and paginate.
 

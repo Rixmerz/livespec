@@ -396,6 +396,12 @@ def index_project(
 
             scan_schema_annotations(conn, project_id=project_id)
             _resolve_schema_links(conn)
+            # Data-access map: ORM accesses name a model; the model's table
+            # comes from declarations that may sit in another file, so every
+            # ORM row is re-resolved on each run that changed anything.
+            from livespec_mcp.domain.data_access_store import resolve_data_access
+
+            resolve_data_access(conn)
 
             # Restore manual spec_symbol links wiped by the symbol cascade. We
             # re-resolve symbol qname → new symbol_id and INSERT OR IGNORE,
@@ -608,6 +614,9 @@ def _replace_symbols(conn: sqlite3.Connection, *, file_id: int, result: ExtractR
         ],
     )
     _insert_schemas(conn, result=result, qname_to_id=qname_to_id)
+    from livespec_mcp.domain.data_access_store import persist_data_access
+
+    persist_data_access(conn, file_id=file_id, result=result, qname_to_id=qname_to_id)
 
 
 def _insert_schemas(

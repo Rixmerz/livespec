@@ -85,6 +85,7 @@ client cached the short tool list.
 | Do the schemas of one entity agree? | `schema_drift(entity?)` | Field by field across every `@schema: <entity>` declaration (group-wide with `group_db`); see §5.9 |
 | What breaks if I change this field? | `schema_impact(entity, change, field)` | Call BEFORE adding / removing / renaming / retyping a shared field: each declaration's action + readers across repos; see §5.9 |
 | Make that field change in every repo | `plan_schema_change(entity, change, field)` | AFTER `schema_impact`: exact line edits per declaration across repos; plan first, `apply=True` only once the person agreed; see §5.9 |
+| Which code touches a database table? | `find_data_access(table? \| qname?, include_callers?)` | BEFORE changing a table or a function that persists data; first call on an unknown repo to see its tables (no args = inventory: read / write / ddl per table, joined with `.sql` CREATE TABLE files). SQL in strings plus SQLAlchemy / Django / Prisma / Knex / TypeORM / JPA shapes; a table is never guessed (`confidence: unresolved`) |
 
 > **livespec speaks OpenSpec (Fission-AI).** If the repo has an `openspec/`
 > directory, livespec is the code-graph/traceability layer *beneath* it — it
@@ -134,7 +135,7 @@ Avoid the v0.7 chain `find_symbol → get_symbol_info → who_calls → …`.
 **Large repos (>30k symbols):** `summary_only=True`, `limit` + `cursor` on
 aggregators (`audit_coverage`, `find_dead_code`, `find_orphan_tests`,
 `find_endpoints`, `find_legacy_flows`, `git_diff_impact`, `schema_drift`,
-`schema_impact`, `plan_schema_change`);
+`schema_impact`, `plan_schema_change`, `find_data_access`);
 `min_weight=0.6` on
 traversals (default) drops resolver fan-out noise.
 
