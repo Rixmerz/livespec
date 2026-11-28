@@ -302,8 +302,39 @@ With it, asked on its own, the graph gives: callers of `Collector.collect` 1
 of 8 -> 7 of 8 (five direct, two through the override it now lists);
 `_alter_field` callers and overriders 1 of 3 -> 3 of 3; `add_fields` 2 of 4 ->
 4 of 4. Two caller questions did not move (4 of 5 and 1 of 3): a call on a
-receiver with no evident type is still resolved by name or not at all. The
-sessions were not repeated after the fix. Index time on Django rose about 4%.
+receiver with no evident type is still resolved by name or not at all. Index
+time on Django rose about 4%.
+
+Two more livespec sessions were run after the fix, same questions and model:
+
+| Session | Fully right | Tool calls | Tool-result chars | Turns | Input tokens | Output tokens |
+| --- | --- | --- | --- | --- | --- | --- |
+| livespec after the fix, run 1 | 8 / 8 | 8 | 15,607 | 15 | 1,882,470 | 7,854 |
+| livespec after the fix, run 2 | 8 / 8 | 5 | 21,697 | 11 | 1,401,133 | 7,897 |
+
+Fewer turns than before the fix (17 and 16) and than either files session
+(19 and 35). Both still ran a text search to confirm the callers on untyped
+receivers; their brief told them the graph can miss those.
+
+**Audit of what the fix removed.** The fix removed 27,792 `calls` edges on
+Django and added 1,209. Of the removed, 1,652 pointed at a method named
+`super` and 23,861 had their source under `tests/`; the 2,279 left, with a
+source under `django/`, were sampled and each judged by reading the calling
+function:
+
+| Stratum (source under `django/`) | Population | Read | Wrong | Correct | Unclear |
+| --- | --- | --- | --- | --- | --- |
+| removed, replaced by another target, weight < 0.6 | 2,224 | 60 | 60 | 0 | 0 |
+| removed, replaced, weight >= 0.6 | 26 | 26 | 25 | 1 | 0 |
+| removed, no replacement | 29 | 29 | 26 | 0 | 3 |
+| added | 849 | 60 | 0 | 60 | 0 |
+
+The one correct edge lost: `setup_databases` calls `time_keeper.timed()`
+where the parameter defaults to `NullTimeKeeper()`; the graph now links only
+that default class, though a caller may pass a `TimeKeeper`. A parameter
+whose only visible class is its default value is treated as that class. The
+three unclear ones reach `QuerySet.using` through a manager method generated
+at runtime. The removed edges under `tests/` were not read.
 
 ## Not yet covered
 
